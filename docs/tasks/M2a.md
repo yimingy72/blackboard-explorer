@@ -10,7 +10,7 @@
 
 ## 已定的实现决定
 
-1. **依赖**：`agent-framework-core[all]` 与 `agent-framework-openai`（锁定当前小版本，例如 `agent-framework-core==1.19.*`）；`docker>=7`；`httpx`；`jinja2`；`pyyaml`；工作区包 `bbx_contracts`、`bbx_objects`。注意 uv workspace 只有一个锁文件：MAF 的 MCP 依赖是 `mcp>=1.24,<2`，envd 是 `mcp>=1.13,<2`，二者兼容；新增依赖时确认不冲突。
+1. **依赖**：固定 `agent-framework-core==1.19.0` 与 `agent-framework-openai==1.14.4`，显式加入 `mcp>=1.24,<2`；不使用会引入无关 provider 的 `[all]` extra。另有 `docker>=7`、`httpx`、`jinja2`、`pyyaml`、工作区包 `bbx_contracts`、`bbx_objects`。2026-09-24 已按官方包元数据确认 core/openai/MCP 兼容；新增依赖时继续确认共用 uv.lock 无冲突。
 2. **模型客户端**：DeepSeek 用 `OpenAIChatCompletionClient(model, api_key, base_url)`（**不是** `OpenAIChatClient`，后者对应 OpenAI Responses 接口）。构建时设置 `function_invocation_configuration["max_iterations"] = explore_max_steps + conclude_grace_calls + 5`（MAF 默认 40）与 `max_duration_seconds`。`reasoning_effort` 从 profile 读取，通过运行选项传入（具体参数名以技术验证结果为准）。
 3. **ScriptedChatClient**：继承 MAF 的 `BaseChatClient`，实现 `_inner_get_response(*, messages, stream, options, **kwargs)`（以安装版本的源码为准）。脚本由若干步组成（返回工具调用 / 返回文本），支持条件跳转（例如"收到的消息含 conclude 指令时跳到交接步骤"）；记录每次收到的完整消息列表；返回与 DeepSeek 相同结构的用量（缓存命中 / 未命中 / 输出 / 推理 token）。
 4. **FakeEnvd**：实现 envd 的 MCP 与内部接口（ASGI 应用，可被 httpx 与 MCP 客户端直接调用），命令执行用预设输出表，文件落在临时目录。
@@ -18,8 +18,8 @@
    - 容器名 `bbx-exec-<task_id 前 8 位>`；运行参数严格按 `services/envd/README.md`；资源来自 profile 的 `exec_resources`。
    - 网络：接入 compose 的 `exec` 网络（compose 会加项目前缀，网络名来自配置项 `EXEC_NETWORK`，默认 `blackboard-explorer_exec`）；环境变量 `HTTP(S)_PROXY` 指向 egress-proxy。
    - token：`ENVD_TOKEN = HMAC-SHA256(ENVD_TOKEN_SECRET, task_id)` 的十六进制，注入容器环境变量。
-   - 方法：`provision(task)`（创建、等待 `/health`）、`create_user(task, agent_id)`、`archive_to_store(task)`（流式读 `/archive`，上传到对象存储 `workspace/{task}.tar.zst`）、`destroy(task)`、`find(task)`（重启恢复用）。
-6. **agent-runtime 访问 envd**：runtime 与执行环境都在 `exec` 网络上，按容器名访问 `http://bbx-exec-<id>:8080`。开发时如果 runtime 在宿主机上运行（不在容器中），通过配置项允许改用端口映射地址（仅开发用）。
+   - 方法：`provision(task_id, profile)`（固定任务的 profile 版本，创建并等待 `/health`，返回 handle）、`create_user(handle, agent_id)`、`archive_to_store(handle)`（流式读 `/archive`，临时文件中转后上传 `workspace/{task}.tar.zst`）、`destroy(task_id)`、`find(task_id)`（重启恢复用）。
+6. **agent-runtime 访问 envd**：生产 `exec_access_mode=network`，按容器名访问 `http://bbx-exec-<id>:8080`。Docker Desktop 的 internal 网络不发布宿主机端口，因此宿主开发使用 `relay` 模式的任务级固定目标 TCP 中转，宿主随机端口只绑定 `127.0.0.1`；执行容器不加外部网络。详细约束按实现架构 2.4–2.5。
 
 ## 任务
 
