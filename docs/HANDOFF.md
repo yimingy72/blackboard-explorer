@@ -73,8 +73,10 @@ blackboard-explorer/
 
   | 工作树 | 分支 | 未提交文件 | Codex 报告 |
   |---|---|---|---|
-  | `/Users/yym/bbx-wt/m1a` | `m1a` | 14 | `docs/tasks/M1a-report.md` |
-  | `/Users/yym/bbx-wt/m2env` | `m2-env` | 18 | `docs/tasks/M2-env-report.md` |
+  | `/Users/yym/bbx-wt/m1a` | `m1a` | 15 | `docs/tasks/M1a-report.md` |
+  | `/Users/yym/bbx-wt/m2env` | `m2-env` | 19 | `docs/tasks/M2-env-report.md` |
+
+  两个工作树中的 `AGENTS.md` 已替换为 `main` 上的新版本（未提交，内容与 `main` 相同，合并时不会冲突），所以在这两个目录里启动的 Codex 也按新的 git 规则工作。
 
 ### 2.2 已验证的事实
 
@@ -245,8 +247,8 @@ git worktree add -b <branch> ~/bbx-wt/<name>     # 每个任务一个工作树
 1. 读报告，尤其"偏差与待决"。
 2. 独立运行 `make check`、`make test-integration`，以及任务特有的验证。
 3. 对照设计抽查关键代码；发现问题写 `docs/tasks/<T>-fix.md`，用 `--resume-last` 派回同一个会话。
-4. 按报告建议的提交划分提交（Codex 不能写 `.git`，见 5.1），提交信息注明 `Implemented by Codex (gpt-6-sol) for task <T>.`
-5. 合并到 `main`（`git merge --ff-only` 或普通合并），删除工作树。
+4. 按报告建议的提交划分提交（交互使用时 Codex 申请、你批准后由它提交，见 5.1），提交信息注明 `Implemented by Codex (gpt-6-sol) for task <T>.`
+5. 合并到 `main`（`git merge --ff-only` 或普通合并），删除工作树——这两步 Codex 必须先得到你的明确确认（`AGENTS.md` 第 7 节）。
 6. 设计需要改的，**先改 `docs/design/`，再改代码**。
 
 ---
@@ -257,12 +259,18 @@ git worktree add -b <branch> ~/bbx-wt/<name>     # 每个任务一个工作树
 
 | 限制 | 影响 | 现在的做法 |
 |---|---|---|
-| 不能写 `.git` | Codex 不能切分支、提交 | 由人提交（`AGENTS.md` 第 7 节已写明） |
-| 不能 `docker build`（buildx 要写 `~/.docker`） | 镜像需在沙箱外构建 | 构建与依赖镜像的测试由人在沙箱外运行 |
+| 不能写 `.git` | 沙箱内切分支、提交会失败 | 交互使用（桌面应用 / CLI）时 Codex 申请在沙箱外执行，你批准（`AGENTS.md` 第 7 节）；插件派发是非交互的，无法申请，Codex 会在报告里列出命令由你执行 |
+| 不能 `docker build`（buildx 要写 `~/.docker`） | 镜像需在沙箱外构建 | 同上：申请批准，或由你手动执行 |
 | 可以 `docker run` / `docker compose` / testcontainers | 集成测试可以在沙箱内跑（前提是镜像已存在） | M0、M1a 的容器测试均在沙箱内跑通 |
-| 写不了 uv 默认缓存 | `uv sync` 失败 | 派发时设 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache` |
+| 写不了 uv 默认缓存 | `uv sync` 失败 | 使用 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache` |
 
-如果改为用更宽松的沙箱（例如允许写 `.git` 与 `~/.docker`）运行 Codex，记得同步修改 `AGENTS.md` 第 7 节，否则 Codex 仍会遵守"不做 git 写操作"。
+- 不要把 `.git` 加进沙箱可写目录：`.git/hooks` 中的脚本会在沙箱外执行，等于给沙箱开了出口。也不建议用"完全访问"模式。
+- 桌面应用不会继承终端里 `export` 的代理与 `UV_CACHE_DIR`。`AGENTS.md` 第 6 节要求 Codex 在缺失时于命令前显式设置；也可以在 `~/.codex/config.toml` 中统一设置：
+
+  ```toml
+  [shell_environment_policy]
+  set = { https_proxy = "http://127.0.0.1:7897", http_proxy = "http://127.0.0.1:7897", all_proxy = "socks5://127.0.0.1:7897", no_proxy = "localhost,127.0.0.1,::1,host.docker.internal", UV_CACHE_DIR = "/private/tmp/bbx-uv-cache" }
+  ```
 
 ### 5.2 网络与镜像
 
