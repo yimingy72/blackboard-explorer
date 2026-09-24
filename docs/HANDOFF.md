@@ -18,9 +18,9 @@
   | EVAL 评估目标（玩具任务 + mini-shop） | ✅ 已完成、审查、合并（mini-shop 规模偏小，见 EVAL-2） |
   | M1a 黑板存储与领域规则 | 🟡 Codex 已完成，**未审查、未提交**（工作树 `~/bbx-wt/m1a`） |
   | M2-env 执行环境与出网代理 | 🟡 Codex 已完成，**镜像未构建成功、集成测试未运行、未提交**（工作树 `~/bbx-wt/m2env`） |
-  | M1b、M1-W、M2（agent-runtime）、M3、M4、M5、EVAL-2 | ⬜ 未开始，任务说明尚未编写 |
+  | M1b、M1-W、M2a、M2b、M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；**任务说明已全部写好**（`docs/tasks/`，派发顺序见第 6 节） |
 
-- **下一步（按顺序）**：① 收尾 M2-env（第 3.1 节）② 审查并合并 M1a（3.2）③ 编写并派发第二波 M1b 与 M1-W（3.3、第 6 节）。
+- **下一步（按顺序）**：① 收尾 M2-env（第 3.1 节，任务说明 `M2-env-fix.md`）② 审查并合并 M1a（3.2）③ 并行派发 M1b 与 M1-W（第 6 节）。
 
 ---
 
@@ -102,7 +102,7 @@ blackboard-explorer/
 1. Codex 沙箱不允许 Docker buildx 写 `~/.docker/buildx/activity`，所以 Codex 无法构建镜像——**镜像需要你在沙箱外构建**。
 2. 在沙箱外构建时，`apt-get` 直连 `archive.ubuntu.com` 极慢并最终失败（退出码 100）。需要改用国内软件源。
 
-建议的修改（**尚未应用**，可以交给 Codex 或手动改）：
+建议的修改（**尚未应用**）已写成任务说明 `docs/tasks/M2-env-fix.md`，可直接派给 Codex（`--cwd ~/bbx-wt/m2env`，提示语中用绝对路径 `~/blackboard-explorer/docs/tasks/M2-env-fix.md` 引用，因为该工作树切出时还没有这个文件）。修改内容如下，也可以手动改：
 
 ```dockerfile
 # services/envd/Dockerfile —— 在 ENV DEBIAN_FRONTEND 之后
@@ -168,7 +168,7 @@ make test-integration        # 注意：Makefile 中 test-integration 依赖这�
 
 ### 3.3 第二波：M1b 与 M1-W（可并行）
 
-任务说明尚未编写，要点见第 6 节。M1b 依赖 M1a 合并；M1-W 可以与 M1b 同时开始（先用 contracts 的 JSON Schema 与接口清单做 mock，M1b 完成后切到真实接口）。
+任务说明已写好：`docs/tasks/M1b.md`、`docs/tasks/M1-W.md`。M1b 依赖 M1a 合并；M1-W 可以与 M1b 同时开始（先用 contracts 的 JSON Schema 与 MSW 模拟接口，M1b 完成后切到 OpenAPI 生成的类型）。
 
 ---
 
@@ -288,56 +288,37 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ---
 
-## 6. 后续任务概要
+## 6. 后续任务与派发顺序
 
-写任务说明时的依据。每项都要先读对应设计章节，再按 4.3 模板写。
+所有任务说明都在 `docs/tasks/`，每份都包含：依据的设计章节、范围与"不做什么"、已定的实现决定、任务表、测试要求、完成标准（含需要你在沙箱外执行的检查点）。派发方法见第 4 节。
 
-### M1b · 黑板服务的接口层（依赖 M1a）
+| 顺序 | 任务 | 任务说明 | 依赖 | 可与谁并行 | 需要你在沙箱外做的事 |
+|---|---|---|---|---|---|
+| 0 | M2-env 收尾 | `M2-env-fix.md` | — | M1a 审查 | 构建两个镜像、`make test-integration` |
+| 0 | M1a 审查合并 | 本文 3.2 | — | M2-env 收尾 | 审查、提交、合并 |
+| 1 | 黑板接口层 | `M1b.md` | M1a | M1-W | 构建 blackboard 镜像；`make up` 后跑模拟器看 SSE |
+| 1 | 画布最小版 | `M1-W.md` | —（M1b 完成后切真实接口） | M1b | 浏览器检查画布 |
+| 2 | 技术验证与 runtime 骨架 | `M2a.md` | M1b、M2-env | EVAL-2 | `make test-live`（真实 DeepSeek） |
+| 3 | 单个 Agent 跑通 | `M2b.md` | M2a | EVAL-2 | 填 `DEEPSEEK_API_KEY` 与价格表；玩具任务上跑真实种子 |
+| 4 | 调度器、清扫与恢复 | `M3a.md` | M2b | — | 构建 agent-runtime 镜像 |
+| 5 | 裁定、收尾与完整闭环 | `M3b.md` | M3a | — | `make e2e`（玩具任务完整闭环） |
+| 6 | 工作台 | `M4.md` | M1-W、M3b | M5 | `make web-e2e`；用工作台复盘一次运行 |
+| 6 | 评估与调参 | `M5.md` | M3b、EVAL-2 | M4 | `make eval-run` / `make eval-score`（花费较多） |
+| 任意 | mini-shop 扩容 | `EVAL-2.md` | — | 任何 | **建议人工完成**（见 5.3） |
 
-- HTTP 接口：实现架构 4.1–4.2 的全部接口，薄薄地包在 `BoardService` 上；错误码与 `RuleViolation` 对应，错误消息原样返回给模型。
-- 鉴权：服务 token、agent token（绑定任务 + agent id，签发与校验）、用户会话（静态账号 `ADMIN_USERS`）。
-- SSE：监听 M1a 的 `NOTIFY bbx_task_<id>`，按任务推送，支持 `Last-Event-ID` / `since` 续传。
-- `ObjectStore` 的 MinIO 实现（证据读取与归属校验、报告存取、tool_calls 全文）。
-- `Embedder` 的真实实现：fastembed + `BAAI/bge-small-zh-v1.5`（512 维），**构建镜像时预下载模型**。
-- 快照 YAML 生成（实现架构 4.4，裁剪规则）。
-- blackboard 的 Dockerfile 与 compose 服务；OpenAPI 导出与快照测试。
-- 黑板模拟器（开发方案 M1 的 1.14）：以多个 agent 身份按剧本写入。
-- 检查点：开发方案 M1 检查点中与接口、SSE 相关的条目。
+**每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
-### M1-W · 画布最小版（可与 M1b 并行）
+## 6.1 设计文档待同步
 
-- 开发方案 M1-W：前端骨架（React 18 + Vite + TS、`@xyflow/react` v12、elkjs、zustand、react-query）、任务列表与创建页、SSE → 状态 → 节点/边派生、TopologyFlowCanvas（四种节点、六种边、分层布局与增量重排）、详情侧栏基础版。
-- 类型：M1b 完成前用 contracts 的 JSON Schema 生成 TS 类型并 mock 接口；之后改用 OpenAPI 生成。
-- 检查点：运行模拟器，浏览器中看到图实时生长。
+以下事项来自 Codex 报告，尚未写回 `docs/design/`（先改设计文档，再让后续任务依据它）：
 
-### M2 · agent-runtime 与单 Agent（依赖 M1b、M2-env）
-
-- **先做技术验证**（开发方案第 6 节的清单，逐项写成测试）。
-- ExecEnvManager（Docker SDK；容器参数按 `services/envd/README.md`；为每个任务派生 `ENVD_TOKEN`）。
-- `make_client`：DeepSeek 用 `OpenAIChatCompletionClient`（不是 `OpenAIChatClient`），设 `max_iterations`、`reasoning_effort`。
-- 黑板工具、三个中间件 + `MessageInjectionMiddleware`、OpeningContextProvider、提示词模板（设计文档 8.1–8.3）、回执解析、CLI。
-- ScriptedChatClient、FakeEnvd。
-- 检查点：玩具任务上用 CLI 跑通一个真实种子 explore（需要 DeepSeek key、`eval-targets`、出网白名单含 `eval-targets`）。
-
-### M3 · 调度与完整闭环（依赖 M2）
-
-- `decide(state) → actions` 纯函数 + 执行器；SchedulerLoop、Sweeper、Recovery；derive、close（裁定 / 终结）、收尾、失败保护、归档。
-- 开发方案 M3 的 13 个场景测试必须全部通过（ScriptedChatClient 驱动）。
-
-### M4 · 工作台（依赖 M1-W、M3）
-
-- 详情面板、证据查看器、验收与预算、事件流、时间轴、Profile 管理（开发方案 M4）。
-
-### EVAL-2 · mini-shop 扩容（M5 之前）
-
-- 现状：Python 代码 568 行（设计约 1500），分支改动 323 行（设计约 500）。规模偏小会削弱对"遗漏"的区分度。
-- 只增加正常业务代码与测试，**不改变 P1–P6、D1–D3**；扩容后重跑 `make eval-verify` 与 tar 包线索扫描。注意 5.3。
-
-### M5 · 评估与调参（依赖 M3、EVAL-2）
-
-- eval runner（同配置跑 N 次）、评分脚本（读 `eval/answers/mini-shop/answer.yaml`）、单 Agent 基线、对比报告（开发方案 7.2 的指标与判断标准）。
-
----
+| 事项 | 来源 | 建议写法 | 位置 |
+|---|---|---|---|
+| envd 的 token | M2-env 报告 | agent-runtime 持有 `ENVD_TOKEN_SECRET`，按任务派生 `ENVD_TOKEN = HMAC-SHA256(secret, task_id)` 注入容器；envd 只读 `ENVD_TOKEN` | 开发方案第 9 节；实现架构 2.2 |
+| 工具调用事件 | M1a 报告 | 新增事件类型 `tool_call.recorded`（参与 provenance 判定、需可重放） | 实现架构 3.3 |
+| 任务创建的引导写入 | M1a 报告 | 任务行先插入、再追加 `task.created` 并投影，是"事件为唯一写入入口"的唯一例外 | 实现架构 3.1 |
+| 相似度检索 | M1a 报告 | v1 为线性余弦 top-3，只作提示不拒绝；数据量大时改 pgvector 索引 | 实现架构 4.3 |
+| `derive_enabled` 参数 | M5 任务 | 默认 true；为 false 时不触发 derive（单 Agent 基线用） | 设计文档第 9 节、5.4 |
 
 ## 7. 已确定的关键设计决策（避免重复讨论）
 
