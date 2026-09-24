@@ -1,7 +1,6 @@
 """Database behavior against an isolated pgvector PostgreSQL container."""
 
 import asyncio
-import hashlib
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -13,24 +12,12 @@ from alembic.config import Config
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.service import BoardService
 from bbx_blackboard.store import schema as s
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.community.postgres import PostgresContainer
 
 pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[3]
-
-
-class FakeEmbedder:
-    async def embed(self, texts):
-        vectors = []
-        for value in texts:
-            vector = [0.0] * 512
-            for offset in range(max(1, len(value) - 2)):
-                part = value[offset : offset + 3]
-                vector[int.from_bytes(hashlib.sha256(part.encode()).digest()[:2], "big") % 512] += 1
-            vectors.append(vector)
-        return vectors
 
 
 class FakeObjects:
@@ -62,7 +49,7 @@ def database_url():
 async def board_service(database_url):
     engine = create_async_engine(database_url)
     try:
-        yield BoardService(engine, FakeEmbedder(), FakeObjects())
+        yield BoardService(engine, FakeObjects())
     finally:
         await engine.dispose()
 
@@ -276,7 +263,7 @@ async def test_dry_run_objects_and_event_filter(board_service):
         intent(statement="Find the source again", method="Inspect traces", retry_of="I1"),
         dry_run=True,
     )
-    assert preview["similar"][0]["id"] == "I1"
+    assert preview == {"valid": True}
     assert len(await service.events(tid)) == count
     related = await service.get_object(tid, "I1")
     assert "F2" in related["related"]
@@ -285,6 +272,40 @@ async def test_dry_run_objects_and_event_filter(board_service):
     other = await service.events(tid, for_agent=two)
     assert any(x["type"] == "fact.disputed" for x in targeted)
     assert not any(x["type"] == "fact.disputed" for x in other)
+
+
+async def test_agent_owned_duplicate_judgment_and_legacy_replay(board_service):
+    service = board_service
+    tid = await task(service)
+    aid = await service.register_agent(tid, "explore")
+    before = await service.events(tid)
+    assert await service.post_fact(tid, aid, fact(), dry_run=True) == {"valid": True}
+    assert await service.events(tid) == before
+    first = await service.post_fact(tid, aid, fact())
+    second = await service.post_fact(tid, aid, fact())
+    assert (first["id"], second["id"]) == ("F1", "F2")
+    assert "similar" not in first
+    event = first["events"][0]
+    # Simulate an immutable event recorded by the former vector-based version.
+    legacy_payload = {**event["payload"], "embedding": [0.0] * 512}
+    async with service.repo.engine.begin() as conn:
+        await conn.execute(
+            update(s.events)
+            .where(s.events.c.version == event["version"])
+            .values(payload=legacy_payload)
+        )
+        assert not (
+            await conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name IN ('facts', 'intents') AND column_name = 'embedding'"
+                )
+            )
+        ).all()
+    await service.replay(tid)
+    restored = await service.state(tid)
+    assert restored["facts"]["F1"]["statement"] == fact()["statement"]
+    assert "embedding" not in restored["facts"]["F1"]
 
 
 async def test_same_agent_claim_race(board_service):

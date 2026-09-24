@@ -45,6 +45,7 @@ PROFILE = {
     "models": {"explore": MODEL, "derive": MODEL, "close": MODEL},
     "params": {},
     "prompts": {"explore": "explore", "derive": "derive", "close": "close"},
+    "prompt_templates": {"explore": "explore", "derive": "derive", "close": "close"},
     "exec_image": "image",
     "exec_resources": {"cpus": 2, "mem": "4g", "pids": 256},
 }
@@ -251,6 +252,9 @@ def test_default_profile() -> None:
     profile, notices = load_profile(directory)
     assert profile.models.explore.model == "deepseek-flash"
     assert profile.params.context_threshold == 128000
+    assert profile.prompt_templates.explore == (directory / profile.prompts.explore).read_text(
+        encoding="utf-8"
+    )
     assert len(notices) == 3
     assert all("price table is incomplete" in notice for notice in notices)
 

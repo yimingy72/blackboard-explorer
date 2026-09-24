@@ -1,7 +1,10 @@
 """Blackboard environment configuration."""
 
+from pathlib import Path
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -16,9 +19,19 @@ class Settings(BaseSettings):
     minio_root_password: SecretStr
     minio_endpoint: str = Field(default="http://minio:9000")
     minio_bucket: str = Field(default="blackboard")
-    embed_model: str = Field(default="BAAI/bge-small-zh-v1.5")
-    embed_dim: int = Field(default=512, ge=1)
     service_token: SecretStr
     agent_token_secret: SecretStr
     admin_users: SecretStr
     otel_enabled: bool = False
+    profiles_dir: Path = Path("profiles/default")
+
+    @property
+    def database_url(self) -> URL:
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )

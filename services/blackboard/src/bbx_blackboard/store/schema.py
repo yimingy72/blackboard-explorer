@@ -1,6 +1,5 @@
 """SQLAlchemy Core schema shared by migrations and projections."""
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -13,6 +12,7 @@ from sqlalchemy import (
     Table,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
@@ -95,7 +95,6 @@ facts = scoped(
     col("satisfies", ARRAY(Text), nullable=False),
     col("author", Text, nullable=False),
     col("provenance", Text, nullable=False),
-    col("embedding", Vector(512)),
     col("version", BigInteger, nullable=False),
 )
 
@@ -116,7 +115,6 @@ intents = scoped(
     col("notes", JSONB, nullable=False),
     col("attempts", Integer, nullable=False),
     col("author", Text, nullable=False),
-    col("embedding", Vector(512)),
     col("version", BigInteger, nullable=False),
 )
 
@@ -159,6 +157,7 @@ agent_profiles = Table(
     col("name", Text, primary_key=True),
     col("version", Integer, primary_key=True),
     col("prompts", JSONB, nullable=False),
+    col("prompt_templates", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     col("models", JSONB, nullable=False),
     col("params", JSONB, nullable=False),
     col("exec_image", Text, nullable=False),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -28,24 +27,13 @@ from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 
 
-class Embedder(Protocol):
-    async def embed(self, texts: list[str]) -> list[list[float]]: ...
-
-
 class ObjectStore(Protocol):
     async def exists(self, uri: str) -> bool: ...
 
 
-def similarity(a: list[float], b: list[float]) -> float:
-    numerator = sum(x * y for x, y in zip(a, b, strict=True))
-    denominator = math.sqrt(sum(x * x for x in a) * sum(y * y for y in b))
-    return numerator / denominator if denominator else 0.0
-
-
 class BoardService:
-    def __init__(self, engine: AsyncEngine, embedder: Embedder, objects: ObjectStore) -> None:
+    def __init__(self, engine: AsyncEngine, objects: ObjectStore) -> None:
         self.repo = Repository(engine)
-        self.embedder = embedder
         self.objects = objects
 
     async def create_task(
@@ -128,11 +116,6 @@ class BoardService:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         data = PostFactRequest.model_validate(request).model_dump(mode="json")
-        vector = (await self.embedder.embed([data["statement"]]))[0]
-        if len(vector) != 512:
-            raise RuleViolation(
-                "embedding_dimension", "事实向量必须是 512 维，请检查 Embedder 配置。"
-            )
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
@@ -142,14 +125,12 @@ class BoardService:
                     raise RuleViolation(
                         "evidence_missing", f"证据 {uri or '(无 uri)'} 未持久化，请先上传再提交。"
                     )
-            nearest = self._nearest(state.facts.values(), vector)
-            data["embedding"] = vector
             planned = decide(state, "post_fact", agent_id, data)
             if dry_run:
-                return {"similar": nearest}
+                return {"valid": True}
             written = await self.repo.append(conn, tid, planned)
         await self.repo.notify(tid, written[-1]["version"])
-        return {"id": written[0]["object_id"], "events": written, "similar": nearest}
+        return {"id": written[0]["object_id"], "events": written}
 
     async def post_intent(
         self,
@@ -160,35 +141,15 @@ class BoardService:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         data = PostIntentRequest.model_validate(request).model_dump(mode="json")
-        vector = (await self.embedder.embed([data["statement"]]))[0]
-        if len(vector) != 512:
-            raise RuleViolation(
-                "embedding_dimension", "意图向量必须是 512 维，请检查 Embedder 配置。"
-            )
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
-            nearest = self._nearest(state.intents.values(), vector)
-            data["embedding"] = vector
             planned = decide(state, "post_intent", agent_id, data)
             if dry_run:
-                return {"similar": nearest}
+                return {"valid": True}
             written = await self.repo.append(conn, tid, planned)
         await self.repo.notify(tid, written[-1]["version"])
-        return {"id": written[0]["object_id"], "events": written, "similar": nearest}
-
-    @staticmethod
-    def _nearest(items: Any, vector: list[float]) -> list[dict[str, Any]]:
-        scored = [
-            {
-                "id": x["id"],
-                "statement": x["statement"],
-                "score": similarity(vector, list(x["embedding"])),
-            }
-            for x in items
-            if x.get("embedding") is not None
-        ]
-        return sorted(scored, key=lambda x: x["score"], reverse=True)[:3]
+        return {"id": written[0]["object_id"], "events": written}
 
     async def claim(self, tid: UUID, agent_id: str, intent_id: str) -> list[dict[str, Any]]:
         return await self._write(tid, "claim", agent_id, {"intent_id": intent_id})

@@ -1,0 +1,9 @@
+[project]
+name = "bbx-objects"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+dependencies = ["anyio>=4,<5", "minio>=7.2,<8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

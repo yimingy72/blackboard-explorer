@@ -2,9 +2,10 @@
 name = "bbx-blackboard"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["bbx-contracts", "sqlalchemy[asyncio]>=2,<3", "asyncpg>=0.30,<1", "alembic>=1.16,<2", "pgvector>=0.4,<1"]
+dependencies = ["bbx-contracts", "sqlalchemy[asyncio]>=2,<3", "asyncpg>=0.30,<1", "alembic>=1.16,<2", "fastapi>=0.115,<1", "PyJWT>=2.10,<3", "sse-starlette>=3,<4", "bbx-objects", "uvicorn>=0.35,<1"]
 
 [tool.uv.sources]
+bbx-objects = { workspace = true }
 bbx-contracts = { workspace = true }
 
 [build-system]

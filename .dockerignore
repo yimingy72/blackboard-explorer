@@ -7,3 +7,8 @@
 **/.pytest_cache
 **/.ruff_cache
 **/node_modules
+.data
+data
+.coverage
+htmlcov
+*.log

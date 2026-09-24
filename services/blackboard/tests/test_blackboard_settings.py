@@ -11,6 +11,5 @@ def test_settings(monkeypatch) -> None:
     ):
         monkeypatch.setenv(key, "replace-me")
     settings = Settings()  # pyright: ignore[reportCallIssue]
-    assert settings.embed_dim == 512
     assert settings.postgres_password.get_secret_value() == "replace-me"
     assert "replace-me" not in repr(settings)

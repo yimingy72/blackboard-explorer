@@ -408,6 +408,12 @@ class PromptPaths(ContractModel):
     close: str = Field(min_length=1, description="收尾提示词模板路径")
 
 
+class PromptTemplates(ContractModel):
+    explore: str = Field(min_length=1, description="探索提示词模板正文快照")
+    derive: str = Field(min_length=1, description="推导提示词模板正文快照")
+    close: str = Field(min_length=1, description="收尾提示词模板正文快照")
+
+
 class ExecResources(ContractModel):
     cpus: float = Field(gt=0, description="执行环境 CPU 限额")
     mem: str = Field(min_length=1, description="执行环境内存限额")
@@ -418,6 +424,7 @@ class AgentProfile(ContractModel):
     models: ModelSet = Field(description="各任务类型模型与价格")
     params: Params = Field(description="默认调度参数")
     prompts: PromptPaths = Field(description="提示词模板文件路径")
+    prompt_templates: PromptTemplates = Field(description="该版本固定的提示词模板正文")
     exec_image: str = Field(min_length=1, description="执行环境镜像")
     exec_resources: ExecResources = Field(description="执行环境资源限制")
     privileged_allowlist: list[str] = Field(default_factory=list, description="允许的提权命令前缀")

@@ -80,7 +80,6 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "satisfies",
                 "author",
                 "provenance",
-                "embedding",
             )
         }
         await conn.execute(
@@ -98,7 +97,6 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "relates_to",
                 "retry_of",
                 "author",
-                "embedding",
             )
         }
         claim = p.get("claim", False)

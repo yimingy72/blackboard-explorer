@@ -317,7 +317,7 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-token 归属、tool_call.recorded、任务创建引导例外与线性余弦 top-3 已同步并合并。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。尚待后续任务同步的事项：
+token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。尚待后续任务同步的事项：
 
 | 事项 | 来源 | 建议写法 | 位置 |
 |---|---|---|---|
@@ -331,7 +331,7 @@ token 归属、tool_call.recorded、任务创建引导例外与线性余弦 top-
 - 预算按金额（`max_cost`、`close_reserve_ratio`），并发上限只在任务 `budget` 中；`context_threshold` 128K。
 - 调度器自建 asyncio 循环，**不用 MAF Workflow**（超步屏障与连续调度冲突）；MAF 只用于 Agent 本体。
 - MAF 核对结论：`max_iterations` 默认 40 需调大；函数中间件"替换结果"而不是 terminate；增量注入用 `enqueue_messages` + `MessageInjectionMiddleware`；MCP 工具经过函数中间件，参数为 `static_headers`。
-- 模型统一 DeepSeek `deepseek-flash`；embedding 用本地 bge-small-zh-v1.5；v1 不部署模型网关。
+- 模型统一 DeepSeek `deepseek-flash`；重复判断由 Agent 根据同步的黑板完成，不再部署本地 embedding 或生成向量；v1 不部署模型网关。
 - 部署：本机 Docker；同一时间一个任务；每任务一个 ubuntu 执行环境（每个 Agent 一个 Linux 用户），证据"引用时持久化 + 结束时归档"到 MinIO。
 
 ---

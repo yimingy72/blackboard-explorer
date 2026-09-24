@@ -2,7 +2,7 @@
 name = "blackboard-explorer"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["bbx-contracts", "bbx-blackboard", "bbx-runtime", "bbx-envd"]
+dependencies = ["bbx-contracts", "bbx-blackboard", "bbx-runtime", "bbx-envd", "bbx-objects"]
 
 [dependency-groups]
 dev = [
@@ -17,10 +17,16 @@ dev = [
     "zstandard>=0.25,<1",
 ]
 
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
 [tool.uv.workspace]
-members = ["packages/contracts", "services/blackboard", "services/agent-runtime", "services/envd"]
+members = ["packages/objects", "packages/contracts", "services/blackboard", "services/agent-runtime", "services/envd"]
 
 [tool.uv.sources]
+bbx-objects = { workspace = true }
 bbx-contracts = { workspace = true }
 bbx-blackboard = { workspace = true }
 bbx-runtime = { workspace = true }
@@ -38,11 +44,11 @@ typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
-include = ["packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src", "packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
-extraPaths = ["packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src"]
+include = ["packages/objects/src", "packages/objects/tests", "packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src", "packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
+extraPaths = ["packages/objects/src", "packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
+testpaths = ["packages/objects/tests", "packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
 markers = ["integration: needs Docker (testcontainers); excluded from make check"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

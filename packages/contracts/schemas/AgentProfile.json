@@ -316,6 +316,36 @@
       ],
       "title": "PromptPaths",
       "type": "object"
+    },
+    "PromptTemplates": {
+      "additionalProperties": false,
+      "properties": {
+        "explore": {
+          "description": "探索提示词模板正文快照",
+          "minLength": 1,
+          "title": "Explore",
+          "type": "string"
+        },
+        "derive": {
+          "description": "推导提示词模板正文快照",
+          "minLength": 1,
+          "title": "Derive",
+          "type": "string"
+        },
+        "close": {
+          "description": "收尾提示词模板正文快照",
+          "minLength": 1,
+          "title": "Close",
+          "type": "string"
+        }
+      },
+      "required": [
+        "explore",
+        "derive",
+        "close"
+      ],
+      "title": "PromptTemplates",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -331,6 +361,10 @@
     "prompts": {
       "$ref": "#/$defs/PromptPaths",
       "description": "提示词模板文件路径"
+    },
+    "prompt_templates": {
+      "$ref": "#/$defs/PromptTemplates",
+      "description": "该版本固定的提示词模板正文"
     },
     "exec_image": {
       "description": "执行环境镜像",
@@ -355,6 +389,7 @@
     "models",
     "params",
     "prompts",
+    "prompt_templates",
     "exec_image",
     "exec_resources"
   ],

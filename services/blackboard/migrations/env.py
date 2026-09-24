@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 config.set_main_option(
-    "sqlalchemy.url", os.environ.get("BBX_DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    "sqlalchemy.url",
+    os.environ.get("BBX_DATABASE_URL", config.get_main_option("sqlalchemy.url")).replace("%", "%%"),
 )
 
 

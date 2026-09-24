@@ -11,8 +11,8 @@
 ## 已定的实现决定
 
 1. **黑板工具**（设计文档 4.1 的工具表，按任务类型装配）：
-   - `post_fact`：先请黑板 dry_run 查相似项（未带 `confirm_not_duplicate=True` 且有相似项时，返回相似项并停止）→ 对每条证据经 envd `/stat`、`/files` 取文件（超过上限返回"证据文件过大，请截取相关部分另存后再提交"）→ 上传到对象存储 `evidence/{task}/{agent}/{sha256[:12]}-{basename}` → 对带 `call_id` 的证据自动追加一条 `command_output` 证据（uri 为 `toolcalls/{task}/{call_id}.txt`，`auto=true`）→ 正式提交。
-   - `post_intent`（含 `claim`、`confirm_not_duplicate`）、`claim`、`release`、`get`、`search`、`read_evidence`（返回内容包裹为 `<evidence>…</evidence>` 数据块）、`submit_close`（终结模式先上传报告到 `reports/{task}.md`）。
+   - `post_fact`：Agent 根据已同步的黑板内容自行判断重复；工具不做相似度预检或二次确认。对每条证据经 envd `/stat`、`/files` 取文件（超过上限返回"证据文件过大，请截取相关部分另存后再提交"）→ 上传到对象存储 `evidence/{task}/{agent}/{sha256[:12]}-{basename}` → 对带 `call_id` 的证据自动追加一条 `command_output` 证据（uri 为 `toolcalls/{task}/{call_id}.txt`，`auto=true`）→ 正式提交。
+   - `post_intent`（含 `claim`）、`claim`、`release`、`get`、`search`、`read_evidence`（返回内容包裹为 `<evidence>…</evidence>` 数据块）、`submit_close`（终结模式先上传报告到 `reports/{task}.md`）。
    - 所有工具返回给模型读的简短中文：成功给对象 id 与一句说明；失败原样给出黑板的错误消息（它已写明怎么改）。
 2. **execute_command**：`MCPStreamableHTTPTool(name="exec", url=…, static_headers={"X-Agent-Id": aid, "Authorization": f"Bearer {envd_token}"})`，只装配给 explore。
 3. **中间件**（执行顺序以 M2a 的验证结论为准）：
@@ -40,7 +40,7 @@
 ## 测试
 
 - **普通测试**（ScriptedChatClient + FakeEnvd + 假黑板客户端）：
-  - `post_fact` 完整流程：相似项拦截、取文件、上传、自动附加 command_output、超限提示
+  - `post_fact` 完整流程：直接提交、取文件、上传、自动附加 command_output、超限提示
   - ToolLog：call_id 追加且与记录一致
   - GraceGate：concluding 后非交接工具被拒绝、模型继续运行、次数用尽后交接工具也被拒绝
   - BoardSync：增量渲染（点名、裁定、摘要、计数截断、过滤自己）；conclude 指令只注入一次；注入的消息出现在下一次模型调用中（ScriptedChatClient 记录）
