@@ -1,13 +1,6 @@
 {
   "additionalProperties": false,
   "properties": {
-    "max_concurrent_agents": {
-      "default": 5,
-      "description": "并发探索和推导上限",
-      "minimum": 1,
-      "title": "Max Concurrent Agents",
-      "type": "integer"
-    },
     "explore_max_steps": {
       "default": 60,
       "description": "单次探索最多模型调用数",
@@ -71,10 +64,10 @@
       "title": "Derive Empty Limit",
       "type": "integer"
     },
-    "close_reserve_cost": {
+    "close_reserve_ratio": {
       "anyOf": [
         {
-          "maximum": 1.0,
+          "exclusiveMaximum": 1.0,
           "minimum": 0.0,
           "type": "number"
         },
@@ -85,7 +78,7 @@
       ],
       "default": "0.05",
       "description": "总预算中为收尾预留的比例",
-      "title": "Close Reserve Cost"
+      "title": "Close Reserve Ratio"
     },
     "snapshot_max_lines": {
       "default": 150,

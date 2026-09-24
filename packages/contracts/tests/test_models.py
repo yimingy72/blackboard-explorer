@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from uuid import UUID
@@ -219,6 +220,30 @@ def test_schema_export(tmp_path: Path) -> None:
     paths = export_schemas(tmp_path)
     assert len(paths) >= 25
     assert json.loads((tmp_path / "Receipt.json").read_text())["anyOf"]
+    params = json.loads((tmp_path / "Params.json").read_text())["properties"]
+    assert "close_reserve_ratio" in params
+    assert "close_reserve_cost" not in params
+    assert "max_concurrent_agents" not in params
+
+
+def test_task_params_override_boundaries() -> None:
+    task = {
+        "goal": "Find cause",
+        "acceptance": [{"id": "A1", "desc": "Explain"}],
+        "budget": {"max_concurrent_agents": 5, "max_cost": 10, "max_minutes": 60},
+        "agent_profile": "default",
+    }
+    assert str(m.Params().close_reserve_ratio) == "0.05"
+    assert m.Params(close_reserve_ratio=Decimal(0)).close_reserve_ratio == 0
+    assert m.TaskSpec.model_validate({**task, "params": {"close_reserve_ratio": 0.5}})
+    for invalid_params in (
+        {"max_concurrent_agents": 6},
+        {"close_reserve_ratio": 1},
+        {"close_reserve_ratio": -0.1},
+        {"close_reserve_cost": 0.05},
+    ):
+        with pytest.raises(ValidationError):
+            m.TaskSpec.model_validate({**task, "params": invalid_params})
 
 
 def test_default_profile() -> None:

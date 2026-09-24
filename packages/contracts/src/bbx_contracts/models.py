@@ -229,7 +229,6 @@ class Budget(ContractModel):
 
 
 class Params(ContractModel):
-    max_concurrent_agents: int = Field(default=5, ge=1, description="并发探索和推导上限")
     explore_max_steps: int = Field(default=60, ge=1, description="单次探索最多模型调用数")
     seed_max_steps: int = Field(default=20, ge=1, description="种子未认领意图的最大步数")
     context_threshold: int = Field(
@@ -241,8 +240,8 @@ class Params(ContractModel):
     intent_max_attempts: int = Field(default=3, ge=1, description="意图未关闭时可被尝试的次数")
     max_consecutive_failures: int = Field(default=3, ge=1, description="连续运行错误上限")
     derive_empty_limit: int = Field(default=2, ge=1, description="连续空推导次数上限")
-    close_reserve_cost: Decimal = Field(
-        default=Decimal("0.05"), ge=0, le=1, description="总预算中为收尾预留的比例"
+    close_reserve_ratio: Decimal = Field(
+        default=Decimal("0.05"), ge=0, lt=1, description="总预算中为收尾预留的比例"
     )
     snapshot_max_lines: int = Field(default=150, ge=1, description="YAML 快照最大行数")
     delta_max_lines: int = Field(default=15, ge=1, description="增量推送最大行数")

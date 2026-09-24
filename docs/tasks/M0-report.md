@@ -58,3 +58,37 @@ git add .env.example docker-compose.yml docs/tasks/M0-report.md
 git commit -m "Add local infrastructure and M0 report"
 git status --short --branch
 ```
+
+## M0-fix 补充
+
+### 完成了什么
+
+1. `minio` 与 `minio-init` 均改用固定镜像 `pgsty/minio:RELEASE.2026-04-17T00-00-00Z`；建桶仍使用 `mc mb --ignore-existing`。未增加环境变量。
+2. `Params.close_reserve_cost` 更名为 `close_reserve_ratio`，默认 `0.05`，范围为 `[0, 1)`；`max_concurrent_agents` 仅保留在 `Budget`。同步更新默认 profile、测试、`Params.json` 与 `AgentProfile.json`。新增任务参数覆盖测试，确认并发字段及旧参数名被拒绝，比例边界按新范围校验。
+
+### 如何验证及实际结果
+
+在仓库根目录运行：
+
+```sh
+make check
+make schemas
+docker compose config --quiet
+make up
+docker compose ps -a
+docker compose exec -T minio sh -c 'mc alias set verify http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls verify/'
+make up
+docker compose ps -a
+make down
+```
+
+实际结果：指定 MinIO 镜像 `docker pull` 成功；`make check` 中 ruff 通过、pyright **0 错误 0 警告**、pytest **50 passed**。`make schemas` 和 Compose 配置校验通过。首次 `make up` 后 PostgreSQL 与 MinIO 均为 **healthy**，`minio-init` **Exited (0)**，桶列表出现 `blackboard/`。第二次 `make up` 后状态相同，建桶日志再次成功，确认幂等。`make down` 成功，数据卷保留，`docker compose ps -a` 为空。
+
+### 偏差与待决
+
+无新增设计偏差。本节结果更新了原报告中关于 MinIO 镜像、容器验收和参数命名的历史状态；原报告正文按任务要求未改动。本次未执行任何 Git 写操作，提交由 Claude 完成。
+
+### 建议的提交划分
+
+1. `docker-compose.yml`：`Use pinned MinIO image for local infrastructure`
+2. `packages/contracts/src/bbx_contracts/models.py`、`packages/contracts/tests/test_models.py`、`packages/contracts/schemas/Params.json`、`packages/contracts/schemas/AgentProfile.json`、`profiles/default/params.yaml`、`docs/tasks/M0-report.md`：`Align reserve ratio and task budget contracts with design`
