@@ -38,3 +38,74 @@
 - `Makefile`：追加 `eval-targets`、`eval-verify` 目标
 - `.gitignore`：追加 `eval/targets/dist/`
 - 新增 `docker-compose.dev.yml`
+
+## EVAL-2 补充
+
+完成日期：2026-09-25。用户明确将本任务交由 Codex 完成，替代原“人工完成”的安排。本轮只新增正常业务与测试，原评估点及验证脚本保持不变；未调用 DeepSeek。
+
+### 新增内容
+
+- 基线增加账户资料与收货地址：本人资料更新、地址增删改查、默认地址切换/删除后的提升；写操作使用事务，测试包含并发创建与切换默认地址。
+- 基线增加商品分类、目录分页、价格/库存/名称筛选、商品详情、分类商品与库存汇总。目录管理仅为本地函数，没有开放未鉴权写接口。
+- 基线增加本人订单历史、日期范围汇总、月度统计与已购商品列表；订单金额统计明确不扣除后续退款，所有账户查询限定本人。
+- 审查分支增加第 6 个正常提交：`/account/refunds` 和 `/account/coupons` 的分页查询，支持本人订单与使用状态过滤。
+- 公共分页参数统一为 `page` / `page_size`，包含总数和 `has_next`。新模块显式关闭 SQLite 连接。
+- 打包脚本在构建基线及每个提交层时排除 Python/pytest 缓存；目标代码与本地生成的数据库分离。
+
+### 规模与既有评估点
+
+| 项目 | 扩容前 | 扩容后 |
+|---|---:|---:|
+| 基线 main 的 Python 行数（含测试与 seed） | 249 | 1434 |
+| feature/coupon-refund 的 Python 行数（含测试与 seed） | 568 | 1942 |
+| 分支相对 main 的改动 | 323 行（原报告口径） | 512 行新增、4 行删除 |
+| 分支提交数 | 5 | 6 |
+| 基线普通测试 | 1 | 42 |
+| 分支普通测试 | 4 | 54 |
+
+任务要求的“main 约 1500 行、分支改动约 500 行”按各自口径满足。正常业务实现复用既有 FastAPI、SQLite 和鉴权，没有新增依赖。
+
+P1–P6 对应的 detail/refunds/coupons/search 函数、D1 测试辅助、D2 排序、D3 充值函数均未改动。只在两份 app.py 末尾追加新模块注册，因此既有函数行号没有变化；`answer.yaml` 不需要调整，也未修改。新增层只读现有表，不修复、扩大或提示既有问题。
+
+### 实际检查结果
+
+- `make check`：Ruff/Pyright 通过，309 个普通测试通过，36 个集成/live 测试排除。
+- `make test-integration`：相关镜像构建通过，32 个集成测试通过；容器自动清理。
+- `make eval-targets`：两个 tar 包生成成功，mini-shop 包含 main 与 6 个 feature 提交；无测试缓存或生成数据库。
+- 解压后的 feature 分支：54 个测试通过；切换 main：42 个测试通过。两者只有 Starlette 上游弃用警告，不影响结果。
+- `make eval-verify`：玩具任务稳定复现 100/100；P1 返回 200，P2/P3 各 20/20，P4 余额 10000→9900，P5 返回另一用户订单，P6 金额 -2000/余额 20000→22000，与原结果一致。
+- 任务指定的完整答案线索表达式扫描最终目标全部跟踪文件，无命中。
+- 新模块/测试 Ruff 检查通过（沿用 FastAPI 的依赖默认参数写法，忽略 B008）。保护路径的 `git diff --exit-code` 通过。
+
+复跑命令：
+
+```sh
+cd ~/blackboard-explorer
+export UV_CACHE_DIR=/private/tmp/bbx-uv-cache
+export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897
+export all_proxy=socks5://127.0.0.1:7897 no_proxy=localhost,127.0.0.1,::1,host.docker.internal
+uv sync --locked
+make check eval-targets eval-verify
+make test-integration DOCKER_BUILD_ARGS='--add-host host.docker.internal:host-gateway --build-arg http_proxy=http://host.docker.internal:7897 --build-arg https_proxy=http://host.docker.internal:7897 --build-arg no_proxy=localhost,127.0.0.1,::1,host.docker.internal,mirrors.aliyun.com'
+
+# 独立临时目录中检查打包目标，避免覆盖用户目录。
+eval_dir=$(mktemp -d)
+tar -xzf eval/targets/dist/mini-shop.tar.gz -C "$eval_dir"
+repo_python="$PWD/.venv/bin/python"
+(cd "$eval_dir" && SHOP_DB="$eval_dir/local.sqlite3" PYTHONPATH=. "$repo_python" -m pytest tests -q)
+git -C "$eval_dir" switch main
+(cd "$eval_dir" && SHOP_DB="$eval_dir/main.sqlite3" PYTHONPATH=. "$repo_python" -m pytest tests -q)
+```
+
+### 偏差与待决
+
+本轮没有内容审核拦截，没有更改密钥或全局配置。完整目标约 1942 行，是基线扩容到约 1500 行后叠加约 500 行分支改动的结果；不以空行或无用抽象凑数。目标测试仍独立于主项目普通测试，按上面的构建/解压命令运行。
+
+初次线索扫描对测试中的人名产生误匹配，最终改用普通中性样例名后完整扫描通过；这只是目标包的答案线索隔离检查，不涉及模型服务审核规避。
+
+### 共享文件与提交划分
+
+- `eval/targets/build.sh`：只增加缓存目录清理；根依赖、contracts、Makefile、设计文档均未改。
+- 提交 1：`Expand mini-shop baseline customer workflows`，包含三个基线模块、测试、README、两处 app 注册和打包清理。
+- 提交 2：`Add paginated account history to evaluation branch`，包含第 6 层正常功能及本补充报告。
+- 合并后更新 HANDOFF，EVAL-2 前置依赖解除，下一步进入 M5 的运行器、评分和单 Agent 基线。

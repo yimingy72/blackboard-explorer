@@ -1,0 +1,2 @@
+from shop.account_history import router as account_history_router
+app.include_router(account_history_router)
