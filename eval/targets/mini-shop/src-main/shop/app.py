@@ -61,3 +61,13 @@ def products() -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT * FROM products ORDER BY id").fetchall()
     return [dict(row) for row in rows]
+
+from shop.accounts import initialize_accounts, router as accounts_router
+from shop.activity import router as activity_router
+from shop.catalog import initialize_catalog, router as catalog_router
+
+initialize_accounts()
+initialize_catalog()
+app.include_router(accounts_router)
+app.include_router(activity_router)
+app.include_router(catalog_router)

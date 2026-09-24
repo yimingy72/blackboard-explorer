@@ -14,6 +14,8 @@ tar -C "$tmp/order-service" -czf "$root/dist/order-service.tar.gz" .
 mkdir "$tmp/mini-shop"
 cp -R "$root/mini-shop/src-main/." "$tmp/mini-shop/"
 cd "$tmp/mini-shop"
+find . -name __pycache__ -type d -prune -exec rm -rf {} +
+find . -name .pytest_cache -type d -prune -exec rm -rf {} +
 git init -q -b main
 git -c user.name='Mini Shop Team' -c user.email='team@example.invalid' add .
 git -c user.name='Mini Shop Team' -c user.email='team@example.invalid' commit -qm 'Initial shop service'
@@ -29,6 +31,8 @@ for layer in "$root"/mini-shop/commits/*; do
         printf '\n' >> scripts/seed.py
         cat "$layer/seed_append.txt" >> scripts/seed.py
     fi
+    find . -name __pycache__ -type d -prune -exec rm -rf {} +
+    find . -name .pytest_cache -type d -prune -exec rm -rf {} +
     git -c user.name='Mini Shop Team' -c user.email='team@example.invalid' add .
     git -c user.name='Mini Shop Team' -c user.email='team@example.invalid' commit -qm "$(cat "$layer/message.txt")"
 done

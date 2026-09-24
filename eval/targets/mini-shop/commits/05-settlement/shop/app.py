@@ -72,3 +72,13 @@ from shop.search import router as search_router
 app.include_router(search_router)
 from shop.detail import router as detail_router
 app.include_router(detail_router)
+
+from shop.accounts import initialize_accounts, router as accounts_router
+from shop.activity import router as activity_router
+from shop.catalog import initialize_catalog, router as catalog_router
+
+initialize_accounts()
+initialize_catalog()
+app.include_router(accounts_router)
+app.include_router(activity_router)
+app.include_router(catalog_router)
