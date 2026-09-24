@@ -67,9 +67,9 @@ blackboard-explorer/
 
 ### 2.1 git
 
-- `main`：`996ef18`，包含 M0、M0-fix、EVAL 与所有任务说明。标签 `m0`。
+- `main`：包含 M0、M0-fix、EVAL、全部任务说明（`docs/tasks/`）与本文。标签 `m0`。
 - 仓库本地 git 身份为 `yym <yym@localhost>`（全局未配置），可用 `git config user.email …` 修改。
-- 两个未合并的工作树（分支从 `01e13f9` 切出，落后 `main` 三个 EVAL 提交，合并时无冲突风险之外需注意 `Makefile`、`uv.lock`）：
+- 两个未合并的工作树（分支从 `01e13f9` 切出，落后 `main` 若干提交：EVAL、任务说明与本文。它们只新增了 `docs/tasks/` 下的文件，合并时主要需注意 `Makefile`、`uv.lock`、`.env.example`）：
 
   | 工作树 | 分支 | 未提交文件 | Codex 报告 |
   |---|---|---|---|
