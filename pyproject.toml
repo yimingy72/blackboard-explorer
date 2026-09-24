@@ -5,7 +5,17 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["bbx-contracts", "bbx-blackboard", "bbx-runtime", "bbx-envd"]
 
 [dependency-groups]
-dev = ["ruff>=0.11,<1", "pyright>=1.1.400,<2", "pytest>=8,<9", "pytest-asyncio>=1,<2", "pre-commit>=4,<5", "testcontainers[postgres]>=4,<5", "pytest-cov>=6,<8"]
+dev = [
+    "ruff>=0.11,<1",
+    "pyright>=1.1.400,<2",
+    "pytest>=8,<9",
+    "pytest-asyncio>=1,<2",
+    "pre-commit>=4,<5",
+    "testcontainers[postgres]>=4.10,<5",
+    "pytest-cov>=6,<8",
+    "httpx>=0.28,<1",
+    "zstandard>=0.25,<1",
+]
 
 [tool.uv.workspace]
 members = ["packages/contracts", "services/blackboard", "services/agent-runtime", "services/envd"]

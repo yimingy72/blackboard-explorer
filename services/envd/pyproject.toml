@@ -2,10 +2,11 @@
 name = "bbx-envd"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["bbx-contracts"]
-
-[tool.uv.sources]
-bbx-contracts = { workspace = true }
+dependencies = [
+    "mcp>=1.13,<2",
+    "starlette>=0.47,<1",
+    "uvicorn>=0.35,<1",
+]
 
 [build-system]
 requires = ["hatchling"]
