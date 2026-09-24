@@ -16,11 +16,12 @@
   |---|---|
   | M0 工程基座 | ✅ 已完成、审查、合并 |
   | EVAL 评估目标（玩具任务 + mini-shop） | ✅ 已完成、审查、合并（mini-shop 规模偏小，见 EVAL-2） |
-  | M1a 黑板存储与领域规则 | 🟡 Codex 已完成，**未审查、未提交**（工作树 `~/bbx-wt/m1a`） |
-  | M2-env 执行环境与出网代理 | 🟡 Codex 已完成，**镜像未构建成功、集成测试未运行、未提交**（工作树 `~/bbx-wt/m2env`） |
+  | M1a 黑板存储与领域规则 | ✅ 已审查、修复、验证并合并（2026-09-24） |
+  | M2-env 执行环境与出网代理 | ✅ 镜像构建、容器测试和安全修复完成，已合并（2026-09-24） |
   | M1b、M1-W、M2a、M2b、M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；**任务说明已全部写好**（`docs/tasks/`，派发顺序见第 6 节） |
 
-- **下一步（按顺序）**：① 收尾 M2-env（第 3.1 节，任务说明 `M2-env-fix.md`）② 审查并合并 M1a（3.2）③ 并行派发 M1b 与 M1-W（第 6 节）。
+- **下一步（按用户指定顺序）**：M1b → M1-W → M2a → M2b → M3a → M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
+- **合并后验证**：`uv sync --locked`、`make check`（121 passed）、`make test-integration`（8 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。尚未达到 m1/m2 标签条件。
 
 ---
 
@@ -67,16 +68,11 @@ blackboard-explorer/
 
 ### 2.1 git
 
-- `main`：包含 M0、M0-fix、EVAL、全部任务说明（`docs/tasks/`）与本文。标签 `m0`。
-- 仓库本地 git 身份为 `yym <yym@localhost>`（全局未配置），可用 `git config user.email …` 修改。
-- 两个未合并的工作树（分支从 `01e13f9` 切出，落后 `main` 若干提交：EVAL、任务说明与本文。它们只新增了 `docs/tasks/` 下的文件，合并时主要需注意 `Makefile`、`uv.lock`、`.env.example`）：
-
-  | 工作树 | 分支 | 未提交文件 | Codex 报告 |
-  |---|---|---|---|
-  | `/Users/yym/bbx-wt/m1a` | `m1a` | 15 | `docs/tasks/M1a-report.md` |
-  | `/Users/yym/bbx-wt/m2env` | `m2-env` | 19 | `docs/tasks/M2-env-report.md` |
-
-  两个工作树中的 `AGENTS.md` 已替换为 `main` 上的新版本（未提交，内容与 `main` 相同，合并时不会冲突），所以在这两个目录里启动的 Codex 也按新的 git 规则工作。
+- `main`：已包含 M0、EVAL、M1a、M2-env、全部任务说明与设计同步。现有标签仍为 `m0`。
+- M1a：设计提交 `f47808d`，实现提交 `46bc578`，合并提交 `430c5ad`。
+- M2-env：token 设计 `ff8565f`、信号能力设计 `1d5f4c0`、实现 `bca1fd9`，合并提交 `108d0c5`。合并时保留两边依赖并重建 `uv.lock`。
+- 原 `~/bbx-wt/m1a`、`~/bbx-wt/m2env` 与对应分支均已删除。原工作树的 AGENTS.md 副本已确认与 main 完全相同后清理，最新规则保留在 main。
+- 仓库本地 git 身份仍为 `yym <yym@localhost>`；未修改全局配置，未推送远程。
 
 ### 2.2 已验证的事实
 
@@ -88,14 +84,17 @@ blackboard-explorer/
 | order-service 玩具任务 | 偶发失败率 36%（18/50）；稳定复现方法 100/100 |
 | DeepSeek `deepseek-flash` | 工具调用可用；不回传 `reasoning_content` 不报错；`reasoning_effort` low/high/max 可用；用量含缓存命中/未命中 token |
 
-### 2.3 Codex 自述、尚未独立验证的结果
+### 2.3 本轮独立验证（2026-09-24）
 
-- **M1a**：`make check` 97 通过、`make test-integration` 6 通过、领域层覆盖率 91%；Alembic 升降级已在集成测试中执行。
-- **M2-env**：`make check` 54 通过；镜像构建与集成测试未能运行（原因见 3.1）。
+- **M1a**：修复 attempts、derive 失败计数与已结束 Agent 写入后，`make check` 110 通过、`make test-integration` 6 通过、领域层覆盖率 91%；Alembic 升降级通过。
+- **M2-env**：`make check` 61 通过、`make test-integration` 2 通过，两个镜像已构建。新增必要的 `KILL` capability，修复 token 传递、路径竞态及测试内部网络访问。
+- **合并 main 后**：121 个普通测试、8 个集成测试通过；未调用真实模型、未读取 `.env`。
 
 ---
 
-## 3. 立即要做的事
+## 3. 收尾记录与后续入口
+
+> 3.1、3.2 为已完成的收尾背景；当前从 M1b 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
 
 ### 3.1 收尾 M2-env（工作树 `~/bbx-wt/m2env`）
 
@@ -104,7 +103,7 @@ blackboard-explorer/
 1. Codex 沙箱不允许 Docker buildx 写 `~/.docker/buildx/activity`，所以 Codex 无法构建镜像——**镜像需要你在沙箱外构建**。
 2. 在沙箱外构建时，`apt-get` 直连 `archive.ubuntu.com` 极慢并最终失败（退出码 100）。需要改用国内软件源。
 
-建议的修改（**尚未应用**）已写成任务说明 `docs/tasks/M2-env-fix.md`，可直接派给 Codex（`--cwd ~/bbx-wt/m2env`，提示语中用绝对路径 `~/blackboard-explorer/docs/tasks/M2-env-fix.md` 引用，因为该工作树切出时还没有这个文件）。修改内容如下，也可以手动改：
+本轮已应用并验证的修改已写成任务说明 `docs/tasks/M2-env-fix.md`，可直接派给 Codex（`--cwd ~/bbx-wt/m2env`，提示语中用绝对路径 `~/blackboard-explorer/docs/tasks/M2-env-fix.md` 引用，因为该工作树切出时还没有这个文件）。修改内容如下，也可以手动改：
 
 ```dockerfile
 # services/envd/Dockerfile —— 在 ENV DEBIAN_FRONTEND 之后
@@ -318,14 +317,10 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-以下事项来自 Codex 报告，尚未写回 `docs/design/`（先改设计文档，再让后续任务依据它）：
+token 归属、tool_call.recorded、任务创建引导例外与线性余弦 top-3 已同步并合并。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。尚待后续任务同步的事项：
 
 | 事项 | 来源 | 建议写法 | 位置 |
 |---|---|---|---|
-| envd 的 token | M2-env 报告 | agent-runtime 持有 `ENVD_TOKEN_SECRET`，按任务派生 `ENVD_TOKEN = HMAC-SHA256(secret, task_id)` 注入容器；envd 只读 `ENVD_TOKEN` | 开发方案第 9 节；实现架构 2.2 |
-| 工具调用事件 | M1a 报告 | 新增事件类型 `tool_call.recorded`（参与 provenance 判定、需可重放） | 实现架构 3.3 |
-| 任务创建的引导写入 | M1a 报告 | 任务行先插入、再追加 `task.created` 并投影，是"事件为唯一写入入口"的唯一例外 | 实现架构 3.1 |
-| 相似度检索 | M1a 报告 | v1 为线性余弦 top-3，只作提示不拒绝；数据量大时改 pgvector 索引 | 实现架构 4.3 |
 | `derive_enabled` 参数 | M5 任务 | 默认 true；为 false 时不触发 derive（单 Agent 基线用） | 设计文档第 9 节、5.4 |
 
 ## 7. 已确定的关键设计决策（避免重复讨论）
