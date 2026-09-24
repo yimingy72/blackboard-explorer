@@ -2,9 +2,21 @@
 name = "bbx-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["bbx-contracts"]
+dependencies = [
+    "bbx-contracts",
+    "bbx-objects",
+    "agent-framework-core==1.19.0",
+    "agent-framework-openai==1.14.4",
+    "mcp>=1.24,<2",
+    "docker>=7,<8",
+    "httpx>=0.28,<1",
+    "socksio>=1,<2",
+    "jinja2>=3.1,<4",
+    "pyyaml>=6,<7",
+]
 
 [tool.uv.sources]
+bbx-objects = { workspace = true }
 bbx-contracts = { workspace = true }
 
 [build-system]

@@ -50,10 +50,10 @@ typecheck:
 	$(VENV)/pyright
 
 test:
-	$(VENV)/pytest -m "not integration"
+	$(VENV)/pytest -m "not integration and not live"
 
 test-integration: image-exec-env image-egress-proxy
-	$(VENV)/pytest -m integration
+	$(VENV)/pytest -m "integration and not live"
 
 check: lint typecheck test
 
@@ -87,3 +87,9 @@ web-check:
 
 web-types:
 	pnpm --dir web types
+
+.PHONY: test-live
+
+test-live:
+	@test -n "$$DEEPSEEK_API_KEY" && test "$$DEEPSEEK_API_KEY" != "replace-me" || { echo "DEEPSEEK_API_KEY is required for explicit live tests"; exit 1; }
+	$(VENV)/pytest -m live

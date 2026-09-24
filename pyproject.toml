@@ -49,6 +49,6 @@ extraPaths = ["packages/objects/src", "packages/contracts/src", "services/blackb
 
 [tool.pytest.ini_options]
 testpaths = ["packages/objects/tests", "packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
-markers = ["integration: needs Docker (testcontainers); excluded from make check"]
+markers = ["integration: needs Docker (testcontainers); excluded from make check", "live: calls DeepSeek explicitly; excluded from ordinary and integration checks"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

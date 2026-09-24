@@ -6,7 +6,6 @@ def test_settings(monkeypatch) -> None:
         "DEEPSEEK_API_KEY",
         "MINIO_ROOT_PASSWORD",
         "SERVICE_TOKEN",
-        "AGENT_TOKEN_SECRET",
         "ENVD_TOKEN_SECRET",
     ):
         monkeypatch.setenv(key, "replace-me")
