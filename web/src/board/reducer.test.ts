@@ -105,4 +105,15 @@ describe('reduce', () => {
     expect(board.agents['agent-1']).toMatchObject({ status: 'concluding', graceCallsLeft: 2, intentId: null });
     expect(board.acceptance.A1).toMatchObject({ status: 'met', evidence_facts: ['F1'], judged_version: 6 });
   });
+
+  it('keeps the terminal status and exposes an archived workspace once', () => {
+    const archived = event(3, 'task.archived', {
+      uri: `workspace/${tid}.tar.zst`, size: 1234, fallback: 'agents-only',
+    });
+    const board = reduce([archived, event(2, 'task.finished', { status: 'finished' }), created, archived]);
+    expect(board.task).toMatchObject({
+      status: 'finished', workspace_uri: `workspace/${tid}.tar.zst`, version: 3,
+    });
+    expect(orderedEvents([archived, archived]).length).toBe(1);
+  });
 });

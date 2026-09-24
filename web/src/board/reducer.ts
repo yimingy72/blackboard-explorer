@@ -68,6 +68,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           budget: (p.budget ?? {}) as Record<string, unknown>,
           usage: numbers(p.usage),
           report_uri: null,
+          workspace_uri: null,
           fail_reason: null,
           version: event.version,
         };
@@ -98,6 +99,9 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         break;
       case 'task.report':
         if (state.task) state.task.report_uri = nullableText(p.uri);
+        break;
+      case 'task.archived':
+        if (state.task) state.task.workspace_uri = nullableText(p.uri);
         break;
       case 'budget.updated':
         if (state.task) state.task.usage = numbers(p.usage);

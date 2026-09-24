@@ -107,6 +107,20 @@ class BoardService:
     ) -> list[dict[str, Any]]:
         return await self._write(tid, "transition", actor, {"status": status, "reason": reason})
 
+    async def record_archive(
+        self, tid: UUID, uri: str, size: int, fallback: str
+    ) -> list[dict[str, Any]]:
+        if uri != f"workspace/{tid}.tar.zst":
+            raise RuleViolation("archive_invalid_uri", "工作区归档 key 与任务不匹配。")
+        if not await self.objects.exists(uri):
+            raise RuleViolation("archive_missing", "工作区归档对象不存在，请先上传。")
+        return await self._write(
+            tid,
+            "record_archive",
+            "scheduler",
+            {"uri": uri, "size": size, "fallback": fallback},
+        )
+
     async def post_fact(
         self,
         tid: UUID,

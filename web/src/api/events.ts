@@ -10,6 +10,7 @@ export const BOARD_EVENT_TYPES = [
   'task.finished',
   'task.failed',
   'task.stopped',
+  'task.archived',
   'fact.posted',
   'fact.disputed',
   'fact.undisputed',

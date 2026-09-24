@@ -173,9 +173,27 @@ def decide(
 ) -> list[dict[str, Any]]:
     """Validate a command and return ordered events without modifying state."""
     task = state.task
+    if command == "record_archive":
+        if task["status"] not in {"finished", "failed", "stopped"}:
+            fail("archive_not_terminal", "任务尚未结束，不能登记工作区归档。")
+        if any(agent["status"] in {"running", "concluding"} for agent in state.agents.values()):
+            fail("archive_agents_active", "仍有运行中的 Agent，不能登记工作区归档。")
+        if data["uri"] != f"workspace/{state.task['id']}.tar.zst":
+            fail("archive_invalid_uri", "工作区归档 key 与任务不匹配。")
+        if data["size"] < 0 or data["fallback"] not in {"none", "agents-only"}:
+            fail("archive_invalid_metadata", "工作区归档大小或退化标记无效。")
+        if task.get("workspace_uri") == data["uri"]:
+            return []
+        if task.get("workspace_uri"):
+            fail("archive_conflict", "任务已经登记了另一份工作区归档。")
+        return [event("task.archived", actor, data)]
     if command == "transition":
         status = data["status"]
         old = task["status"]
+        if old in {"finished", "failed", "stopped"}:
+            if status == old:
+                return []
+            fail("invalid_transition", f"任务已处于终态 {old}，不能改为 {status}。")
         next_statuses = {
             "created": {"provisioning"},
             "provisioning": {"running"},
@@ -320,6 +338,8 @@ def decide(
             )
         ]
     if command == "register_agent":
+        if task["status"] in {"finished", "failed", "stopped"}:
+            fail("task_terminal", "任务已结束，不能再登记 Agent。")
         aid = _id(state, "agent")
         kind = data["task_type"]
         if kind not in {"explore", "derive", "close"}:
@@ -427,12 +447,15 @@ def decide(
         concluding_for_closing = (
             agent["status"] == "concluding" and agent.get("conclude_reason") == "closing"
         )
-        counted = reason in {"heartbeat", "runtime_error"} or (
-            not concluding_for_closing
-            and (
-                reason in {"refused", "grace_timeout"}
-                or (reason == "limit" and agent["status"] == "concluding")
-                or concluding_for_limit
+        counted = reason != "runtime_restart" and (
+            reason in {"heartbeat", "runtime_error"}
+            or (
+                not concluding_for_closing
+                and (
+                    reason in {"refused", "grace_timeout"}
+                    or (reason == "limit" and agent["status"] == "concluding")
+                    or concluding_for_limit
+                )
             )
         )
         result: list[dict[str, Any]] = []
@@ -452,14 +475,18 @@ def decide(
                     )
                 )
         result.append(event("agent.finished", aid, data, aid))
-        if reason == "runtime_error" and task["failure_streak"] + 1 >= int(
-            task["params"].get("max_consecutive_failures", 3)
+        if (
+            task["status"] not in {"finished", "failed", "stopped"}
+            and reason == "runtime_error"
+            and task["failure_streak"] + 1 >= int(task["params"].get("max_consecutive_failures", 3))
         ):
             result.append(
                 event("task.failed", "system", {"status": "failed", "reason": "Agent 连续运行失败"})
             )
         elif (
-            agent.get("is_seed", False)
+            task["status"] not in {"finished", "failed", "stopped"}
+            and reason != "runtime_restart"
+            and agent.get("is_seed", False)
             and not (state.facts or state.intents)
             and task["seed_empty_count"] + 1 >= 2
         ):

@@ -227,6 +227,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Archive */
+        post: operations["record_archive_api_tasks__task_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/claim_for": {
         parameters: {
             query?: never;
@@ -652,6 +669,18 @@ export interface components {
             /** Token */
             token: string;
         };
+        /** ArchiveBody */
+        ArchiveBody: {
+            /**
+             * Fallback
+             * @enum {string}
+             */
+            fallback: "none" | "agents-only";
+            /** Size */
+            size: number;
+            /** Uri */
+            uri: string;
+        };
         /** Budget */
         Budget: {
             /**
@@ -740,7 +769,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded";
+        EventType: "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded";
         /** Evidence */
         Evidence: {
             /**
@@ -1935,6 +1964,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_archive_api_tasks__task_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"][];
                 };
             };
             /** @description Validation Error */

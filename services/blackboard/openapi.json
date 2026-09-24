@@ -178,6 +178,35 @@
         "title": "AgentRegistered",
         "type": "object"
       },
+      "ArchiveBody": {
+        "properties": {
+          "fallback": {
+            "enum": [
+              "none",
+              "agents-only"
+            ],
+            "title": "Fallback",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "uri": {
+            "minLength": 1,
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "size",
+          "fallback"
+        ],
+        "title": "ArchiveBody",
+        "type": "object"
+      },
       "Budget": {
         "additionalProperties": false,
         "properties": {
@@ -375,6 +404,7 @@
           "task.finished",
           "task.failed",
           "task.stopped",
+          "task.archived",
           "fact.posted",
           "fact.disputed",
           "fact.undisputed",
@@ -2628,6 +2658,63 @@
           }
         },
         "summary": "Grace",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/archive": {
+      "post": {
+        "operationId": "record_archive_api_tasks__task_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "title": "Response Record Archive Api Tasks  Task Id  Archive Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Archive",
         "tags": [
           "system"
         ]

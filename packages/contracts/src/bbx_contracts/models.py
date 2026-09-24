@@ -104,6 +104,7 @@ class EventType(StrEnum):
     TASK_FINISHED = "task.finished"
     TASK_FAILED = "task.failed"
     TASK_STOPPED = "task.stopped"
+    TASK_ARCHIVED = "task.archived"
     FACT_POSTED = "fact.posted"
     FACT_DISPUTED = "fact.disputed"
     FACT_UNDISPUTED = "fact.undisputed"

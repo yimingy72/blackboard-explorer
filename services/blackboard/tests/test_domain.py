@@ -175,6 +175,29 @@ def test_rejected_commands(command, actor, data, code):
     assert str(exc.value)
 
 
+@pytest.mark.parametrize("status", ["finished", "failed", "stopped"])
+def test_terminal_state_is_stable_and_blocks_new_agents(status: str) -> None:
+    state = board()
+    state.task["status"] = status
+    assert decide(state, "transition", "scheduler", {"status": status}) == []
+    for other in {"finished", "failed", "stopped", "running"} - {status}:
+        with pytest.raises(RuleViolation) as exc:
+            decide(state, "transition", "scheduler", {"status": other})
+        assert exc.value.code == "invalid_transition"
+    with pytest.raises(RuleViolation) as exc:
+        decide(state, "register_agent", "scheduler", {"task_type": "explore"})
+    assert exc.value.code == "task_terminal"
+
+
+def test_created_task_can_still_register_agent() -> None:
+    state = board()
+    state.task["status"] = "created"
+    assert (
+        decide(state, "register_agent", "scheduler", {"task_type": "explore"})[0]["type"]
+        == "agent.spawned"
+    )
+
+
 def test_resolve_and_claim_release():
     state = board()
     state.intents["I1"]["status"] = "claimed"
@@ -324,6 +347,37 @@ def test_budget_and_failure_thresholds():
     assert [x["type"] for x in seed] == ["agent.finished", "task.failed"]
 
 
+def test_restart_does_not_count_second_empty_seed_or_fail_task() -> None:
+    state = board()
+    state.task["seed_empty_count"] = 1
+    state.facts.clear()
+    state.intents.clear()
+    state.agents["agent-1"].update(is_seed=True, status="concluding", conclude_reason="limit")
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {"agent_id": "agent-1", "end_reason": "runtime_restart", "receipt": {}},
+    )
+    assert [event["type"] for event in events] == ["agent.finished"]
+
+
+@pytest.mark.parametrize("terminal", ["finished", "failed", "stopped"])
+def test_terminal_finish_does_not_append_another_task_failed(terminal: str) -> None:
+    state = board()
+    state.task.update(status=terminal, failure_streak=2, seed_empty_count=1)
+    state.facts.clear()
+    state.intents.clear()
+    state.agents["agent-1"]["is_seed"] = True
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {"agent_id": "agent-1", "end_reason": "runtime_error", "receipt": {}},
+    )
+    assert [event["type"] for event in events] == ["agent.finished"]
+
+
 @pytest.mark.parametrize(
     "reason,concluding,counted",
     [
@@ -361,6 +415,8 @@ def test_finish_release_attempt_rules(reason, concluding, counted):
         ("grace_timeout", "closing", False),
         ("refused", "closing", False),
         ("runtime_error", "closing", True),
+        ("runtime_restart", "limit", False),
+        ("runtime_restart", "closing", False),
     ],
 )
 def test_finish_respects_conclude_reason(end_reason, conclude_reason, counted):

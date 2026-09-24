@@ -86,6 +86,12 @@ class StatusResult(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ArchiveBody(BaseModel):
+    uri: str = Field(min_length=1)
+    size: int = Field(ge=0)
+    fallback: Literal["none", "agents-only"]
+
+
 class AgentRegisterBody(BaseModel):
     task_type: Literal["explore", "derive", "close"]
     is_seed: bool = False
@@ -632,6 +638,14 @@ def create_app(
         require_service(request)
         await _task(request, task_id)
         return await _service(request).transition(task_id, body.status, reason=body.reason)
+
+    @app.post("/api/tasks/{task_id}/archive", response_model=list[Event], tags=["system"])
+    async def record_archive(
+        request: Request, task_id: UUID, body: ArchiveBody
+    ) -> list[dict[str, Any]]:
+        require_service(request)
+        await _task(request, task_id)
+        return await _service(request).record_archive(task_id, body.uri, body.size, body.fallback)
 
     @app.post("/api/tasks/{task_id}/agents", response_model=AgentRegistered, tags=["system"])
     async def register_agent(

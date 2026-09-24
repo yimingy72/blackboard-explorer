@@ -240,6 +240,61 @@ async def test_claim_race_and_notify(board_service, database_url):
         await conn.close()
 
 
+async def test_archive_event_projects_and_replays(board_service):
+    service = board_service
+    tid = await task(service)
+    await service.transition(tid, "closing")
+    await service.transition(tid, "finished")
+    uri = f"workspace/{tid}.tar.zst"
+
+    class ArchiveObjects:
+        async def exists(self, value):
+            return value == uri
+
+    service.objects = ArchiveObjects()
+    written = await service.record_archive(tid, uri, 1234, "agents-only")
+    assert len(written) == 1
+    assert written[0]["type"] == "task.archived"
+    assert written[0]["payload"] == {"uri": uri, "size": 1234, "fallback": "agents-only"}
+    assert (await service.state(tid))["task"]["workspace_uri"] == uri
+    assert await service.record_archive(tid, uri, 1234, "agents-only") == []
+    assert sum(event["type"] == "task.archived" for event in await service.events(tid)) == 1
+    await service.replay(tid)
+    assert (await service.state(tid))["task"]["workspace_uri"] == uri
+
+
+async def test_runtime_restart_preserves_counters_and_attempts_on_replay(board_service):
+    service = board_service
+    tid = await task(service)
+    first_seed = await service.register_agent(tid, "explore", is_seed=True)
+    await service.finish_agent(tid, first_seed, {"accepted": True}, "normal")
+    failing = await service.register_agent(tid, "explore")
+    await service.finish_agent(tid, failing, {"accepted": False}, "runtime_error")
+    interrupted_seed = await service.register_agent(tid, "explore", is_seed=True)
+    await service.conclude(tid, interrupted_seed, "limit")
+    await service.finish_agent(tid, interrupted_seed, {"accepted": False}, "runtime_restart")
+    state = await service.state(tid)
+    assert state["task"]["status"] == "running"
+    assert state["task"]["failure_streak"] == 1
+    assert state["task"]["seed_empty_count"] == 1
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+    with_intent = await task(service)
+    holder = await service.register_agent(with_intent, "explore")
+    await service.post_fact(with_intent, holder, fact())
+    await service.post_intent(with_intent, holder, intent(claim=True))
+    await service.conclude(with_intent, holder, "limit")
+    await service.finish_agent(with_intent, holder, {"accepted": False}, "runtime_restart")
+    state = await service.state(with_intent)
+    assert state["intents"]["I1"]["attempts"] == 0
+    assert state["intents"]["I1"]["status"] == "open"
+    before = await projections(service, with_intent)
+    await service.replay(with_intent)
+    assert await projections(service, with_intent) == before
+
+
 async def test_dry_run_objects_and_event_filter(board_service):
     service = board_service
     tid = await task(service)

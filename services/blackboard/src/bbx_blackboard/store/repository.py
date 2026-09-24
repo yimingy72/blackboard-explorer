@@ -55,7 +55,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     stamp = evt["created_at"]
     if kind == "task.created":
         await patch(conn, s.tasks, tid, p)
-    elif kind.startswith("task.") and kind not in {"task.report"}:
+    elif kind.startswith("task.") and kind not in {"task.report", "task.archived"}:
         values: dict[str, Any] = {"status": kind.split(".")[1]}
         if kind == "task.running":
             values["started_at"] = stamp
@@ -66,6 +66,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         await patch(conn, s.tasks, tid, values)
     elif kind == "task.report":
         await patch(conn, s.tasks, tid, {"report_uri": p["uri"]})
+    elif kind == "task.archived":
+        await patch(conn, s.tasks, tid, {"workspace_uri": p["uri"]})
     elif kind == "fact.posted":
         fields = {
             k: p.get(k)
@@ -240,12 +242,19 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             p["agent_id"],
         )
         task = await row(conn, s.tasks, tid)
-        changes: dict[str, Any] = {
-            "failure_streak": task["failure_streak"] + 1 if reason == "runtime_error" else 0
-        }
-        if agent["is_seed"] and not await board_has_content(conn, tid):
+        changes: dict[str, Any] = {}
+        if reason == "runtime_error":
+            changes["failure_streak"] = task["failure_streak"] + 1
+        elif reason != "runtime_restart":
+            changes["failure_streak"] = 0
+        if (
+            reason != "runtime_restart"
+            and agent["is_seed"]
+            and not await board_has_content(conn, tid)
+        ):
             changes["seed_empty_count"] = task["seed_empty_count"] + 1
-        await patch(conn, s.tasks, tid, changes)
+        if changes:
+            await patch(conn, s.tasks, tid, changes)
     elif kind == "derive.result":
         task = await row(conn, s.tasks, tid)
         await patch(

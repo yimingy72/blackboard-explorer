@@ -80,7 +80,7 @@ export default function TaskWorkbenchPage() {
           <div className={styles.titleGroup}><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div><h1>{boardTask?.goal ?? task?.goal ?? '探索任务'}</h1></div>
           <div className={styles.actions}>
             {reportUri && <a href={`/api/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" rel="noopener noreferrer" className={controls.button}>查看报告</a>}
-            {task?.workspace_uri && <a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`} className={controls.button}>下载归档</a>}
+            {(boardTask?.workspace_uri ?? task?.workspace_uri) && <a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`} className={controls.button}>下载归档</a>}
             {status === 'created' && <button type="button" className={`${controls.button} ${controls.primary}`} onClick={() => void changeStatus('start')} disabled={action !== null}>{action === 'start' ? '正在启动…' : '启动任务'}</button>}
             {['created', 'provisioning', 'running'].includes(status) && <button type="button" className={`${controls.button} ${controls.danger}`} onClick={() => void changeStatus('stop')} disabled={action !== null}>{action === 'stop' ? '正在停止…' : '停止'}</button>}
           </div>

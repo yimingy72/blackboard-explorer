@@ -30,6 +30,7 @@ export interface BoardTask {
   budget: Record<string, unknown>;
   usage: Record<string, number>;
   report_uri: string | null;
+  workspace_uri?: string | null;
   fail_reason: string | null;
   version: number;
 }
