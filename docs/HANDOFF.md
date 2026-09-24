@@ -20,10 +20,11 @@
   | M2-env 执行环境与出网代理 | ✅ 镜像构建、容器测试和安全修复完成，已合并（2026-09-24） |
   | M1b 黑板接口层 | ✅ API、鉴权、SSE、对象存储、镜像与模拟器已合并；按用户新设计取消向量预检 |
   | M1-W 画布最小版 | ✅ 实时图谱、页面、类型与浏览器验收完成，已合并；`m1` 标签已打 |
-  | M2a 技术验证与 runtime 骨架 | 🟡 开始开发，工作树 `~/bbx-wt/m2a` |
-  | M2b、M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
+  | M2a 技术验证与 runtime 骨架 | ✅ 173 普通、12 集成、4 DeepSeek live 检查通过，已合并 |
+  | M2b 单 Agent 跑通 | 🟡 开始开发，工作树 `~/bbx-wt/m2b` |
+  | M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
 
-- **下一步（按用户指定顺序）**：M2a → M2b → M3a → M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
+- **下一步（按用户指定顺序）**：M2b → M3a → M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
 - **合并后验证**：`uv sync --locked`、`make check`（M1b 最终 141 passed）、`make test-integration`（M1b 最终 11 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。M1-W 另有 10 个前端测试通过，浏览器验收完成，已打 `m1`；`m2` 尚未达到条件。
 
 ---
@@ -96,13 +97,14 @@ blackboard-explorer/
 - **M2-env**：`make check` 61 通过、`make test-integration` 2 通过，两个镜像已构建。新增必要的 `KILL` capability，修复 token 传递、路径竞态及测试内部网络访问。
 - **M1b**：141 个普通测试、11 个集成测试通过；blackboard 镜像构建和真实容器启动/自动迁移验证通过，OpenAPI 已导出并由测试守护。
 - **M1-W**：前端 ESLint/TypeScript/Vitest 10 项通过，构建与镜像静态托管验证通过；真实浏览器完成中文创建、启动停止、SSE、争议与详情、390/1440 视口检查，预览资源已清理。
-- **当前架构**：不再部署本地 embedding，Agent 根据快照/增量同步自行判断重复；黑板保留确定性写入规则与关键词查找。未调用真实 DeepSeek、未读取 `.env`。
+- **M2a**：设计 `1d5d853` / `1256820` / `701e214`、实现 `c025955` 已合并；普通检查 173、集成 12、真实 DeepSeek 4 项通过。详细逐项结论见 `docs/tasks/M2a-report.md`；M2b 必须遵循增量持久追加与缓存字段适配。
+- **当前架构**：不再部署本地 embedding，Agent 根据快照/增量同步自行判断重复；黑板保留确定性写入规则与关键词查找。M1 阶段未调用真实 DeepSeek；M2a 按用户提供的配置指引，由测试子进程加载 DeepSeek 配置完成 4 项 live 验证，未显示或修改密钥。
 
 ---
 
 ## 3. 收尾记录与后续入口
 
-> 3.1、3.2 为已完成的收尾背景；当前从 M2a 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
+> 3.1、3.2 为已完成的收尾背景；当前从 M2b 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
 
 ### 3.1 收尾 M2-env（工作树 `~/bbx-wt/m2env`）
 
@@ -292,7 +294,7 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 ### 5.4 密钥与本地配置
 
 - `.env` 只在主工作树 `~/blackboard-explorer/.env`（权限 600，已被 git 忽略）：数据库/MinIO 口令与各类 token 为随机值。
-- **`DEEPSEEK_API_KEY` 尚未写入 `.env`**（仍是占位符）。M2 用真实模型之前填入。不要写进任何提交、文档或 Codex 提示语。该 key 曾出现在对话记录中，可考虑在 DeepSeek 控制台重新生成。
+- 用户已确认 `.env` 配置好 `DEEPSEEK_API_KEY`，M2a 真实认证及 4 项 live 检查通过。不要输出 `.env` 或把密钥写进提交、文档、提示语；普通检查不加载 `.env`。
 - `profiles/default/models.yaml` 的价格表为空，需按 DeepSeek 官方价格页填写（缓存命中输入、未命中输入、输出单价、是否错峰）；未填时金额记为 0 并有提示。
 
 ### 5.5 其他
@@ -325,7 +327,7 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。尚待后续任务同步的事项：
+token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。M2a 已同步宿主固定目标 relay、JWT 密钥仅属于 blackboard、DeepSeek 缓存用量适配和公开 Content 持久追加退路。尚待后续任务同步的事项：
 
 | 事项 | 来源 | 建议写法 | 位置 |
 |---|---|---|---|
@@ -338,7 +340,7 @@ token 归属、tool_call.recorded、任务创建引导例外已同步并合并�
 - Goal、domain_context、验收条件都是文字；**验收由 close 裁定**，调度器在"有事实带 `satisfies`"或"探索停下来且黑板有变化"时触发裁定；裁定与探索并行；met 项的支撑事实被争议时自动回到 unmet。不设 setup 脚本。
 - 预算按金额（`max_cost`、`close_reserve_ratio`），并发上限只在任务 `budget` 中；`context_threshold` 128K。
 - 调度器自建 asyncio 循环，**不用 MAF Workflow**（超步屏障与连续调度冲突）；MAF 只用于 Agent 本体。
-- MAF 核对结论：`max_iterations` 默认 40 需调大；函数中间件"替换结果"而不是 terminate；增量注入用 `enqueue_messages` + `MessageInjectionMiddleware`；MCP 工具经过函数中间件，参数为 `static_headers`。
+- MAF 核对结论：`max_iterations` 默认 40 需调大；函数中间件"替换结果"而不是 terminate；M2a 实测原 enqueue 注入不能跨轮保留，改用公开 Content.text/result 追加增量；MCP 工具经过函数中间件，参数为 `static_headers`。
 - 模型统一 DeepSeek `deepseek-flash`；重复判断由 Agent 根据同步的黑板完成，不再部署本地 embedding 或生成向量；v1 不部署模型网关。
 - 部署：本机 Docker；同一时间一个任务；每任务一个 ubuntu 执行环境（每个 Agent 一个 Linux 用户），证据"引用时持久化 + 结束时归档"到 MinIO。
 
