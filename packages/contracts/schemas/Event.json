@@ -24,7 +24,8 @@
         "acceptance.judged",
         "acceptance.reverted",
         "task.report",
-        "budget.updated"
+        "budget.updated",
+        "tool_call.recorded"
       ],
       "title": "EventType",
       "type": "string"

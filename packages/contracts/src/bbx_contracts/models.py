@@ -120,6 +120,7 @@ class EventType(StrEnum):
     ACCEPTANCE_REVERTED = "acceptance.reverted"
     TASK_REPORT = "task.report"
     BUDGET_UPDATED = "budget.updated"
+    TOOL_CALL_RECORDED = "tool_call.recorded"
 
 
 class Evidence(ContractModel):
