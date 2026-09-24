@@ -12,12 +12,13 @@ from bbx_runtime.clients import BlackboardClient, object_store
 from bbx_runtime.execenv import ExecEnvManager
 from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.runner import AgentRunner
-from bbx_runtime.settings import ControlSettings, Settings
+from bbx_runtime.settings import ControlSettings, SchedulerSettings, Settings
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="bbx-runtime")
     commands = root.add_subparsers(dest="command", required=True)
+    commands.add_parser("serve", help="运行任务调度与监管服务")
     run = commands.add_parser("run-agent", help="运行一个 Agent（调用真实模型）")
     run.add_argument("--task", type=UUID, required=True)
     run.add_argument("--type", choices=["explore", "derive", "close"], required=True)
@@ -113,8 +114,14 @@ async def run_command(args: argparse.Namespace, settings: ControlSettings) -> in
 def main() -> None:
     args = parser().parse_args()
     try:
-        settings = Settings() if args.command == "run-agent" else ControlSettings()  # type: ignore[call-arg]
-        code = asyncio.run(run_command(args, settings))
+        if args.command == "serve":
+            from bbx_runtime.server import serve
+
+            asyncio.run(serve(SchedulerSettings()))  # type: ignore[call-arg]
+            code = 0
+        else:
+            settings = Settings() if args.command == "run-agent" else ControlSettings()  # type: ignore[call-arg]
+            code = asyncio.run(run_command(args, settings))
     except KeyboardInterrupt:
         code = 130
     except Exception as error:

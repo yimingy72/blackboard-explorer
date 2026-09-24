@@ -26,3 +26,11 @@ class Settings(ControlSettings):
     egress_proxy_url: str = "http://egress-proxy:8888"
     max_running_tasks: int = Field(default=1, ge=1)
     otel_enabled: bool = False
+
+
+class SchedulerSettings(Settings):
+    postgres_host: str = "postgres"
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_user: str = "blackboard"
+    postgres_password: SecretStr
+    postgres_db: str = "blackboard"

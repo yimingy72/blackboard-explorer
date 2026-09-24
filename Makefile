@@ -19,7 +19,11 @@ image-egress-proxy:
 	docker build $(DOCKER_BUILD_ARGS) -f services/egress-proxy/Dockerfile --build-arg APK_MIRROR=$(APK_MIRROR) \
 		-t bbx-egress-proxy:latest .
 
-.PHONY: image-blackboard openapi
+.PHONY: image-blackboard image-agent-runtime openapi
+
+image-agent-runtime:
+	docker build $(DOCKER_BUILD_ARGS) -f services/agent-runtime/Dockerfile \
+		--build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) -t bbx-agent-runtime:latest .
 
 image-blackboard:
 	docker build $(DOCKER_BUILD_ARGS) -f services/blackboard/Dockerfile \
@@ -52,7 +56,7 @@ typecheck:
 test:
 	$(VENV)/pytest -m "not integration and not live"
 
-test-integration: image-exec-env image-egress-proxy
+test-integration: image-exec-env image-egress-proxy image-agent-runtime
 	$(VENV)/pytest -m "integration and not live"
 
 check: lint typecheck test

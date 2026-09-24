@@ -130,7 +130,7 @@ async def test_provision_idempotent_with_isolated_relay(monkeypatch: pytest.Monk
     async def healthy(_handle):
         return None
 
-    monkeypatch.setattr(manager, "_wait_healthy", healthy)
+    monkeypatch.setattr(manager, "wait_healthy", healthy)
     task_id = uuid4()
     handle = await manager.provision(task_id, profile)
     assert handle.base_url == "http://127.0.0.1:49152"
@@ -205,7 +205,7 @@ async def test_failed_provision_keeps_preexisting_envd(monkeypatch: pytest.Monke
     async def unhealthy(_handle):
         raise TimeoutError("health failed")
 
-    monkeypatch.setattr(manager, "_wait_healthy", unhealthy)
+    monkeypatch.setattr(manager, "wait_healthy", unhealthy)
     with pytest.raises(TimeoutError, match="health failed"):
         await manager.provision(task_id, profile)
     assert fake.containers.items == [existing]

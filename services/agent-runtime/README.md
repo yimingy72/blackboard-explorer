@@ -1,6 +1,6 @@
 # agent-runtime
 
-提供单 Agent 的工具循环、黑板同步、证据持久化、用量记录、回执与 CLI。调度循环由 M3 提供。
+提供 Agent 工具循环、黑板同步、证据持久化、用量记录，以及任务排队、调度、清扫和重启恢复。完整闭环场景与付费 e2e 由 M3b 验证。
 
 配置从进程环境读取，不自动加载 `.env`。必需项为 `DEEPSEEK_API_KEY`、`MINIO_ROOT_PASSWORD`、`SERVICE_TOKEN`、`ENVD_TOKEN_SECRET`；地址与网络项见 `.env.example`。JWT 签名密钥仅由 blackboard 持有，runtime 使用登记 Agent 时取得的 token。
 
@@ -21,7 +21,26 @@ bbx-runtime state --task <任务UUID>
 
 可将 `bbx-runtime` 替换为 `.venv/bin/bbx-runtime`。如由使用者显式选择加载本地配置，可使用 `uv run --env-file <本地配置文件> bbx-runtime …`；程序本身不自动读取文件，也不打印密钥。
 
-任务需先通过黑板 API/网页创建。CLI 在 explore 首次运行时启动任务、创建执行容器，登记 Agent、认领指定意图并建立 Linux 用户；会先输出 Agent ID，方便另一个终端发送 conclude。默认容器保留供后续 Agent 复用。final close 只允许在 closing 任务启动。M2b 不会自动派发其他 Agent、触发裁定或销毁任务容器。
+任务需先通过黑板 API/网页创建。单 Agent CLI 在 explore 首次运行时启动任务、创建执行容器，登记 Agent、认领指定意图并建立 Linux 用户；会先输出 Agent ID，方便另一个终端发送 conclude。默认容器保留供后续 Agent 复用。final close 只允许在 closing 任务启动。单 Agent CLI 用于调试，不应与同一任务的调度服务同时运行。
+
+## 调度服务与部署
+
+```sh
+make image-exec-env image-egress-proxy image-agent-runtime
+make web-install web-build image-blackboard
+# 主工作树默认项目名对应 blackboard-explorer_exec；使用其他项目名时同步 EXEC_NETWORK
+docker compose --project-name blackboard-explorer up -d
+# 宿主机调试：配置好进程环境（含 PG 锁连接与 relay 网络）后
+.venv/bin/bbx-runtime serve
+```
+
+镜像构建代理参数见 `services/envd/README.md`。`serve` 在 Settings 之外要求 POSTGRES_HOST/PORT/USER/PASSWORD/DB，独立 PG 会话仅用于 advisory lock 和健康探测，不直接写黑板表；锁已被占用则退出，丢失连接立即停止派发。Compose 挂载 Docker socket，runtime 是可信控制服务，不把 socket、服务密钥或模型密钥传给执行环境。
+
+`TaskSupervisor` 每 2 秒遍历任务列表所有分页。provisioning 按创建时间排队，running/closing 与尚未完成归档清理的任务占容量；`MAX_RUNNING_TASKS` 默认 1。每任务 SchedulerLoop 用 SSE（500ms 去抖）唤醒，持续事件也不会延后超过 2 秒的兜底 tick；每 30 秒清扫心跳与交接超时。`decide(state, params, now)` 是纯函数，动作由 ActionExecutor 执行。
+
+停止服务会先阻止新派发，再以 runtime_restart 取消并等待 finish；保留执行容器。重启结束旧记录（不增加 attempts/种子空产，不清零失败连击），健康容器接管；尚无容器的 provisioning 继续排队，running/closing 丢失或无法恢复容器则 failed。终态任务先完成交接，然后归档上传、服务 API 登记 task.archived、最后销毁；登记失败保留容器重试。归档事件会让工作台的下载入口即时出现。
+
+v1 **实际出网限制是部署级 EGRESS_ALLOWLIST**，所有执行容器共享；任务的 egress_allowlist 记录需求，不动态改代理，也不额外收窄部署策略。可把 eval-targets 和依赖镜像源列在部署白名单中。runtime 访问模型可使用独立 RUNTIME_HTTP_PROXY/RUNTIME_HTTPS_PROXY（本机 Docker Desktop 例：`http://host.docker.internal:7897`）；黑板与 envd HTTP 客户端不读取外部代理变量。
 
 ## 执行与同步
 
@@ -59,7 +78,7 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 ```sh
 make check
 # Docker 构建代理参数见 services/envd/README.md
-make test-integration
+make test-integration # 同时构建执行环境、代理与运行器镜像；不调用模型
 # 仅在进程环境已有 DEEPSEEK_API_KEY 时运行，会产生模型费用
 make test-live
 ```

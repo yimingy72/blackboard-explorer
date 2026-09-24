@@ -126,10 +126,15 @@ class AgentRunner:
                     )
             receipt = parse_receipt(response.text, task_type)
             end_reason = "normal" if receipt.get("accepted") else "refused"
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
             cancelled = True
             receipt = {"accepted": True, "data": {"note": "运行被取消，系统结束交接"}}
-            end_reason = "grace_timeout"
+            reason = error.args[0] if error.args else None
+            end_reason = (
+                reason
+                if reason in {"heartbeat", "grace_timeout", "runtime_restart"}
+                else "grace_timeout"
+            )
         except Exception as error:
             # SDK error strings can contain request details; record only the exception type.
             receipt = {"accepted": False, "reason": f"运行失败：{type(error).__name__}"}

@@ -82,6 +82,47 @@ services:
       EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-}
     networks: [exec, default]
 
+  agent-runtime:
+    image: bbx-agent-runtime:latest
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      BLACKBOARD_URL: http://blackboard:8000
+      SERVICE_TOKEN: ${SERVICE_TOKEN}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      ENVD_TOKEN_SECRET: ${ENVD_TOKEN_SECRET}
+      EXEC_NETWORK: ${EXEC_NETWORK:-blackboard-explorer_exec}
+      EXEC_ACCESS_MODE: network
+      EGRESS_PROXY_URL: http://egress-proxy:8888
+      MAX_RUNNING_TASKS: ${MAX_RUNNING_TASKS:-1}
+      HTTP_PROXY: ${RUNTIME_HTTP_PROXY:-}
+      HTTPS_PROXY: ${RUNTIME_HTTPS_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,::1,blackboard,postgres,minio,host.docker.internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      blackboard:
+        condition: service_started
+      egress-proxy:
+        condition: service_started
+    restart: unless-stopped
+    stop_grace_period: 120s
+    networks: [internal, exec]
+
 networks:
   internal: {}
   exec:

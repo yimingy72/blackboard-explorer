@@ -224,7 +224,7 @@ class ExecEnvManager:
             relay_id=relay.id if relay is not None else None,
         )
 
-    async def _wait_healthy(self, handle: ExecEnvHandle, timeout: float = 30) -> None:
+    async def wait_healthy(self, handle: ExecEnvHandle, timeout: float = 30) -> None:
         deadline = time.monotonic() + timeout
         async with EnvdClient(handle.base_url, handle.token) as envd:
             while True:
@@ -257,7 +257,7 @@ class ExecEnvManager:
                 else:
                     await self._running(relay)
             handle = await self._handle(task, envd, relay)
-            await self._wait_healthy(handle)
+            await self.wait_healthy(handle)
             return handle
         except BaseException:
             for container in reversed(created):

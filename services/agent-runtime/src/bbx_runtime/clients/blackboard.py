@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 from urllib.parse import quote
 from uuid import UUID
@@ -51,7 +53,12 @@ class BlackboardClient:
             headers={"Authorization": f"Bearer {self.token}"},
             **kwargs,
         )
+        return await self._check(response)
+
+    @staticmethod
+    async def _check(response: httpx.Response) -> httpx.Response:
         if response.is_error:
+            await response.aread()
             try:
                 payload = response.json()
             except ValueError:
@@ -75,7 +82,12 @@ class BlackboardClient:
         return f"/tasks/{quote(str(task_id), safe='')}"
 
     async def list_tasks(self) -> list[dict[str, Any]]:
-        return await self._json("GET", "/tasks")
+        tasks: list[dict[str, Any]] = []
+        while True:
+            page = await self._json("GET", "/tasks", params={"limit": 500, "offset": len(tasks)})
+            tasks.extend(page)
+            if len(page) < 500:
+                return tasks
 
     async def get_task(self, task_id: UUID | str) -> dict[str, Any]:
         return await self._json("GET", self._task(task_id))
@@ -99,6 +111,48 @@ class BlackboardClient:
         if for_agent is not None:
             params["for"] = for_agent
         return await self._json("GET", f"{self._task(task_id)}/events", params=params)
+
+    async def stream(self, task_id: UUID | str, since: int = 0) -> AsyncIterator[dict[str, Any]]:
+        timeout = httpx.Timeout(connect=10, read=None, write=30, pool=10)
+        async with self._http.stream(
+            "GET",
+            f"{self.base_url}/api{self._task(task_id)}/stream",
+            headers={"Authorization": f"Bearer {self.token}"},
+            params={"since": since},
+            timeout=timeout,
+        ) as response:
+            await self._check(response)
+            fields: dict[str, str] = {}
+            data: list[str] = []
+            async for line in response.aiter_lines():
+                if not line:
+                    if data:
+                        yield self._sse_event(fields, data)
+                    fields, data = {}, []
+                    continue
+                if line.startswith(":"):
+                    continue
+                field, separator, value = line.partition(":")
+                if not separator:
+                    continue
+                value = value.removeprefix(" ")
+                if field == "data":
+                    data.append(value)
+                elif field in {"id", "event"}:
+                    fields[field] = value
+            if data:
+                yield self._sse_event(fields, data)
+
+    @staticmethod
+    def _sse_event(fields: dict[str, str], data: list[str]) -> dict[str, Any]:
+        if not fields.get("id", "").isdecimal() or not fields.get("event"):
+            raise ValueError("SSE frame has no event id or type")
+        payload = json.loads("\n".join(data))
+        if not isinstance(payload, dict):
+            raise ValueError("SSE event data must be an object")
+        if payload.get("version") != int(fields["id"]) or payload.get("type") != fields["event"]:
+            raise ValueError("SSE frame disagrees with event data")
+        return payload
 
     async def snapshot(self, task_id: UUID | str, max_lines: int | None = None) -> str:
         params = {"max_lines": max_lines} if max_lines is not None else None
@@ -241,6 +295,15 @@ class BlackboardClient:
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST", f"{self._task(task_id)}/status", json={"status": status, "reason": reason}
+        )
+
+    async def record_archive(
+        self, task_id: UUID | str, uri: str, size: int, fallback: str
+    ) -> list[dict[str, Any]]:
+        return await self._json(
+            "POST",
+            f"{self._task(task_id)}/archive",
+            json={"uri": uri, "size": size, "fallback": fallback},
         )
 
     async def claim_for(

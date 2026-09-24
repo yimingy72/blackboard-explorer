@@ -43,4 +43,4 @@
 
 ## M3a 接口补充
 
-按实现架构 5.5，归档采用 POST /api/tasks/{id}/archive 与 task.archived 事件，上传并登记成功后才销毁。runtime 的 PG 会话仅做单实例锁；任务列表遍历所有分页。v1 明确使用部署级全局出网白名单，任务字段不动态生效。进程停止传 runtime_restart 取消原因，Sweeper 传 heartbeat/grace_timeout，finish 仅由运行器写一次。
+按实现架构 5.5，归档采用 POST /api/tasks/{id}/archive 与 task.archived 事件，上传并登记成功后才销毁。runtime 的 PG 会话仅做单实例锁；任务列表遍历所有分页。v1 明确使用部署级全局出网白名单，任务字段不动态生效。进程停止传 runtime_restart 取消原因，Sweeper 传 heartbeat/grace_timeout，finish 仅由运行器写一次。归档事件需同步现有前端命名订阅、状态投影和下载入口的数据来源，不扩展 M4 界面。
