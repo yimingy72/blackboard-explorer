@@ -17,3 +17,4 @@ build/
 data/
 .data/
 .uv-cache/
+eval/targets/dist/

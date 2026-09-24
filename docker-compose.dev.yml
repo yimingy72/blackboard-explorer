@@ -1,0 +1,9 @@
+services:
+  eval-targets:
+    image: python:3.12-slim
+    command: ["python", "-m", "http.server", "80", "--directory", "/targets"]
+    volumes:
+      - ./eval/targets/dist:/targets:ro
+    networks:
+      exec:
+        aliases: [eval-targets]

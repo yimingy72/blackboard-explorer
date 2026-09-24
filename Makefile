@@ -35,3 +35,12 @@ check-all: check test-integration
 
 schemas:
 	$(VENV)/python -m bbx_contracts.schemas
+
+.PHONY: eval-targets eval-verify
+
+eval-targets:
+	sh eval/targets/build.sh
+
+eval-verify:
+	$(VENV)/python eval/answers/order-service/verify.py
+	uv run --no-project --python 3.12 --with-requirements eval/targets/mini-shop/src-main/requirements.txt python eval/answers/mini-shop/verify/run.py
