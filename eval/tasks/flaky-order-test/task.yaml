@@ -1,0 +1,9 @@
+goal: "找出 tests/test_orders.py::test_concurrent_orders 偶发失败的根因"
+domain_context: |
+  订单服务代码在 http://eval-targets/order-service.tar.gz，Python 3.12，用 pytest 运行测试。
+acceptance:
+  - id: A1
+    desc: "指出导致失败的代码位置与机制"
+  - id: A2
+    desc: "给出能稳定复现失败的方法（复现率不低于 90%）"
+budget: {max_concurrent_agents: 3, max_cost: 3, max_minutes: 20}
