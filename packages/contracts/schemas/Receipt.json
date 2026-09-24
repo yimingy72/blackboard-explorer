@@ -1,5 +1,39 @@
 {
   "$defs": {
+    "CloseReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "const": true,
+          "default": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "data": {
+          "$ref": "#/$defs/CloseReceiptData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CloseReceipt",
+      "type": "object"
+    },
+    "CloseReceiptData": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "description": "裁定或终结提交后的结束说明",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "title": "CloseReceiptData",
+      "type": "object"
+    },
     "DeriveReceipt": {
       "additionalProperties": false,
       "properties": {
@@ -125,6 +159,9 @@
     },
     {
       "$ref": "#/$defs/DeriveReceipt"
+    },
+    {
+      "$ref": "#/$defs/CloseReceipt"
     },
     {
       "$ref": "#/$defs/RefusalReceipt"

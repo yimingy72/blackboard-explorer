@@ -329,8 +329,18 @@ class RefusalReceipt(ContractModel):
     reason: str = Field(min_length=1, description="无法开始的原因")
 
 
+class CloseReceiptData(ContractModel):
+    note: str = Field(description="裁定或终结提交后的结束说明")
+
+
+class CloseReceipt(ContractModel):
+    accepted: Literal[True] = True
+    data: CloseReceiptData
+
+
 Receipt = Annotated[
-    ExploreReceipt | DeriveReceipt | RefusalReceipt, Field(union_mode="left_to_right")
+    ExploreReceipt | DeriveReceipt | CloseReceipt | RefusalReceipt,
+    Field(union_mode="left_to_right"),
 ]
 
 
