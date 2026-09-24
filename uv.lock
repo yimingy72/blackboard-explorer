@@ -168,6 +168,7 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sse-starlette" },
     { name = "uvicorn" },
+    { name = "zstandard" },
 ]
 
 [package.metadata]
@@ -181,6 +182,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2,<3" },
     { name = "sse-starlette", specifier = ">=3,<4" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
+    { name = "zstandard", specifier = ">=0.25,<1" },
 ]
 
 [[package]]

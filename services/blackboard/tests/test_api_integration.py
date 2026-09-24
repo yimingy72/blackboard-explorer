@@ -1,8 +1,10 @@
 """Full HTTP blackboard scenario against isolated PostgreSQL and MinIO."""
 
 import asyncio
+import io
 import os
 import socket
+import tarfile
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -13,9 +15,11 @@ from uuid import uuid4
 import httpx
 import pytest
 import uvicorn
+import zstandard
 from alembic import command
 from alembic.config import Config
 from bbx_blackboard.api import create_app
+from bbx_blackboard.auth import issue_agent_token
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.simulator import run_demo
 from bbx_objects import ObjectStore
@@ -234,4 +238,91 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
         server.should_exit = True
         await asyncio.wait_for(server_task, 15)
         server_socket.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_workspace_api_reads_registered_minio_archive_with_task_auth(infrastructure) -> None:
+    database_url, endpoint = infrastructure
+    parsed = make_url(database_url)
+    settings = Settings(
+        postgres_host=parsed.host or "127.0.0.1",
+        postgres_port=parsed.port or 5432,
+        postgres_user=parsed.username or "test",
+        postgres_password=SecretStr(parsed.password or "test"),
+        postgres_db=parsed.database or "test",
+        minio_root_user="bbxm1buser",
+        minio_root_password=SecretStr("bbxm1b-test-password"),
+        minio_endpoint=f"http://{endpoint}",
+        minio_bucket=f"bbxm4workspace{uuid4().hex[:12]}",
+        service_token=SecretStr(SERVICE_TOKEN),
+        agent_token_secret=SecretStr("bbx-m4-workspace-agent-signing-test-secret"),
+        admin_users=SecretStr("admin:integration-only"),
+        profiles_dir=ROOT / "profiles/default",
+    )
+    objects = ObjectStore(endpoint, "bbxm1buser", "bbxm1b-test-password", settings.minio_bucket)
+    await objects.ensure_bucket()
+    engine = create_async_engine(settings.database_url)
+    app = create_app(settings, engine=engine, objects=objects)
+    try:
+        service = app.state.board_service
+        task_id = await service.create_task(
+            {
+                "goal": "Inspect archived workspace",
+                "acceptance": [{"id": "A1", "desc": "Read source"}],
+                "budget": {"max_cost": "1", "max_minutes": 5},
+                "agent_profile": "default",
+            }
+        )
+        for status in ("provisioning", "running", "closing", "finished"):
+            await service.transition(task_id, status)
+        uri = f"workspace/{task_id}.tar.zst"
+        content = io.BytesIO()
+        with tarfile.open(fileobj=content, mode="w") as tar:
+            root = tarfile.TarInfo(".")
+            root.type = tarfile.DIRTYPE
+            tar.addfile(root)
+            source = tarfile.TarInfo("./shared/orders.py")
+            data = b"def reserve():\n    return True\n"
+            source.size = len(data)
+            tar.addfile(source, io.BytesIO(data))
+            link = tarfile.TarInfo("./shared/python")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/usr/bin/python3"
+            tar.addfile(link)
+        compressed = zstandard.ZstdCompressor().compress(content.getvalue())
+        await objects.put(uri, compressed, content_type="application/zstd")
+        await service.record_archive(task_id, uri, len(compressed), "none")
+
+        same_agent = issue_agent_token(settings, task_id, "agent-1")
+        other_agent = issue_agent_token(settings, uuid4(), "agent-2")
+        base = f"/api/tasks/{task_id}/workspace"
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+        ) as client:
+            assert (await client.get(f"{base}/tree")).status_code == 401
+            assert (
+                await client.get(f"{base}/tree", headers={"Authorization": f"Bearer {other_agent}"})
+            ).status_code == 403
+            headers = {"Authorization": f"Bearer {same_agent}"}
+            tree = await client.get(f"{base}/tree", headers=headers)
+            assert tree.status_code == 200, tree.text
+            entries = {entry["path"]: entry for entry in tree.json()["entries"]}
+            assert entries["shared/orders.py"]["size"] == len(data)
+            assert entries["shared/python"]["kind"] == "link"
+            preview = await client.get(
+                f"{base}/file", params={"path": "shared/orders.py"}, headers=headers
+            )
+            assert preview.json() == {
+                "path": "shared/orders.py",
+                "size": len(data),
+                "text": data.decode(),
+                "truncated": False,
+                "binary": False,
+            }
+            assert (
+                await client.get(f"{base}/file", params={"path": "shared/python"}, headers=headers)
+            ).status_code == 400
+    finally:
+        await app.state.workspace_cache.close()
         await engine.dispose()

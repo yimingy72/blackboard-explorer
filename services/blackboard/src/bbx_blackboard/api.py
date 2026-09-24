@@ -45,6 +45,13 @@ from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.workspace import (
+    ArchiveTooLarge,
+    InvalidArchive,
+    InvalidPath,
+    NotPreviewable,
+    WorkspaceArchiveCache,
+)
 
 
 class LoginBody(BaseModel):
@@ -168,6 +175,24 @@ class UploadResult(BaseModel):
     size: int
 
 
+class WorkspaceEntryView(BaseModel):
+    path: str
+    kind: Literal["file", "directory", "link"]
+    size: int
+
+
+class WorkspaceTreeView(BaseModel):
+    entries: list[WorkspaceEntryView]
+
+
+class WorkspaceFileView(BaseModel):
+    path: str
+    size: int
+    text: str
+    truncated: bool
+    binary: bool
+
+
 def _web_dist() -> Path:
     return Path(__file__).resolve().parents[4] / "web/dist"
 
@@ -210,6 +235,16 @@ async def _task(request: Request, task_id: UUID) -> dict[str, Any]:
     if row is None:
         raise HTTPException(404, "Task not found")
     return dict(row)
+
+
+async def _workspace_uri(request: Request, task_id: UUID) -> str:
+    task = await _task(request, task_id)
+    uri = task.get("workspace_uri")
+    if not uri or uri != f"workspace/{task_id}.tar.zst":
+        raise HTTPException(404, "Workspace archive not found")
+    if not await request.app.state.objects.exists(uri):
+        raise HTTPException(404, "Workspace archive not found")
+    return uri
 
 
 def _key_task(uri: str) -> UUID | None:
@@ -289,6 +324,7 @@ def create_app(
         try:
             yield
         finally:
+            await app.state.workspace_cache.close()
             await app.state.dispatcher.stop()
             if own_engine:
                 await app.state.engine.dispose()
@@ -302,6 +338,7 @@ def create_app(
         BoardService(engine, objects) if engine is not None and objects is not None else None
     )
     app.state.profile_store = ProfileStore(engine) if engine is not None else None
+    app.state.workspace_cache = WorkspaceArchiveCache()
 
     @app.exception_handler(RuleViolation)
     async def rule_error(_request: Request, exc: RuleViolation) -> Response:
@@ -450,17 +487,48 @@ def create_app(
     @app.get("/api/tasks/{task_id}/workspace", tags=["tasks"])
     async def workspace(request: Request, task_id: UUID) -> StreamingResponse:
         require_task_reader(request, task_id)
-        task = await _task(request, task_id)
-        uri = task.get("workspace_uri")
-        if not uri or uri != f"workspace/{task_id}.tar.zst":
-            raise HTTPException(404, "Workspace archive not found")
-        if not await request.app.state.objects.exists(uri):
-            raise HTTPException(404, "Workspace archive not found")
+        uri = await _workspace_uri(request, task_id)
         return StreamingResponse(
             request.app.state.objects.stream(uri),
             media_type="application/zstd",
             headers={"Content-Disposition": f'attachment; filename="{task_id}.tar.zst"'},
         )
+
+    @app.get(
+        "/api/tasks/{task_id}/workspace/tree", response_model=WorkspaceTreeView, tags=["tasks"]
+    )
+    async def workspace_tree(request: Request, task_id: UUID) -> WorkspaceTreeView:
+        require_task_reader(request, task_id)
+        uri = await _workspace_uri(request, task_id)
+        try:
+            entries = await request.app.state.workspace_cache.tree(request.app.state.objects, uri)
+        except ArchiveTooLarge as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except (InvalidArchive, InvalidPath) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return WorkspaceTreeView(
+            entries=[WorkspaceEntryView(**entry.__dict__) for entry in entries]
+        )
+
+    @app.get(
+        "/api/tasks/{task_id}/workspace/file", response_model=WorkspaceFileView, tags=["tasks"]
+    )
+    async def workspace_file(
+        request: Request, task_id: UUID, path: str = Query(min_length=1)
+    ) -> WorkspaceFileView:
+        require_task_reader(request, task_id)
+        uri = await _workspace_uri(request, task_id)
+        try:
+            preview = await request.app.state.workspace_cache.file(
+                request.app.state.objects, uri, path
+            )
+        except ArchiveTooLarge as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except (InvalidArchive, InvalidPath, NotPreviewable) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Workspace file not found") from exc
+        return WorkspaceFileView(**preview)
 
     @app.get("/api/tasks/{task_id}/state", tags=["board"])
     async def state(request: Request, task_id: UUID) -> dict[str, Any]:
