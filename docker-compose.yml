@@ -50,6 +50,12 @@ services:
         mc mb --ignore-existing "local/$${MINIO_BUCKET}"
     networks: [internal]
 
+  egress-proxy:
+    image: bbx-egress-proxy:latest
+    environment:
+      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-}
+    networks: [exec, default]
+
 networks:
   internal: {}
   exec:
