@@ -8,7 +8,7 @@
 ## 0. 一页速览
 
 - **项目**：通用的黑板式多 Agent 探索系统——给定目标（Goal）与文字验收条件，多个 DeepSeek 驱动的探索 Agent 通过共享黑板（事实 Fact、意图 Intent）协作，close Agent 裁定是否达成。
-- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`）。
+- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`）。
 - **设计正本**：`docs/design/` 下三份文档（桌面上的同名文件是指向它们的符号链接）。实现以它们为准。
 - **进度**：
 
@@ -19,11 +19,12 @@
   | M1a 黑板存储与领域规则 | ✅ 已审查、修复、验证并合并（2026-09-24） |
   | M2-env 执行环境与出网代理 | ✅ 镜像构建、容器测试和安全修复完成，已合并（2026-09-24） |
   | M1b 黑板接口层 | ✅ API、鉴权、SSE、对象存储、镜像与模拟器已合并；按用户新设计取消向量预检 |
-  | M1-W 画布最小版 | 🟡 开始开发，工作树 `~/bbx-wt/m1w` |
-  | M2a、M2b、M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
+  | M1-W 画布最小版 | ✅ 实时图谱、页面、类型与浏览器验收完成，已合并；`m1` 标签已打 |
+  | M2a 技术验证与 runtime 骨架 | 🟡 开始开发，工作树 `~/bbx-wt/m2a` |
+  | M2b、M3a、M3b、M4、EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
 
-- **下一步（按用户指定顺序）**：M1-W → M2a → M2b → M3a → M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
-- **合并后验证**：`uv sync --locked`、`make check`（M1b 最终 141 passed）、`make test-integration`（M1b 最终 11 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。尚未达到 m1/m2 标签条件。
+- **下一步（按用户指定顺序）**：M2a → M2b → M3a → M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
+- **合并后验证**：`uv sync --locked`、`make check`（M1b 最终 141 passed）、`make test-integration`（M1b 最终 11 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。M1-W 另有 10 个前端测试通过，浏览器验收完成，已打 `m1`；`m2` 尚未达到条件。
 
 ---
 
@@ -70,11 +71,12 @@ blackboard-explorer/
 
 ### 2.1 git
 
-- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签仍为 `m0`。
+- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签为 `m0`、`m1`。
 - M1a：设计提交 `f47808d`，实现提交 `46bc578`，合并提交 `430c5ad`。
 - M2-env：token 设计 `ff8565f`、信号能力设计 `1d5f4c0`、实现 `bca1fd9`，合并提交 `108d0c5`。合并时保留两边依赖并重建 `uv.lock`。
 - M1b：接口设计 `6371507`、profile 正文快照 `561103c`、Agent 自主判重设计 `7de008a`、实现 `87f774f`，已快进合并；原 m1b 工作树与分支已删除。
 - 合并时 main 的旧 embedding 段落有一处用户未提交编辑，已保存为 stash `Preserve pending edit to superseded embedding design`；该段现由用户新设计整体替代，未将旧段重新应用。
+- M1b 模拟器生命周期修复 `eed65d4` 已合并；M1-W 实现 `a17a905` 已合并，`m1` 指向该提交。原 m1w 工作树与 m1-w 分支已删除。
 - 原 `~/bbx-wt/m1a`、`~/bbx-wt/m2env` 与对应分支均已删除。原工作树的 AGENTS.md 副本已确认与 main 完全相同后清理，最新规则保留在 main。
 - 仓库本地 git 身份仍为 `yym <yym@localhost>`；未修改全局配置，未推送远程。
 
@@ -93,13 +95,14 @@ blackboard-explorer/
 - **M1a**：修复 attempts、derive 失败计数与已结束 Agent 写入后，`make check` 110 通过、`make test-integration` 6 通过、领域层覆盖率 91%；Alembic 升降级通过。
 - **M2-env**：`make check` 61 通过、`make test-integration` 2 通过，两个镜像已构建。新增必要的 `KILL` capability，修复 token 传递、路径竞态及测试内部网络访问。
 - **M1b**：141 个普通测试、11 个集成测试通过；blackboard 镜像构建和真实容器启动/自动迁移验证通过，OpenAPI 已导出并由测试守护。
+- **M1-W**：前端 ESLint/TypeScript/Vitest 10 项通过，构建与镜像静态托管验证通过；真实浏览器完成中文创建、启动停止、SSE、争议与详情、390/1440 视口检查，预览资源已清理。
 - **当前架构**：不再部署本地 embedding，Agent 根据快照/增量同步自行判断重复；黑板保留确定性写入规则与关键词查找。未调用真实 DeepSeek、未读取 `.env`。
 
 ---
 
 ## 3. 收尾记录与后续入口
 
-> 3.1、3.2 为已完成的收尾背景；当前从 M1-W 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
+> 3.1、3.2 为已完成的收尾背景；当前从 M2a 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
 
 ### 3.1 收尾 M2-env（工作树 `~/bbx-wt/m2env`）
 
