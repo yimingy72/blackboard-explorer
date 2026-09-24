@@ -1,6 +1,6 @@
 # agent-runtime
 
-提供 Agent 工具循环、黑板同步、证据持久化、用量记录，以及任务排队、调度、清扫和重启恢复。完整闭环场景与付费 e2e 由 M3b 验证。
+提供 Agent 工具循环、黑板同步、证据持久化、用量记录，以及任务排队、调度、清扫和重启恢复。M3b 补齐完整闭环场景与显式付费 e2e。
 
 配置从进程环境读取，不自动加载 `.env`。必需项为 `DEEPSEEK_API_KEY`、`MINIO_ROOT_PASSWORD`、`SERVICE_TOKEN`、`ENVD_TOKEN_SECRET`；地址与网络项见 `.env.example`。JWT 签名密钥仅由 blackboard 持有，runtime 使用登记 Agent 时取得的 token。
 
@@ -44,7 +44,7 @@ v1 **实际出网限制是部署级 EGRESS_ALLOWLIST**，所有执行容器共�
 
 ## 执行与同步
 
-`AgentRunner(settings, service, objects, manager).run_agent(task_id, agent_id, task_type, intent_id=None, mode=None, *, agent_token)` 运行一个已登记 Agent。它读取任务固定版本 profile、组装工具与模板，并创建显式 MAF session。单次模型 HTTP 请求超时不超过 120 秒，整个 run 由 asyncio 按任务时长保护。正常、拒绝、运行错误都调用 finish；取消会完成 finish 与资源清理后再传播。测试可以注入 ScriptedChatClient 和 FakeEnvd HTTP 客户端。
+`AgentRunner(settings, service, objects, manager).run_agent(task_id, agent_id, task_type, intent_id=None, mode=None, *, agent_token)` 运行一个已登记 Agent。它读取任务固定版本 profile、组装工具与模板，并创建显式 MAF session。单次模型 HTTP 请求超时不超过 120 秒，整个 run 的硬时限为任务时长加交接宽限及一分钟清扫余量；调度器仍按原探索预算进入 closing。正常、拒绝、运行错误都调用 finish；取消会完成 finish 与资源清理后再传播。测试可以注入 ScriptedChatClient 和 FakeEnvd HTTP 客户端。
 
 工具按 explore / derive / close 分别装配，只有 explore 有 MCP execute_command。post_fact 直接提交，Agent 自行判断重复；证据文件上限 50 MiB，由 envd 检查路径与权限，上传后替换为对象 URI。模型不能自报 `uri` / `auto`。携带真实 call_id 的证据会附加完整工具记录。read_evidence 返回带边界且转义的证据数据。
 
@@ -84,3 +84,21 @@ make test-live
 ```
 
 普通与集成测试排除 `live` 标记。MAF 固定为 core 1.19.0、openai 1.14.4；升级时重跑 `tests/verification`。默认 enqueue 注入不能跨工具轮次保留，运行器使用公开 Content.text/result 追加黑板增量，不挂 MessageInjectionMiddleware。详见 `docs/tasks/M2a-report.md` 和 `docs/tasks/M2b-report.md`。
+
+
+## 真实闭环检查（会调用 DeepSeek）
+
+```sh
+# 密钥已由外部注入进程环境时
+make e2e
+# 或由 uv 子进程显式加载用户选择的本地配置文件
+make e2e E2E_ENV_FILE=~/blackboard-explorer/.env
+# 保留隔离工作台供浏览器复盘；--timeout 只限制任务等待时间
+make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--keep --timeout 1800'
+```
+
+先按上面的部署命令构建前端和四个镜像；每次修改实现后重新构建对应镜像。该命令生成已有玩具素材，使用已构建镜像，以唯一 `bbx-e2e-*` Compose 项目启动全栈。黑板仅发布 localhost 随机端口，PG/MinIO 不发布宿主端口，控制凭据为本次随机生成，只有模型配置使用提供的 DEEPSEEK_API_KEY。Compose 文件不保存密钥值；每条 Compose 命令另有 180 秒上限。
+
+控制台会显示任务/工作台地址与进展。隔离测试账号是 `e2e / local-e2e-only`，只用于这套临时服务。任务结束后输出报告和账本费用估算，并在 `.data/e2e/<项目名>/` 保存报告、事件、状态、工作区压缩包和脱敏日志。默认停止服务并清理本项目卷与执行容器；`--keep` 仅在任务已终结并登记归档后保留工作台，并打印清理命令。
+
+生产请求去重仍由 Agent 判断；e2e 不使用 embedding，也不会让普通检查调用模型。固定 profile 的价格是预算估算，不能代替供应商实际账单。

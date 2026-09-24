@@ -68,6 +68,13 @@ schemas:
 
 .PHONY: eval-targets eval-verify
 
+E2E_ENV_FILE ?=
+E2E_ARGS ?=
+.PHONY: e2e
+
+e2e: eval-targets
+	uv run $(if $(E2E_ENV_FILE),--env-file "$(E2E_ENV_FILE)") --no-sync python -m bbx_runtime.e2e $(E2E_ARGS)
+
 eval-targets:
 	sh eval/targets/build.sh
 
