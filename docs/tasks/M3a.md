@@ -6,7 +6,7 @@
 
 ## 范围
 
-`services/agent-runtime/src/bbx_runtime/scheduler/`：决策纯函数、动作执行器、任务监管、调度循环、清扫器、重启恢复、失败保护、归档与销毁；agent-runtime 的 Dockerfile 与 compose 服务。**不做** derive / close 的触发之外的内容——触发条件在本任务的 `decide()` 中实现，但 close 的收尾流程与完整场景测试属于 M3b。
+`services/agent-runtime/src/bbx_runtime/scheduler/`：决策纯函数、动作执行器、任务监管、调度循环、清扫器、重启恢复、失败保护、归档与销毁；为归档补齐 blackboard 的事件、投影、服务身份 API 与运行客户端；agent-runtime 的 Dockerfile 与 compose 服务。**不做** derive / close 的触发之外的内容——触发条件在本任务的 `decide()` 中实现，但 close 的收尾流程与完整场景测试属于 M3b。
 
 ## 已定的实现决定
 
@@ -16,7 +16,7 @@
 4. **调度循环**：每个任务一个 `SchedulerLoop`；订阅该任务的 SSE 事件唤醒（500ms 去抖），并每 2 秒兜底执行一次；每任务一把 `asyncio.Lock` 保证 tick 串行。
 5. **任务监管**：轮询（每 2 秒）或订阅任务状态变化；`provisioning` 的任务在运行数未达 `MAX_RUNNING_TASKS` 时 `ExecEnvManager.provision` → 置 `running` → 启动循环；达到上限的任务保持 `provisioning` 排队。`finished` / `failed` / `stopped` → 归档上传 → 销毁执行环境。
 6. **清扫器**（每 30 秒）：心跳超时（`heartbeat_timeout`）→ 取消该 Agent 的协程，finish（end_reason=heartbeat）；宽限超时（`grace_timeout`）→ 取消，finish（end_reason=grace_timeout，黑板写系统交接说明）；运行超过 `max_minutes` → 标记探索预算用尽。
-7. **重启恢复**：启动时把所有 running / concluding 的 agent 运行 finish 为 `runtime_restart`（不计 attempts）；对 provisioning / running / closing 的任务检查执行环境容器：存在则接管，不存在则任务 failed（原因写明）。单实例保障：启动时取 Postgres advisory lock，拿不到就退出。
+7. **重启恢复**：启动时把所有 running / concluding 的 agent 运行 finish 为 `runtime_restart`（不计 attempts）；对 provisioning 无容器的任务保留排队，有容器则健康检查后接管；running / closing 无容器或不健康则 failed（原因写明）。单实例保障：启动时取 Postgres advisory lock，拿不到就退出。
 8. **部署**：`services/agent-runtime/Dockerfile`（`python:3.12-slim`）；`docker-compose.yml` 追加 `agent-runtime` 服务，接入 `internal` 与 `exec` 网络，挂载 `/var/run/docker.sock`；`make image-agent-runtime`（镜像由用户在沙箱外构建）。
 
 ## 任务
@@ -40,3 +40,7 @@
 
 1. `make check`、`make test-integration` 全绿（报告中给出结果）。
 2. 报告 `docs/tasks/M3a-report.md`：`decide()` 规则与测试用例对照表、动作清单、部署说明、共享文件修改、建议提交划分、偏差与待决。
+
+## M3a 接口补充
+
+按实现架构 5.5，归档采用 POST /api/tasks/{id}/archive 与 task.archived 事件，上传并登记成功后才销毁。runtime 的 PG 会话仅做单实例锁；任务列表遍历所有分页。v1 明确使用部署级全局出网白名单，任务字段不动态生效。进程停止传 runtime_restart 取消原因，Sweeper 传 heartbeat/grace_timeout，finish 仅由运行器写一次。
