@@ -1,8 +1,41 @@
 # agent-runtime
 
-M2a 提供客户端、任务执行容器管理和 MAF 验证基础；Agent 工具与运行入口由 M2b 补齐。
+提供单 Agent 的工具循环、黑板同步、证据持久化、用量记录、回执与 CLI。调度循环由 M3 提供。
 
 配置从进程环境读取，不自动加载 `.env`。必需项为 `DEEPSEEK_API_KEY`、`MINIO_ROOT_PASSWORD`、`SERVICE_TOKEN`、`ENVD_TOKEN_SECRET`；地址与网络项见 `.env.example`。JWT 签名密钥仅由 blackboard 持有，runtime 使用登记 Agent 时取得的 token。
+
+`state` 和 `conclude` 仅需 `BLACKBOARD_URL` 与 `SERVICE_TOKEN`，不要求模型密钥或 Docker。
+
+## 单 Agent 命令
+
+```sh
+uv sync --locked
+bbx-runtime run-agent --task <任务UUID> --type explore --seed
+bbx-runtime run-agent --task <任务UUID> --type explore --intent I1
+bbx-runtime run-agent --task <任务UUID> --type derive
+bbx-runtime run-agent --task <任务UUID> --type close --mode judge
+bbx-runtime run-agent --task <任务UUID> --type close --mode final
+bbx-runtime conclude --task <任务UUID> --agent agent-1
+bbx-runtime state --task <任务UUID>
+```
+
+可将 `bbx-runtime` 替换为 `.venv/bin/bbx-runtime`。如由使用者显式选择加载本地配置，可使用 `uv run --env-file <本地配置文件> bbx-runtime …`；程序本身不自动读取文件，也不打印密钥。
+
+任务需先通过黑板 API/网页创建。CLI 在 explore 首次运行时启动任务、创建执行容器，登记 Agent、认领指定意图并建立 Linux 用户；会先输出 Agent ID，方便另一个终端发送 conclude。默认容器保留供后续 Agent 复用。final close 只允许在 closing 任务启动。M2b 不会自动派发其他 Agent、触发裁定或销毁任务容器。
+
+## 执行与同步
+
+`AgentRunner(settings, service, objects, manager).run_agent(task_id, agent_id, task_type, intent_id=None, mode=None, *, agent_token)` 运行一个已登记 Agent。它读取任务固定版本 profile、组装工具与模板，并创建显式 MAF session。单次模型 HTTP 请求超时不超过 120 秒，整个 run 由 asyncio 按任务时长保护。正常、拒绝、运行错误都调用 finish；取消会完成 finish 与资源清理后再传播。测试可以注入 ScriptedChatClient 和 FakeEnvd HTTP 客户端。
+
+工具按 explore / derive / close 分别装配，只有 explore 有 MCP execute_command。post_fact 直接提交，Agent 自行判断重复；证据文件上限 50 MiB，由 envd 检查路径与权限，上传后替换为对象 URI。模型不能自报 `uri` / `auto`。携带真实 call_id 的证据会附加完整工具记录。read_evidence 返回带边界且转义的证据数据。
+
+ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加返回 ID；普通工具异常也落日志。GraceGate 通过服务端原子接口消耗额度，最后一次成功返回 0 仍允许执行。BoardSync 在每次 explore 模型请求前追加增量到公开 Content，保留全文点名/裁定、压缩其他事件；derive/close 仅心跳记账。所有角色都从固定版本的模板正文渲染，Jinja 使用 sandbox 与严格变量检查。
+
+回执按 explore / derive / close 的 contracts 校验，支持代码块与尾部 JSON；无效文本记为规定的回退回执并保留 raw_text，不把回执当作事实发布。
+
+## 价格
+
+默认 profile 使用 2026-09-24 [DeepSeek 官方价格](https://api-docs.deepseek.com/quick_start/pricing/)的 USD 高峰单价，按每百万 token 计价：缓存命中 0.006、未命中 0.30、输出 1.20。推理 token 已含在输出中，不重复收费。这是固定版本的保守预算估算；错峰费率为一半，需在运行用 profile 中明确选定对应价格再核对账单。`off_peak` 是该价格快照的标记，不会动态切换时段。
 
 ## 模块接口
 
@@ -31,4 +64,4 @@ make test-integration
 make test-live
 ```
 
-普通与集成测试排除 `live` 标记。MAF 固定为 core 1.19.0、openai 1.14.4；升级时重跑 `tests/verification`。默认 enqueue 注入不能跨工具轮次保留，M2b 应使用公开 Content.text/result 追加黑板增量；不挂 MessageInjectionMiddleware。详见 `docs/tasks/M2a-report.md`。
+普通与集成测试排除 `live` 标记。MAF 固定为 core 1.19.0、openai 1.14.4；升级时重跑 `tests/verification`。默认 enqueue 注入不能跨工具轮次保留，运行器使用公开 Content.text/result 追加黑板增量，不挂 MessageInjectionMiddleware。详见 `docs/tasks/M2a-report.md` 和 `docs/tasks/M2b-report.md`。

@@ -19,6 +19,9 @@ dependencies = [
 bbx-objects = { workspace = true }
 bbx-contracts = { workspace = true }
 
+[project.scripts]
+bbx-runtime = "bbx_runtime.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

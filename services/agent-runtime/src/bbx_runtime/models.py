@@ -10,6 +10,7 @@ from agent_framework import UsageDetails
 from agent_framework.openai import OpenAIChatCompletionClient, OpenAIChatCompletionOptions
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.profile import load_profile
+from openai import AsyncOpenAI
 from openai.types.completion_usage import CompletionUsage
 
 
@@ -54,8 +55,11 @@ def make_client(
         raise ValueError("Model key, step limit, and duration must be valid")
     return DeepSeekChatClient(
         model=model.model,
-        api_key=api_key,
-        base_url=model.base_url,
+        async_client=AsyncOpenAI(
+            api_key=api_key,
+            base_url=model.base_url,
+            timeout=min(120, max_duration_seconds),
+        ),
         function_invocation_configuration={
             "max_iterations": explore_max_steps + conclude_grace_calls + 5,
             "max_duration_seconds": max_duration_seconds,

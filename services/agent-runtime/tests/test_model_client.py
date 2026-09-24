@@ -43,6 +43,7 @@ def test_make_client_is_explicit_and_bounded(monkeypatch):
     assert isinstance(client, FunctionInvocationLayer)
     assert client.function_invocation_configuration.get("max_iterations") == 68
     assert client.function_invocation_configuration.get("max_duration_seconds") == 3600
+    assert client.client.timeout == 120
     assert model_run_options(model) == {"reasoning_effort": "high"}
 
 

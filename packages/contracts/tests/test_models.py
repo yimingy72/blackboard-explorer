@@ -255,8 +255,9 @@ def test_default_profile() -> None:
     assert profile.prompt_templates.explore == (directory / profile.prompts.explore).read_text(
         encoding="utf-8"
     )
-    assert len(notices) == 3
-    assert all("price table is incomplete" in notice for notice in notices)
+    assert not notices
+    assert profile.models.explore.price.is_complete()
+    assert profile.models.explore.price.currency == "USD"
 
 
 def test_json_log_format() -> None:

@@ -4,11 +4,12 @@ explore: &default_model
   base_url: https://api.deepseek.com
   reasoning_effort: high
   price:
-    # 按 DeepSeek 官方价格页填写
-    currency: null
-    cache_hit_per_m: null
-    cache_miss_per_m: null
-    output_per_m: null
-    off_peak: null
+    # 2026-09-24 https://api-docs.deepseek.com/quick_start/pricing/
+    # 固定高峰价用于保守预算估算；错峰账单按实际时段核对。
+    currency: USD
+    cache_hit_per_m: 0.006
+    cache_miss_per_m: 0.30
+    output_per_m: 1.20
+    off_peak: false
 derive: *default_model
 close: *default_model
