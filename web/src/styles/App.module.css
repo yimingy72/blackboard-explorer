@@ -57,9 +57,9 @@
 .routeLoading { padding: 34px 36px; color: var(--color-muted); font-size: 0.875rem; }
 
 @media (max-width: 650px) {
-  .topbarInner { min-height: 54px; padding: 0 14px; gap: 12px; }
-  .brand { font-size: 0.9rem; }
-  .nav { display: none; }
+  .topbarInner { min-height: 54px; padding: 0 14px; gap: 0 12px; flex-wrap: wrap; }
+  .brand { font-size: 0.9rem; min-height: 50px; }
+  .nav { display: flex; order: 3; width: 100%; min-height: 36px; }
   .actions { gap: 2px; }
   .actions a { min-height: 34px; padding: 7px 9px; font-size: 0.77rem; }
   .logout { min-height: 34px; padding: 7px 8px; font-size: 0.77rem; }

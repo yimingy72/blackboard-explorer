@@ -33,6 +33,10 @@ export interface BoardTask {
   workspace_uri?: string | null;
   fail_reason: string | null;
   version: number;
+  params?: Record<string, unknown>;
+  closingReason?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface BoardFact {
@@ -68,6 +72,7 @@ export interface BoardIntent {
   closedBy: string | null;
   resultFacts: string[];
   attempts: number;
+  notes?: Array<{ by: string; at: string; text: string }>;
 }
 
 export interface BoardAgent {
@@ -83,6 +88,21 @@ export interface BoardAgent {
   lastSeenVersion: number;
   graceCallsLeft: number | null;
   endReason: string | null;
+  receipt?: unknown;
+  concludeReason?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface BoardToolCall {
+  id: string;
+  agentId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  resultHead: string;
+  resultUri: string | null;
+  createdAt: string;
+  version: number;
 }
 
 export interface BoardState {
@@ -91,4 +111,5 @@ export interface BoardState {
   intents: Record<string, BoardIntent>;
   agents: Record<string, BoardAgent>;
   acceptance: Record<string, BoardAcceptance>;
+  toolCalls?: Record<string, BoardToolCall>;
 }

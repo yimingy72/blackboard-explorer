@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { api, ApiError } from '../api/client';
-import type { BoardState } from '../board/types';
+import type { BoardAgent, BoardFact, BoardIntent, BoardState } from '../board/types';
 import controls from '../styles/controls.module.css';
+import { disputeChain, retryChain } from './detailRelations';
+import EvidenceViewer from './EvidenceViewer';
 import styles from './DetailPanel.module.css';
 
 type Props = {
@@ -11,84 +10,91 @@ type Props = {
   state: BoardState;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  historical?: boolean;
 };
 
 const factKinds: Record<string, string> = { observation: '观察事实', inference: '推断事实', structure: '结构事实' };
 const intentStatus: Record<string, string> = { open: '待认领', claimed: '已认领', closed: '已关闭' };
 const agentStatus: Record<string, string> = { running: '运行中', concluding: '收尾中', finished: '已结束', failed: '失败' };
+const resultLabels: Record<string, string> = { confirmed: '确认', rejected: '否定', inconclusive: '未定' };
 
-function text(value: unknown): string {
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  return '—';
+function printable(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try { return JSON.stringify(value, null, 2) ?? '—'; } catch { return '—'; }
 }
 
 function Meta({ label, value }: { label: string; value: unknown }) {
-  return <div className={styles.meta}><dt>{label}</dt><dd>{text(value)}</dd></div>;
+  return <div className={styles.meta}><dt>{label}</dt><dd>{printable(value)}</dd></div>;
 }
 
-export default function DetailPanel({ taskId, state, selectedId, onSelect }: Props) {
-  const heading = useRef<HTMLHeadingElement>(null);
+function ObjectLinks({ ids, state, onSelect }: { ids: string[]; state: BoardState; onSelect: Props['onSelect'] }) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return <p className={styles.muted}>暂无记录。</p>;
+  return <ul className={styles.related}>{unique.map((id) => {
+    const object = state.facts[id] ?? state.intents[id] ?? state.agents[id];
+    const label = state.facts[id]?.statement ?? state.intents[id]?.statement
+      ?? (state.agents[id] ? `Agent · ${state.agents[id].taskType}` : '当前快照中不可用');
+    return <li key={id}>{object ? <button type="button" className={styles.objectLink} onClick={() => onSelect(id)}><strong>{id}</strong><span>{label}</span></button> : <span className={styles.unavailable}>{id} · {label}</span>}</li>;
+  })}</ul>;
+}
+
+function FactDetail({ fact, state, onSelect }: { fact: BoardFact; state: BoardState; onSelect: Props['onSelect'] }) {
+  const chain = disputeChain(state, fact.id);
+  const derivedBy = Object.values(state.facts).filter((item) => item.derivedFrom.includes(fact.id)).map((item) => item.id);
+  const basedOn = Object.values(state.intents).filter((item) => item.basedOn.includes(fact.id)).map((item) => item.id);
+  const resolvedBy = Object.values(state.facts).filter((item) => item.resolves === fact.id).map((item) => item.id);
+  const claimedAcceptance = fact.satisfies.map((id) => state.acceptance[id]).filter(Boolean);
+  const judgedAcceptance = Object.values(state.acceptance).filter((item) => item.evidence_facts.includes(fact.id));
+  return <>
+    <div className={styles.titleBlock}><span className={styles.type}>{factKinds[fact.kind] ?? '事实'} · {fact.id}</span><h2 tabIndex={-1}>{fact.statement}</h2><span className={`${controls.badge} ${fact.status === 'disputed' ? controls.badgeDanger : controls.badgeInfo}`}>{fact.status === 'disputed' ? '有争议' : '已提出'}</span></div>
+    <section className={styles.section}><h3>基本信息</h3><dl className={styles.metaList}><Meta label="作者" value={fact.author} /><Meta label="版本" value={fact.version} /><Meta label="来源" value={fact.provenance === 'tool_backed' ? '工具支持' : 'Agent 自述'} /><Meta label="被依赖次数" value={fact.reliedBy} />{fact.result && <Meta label="结论" value={resultLabels[fact.result]} />}</dl></section>
+    <section className={styles.section}><h3>证据 · {fact.evidence.length}</h3>{fact.evidence.length ? <ul className={styles.evidence}>{fact.evidence.map((item, index) => <li key={index}><EvidenceViewer evidence={item} /></li>)}</ul> : <p className={styles.muted}>当前快照没有证据记录。</p>}</section>
+    <section className={styles.section}><h3>争议链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === fact.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.disputes.length ? `质疑 ${item.disputes.join('、')}` : '原始陈述'} · {item.status === 'disputed' ? '有争议' : '已提出'}</small></li>)}</ol> : <p className={styles.muted}>暂无争议。</p>}</section>
+    <section className={styles.section}><h3>事实关联</h3><p className={styles.relationLabel}>来源事实</p><ObjectLinks ids={fact.derivedFrom} state={state} onSelect={onSelect} /><p className={styles.relationLabel}>后续引用</p><ObjectLinks ids={[...derivedBy, ...basedOn]} state={state} onSelect={onSelect} />{(fact.resolves || resolvedBy.length > 0) && <><p className={styles.relationLabel}>解决的争议 / 被解决</p><ObjectLinks ids={[...(fact.resolves ? [fact.resolves] : []), ...resolvedBy]} state={state} onSelect={onSelect} /></>}</section>
+    <section className={styles.section}><h3>验收关系</h3>{!claimedAcceptance.length && !judgedAcceptance.length ? <p className={styles.muted}>未关联验收条件。</p> : <ul className={styles.acceptance}>{[...new Map([...claimedAcceptance, ...judgedAcceptance].map((item) => [item.id, item])).values()].map((item) => <li key={item.id}><strong>{item.id} · {item.desc}</strong><span className={`${controls.badge} ${item.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item.status === 'met' ? '已满足' : '未满足'}</span><small>{fact.satisfies.includes(item.id) ? '本事实声明满足' : '裁定引用本事实'}{item.reason ? ` · ${item.reason}` : ''}</small></li>)}</ul>}</section>
+  </>;
+}
+
+function IntentDetail({ intent, state, onSelect }: { intent: BoardIntent; state: BoardState; onSelect: Props['onSelect'] }) {
+  const chain = retryChain(state, intent.id);
+  return <>
+    <div className={styles.titleBlock}><span className={styles.type}>意图 · {intent.id}</span><h2 tabIndex={-1}>{intent.statement}</h2><span className={`${controls.badge} ${intent.status === 'closed' ? controls.badgeSuccess : intent.status === 'claimed' ? controls.badgeInfo : controls.badgeWarning}`}>{intentStatus[intent.status]}</span></div>
+    <section className={styles.section}><h3>计划与状态</h3><dl className={styles.metaList}><Meta label="作者" value={intent.author} /><Meta label="版本" value={intent.version} /><Meta label="预期" value={intent.expected} /><Meta label="方法" value={intent.method} /><Meta label="持有者" value={intent.holder} /><Meta label="尝试次数" value={intent.attempts} /><Meta label="结果" value={intent.result ? resultLabels[intent.result] : null} /><Meta label="关闭者" value={intent.closedBy} /></dl></section>
+    <section className={styles.section}><h3>执行记录</h3>{intent.notes?.length ? <ol className={styles.notes}>{intent.notes.map((note, index) => <li key={`${note.at}-${index}`}><small>{note.by} · <time dateTime={note.at}>{note.at}</time></small><p>{note.text}</p></li>)}</ol> : <p className={styles.muted}>暂无记录。</p>}</section>
+    <section className={styles.section}><h3>重试链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === intent.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.retryOf ? `重试 ${item.retryOf}` : '初次尝试'} · {item.result ? resultLabels[item.result] : intentStatus[item.status]}</small></li>)}</ol> : <p className={styles.muted}>暂无重试。</p>}</section>
+    <section className={styles.section}><h3>关联对象</h3><p className={styles.relationLabel}>依据事实</p><ObjectLinks ids={intent.basedOn} state={state} onSelect={onSelect} /><p className={styles.relationLabel}>相关对象</p><ObjectLinks ids={intent.relatesTo} state={state} onSelect={onSelect} /><p className={styles.relationLabel}>结论事实</p><ObjectLinks ids={intent.resultFacts} state={state} onSelect={onSelect} /></section>
+  </>;
+}
+
+function AgentDetail({ agent, state, onSelect }: { agent: BoardAgent; state: BoardState; onSelect: Props['onSelect'] }) {
+  const calls = Object.values(state.toolCalls ?? {}).filter((call) => call.agentId === agent.id).sort((a, b) => a.version - b.version);
+  return <>
+    <div className={styles.titleBlock}><span className={styles.type}>Agent · {agent.taskType}{agent.isSeed ? ' · 种子' : ''}{agent.closeMode ? ` · ${agent.closeMode}` : ''}</span><h2 tabIndex={-1}>{agent.id}</h2><span className={`${controls.badge} ${agent.status === 'failed' ? controls.badgeDanger : agent.status === 'running' ? controls.badgeInfo : ''}`}>{agentStatus[agent.status] ?? agent.status}</span></div>
+    <section className={styles.section}><h3>运行情况</h3><dl className={styles.metaList}><Meta label="模型调用" value={agent.steps} /><Meta label="上下文 token" value={agent.contextTokens} /><Meta label="最后版本" value={agent.lastSeenVersion} /><Meta label="结束原因" value={agent.endReason} /><Meta label="收尾原因" value={agent.concludeReason} /><Meta label="开始时间" value={agent.startedAt} /><Meta label="结束时间" value={agent.finishedAt} /></dl></section>
+    {agent.intentId && <section className={styles.section}><h3>当前意图</h3><ObjectLinks ids={[agent.intentId]} state={state} onSelect={onSelect} /></section>}
+    <section className={styles.section}><h3>用量与花费</h3>{Object.keys(agent.usage).length ? <dl className={styles.metaList}>{Object.entries(agent.usage).map(([key, value]) => <Meta key={key} label={key === 'cost' ? '估算花费' : key.replaceAll('_', ' ')} value={key === 'cost' ? Number(value).toFixed(6) : value} />)}</dl> : <p className={styles.muted}>暂无用量记录。</p>}</section>
+    <section className={styles.section}><h3>结束回执</h3>{agent.receipt ? <pre className={styles.receipt}>{printable(agent.receipt)}</pre> : <p className={styles.muted}>暂无回执。</p>}</section>
+    <section className={styles.section}><h3>工具调用 · {calls.length}</h3>{calls.length ? <ol className={styles.calls}>{calls.map((call) => <li key={call.id}><div className={styles.callHeading}><strong>{call.tool}</strong><span>{call.id} · v{call.version}</span></div><small><time dateTime={call.createdAt}>{call.createdAt}</time></small><details className={styles.callDetails}><summary>查看参数和结果摘要</summary><pre>{printable(call.args)}</pre><pre>{call.resultHead}</pre></details>{call.resultUri && <EvidenceViewer evidence={{ type: 'command_output', summary: `${call.tool} 的完整结果`, uri: call.resultUri, call_id: call.id }} />}</li>)}</ol> : <p className={styles.muted}>暂无工具调用。</p>}</section>
+  </>;
+}
+
+export default function DetailPanel({ taskId, state, selectedId, onSelect, historical = false }: Props) {
   const panel = useRef<HTMLElement>(null);
-  const isObject = Boolean(selectedId && (selectedId in state.facts || selectedId in state.intents));
-  const query = useQuery({
-    queryKey: ['board-object', taskId, selectedId],
-    queryFn: () => api.getObject(taskId, selectedId!),
-    enabled: isObject,
-    staleTime: 5000,
-  });
-
-  useEffect(() => { if (selectedId && !query.isLoading) heading.current?.focus(); }, [selectedId, query.isLoading]);
-
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (selectedId) body.current?.querySelector('h2')?.focus(); }, [selectedId]);
   const fact = selectedId ? state.facts[selectedId] : undefined;
   const intent = selectedId ? state.intents[selectedId] : undefined;
   const agent = selectedId ? state.agents[selectedId] : undefined;
-  const object = query.data?.object;
-  const related = query.data?.related ?? {};
-  const objectType = fact ? 'fact' : intent ? 'intent' : null;
-  const currentStatus = fact?.status ?? intent?.status ?? text(object?.status);
-
-  function close() {
-    onSelect(null);
-    requestAnimationFrame(() => panel.current?.focus());
-  }
-
-  return (
-    <aside ref={panel} tabIndex={-1} className={styles.panel} aria-label="对象详情" onKeyDown={(event) => { if (event.key === 'Escape' && selectedId) close(); }}>
-      <div className={styles.top}>
-        <span className={styles.panelLabel}>详情</span>
-        {selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}
-      </div>
-      {!selectedId ? (
-        <div className={styles.placeholder}>
-          <div className={styles.placeholderGlyph} aria-hidden="true">◇</div>
-          <h2>选择图上的节点</h2>
-          <p>查看任务目标、事实、意图或 Agent 的详细信息。</p>
-        </div>
-      ) : selectedId === 'goal' ? (
-        <div className={styles.body}>
-          <div className={styles.titleBlock}><span className={styles.type}>任务目标</span><h2 ref={heading} tabIndex={-1}>{state.task?.goal ?? '任务目标'}</h2></div>
-          {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><p className={styles.prose}>{state.task.domain_context}</p></section>}
-          <section className={styles.section}><h3>验收条件</h3><ul className={styles.acceptance}>{Object.values(state.acceptance).map((item) => <li key={item.id}><span className={`${controls.badge} ${item.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item.id} · {item.status === 'met' ? '已满足' : '未满足'}</span><p>{item.desc}</p>{item.reason && <small>裁定：{item.reason}</small>}{item.missing && <small>缺口：{item.missing}</small>}</li>)}</ul></section>
-        </div>
-      ) : agent ? (
-        <div className={styles.body}>
-          <div className={styles.titleBlock}><span className={styles.type}>Agent · {agent.taskType}</span><h2 ref={heading} tabIndex={-1}>{agent.id}</h2><span className={`${controls.badge} ${agent.status === 'failed' ? controls.badgeDanger : agent.status === 'running' ? controls.badgeInfo : ''}`}>{agentStatus[agent.status] ?? agent.status}</span></div>
-          <section className={styles.section}><h3>运行情况</h3><dl className={styles.metaList}><Meta label="模型调用" value={agent.steps} /><Meta label="上下文 token" value={agent.contextTokens} /><Meta label="最后版本" value={agent.lastSeenVersion} /><Meta label="结束原因" value={agent.endReason} /></dl></section>
-          {agent.intentId && <section className={styles.section}><h3>当前意图</h3><button type="button" className={styles.objectLink} onClick={() => onSelect(agent.intentId)}>{agent.intentId}<span aria-hidden="true"> →</span></button></section>}
-        </div>
-      ) : isObject ? (
-        query.isLoading ? <div className={styles.loading} role="status" aria-label="正在加载对象详情"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> :
-        query.isError ? <div className={styles.message} role="alert"><h2 ref={heading} tabIndex={-1}>详情加载失败</h2><p>{query.error instanceof ApiError ? query.error.message : '请稍后重试。'}</p><button type="button" className={controls.button} onClick={() => void query.refetch()}>重试</button>{query.error instanceof ApiError && query.error.status === 401 && <Link to="/login">重新登录</Link>}</div> :
-        object && <div className={styles.body}>
-          <div className={styles.titleBlock}><span className={styles.type}>{objectType === 'fact' ? factKinds[text(object.kind)] ?? '事实' : '意图'} · {selectedId}</span><h2 ref={heading} tabIndex={-1}>{text(object.statement)}</h2><span className={`${controls.badge} ${currentStatus === 'disputed' ? controls.badgeDanger : currentStatus === 'closed' ? controls.badgeSuccess : ''}`}>{objectType === 'fact' ? currentStatus === 'disputed' ? '有争议' : '已提出' : intentStatus[currentStatus] ?? currentStatus}</span></div>
-          <section className={styles.section}><h3>基本信息</h3><dl className={styles.metaList}><Meta label="作者" value={object.author} /><Meta label="版本" value={object.version} />{objectType === 'fact' ? <><Meta label="来源" value={object.provenance === 'tool_backed' ? '工具支持' : '自述'} /><Meta label="依赖次数" value={fact?.reliedBy ?? object.relied_by} /></> : <><Meta label="持有者" value={intent ? intent.holder : object.holder} /><Meta label="尝试次数" value={intent?.attempts ?? object.attempts} /><Meta label="结果" value={intent ? intent.result : object.result} /></>}</dl></section>
-          {objectType === 'intent' && <section className={styles.section}><h3>计划</h3><dl className={styles.metaList}><Meta label="预期" value={object.expected} /><Meta label="方法" value={object.method} /></dl></section>}
-          {objectType === 'fact' && Array.isArray(object.evidence) && object.evidence.length > 0 && <section className={styles.section}><h3>证据摘要</h3><ul className={styles.evidence}>{object.evidence.map((raw, index) => { const item = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}; return <li key={index}><span className={styles.evidenceType}>{text(item.type)}</span><p>{text(item.summary)}</p>{typeof item.uri === 'string' && <small>对象：{item.uri}</small>}</li>; })}</ul></section>}
-          <section className={styles.section}><h3>关联对象</h3>{Object.keys(related).length ? <ul className={styles.related}>{Object.entries(related).map(([id, item]) => <li key={id}><button type="button" className={styles.objectLink} onClick={() => onSelect(id)}><strong>{id}</strong><span>{text(item.statement)}</span></button></li>)}</ul> : <p className={styles.muted}>暂无一跳关联对象。</p>}</section>
-        </div>
-      ) : (
-        <div className={styles.message}><h2 ref={heading} tabIndex={-1}>节点已不在当前视图中</h2><p>选择其他节点继续查看。</p></div>
-      )}
-    </aside>
-  );
+  function close() { onSelect(null); requestAnimationFrame(() => panel.current?.focus()); }
+  return <aside key={taskId} ref={panel} tabIndex={-1} className={styles.panel} aria-label={historical ? '历史快照详情' : '对象详情'} onKeyDown={(event) => { if (event.key === 'Escape' && selectedId) close(); }}>
+    <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}</div>
+    {!selectedId ? <div className={styles.placeholder}><h2>选择图上的节点</h2><p>查看任务目标、事实、意图或 Agent 的详细信息。</p></div> :
+      <div ref={body} className={styles.body}>{selectedId === 'goal' ? <>
+        <div className={styles.titleBlock}><span className={styles.type}>任务目标</span><h2 tabIndex={-1}>{state.task?.goal ?? '任务目标'}</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div>
+        <section className={styles.section}><h3>任务状态</h3><dl className={styles.metaList}><Meta label="结束原因" value={state.task?.fail_reason ?? state.task?.closingReason} /><Meta label="开始时间" value={state.task?.startedAt} /><Meta label="结束时间" value={state.task?.finishedAt} /><Meta label="版本" value={state.task?.version} /></dl></section>
+        {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><p className={styles.prose}>{state.task.domain_context}</p></section>}
+        <section className={styles.section}><h3>验收条件</h3><ul className={styles.acceptance}>{(state.task?.acceptance ?? []).map(({ id, desc }) => { const item = state.acceptance[id]; return <li key={id}><strong>{id} · {desc}</strong><span className={`${controls.badge} ${item?.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item?.status === 'met' ? '已满足' : '未满足'}</span>{item?.reason && <small>裁定：{item.reason}</small>}{item?.missing && <small>缺口：{item.missing}</small>}{item?.evidence_facts.length ? <ObjectLinks ids={item.evidence_facts} state={state} onSelect={onSelect} /> : null}</li>; })}</ul></section>
+      </> : fact ? <FactDetail fact={fact} state={state} onSelect={onSelect} /> : intent ? <IntentDetail intent={intent} state={state} onSelect={onSelect} /> : agent ? <AgentDetail agent={agent} state={state} onSelect={onSelect} /> : <div className={styles.message}><h2 tabIndex={-1}>节点已不在当前视图中</h2><p>选择其他节点继续查看。</p></div>}</div>}
+  </aside>;
 }

@@ -84,6 +84,16 @@ eval-verify:
 
 .PHONY: web-install web-dev web-build web-check web-types
 
+PLAYWRIGHT_DOWNLOAD_HOST ?= https://registry.npmmirror.com/-/binary/playwright
+PLAYWRIGHT_BROWSERS_PATH ?= $(CURDIR)/.data/playwright
+.PHONY: web-e2e web-e2e-install
+
+web-e2e-install:
+	PLAYWRIGHT_DOWNLOAD_HOST=$(PLAYWRIGHT_DOWNLOAD_HOST) PLAYWRIGHT_BROWSERS_PATH=$(PLAYWRIGHT_BROWSERS_PATH) pnpm --dir web exec playwright install --only-shell chromium
+
+web-e2e: web-e2e-install
+	PLAYWRIGHT_BROWSERS_PATH=$(PLAYWRIGHT_BROWSERS_PATH) pnpm --dir web e2e
+
 web-install:
 	pnpm --dir web install --frozen-lockfile
 

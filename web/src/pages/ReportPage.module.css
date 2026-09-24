@@ -1,0 +1,21 @@
+.page { max-width: 1120px; margin: 0 auto; padding: 30px 32px 70px; }
+.header { border-bottom: 1px solid var(--color-line); padding-bottom: 22px; }
+.header > a { color: var(--color-muted); font-size: 13px; text-decoration: none; }
+.title { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-top: 18px; }
+.title h1 { font-size: 25px; margin: 0 0 10px; }
+.title p { margin: 0; font-size: 14px; line-height: 1.7; }
+.actions { display: flex; flex-wrap: wrap; flex: none; gap: 8px; }
+.meta { color: var(--color-muted); font-size: 12px; margin: 16px 0 0; }
+.markdown { max-width: 78ch; margin: 30px auto 0; font-size: 14px; line-height: 1.8; color: var(--color-ink); overflow-wrap: anywhere; }
+.markdown h1 { font-size: 23px; line-height: 1.45; margin: 28px 0 20px; }
+.markdown h2 { font-size: 19px; margin: 30px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--color-line); }
+.markdown h3 { font-size: 16px; margin: 24px 0 10px; }
+.markdown a { color: var(--color-primary-hover); text-underline-offset: 3px; }
+.markdown pre { overflow: auto; padding: 14px; border-radius: var(--radius-sm); background: var(--color-surface); white-space: pre-wrap; }
+.markdown code { font-size: .9em; background: var(--color-surface); padding: 1px 4px; border-radius: 3px; }
+.markdown pre code { padding: 0; }
+.markdown blockquote { margin: 18px 0; padding: 10px 16px; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-sm); }
+.markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
+.markdown th, .markdown td { padding: 8px 12px; border: 1px solid var(--color-line); text-align: left; }
+.message { padding: 30px 0; color: var(--color-muted); }
+@media(max-width: 650px) { .page { padding: 22px 16px 40px; } .title { flex-direction: column; gap: 14px; } .title h1 { font-size: 22px; } .markdown { font-size: 13px; } }

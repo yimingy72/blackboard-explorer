@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskCreateInput } from '../api/client';
+import { readDefaultProfile } from '../profiles/preferences';
 import controls from '../styles/controls.module.css';
 import styles from './NewTaskPage.module.css';
 
@@ -11,6 +12,7 @@ export default function NewTaskPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const nextKey = useRef(2);
+  const browserDefault = useRef(readDefaultProfile());
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
   const [acceptance, setAcceptance] = useState<AcceptanceDraft[]>([{ key: 1, desc: '' }]);
@@ -28,10 +30,16 @@ export default function NewTaskPage() {
   const unauthorized = (profiles.error instanceof ApiError && profiles.error.status === 401) || (versions.error instanceof ApiError && versions.error.status === 401);
 
   useEffect(() => {
-    if (!profileName && profiles.data?.length) {
-      setProfileName(profiles.data.some((item) => item.name === 'default') ? 'default' : profiles.data[0].name);
-    }
+    if (!profiles.data?.length || profiles.data.some((item) => item.name === profileName)) return;
+    const preferred = profiles.data.find((item) => item.name === browserDefault.current?.name);
+    setProfileName(preferred?.name ?? profiles.data.find((item) => item.name === 'default')?.name ?? profiles.data[0].name);
+    setProfileVersion(preferred ? String(browserDefault.current?.version ?? '') : '');
   }, [profileName, profiles.data]);
+  useEffect(() => {
+    if (versions.data && profileVersion && !versions.data.some((item) => item.version === Number(profileVersion))) {
+      setProfileVersion('');
+    }
+  }, [profileVersion, versions.data]);
   useEffect(() => {
     if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname } });
   }, [unauthorized, navigate, location.pathname]);
@@ -135,7 +143,7 @@ export default function NewTaskPage() {
             </div>
             {(profiles.isError || versions.isError) && !unauthorized && <p className={controls.error} role="alert">配置加载失败。<button type="button" className={styles.textButton} onClick={() => void (profiles.isError ? profiles.refetch() : versions.refetch())}>重试</button></p>}
             {!profiles.isLoading && profiles.data?.length === 0 && <p className={controls.error} role="status">当前没有可用的 Agent 配置，暂时无法创建任务。</p>}
-            <div className={controls.field}><label className={controls.label} htmlFor="allowlist">允许访问的域名</label><textarea id="allowlist" className={controls.textarea} rows={2} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" disabled={pending} /><span className={controls.hint}>可选。留空时不添加外网白名单。</span></div>
+            <div className={controls.field}><label className={controls.label} htmlFor="allowlist">任务所需域名（记录）</label><textarea id="allowlist" className={controls.textarea} rows={2} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" disabled={pending} /><span className={controls.hint}>可选。v1 实际出网策略由部署级 EGRESS_ALLOWLIST 决定；这里记录需求，不会动态改变策略。</span></div>
           </div>
         </section>
 

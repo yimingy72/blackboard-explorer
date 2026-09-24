@@ -16,6 +16,7 @@ export const emptyBoard = (): BoardState => ({
   intents: {},
   agents: {},
   acceptance: {},
+  toolCalls: {},
 });
 
 export function orderedEvents(events: readonly BoardEvent[]): BoardEvent[] {
@@ -71,6 +72,10 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           workspace_uri: null,
           fail_reason: null,
           version: event.version,
+          params: (p.params ?? {}) as Record<string, unknown>,
+          closingReason: null,
+          startedAt: null,
+          finishedAt: null,
         };
         for (const item of acceptance) {
           const saved = initial[item.id];
@@ -95,6 +100,9 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         if (state.task) {
           state.task.status = event.type.split('.')[1] as BoardTask['status'];
           if (event.type === 'task.failed') state.task.fail_reason = nullableText(p.reason);
+          if (event.type === 'task.running') state.task.startedAt = event.created_at;
+          if (event.type === 'task.closing' || event.type === 'task.stopped') state.task.closingReason = nullableText(p.reason);
+          if (['task.finished', 'task.failed', 'task.stopped'].includes(event.type)) state.task.finishedAt = event.created_at;
         }
         break;
       case 'task.report':
@@ -159,6 +167,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           closedBy: null,
           resultFacts: [],
           attempts: 0,
+          notes: [],
         };
         if (claimed && state.agents[author]) state.agents[author].intentId = id;
         break;
@@ -181,6 +190,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           intent.status = 'open';
           intent.holder = null;
           if (p.counted === true) intent.attempts += 1;
+          intent.notes = [...(intent.notes ?? []), { by: holder, at: event.created_at, text: text(p.note) }];
         }
         if (state.agents[holder]) state.agents[holder].intentId = null;
         break;
@@ -216,6 +226,10 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           lastSeenVersion: 0,
           graceCallsLeft: null,
           endReason: null,
+          receipt: null,
+          concludeReason: null,
+          startedAt: event.created_at,
+          finishedAt: null,
         };
         state.agents[id] = agent;
         break;
@@ -239,7 +253,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
       }
       case 'agent.conclude_requested': {
         const agent = state.agents[text(p.agent_id)];
-        if (agent) agent.status = 'concluding';
+        if (agent) { agent.status = 'concluding'; agent.concludeReason = nullableText(p.reason); }
         break;
       }
       case 'agent.finished': {
@@ -248,7 +262,20 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           agent.status = p.end_reason === 'runtime_error' ? 'failed' : 'finished';
           agent.endReason = nullableText(p.end_reason);
           agent.intentId = null;
+          agent.receipt = p.receipt ?? null;
+          agent.finishedAt = event.created_at;
         }
+        break;
+      }
+      case 'tool_call.recorded': {
+        const id = text(p.id);
+        state.toolCalls ??= {};
+        state.toolCalls[id] = {
+          id, agentId: text(p.agent_id), tool: text(p.tool),
+          args: (p.args ?? {}) as Record<string, unknown>,
+          resultHead: text(p.result_head), resultUri: nullableText(p.result_uri),
+          createdAt: event.created_at, version: event.version,
+        };
         break;
       }
       case 'acceptance.judged': {

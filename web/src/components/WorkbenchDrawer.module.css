@@ -1,0 +1,47 @@
+.drawer { border-top: 1px solid var(--color-line); background: var(--color-bg); }
+.tabs { display: flex; gap: 4px; align-items: center; min-width: 0; padding: 0 16px; border-bottom: 1px solid var(--color-line); }
+.tabList { display: flex; flex: 1; min-width: 0; overflow-x: auto; }
+.tabs button { flex: 0 0 auto; padding: 12px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-muted); font-size: 13px; }
+.tabs button[aria-selected=true] { color: var(--color-primary-hover); border-bottom-color: var(--color-primary); font-weight: 600; }
+.tabs button:hover { color: var(--color-ink); background: var(--color-surface); }
+.tabs .toggle { margin-left: auto; }
+.content { max-height: 420px; overflow: auto; padding: 18px 24px; font-size: 13px; }
+.content[hidden] { display: none; }
+.content button { color: var(--color-primary-hover); background: transparent; border: 1px solid var(--color-line); border-radius: var(--radius-sm); padding: 4px 8px; }
+.content button:disabled { color: var(--color-muted); opacity: .7; }
+.content button:hover:not(:disabled) { background: var(--color-primary-soft); }
+.content pre { max-height: 280px; overflow: auto; background: var(--color-surface); padding: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tableScroll { width: 100%; overflow-x: auto; }
+.tableScroll table { width: 100%; min-width: 800px; border-collapse: collapse; text-align: left; }
+.tableScroll th { color: var(--color-muted); font-weight: 500; }
+.tableScroll th, .tableScroll td { padding: 10px 12px; border-bottom: 1px solid var(--color-line); vertical-align: top; }
+.tableScroll small { display: block; color: var(--color-muted); margin-top: 4px; }
+.empty, .muted { color: var(--color-muted); line-height: 1.7; }
+.inlineField { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; }
+.inlineField select { border: 1px solid var(--color-line-strong); background: var(--color-bg); padding: 5px 8px; border-radius: 5px; }
+.events { list-style: none; padding: 0; margin: 0; }
+.events li { border-bottom: 1px solid var(--color-line); }
+.events summary { cursor: pointer; padding: 10px 0; }
+.events summary > * { margin-right: 16px; }
+.events time, .version { color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.previewNotice { padding: 8px 10px; border-left: 3px solid var(--color-warning); background: var(--color-warning-soft); color: var(--color-ink); line-height: 1.5; }
+.eventActions, .factLinks { display: flex; flex-wrap: wrap; gap: 8px; }
+.judgments { display: grid; gap: 22px; }
+.judgments article { border-bottom: 1px solid var(--color-line); padding-bottom: 18px; }
+.judgments header { display: flex; align-items: center; gap: 12px; }
+.judgments h3 { font-size: 13px; margin: 16px 0 6px; }
+.judgments p { max-width: 75ch; line-height: 1.7; margin: 6px 0; white-space: pre-wrap; }
+.timeline { display: grid; gap: 12px; max-width: 800px; margin: 0 auto; }
+.timeline input { width: 100%; accent-color: var(--color-primary); }
+.timeline p { margin: 0; color: var(--color-muted); }
+.timeline button { justify-self: start; }
+.workspaceFiles { display: grid; grid-template-columns: minmax(180px, 30%) minmax(0, 1fr); gap: 22px; }
+.fileTree { max-height: 330px; overflow: auto; border-right: 1px solid var(--color-line); padding-right: 12px; }
+.tree { list-style: none; padding: 0 0 0 12px; margin: 0; }
+.tree summary { cursor: pointer; padding: 5px 0; overflow-wrap: anywhere; }
+.tree button { text-align: left; overflow-wrap: anywhere; margin: 3px 0; }
+.tree button[aria-pressed=true] { background: var(--color-primary-soft); border-color: var(--color-primary); }
+.treeLink { display: inline-block; padding: 5px 8px; color: var(--color-muted); overflow-wrap: anywhere; }
+.filePreview { min-width: 0; }
+.filePreview h3 { font-size: 13px; margin-top: 0; overflow-wrap: anywhere; }
+@media(max-width: 700px) { .content { padding: 16px; } .tabs { padding: 0 6px; } .tabs button { padding: 10px; } .workspaceFiles { grid-template-columns: 1fr; } .fileTree { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--color-line); } }

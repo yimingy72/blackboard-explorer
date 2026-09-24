@@ -21,5 +21,6 @@ export function formatDate(value: string): string {
 
 export function formatCost(value: unknown): string {
   const amount = Number(value ?? 0);
+  if (amount > 0 && amount < 0.001) return '<0.001';
   return Number.isFinite(amount) ? amount.toFixed(amount < 1 ? 3 : 2) : '—';
 }

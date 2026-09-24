@@ -18,3 +18,5 @@ data/
 .data/
 .uv-cache/
 eval/targets/dist/
+web/test-results/
+web/playwright-report/

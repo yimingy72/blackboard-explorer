@@ -8,6 +8,8 @@ import controls from './styles/controls.module.css';
 import styles from './styles/App.module.css';
 
 const TaskWorkbenchPage = lazy(() => import('./pages/TaskWorkbenchPage'));
+const ProfilesPage = lazy(() => import('./pages/ProfilesPage'));
+const ReportPage = lazy(() => import('./pages/ReportPage'));
 
 function AppShell() {
   const navigate = useNavigate();
@@ -33,6 +35,7 @@ function AppShell() {
           </Link>
           <nav className={styles.nav} aria-label="主导航">
             <NavLink to="/tasks" end className={({ isActive }) => `${styles.navLink} ${isActive ? styles.navActive : ''}`}>任务</NavLink>
+            <NavLink to="/profiles" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.navActive : ''}`}>Agent 配置</NavLink>
           </nav>
           <div className={styles.actions}>
             <Link to="/tasks/new" className={`${controls.button} ${controls.primary}`}>新建任务</Link>
@@ -65,6 +68,8 @@ export default function App() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/tasks/new" element={<NewTaskPage />} />
         <Route path="/tasks/:taskId" element={<Suspense fallback={<div className={styles.routeLoading} role="status">正在打开工作台…</div>}><TaskWorkbenchPage /></Suspense>} />
+        <Route path="/tasks/:taskId/report" element={<Suspense fallback={<div className={styles.routeLoading} role="status">正在读取报告…</div>}><ReportPage /></Suspense>} />
+        <Route path="/profiles" element={<Suspense fallback={<div className={styles.routeLoading} role="status">正在读取配置…</div>}><ProfilesPage /></Suspense>} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

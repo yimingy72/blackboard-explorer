@@ -1,41 +1,45 @@
 .panel { min-width: 0; height: 100%; overflow-y: auto; border-left: 1px solid var(--color-line); background: var(--color-bg); }
-.top { height: 49px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--color-line); }
+.top { position: sticky; top: 0; z-index: 1; height: 49px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--color-line); background: var(--color-bg); }
 .panelLabel { color: var(--color-muted); font-size: 0.78rem; font-weight: 650; }
 .close { min-height: 30px; width: 30px; padding: 0; font-size: 1.35rem; line-height: 1; }
 .placeholder { display: grid; justify-items: center; padding: 18vh 24px 24px; text-align: center; }
-.placeholderGlyph { margin-bottom: 15px; color: var(--color-primary); font-size: 2rem; }
 .placeholder h2 { margin: 0 0 8px; font-size: 1rem; }
 .placeholder p { max-width: 26ch; margin: 0; color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
-.body { padding: 22px 21px 42px; }
+.body { min-width: 0; padding: 22px 21px 42px; }
 .titleBlock h2 { margin: 8px 0 13px; color: var(--color-ink); font-size: 1.05rem; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; text-wrap: pretty; }
 .titleBlock h2:focus { outline: none; }
 .type { color: var(--color-muted); font-size: 0.75rem; font-weight: 650; }
-.section { margin-top: 28px; padding-top: 21px; border-top: 1px solid var(--color-line); }
+.section { min-width: 0; margin-top: 28px; padding-top: 21px; border-top: 1px solid var(--color-line); }
 .section h3 { margin: 0 0 14px; font-size: 0.82rem; font-weight: 700; }
 .prose { margin: 0; font-size: 0.84rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .metaList { display: grid; gap: 10px; margin: 0; }
-.meta { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 12px; font-size: 0.79rem; line-height: 1.5; }
+.meta { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 12px; font-size: 0.79rem; line-height: 1.5; }
 .meta dt { color: var(--color-muted); }
-.meta dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
-.acceptance, .evidence, .related { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
-.related li { min-width: 0; }
-.acceptance li, .evidence li { padding: 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); }
-.acceptance p, .evidence p { margin: 7px 0 0; font-size: 0.8rem; line-height: 1.6; overflow-wrap: anywhere; }
-.acceptance small, .evidence small { display: block; margin-top: 6px; color: var(--color-muted); font-size: 0.73rem; line-height: 1.5; overflow-wrap: anywhere; }
-.evidenceType { color: var(--color-muted); font-size: 0.72rem; font-weight: 650; }
+.meta dd { margin: 0; color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.acceptance, .evidence, .related, .calls { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.acceptance li, .calls li { min-width: 0; padding: 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); }
+.acceptance strong { display: block; margin-bottom: 8px; font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.acceptance small, .chain small, .notes small, .calls small { display: block; margin-top: 6px; color: var(--color-muted); font-size: 0.73rem; line-height: 1.5; overflow-wrap: anywhere; }
+.related li, .evidence li { min-width: 0; }
 .objectLink { display: inline-flex; flex-direction: column; align-items: start; gap: 4px; width: 100%; min-width: 0; max-width: 100%; border: 0; padding: 4px 0; background: none; color: var(--color-primary); text-align: left; font-size: 0.81rem; cursor: pointer; }
 .objectLink:hover { text-decoration: underline; text-underline-offset: 3px; }
 .objectLink strong { max-width: 100%; overflow-wrap: anywhere; }
 .objectLink span { display: block; width: 100%; min-width: 0; color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.muted { color: var(--color-muted); font-size: 0.8rem; }
-.loading { display: grid; gap: 12px; padding: 24px 20px; }
-.loading span { height: 22px; }
-.loading span:nth-child(2) { height: 80px; }
-.message { padding: 30px 20px; }
+.unavailable { display: block; padding: 4px 0; color: var(--color-muted); font-size: 0.79rem; overflow-wrap: anywhere; }
+.muted { margin: 0; color: var(--color-muted); font-size: 0.8rem; line-height: 1.6; }
+.relationLabel { margin: 14px 0 7px; color: var(--color-muted); font-size: 0.73rem; font-weight: 700; }
+.chain, .notes { display: grid; gap: 10px; margin: 0; padding-left: 22px; }
+.chain li, .notes li { min-width: 0; padding-left: 4px; font-size: 0.8rem; }
+.chain li::marker, .notes li::marker { color: var(--color-muted); }
+.notes p { margin: 6px 0 0; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.receipt, .callDetails pre { margin: 0; max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-ink); font-size: 0.73rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.callHeading { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: baseline; font-size: 0.8rem; overflow-wrap: anywhere; }
+.callHeading span { color: var(--color-muted); font-size: 0.73rem; }
+.callDetails { margin: 10px 0; font-size: 0.78rem; }
+.callDetails summary { color: var(--color-primary); cursor: pointer; }
+.callDetails pre { margin-top: 8px; }
+.message { padding: 12px 0; }
 .message h2 { margin: 0 0 9px; font-size: 1rem; }
 .message p { color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
-
-@media (max-width: 900px) {
-  .panel { border-left: 0; border-top: 1px solid var(--color-line); }
-  .placeholder { padding: 30px 20px; }
-}
+@media (max-width: 900px) { .panel { border-left: 0; border-top: 1px solid var(--color-line); } .placeholder { padding: 30px 20px; } }
+@media (max-width: 480px) { .body { padding: 18px 16px 32px; } .meta { grid-template-columns: 82px minmax(0, 1fr); gap: 8px; } }

@@ -1,0 +1,79 @@
+.page { max-width: 1560px; margin: 0 auto; padding: 38px 36px 70px; }
+.pageHeader { margin-bottom: 26px; }
+.pageHeader h1 { margin: 0; font-size: 1.55rem; line-height: 1.25; letter-spacing: -0.025em; }
+.pageHeader p { margin: 8px 0 0; color: var(--color-muted); font-size: 0.875rem; line-height: 1.6; }
+.errorBanner, .noticeBanner { margin: 0 0 16px; padding: 12px 14px; border-radius: var(--radius-sm); font-size: 0.84rem; line-height: 1.5; }
+.errorBanner { background: var(--color-danger-soft); color: var(--color-danger); }
+.noticeBanner { background: var(--color-success-soft); color: var(--color-success); }
+.errorBanner button { margin-left: 8px; padding: 0; border: 0; background: none; color: inherit; font-weight: 700; text-decoration: underline; }
+
+.layout { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(170px, 0.75fr) minmax(0, 3.5fr); min-height: min(680px, calc(100vh - 185px)); border: 1px solid var(--color-line); border-radius: var(--radius-md); overflow: hidden; }
+.names, .versions, .content { min-width: 0; }
+.names, .versions { display: flex; flex-direction: column; border-right: 1px solid var(--color-line); background: var(--color-bg); }
+.columnHeading { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 63px; padding: 16px 18px; border-bottom: 1px solid var(--color-line); }
+.columnHeading h2 { margin: 0; font-size: 0.83rem; }
+.columnHeading span { color: var(--color-subtle); font-size: 0.76rem; font-variant-numeric: tabular-nums; }
+.list { flex: 1; margin: 0; padding: 7px; list-style: none; }
+.list li { min-width: 0; }
+.listButton { display: grid; width: 100%; min-width: 0; gap: 4px; padding: 11px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-ink); text-align: left; line-height: 1.4; }
+.listButton:hover { background: var(--color-surface); }
+.listButton.selected { border-color: oklch(0.84 0.06 36); background: var(--color-primary-soft); }
+.listButton strong, .listButton span, .listButton small { min-width: 0; overflow-wrap: anywhere; }
+.listButton strong { font-size: 0.87rem; }
+.listButton span { color: var(--color-muted); font-size: 0.76rem; }
+.listButton small { color: var(--color-primary); font-size: 0.73rem; }
+.emptyColumn { margin: 0; padding: 20px 18px; color: var(--color-muted); font-size: 0.83rem; line-height: 1.6; }
+.newProfile { margin: 12px; }
+.skeletonList { display: grid; gap: 10px; padding: 16px; }
+.skeletonList span { height: 58px; }
+
+.content { background: var(--color-bg); }
+.contentHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; min-height: 87px; padding: 20px 24px 16px; border-bottom: 1px solid var(--color-line); }
+.contentHeader h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.contentHeader p { margin: 5px 0 0; color: var(--color-muted); font-size: 0.79rem; line-height: 1.5; }
+.contentLoading { display: grid; gap: 12px; padding: 24px; }
+.contentLoading span { height: 24px; }
+.contentLoading span:last-child { height: 280px; }
+.emptyDetail { padding: 30px 24px; color: var(--color-muted); font-size: 0.86rem; line-height: 1.6; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--color-line); }
+.tabs, .actions, .editorActions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tab, .tabActive { min-height: 35px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-muted); font-size: 0.82rem; font-weight: 650; }
+.tab:hover { background: var(--color-surface); color: var(--color-ink); }
+.tabActive { background: var(--color-primary-soft); color: var(--color-primary); }
+.tab:disabled { opacity: 0.5; }
+.editor { display: grid; gap: 12px; padding: 24px; }
+.editor p { margin: 0; }
+.yamlEditor { min-height: 430px; padding: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; line-height: 1.55; tab-size: 2; white-space: pre; }
+.editorActions { justify-content: flex-end; }
+.yamlView { min-height: 430px; margin: 0; padding: 22px 24px; overflow: auto; color: var(--color-ink); background: var(--color-bg); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.81rem; line-height: 1.6; tab-size: 2; }
+.compare { min-width: 0; }
+.compareControls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 17px 24px; }
+.compareControls select { width: auto; min-width: 90px; }
+.compareControls span { color: var(--color-muted); font-size: 0.8rem; }
+.diff { max-height: 660px; overflow: auto; border-top: 1px solid var(--color-line); background: var(--color-bg); }
+.diffLine { display: flex; min-width: max-content; padding: 0 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.6; white-space: pre; }
+.diffLine > span { flex: none; width: 22px; user-select: none; }
+.diffLine code { font: inherit; }
+.diffLine[data-kind='added'] { background: var(--color-success-soft); color: var(--color-success); }
+.diffLine[data-kind='removed'] { background: var(--color-danger-soft); color: var(--color-danger); }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: minmax(150px, 0.9fr) minmax(150px, 0.8fr) minmax(0, 2.5fr); }
+  .contentHeader, .toolbar, .editor, .compareControls { padding-left: 18px; padding-right: 18px; }
+}
+@media (max-width: 760px) {
+  .page { padding: 26px 16px 52px; }
+  .pageHeader h1 { font-size: 1.35rem; }
+  .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
+  .versions { border-right: 0; }
+  .content { grid-column: 1 / -1; border-top: 1px solid var(--color-line); }
+  .list { max-height: 240px; overflow-y: auto; }
+}
+@media (max-width: 480px) {
+  .columnHeading { padding: 12px; }
+  .list { padding: 5px; }
+  .listButton { padding: 9px; }
+  .newProfile { margin: 8px; }
+  .contentHeader, .toolbar, .editor, .compareControls { padding-left: 14px; padding-right: 14px; }
+  .yamlView { padding: 16px 14px; }
+}

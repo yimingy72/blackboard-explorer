@@ -1,4 +1,4 @@
-.page { height: calc(100dvh - 59px); min-height: 790px; display: flex; flex-direction: column; }
+.page { height: calc(100dvh - 59px); min-height: 850px; display: flex; flex-direction: column; }
 .header { flex: none; padding: 20px 30px 18px; border-bottom: 1px solid var(--color-line); background: var(--color-bg); }
 .topline { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .back { color: var(--color-muted); font-size: 0.79rem; text-decoration: none; }
@@ -30,7 +30,15 @@
 .notice, .reconnect { display: flex; align-items: center; gap: 12px; margin-top: 15px; padding: 9px 11px; border-radius: var(--radius-sm); background: var(--color-danger-soft); color: var(--color-danger); font-size: 0.78rem; }
 .reconnect { background: var(--color-warning-soft); color: var(--color-warning); }
 .notice button { border: 0; padding: 0; background: none; color: inherit; font-weight: 650; text-decoration: underline; white-space: nowrap; }
-.workspace { flex: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr) 350px; }
+.workspace { flex: 1; min-height: 330px; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr) 370px; }
+.endReason { color: var(--color-muted); font-size: 12px; line-height: 1.6; margin: 12px 0 0; }
+.history { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; padding: 10px 12px; background: var(--color-warning-soft); color: var(--color-warning); font-size: 12px; border-radius: var(--radius-sm); }
+.history button, .filters > button { border: 1px solid var(--color-line-strong); background: var(--color-bg); border-radius: var(--radius-sm); padding: 5px 8px; color: var(--color-ink); }
+.filters { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 24px; border-bottom: 1px solid var(--color-line); font-size: 12px; }
+.filters label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); }
+.filters select { max-width: 150px; border: 1px solid var(--color-line-strong); background: var(--color-bg); border-radius: 5px; padding: 4px 6px; color: var(--color-ink); }
+.checkbox input { accent-color: var(--color-primary); }
+.filterCount { margin-left: auto; color: var(--color-muted); font-variant-numeric: tabular-nums; }
 .canvasArea { min-width: 0; min-height: 0; overflow: hidden; background: var(--color-surface); }
 .canvasLoading { display: flex; align-items: flex-start; gap: 30px; padding: 18vh 10%; }
 .canvasLoading span { width: 22%; height: 95px; }

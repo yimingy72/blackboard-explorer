@@ -584,6 +584,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/workspace/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace File */
+        get: operations["workspace_file_api_tasks__task_id__workspace_file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/workspace/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace Tree */
+        get: operations["workspace_tree_api_tasks__task_id__workspace_tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1482,6 +1516,36 @@ export interface components {
             reason: string;
             /** @description 满足或未满足 */
             verdict: components["schemas"]["Verdict"];
+        };
+        /** WorkspaceEntryView */
+        WorkspaceEntryView: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "file" | "directory" | "link";
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+        };
+        /** WorkspaceFileView */
+        WorkspaceFileView: {
+            /** Binary */
+            binary: boolean;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** WorkspaceTreeView */
+        WorkspaceTreeView: {
+            /** Entries */
+            entries: components["schemas"]["WorkspaceEntryView"][];
         };
     };
     responses: never;
@@ -2694,6 +2758,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workspace_file_api_tasks__task_id__workspace_file_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workspace_tree_api_tasks__task_id__workspace_tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceTreeView"];
                 };
             };
             /** @description Validation Error */
