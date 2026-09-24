@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import json
@@ -56,6 +57,7 @@ def _remote_error(exc: RemoteError) -> str:
 
 def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
     """Bind task identity once; the model never supplies task or agent IDs."""
+    close_lock = asyncio.Lock()
 
     @tool(approval_mode="never_require")
     async def post_fact(
@@ -239,26 +241,33 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
     @tool(approval_mode="never_require")
     async def submit_close(verdicts: list[VerdictItem], report: str | None = None) -> str:
         """提交验收裁定；final 模式先持久化终结报告。"""
-        if ctx.mode not in {"judge", "final"}:
-            return "收尾模式未指定，请先由系统登记 judge 或 final 模式。"
-        try:
-            request = SubmitCloseRequest(verdicts=verdicts, report=report)
-        except ValidationError as exc:
-            return f"裁定字段不合法，请检查每项理由与依据：{exc.errors()[0]['msg']}"
-        uri: str | None = None
-        if ctx.mode == "final":
-            if not report or not report.strip():
-                return "终结模式必须提供完整报告，请填写 report。"
-            uri = f"reports/{ctx.task_id}.md"
+        async with close_lock:
+            if ctx.mode not in {"judge", "final"}:
+                return "收尾模式未指定，请先由系统登记 judge 或 final 模式。"
             try:
-                await ctx.objects.put(uri, report.encode("utf-8"), content_type="text/markdown")
-            except Exception:
-                return "报告上传失败，请稍后重试。"
-        try:
-            await ctx.board.submit_close(ctx.task_id, request, report_uri=uri)
-        except RemoteError as exc:
-            return _remote_error(exc)
-        return "终结报告与验收裁定已提交。" if ctx.mode == "final" else "验收裁定已提交。"
+                request = SubmitCloseRequest(verdicts=verdicts, report=report)
+            except ValidationError as exc:
+                return f"裁定字段不合法，请检查每项理由与依据：{exc.errors()[0]['msg']}"
+            uri: str | None = None
+            if ctx.mode == "final":
+                if not report or not report.strip():
+                    return "终结模式必须提供完整报告，请填写 report。"
+                try:
+                    current = await ctx.board.state(ctx.task_id)
+                except RemoteError as exc:
+                    return _remote_error(exc)
+                if current["task"]["status"] != "closing":
+                    return "任务已结束或不在收尾状态，不能再次写入终结报告。"
+                uri = f"reports/{ctx.task_id}.md"
+                try:
+                    await ctx.objects.put(uri, report.encode("utf-8"), content_type="text/markdown")
+                except Exception:
+                    return "报告上传失败，请稍后重试。"
+            try:
+                await ctx.board.submit_close(ctx.task_id, request, report_uri=uri)
+            except RemoteError as exc:
+                return _remote_error(exc)
+            return "终结报告与验收裁定已提交。" if ctx.mode == "final" else "验收裁定已提交。"
 
     common = [get_object, search, read_evidence]
     if ctx.task_type == "explore":

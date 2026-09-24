@@ -86,13 +86,15 @@ class AgentRunner:
                 mode=mode or run.get("close_mode"),
             )
             model = getattr(profile.models, task_type)
+            # The scheduler stops exploration at the budget deadline; this is only a hard guard.
+            run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
             if client is None:
                 owned_client = make_client(
                     model,
                     api_key=self.settings.deepseek_api_key.get_secret_value(),
                     explore_max_steps=ctx.params.explore_max_steps,
                     conclude_grace_calls=ctx.params.conclude_grace_calls,
-                    max_duration_seconds=task["budget"]["max_minutes"] * 60,
+                    max_duration_seconds=run_limit,
                 )
                 client = owned_client
             tools: list[FunctionTool | MCPStreamableHTTPTool] = list(make_board_tools(ctx))
@@ -120,7 +122,7 @@ class AgentRunner:
                     BoardSyncMiddleware(ctx),
                 ],
             ) as agent:
-                async with asyncio.timeout(task["budget"]["max_minutes"] * 60):
+                async with asyncio.timeout(run_limit):
                     response = await agent.run(
                         "开始。", session=agent.create_session(), options=model_run_options(model)
                     )

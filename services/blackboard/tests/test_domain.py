@@ -198,6 +198,29 @@ def test_created_task_can_still_register_agent() -> None:
     )
 
 
+@pytest.mark.parametrize("mode", ["judge", "final"])
+def test_only_one_active_close_agent_may_be_registered(mode: str) -> None:
+    state = board()
+    with pytest.raises(RuleViolation) as exc:
+        decide(state, "register_agent", "scheduler", {"task_type": "close", "close_mode": mode})
+    assert exc.value.code == "close_already_running"
+    assert (
+        decide(state, "register_agent", "scheduler", {"task_type": "explore"})[0]["type"]
+        == "agent.spawned"
+    )
+    assert (
+        decide(state, "register_agent", "scheduler", {"task_type": "derive"})[0]["type"]
+        == "agent.spawned"
+    )
+    state.agents["agent-3"]["status"] = "finished"
+    assert (
+        decide(state, "register_agent", "scheduler", {"task_type": "close", "close_mode": mode})[0][
+            "type"
+        ]
+        == "agent.spawned"
+    )
+
+
 def test_resolve_and_claim_release():
     state = board()
     state.intents["I1"]["status"] = "claimed"
@@ -211,6 +234,32 @@ def test_resolve_and_claim_release():
         x["type"]
         for x in decide(state, "release", "agent-1", {"intent_id": "I1", "note": "handoff"})
     ] == ["intent.released", "intent.closed"]
+
+
+@pytest.mark.parametrize(
+    "status, conclude_reason, counted",
+    [
+        ("running", None, True),
+        ("concluding", "limit", True),
+        ("concluding", "closing", False),
+    ],
+)
+def test_manual_release_counts_except_during_closing_handoff(
+    status: str, conclude_reason: str | None, counted: bool
+) -> None:
+    state = board()
+    state.intents["I1"].update(status="claimed", holder="agent-1", attempts=1)
+    state.agents["agent-1"].update(status=status, conclude_reason=conclude_reason)
+    events = decide(
+        state,
+        "release",
+        "agent-1",
+        {"intent_id": "I1", "note": "交接已完成"},
+    )
+    assert events[0]["type"] == "intent.released"
+    assert events[0]["payload"]["counted"] is counted
+    assert events[0]["payload"]["note"] == "交接已完成"
+    assert [event["type"] for event in events[1:]] == (["intent.closed"] if counted else [])
 
 
 def test_dispute_recursion_retraction_and_notification():

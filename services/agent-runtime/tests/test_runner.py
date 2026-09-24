@@ -40,7 +40,13 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
     if outcome == "setup_error":
         service.get_profile.side_effect = ValueError("bad profile")
     if outcome == "timeout":
-        service.state.return_value["task"]["budget"]["max_minutes"] = 0.001
+        real_timeout = asyncio.timeout
+
+        def short_deadline(seconds):
+            assert seconds > 60 + Params().grace_timeout * 60
+            return real_timeout(0.01)
+
+        monkeypatch.setattr("bbx_runtime.runner.asyncio.timeout", short_deadline)
 
     class FakeAgent:
         def __init__(self, **kwargs):

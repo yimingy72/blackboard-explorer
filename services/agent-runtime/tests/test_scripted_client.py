@@ -61,3 +61,15 @@ async def test_scripted_streaming_response():
         )
     ]
     assert any(content.text == "streamed" for update in updates for content in update.contents)
+
+
+async def test_expect_contains_checks_agent_instructions_as_model_input():
+    client = ScriptedChatClient(
+        [ScriptStep(text="ready", expect_contains="instruction-only-marker")]
+    )
+    response = await Agent(client=client, instructions="instruction-only-marker").run("Start")
+    assert response.text == "ready"
+    assert "instruction-only-marker" in client.received_options[0]["instructions"]
+    assert all(
+        "instruction-only-marker" not in message.text for message in client.received_messages[0]
+    )

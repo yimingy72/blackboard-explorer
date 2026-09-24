@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 from typing import Any, cast
@@ -24,8 +25,10 @@ CALL_ID = "c_ABCDEFGHIJKL"
 class MemoryObjects:
     def __init__(self) -> None:
         self.data: dict[str, bytes] = {}
+        self.put_calls = 0
 
     async def put(self, uri: str, data: bytes, **_kwargs: Any) -> None:
+        self.put_calls += 1
         self.data[uri] = data
 
     async def exists(self, uri: str) -> bool:
@@ -40,6 +43,11 @@ class Board:
         self.close_uri: str | None = None
         self.fact_error: RemoteError | None = None
         self.evidence: bytes = b"original evidence"
+        self.status = "closing"
+        self.close_calls = 0
+
+    async def state(self, _task_id: str) -> dict[str, Any]:
+        return {"task": {"status": self.status}}
 
     async def post_fact(self, _task_id: str, request: Any) -> dict[str, Any]:
         self.fact = request
@@ -69,8 +77,11 @@ class Board:
     async def submit_close(
         self, _task_id: str, request: Any, *, report_uri: str | None
     ) -> list[Any]:
+        self.close_calls += 1
         self.close = request
         self.close_uri = report_uri
+        if report_uri is not None:
+            self.status = "finished"
         return []
 
 
@@ -257,3 +268,21 @@ async def test_intent_and_close_modes() -> None:
     assert board.close_uri == f"reports/{TASK}.md"
     assert board.close_uri is not None
     assert objects.data[board.close_uri] == "# 完成".encode()
+
+
+@pytest.mark.asyncio
+async def test_parallel_final_close_cannot_overwrite_accepted_report() -> None:
+    board = Board()
+    objects = MemoryObjects()
+    item = named(context(board, objects, task_type="close", mode="final"))["submit_close"]
+    verdict = {"id": "A1", "verdict": "unmet", "reason": "尚未完成", "missing": "补证据"}
+    results = await asyncio.gather(
+        call(item, verdicts=[verdict], report="# 第一份报告"),
+        call(item, verdicts=[verdict], report="# 第二份报告"),
+    )
+    assert sum("终结报告与验收裁定已提交" in result for result in results) == 1
+    assert sum("不能再次写入终结报告" in result for result in results) == 1
+    assert board.close_calls == 1
+    assert objects.put_calls == 1
+    accepted = "# 第一份报告" if "终结报告与验收裁定已提交" in results[0] else "# 第二份报告"
+    assert objects.data[f"reports/{TASK}.md"] == accepted.encode()

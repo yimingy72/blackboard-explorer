@@ -93,7 +93,7 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         self.received_messages.append(deepcopy(list(messages)))
         self.received_options.append(deepcopy(dict(options)))
-        seen = "\n".join(
+        message_text = (
             fragment
             for message in messages
             for fragment in [
@@ -104,6 +104,10 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
                     if content.type == "function_result"
                 ),
             ]
+        )
+        instructions = options.get("instructions")
+        seen = "\n".join(
+            [instructions, *message_text] if isinstance(instructions, str) else message_text
         )
         for trigger, target in self.jump_on.items():
             if trigger in seen and trigger not in self._used_jumps:

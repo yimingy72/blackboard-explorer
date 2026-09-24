@@ -314,7 +314,11 @@ def decide(
     if command in {"claim", "claim_for"}:
         return _claim(state, data["intent_id"], data.get("agent_id", actor), actor)
     if command == "release":
-        return _release(state, data["intent_id"], actor, data["note"], True)
+        agent = _agent(state, actor)
+        counted = not (
+            agent["status"] == "concluding" and agent.get("conclude_reason") == "closing"
+        )
+        return _release(state, data["intent_id"], actor, data["note"], counted)
     if command == "system_close":
         iid = data["intent_id"]
         intent = state.intents.get(iid)
@@ -344,6 +348,11 @@ def decide(
         kind = data["task_type"]
         if kind not in {"explore", "derive", "close"}:
             fail("invalid_agent_type", "Agent 类型必须是 explore、derive 或 close。")
+        if kind == "close" and any(
+            agent["task_type"] == "close" and agent["status"] in {"running", "concluding"}
+            for agent in state.agents.values()
+        ):
+            fail("close_already_running", "已有收尾 Agent 在运行，不能重复登记。")
         if kind == "close" and data.get("close_mode") not in {"judge", "final"}:
             fail("close_mode_required", "close Agent 必须指定 judge 或 final 模式。")
         return [

@@ -34,7 +34,7 @@
 {% elif mode == "final" %}
 当前是终结模式。对全部验收项做最后一次裁定，并通过 submit_close 提交 Markdown 最终报告。
 报告依次列出：
-1. 每项验收结论与证据链（fact id → evidence uri）；
+1. 每项验收结论与证据链（fact id → 完整 evidence uri）；
 2. 被否定的 intent 及排除依据；
 3. disputed fact 及双方证据，标明未决争执链；
 4. relied_by=0 且 provenance=self_reported 的单一来源 fact；
@@ -50,6 +50,7 @@
 2. met 必须列出 proposed 状态的支撑事实 id；unmet 必须写清缺什么，让探索者能据此行动。
 3. verdicts 必须恰好覆盖全部验收项。不能把 disputed fact 当作 met 的证据。
 4. 裁定模式仅提交 verdicts；终结模式还要提交报告。不要在回执里代替工具提交结论。
+5. 报告引用必须逐字使用工具返回的完整 evidence uri（包含任务编号和文件名），不得使用 `...`、省略号或只有文件名的缩写路径。
 
 submit_close 参数示例（裁定模式）：
 {"verdicts": [{"id": "A1", "verdict": "met", "reason": "证据充分", "evidence_facts": ["F52", "F31"]}]}

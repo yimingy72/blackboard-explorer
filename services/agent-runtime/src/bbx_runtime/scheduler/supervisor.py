@@ -93,7 +93,8 @@ class TaskSupervisor:
         for aid, agent in state["agents"].items():
             if agent["status"] == "running":
                 try:
-                    await self.service.conclude(tid, aid, "failed")
+                    reason = "failed" if state["task"]["status"] == "failed" else "closing"
+                    await self.service.conclude(tid, aid, reason)
                 except RemoteError as error:
                     if error.code != "agent_inactive":
                         raise
