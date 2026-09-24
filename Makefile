@@ -1,7 +1,7 @@
 VENV = .venv/bin
 PYTHON_DIRS = packages/contracts services/blackboard services/agent-runtime services/envd
 
-.PHONY: up down clean-volumes fmt lint typecheck test check schemas
+.PHONY: up down clean-volumes fmt lint typecheck test test-integration check check-all schemas
 
 up:
 	docker compose up -d
@@ -24,9 +24,14 @@ typecheck:
 	$(VENV)/pyright
 
 test:
-	$(VENV)/pytest
+	$(VENV)/pytest -m "not integration"
+
+test-integration:
+	$(VENV)/pytest -m integration
 
 check: lint typecheck test
+
+check-all: check test-integration
 
 schemas:
 	$(VENV)/python -m bbx_contracts.schemas

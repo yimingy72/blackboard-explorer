@@ -31,5 +31,6 @@ extraPaths = ["packages/contracts/src", "services/blackboard/src", "services/age
 
 [tool.pytest.ini_options]
 testpaths = ["packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
+markers = ["integration: needs Docker (testcontainers); excluded from make check"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

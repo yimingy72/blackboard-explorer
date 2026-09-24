@@ -43,9 +43,9 @@
 
 - 本机：macOS（Intel，amd64），Docker Desktop 4 核、约 9.7GB 内存。
 - 外网访问经代理，已通过环境变量 `http_proxy` / `https_proxy` / `all_proxy` 提供；本机地址已加入 `no_proxy`。
-- uv：启动你的环境里已设置 `UV_CACHE_DIR` 指向仓库内的 `.uv-cache/`（已忽略），Python 3.12 解释器已安装在 uv 默认位置，直接 `uv sync` 即可，不要把解释器装到临时目录。
+- uv：启动你的环境里已设置 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache`（多个 Codex 共用的下载缓存）。Python 3.12 解释器已安装在 uv 默认位置，直接 `uv sync` 即可，不要把解释器装到临时目录。
 - Docker：本机配置了镜像加速源，它不提供 MinIO 官方镜像（`minio/minio`、`minio/mc` 均返回 422）。对象存储统一使用 `pgsty/minio:RELEASE.2026-04-17T00-00-00Z`（自带 `mc`）。新增任何镜像前，先确认能通过 `docker pull` 拉取。
-- 本地 `.env` 已由 Claude 生成，不要修改或读取；需要新变量时加到 `.env.example` 并在报告中说明。
+- 本地 `.env` 只存在于主工作树，不要修改或读取；你的代码与测试不能依赖 `.env`。需要新变量时加到 `.env.example` 并在报告中说明。
 - 如果沙箱阻止了某个操作，不要绕过沙箱，在报告中写明哪一步未能执行、原因、以及用户需要手动执行的命令。
 
 ## 7. Git
@@ -53,3 +53,13 @@
 - **你不执行任何写入 git 的操作**（沙箱把 `.git` 设为只读）：不要切分支、暂存、提交。分支与提交由 Claude 在审查你的成果后完成。
 - 可以使用只读的 git 命令（`git status`、`git diff`、`git log`、`git show`）。
 - 在报告中给出建议的提交划分（每个提交包含哪些文件、英文提交信息）。
+
+## 8. 并行开发
+
+- 可能有多个 Codex 同时在不同分支上开发。你在自己的 git 工作树中工作（你的当前目录），只修改任务说明列出的目录与文件。
+- 共享文件（根 `pyproject.toml`、`uv.lock`、`Makefile`、`docker-compose*.yml`、`packages/contracts`）只做必要的、尽量追加式的修改，并在报告中逐条列出，方便 Claude 合并。不要修改 `AGENTS.md` 与 `docs/design/`。
+- 测试分两类：
+  - 普通测试：不依赖 Docker、网络，由 `make check` 运行。
+  - 需要 Docker 的测试：标记 `@pytest.mark.integration`，由 `make test-integration` 运行；使用 testcontainers（随机主机端口、结束后自动清理），**不要使用 `make up` 或固定主机端口**，以免与其他 Codex 冲突。
+- 你构建的镜像、创建的容器与网络，名称加任务前缀（例如 `bbx-m2env-…`），测试结束后清理。
+
