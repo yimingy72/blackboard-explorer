@@ -18,8 +18,8 @@
 3. **中间件**（执行顺序以 M2a 的验证结论为准）：
    - `ToolLogMiddleware`（函数中间件，最外层）：工具执行后生成 `call_id`（`c_` + 12 位 base32），把工具名、参数、完整结果上传到 `toolcalls/{task}/{call_id}.txt`，调用 `record_tool_call`，在结果末尾追加 `[call_id: …]`。
    - `GraceGateMiddleware`（函数中间件）：Agent 处于 concluding 时，对非 `release / post_fact / post_intent` 的调用、或宽限次数已用尽（黑板 `grace` 接口原子扣减失败）的调用，**设置结果为拒绝说明并且不调用 call_next；不要 terminate**。
-   - `BoardSyncMiddleware`（chat 中间件，排在 `MessageInjectionMiddleware` 之前）：仅对 explore 拉取 `events?since=last_seen&for=aid`，按设计文档第 6 节渲染（点名事件全文、裁定结果全文、其余每条一行摘要、超过 `delta_max_lines` 只给计数、过滤自己产生的事件）；有 conclude 请求且尚未注入时，把 conclude 指令放在最前；用 `enqueue_messages(context.session, …)` 入队。调用完成后 `heartbeat`：steps +1、`context_tokens` 取本次输入 token、用量（缓存命中 / 未命中 / 输出 / 推理）、`last_seen_version`。derive 与 close 只做心跳与记账。
-   - 最后挂 MAF 的 `MessageInjectionMiddleware`。
+   - `BoardSyncMiddleware`（chat 中间件）：仅对 explore 拉取 `events?since=last_seen&for=aid`，按设计文档第 6 节渲染（点名事件全文、裁定结果全文、其余每条一行摘要、超过 `delta_max_lines` 只给计数、过滤自己产生的事件）；有 conclude 请求且尚未注入时，把 conclude 指令放在最前；按 M2a 实测退路把有边界的增量追加到最近工具结果的公开 Content.result；首轮没有工具结果时附到已有起始 user Content.text。每条增量只追加一次，持久进入本次工具循环的后续上下文；不操作私有历史。调用完成后 `heartbeat`：steps +1、`context_tokens` 取本次输入 token、用量（缓存命中 / 未命中 / 输出 / 推理）、`last_seen_version`。derive 与 close 只做心跳与记账。
+   - 不再挂 MessageInjectionMiddleware；MAF 1.19 的原持久追加方式不能跨轮保留增量。conclude 是否已追加由该 Agent 的中间件实例记录一次，重启后旧 run 按恢复规则结束。
 4. **启动上下文**：`OpeningContextProvider.before_run` 用 `context.extend_instructions` 注入渲染后的模板；首条用户消息为"开始。"。explore 的 L0–L2 按设计文档 5.2（种子只有 L0）；快照取黑板 `/snapshot`。
 5. **提示词模板**：把设计文档 8.1（explore，完整原文）、8.2（derive）、8.3（close）写成 `profiles/default/prompts/{explore,derive,close}.md.j2`。模板变量与实现架构 7.1 的表一致。derive 与 close 按 8.2、8.3 的要点写成完整提示词，风格与 8.1 一致（中文、先说任务、再说规则、最后说输出格式）。
 6. **回执解析**：容错（去掉代码块包裹、多余文字，取最后一个 JSON 对象），按任务类型用对应的回执模型校验；解析失败时视为 `{"accepted": true, "data": {"note": "回执格式错误"}}` 并记录原始文本。
