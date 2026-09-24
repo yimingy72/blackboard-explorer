@@ -1,0 +1,16 @@
+.page { min-height: 100dvh; background: var(--color-bg); display: grid; place-items: center; padding: 32px 20px; }
+.frame { width: min(100%, 390px); }
+.brand { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 38px; color: var(--color-ink); text-decoration: none; font-size: 1rem; font-weight: 730; }
+.formPanel { border: 1px solid var(--color-line); border-radius: var(--radius-lg); padding: 31px; background: var(--color-bg); box-shadow: var(--shadow-panel); }
+.formPanel h1 { margin: 0 0 8px; font-size: 1.5rem; line-height: 1.25; letter-spacing: -0.025em; text-wrap: balance; }
+.intro { margin: 0; color: var(--color-muted); font-size: 0.875rem; line-height: 1.6; }
+.form { display: grid; gap: 18px; margin-top: 28px; }
+.error { margin: -2px 0 0; }
+.submit { width: 100%; margin-top: 3px; min-height: 42px; }
+.footnote { margin: 18px 5px 0; color: var(--color-muted); font-size: 0.78rem; line-height: 1.6; text-align: center; }
+
+@media (max-width: 480px) {
+  .page { align-items: start; padding-top: 14vh; }
+  .brand { margin-bottom: 28px; }
+  .formPanel { padding: 25px 21px; }
+}

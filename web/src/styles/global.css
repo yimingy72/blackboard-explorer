@@ -1,0 +1,57 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: oklch(0.24 0.012 260);
+  background: oklch(1 0 0);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --color-bg: oklch(1 0 0);
+  --color-surface: oklch(0.973 0.002 260);
+  --color-surface-hover: oklch(0.953 0.003 260);
+  --color-line: oklch(0.89 0.004 260);
+  --color-line-strong: oklch(0.79 0.007 260);
+  --color-ink: oklch(0.24 0.012 260);
+  --color-muted: oklch(0.43 0.012 260);
+  --color-subtle: oklch(0.54 0.01 260);
+  --color-primary: oklch(0.54 0.17 36);
+  --color-primary-hover: oklch(0.46 0.17 36);
+  --color-primary-soft: oklch(0.96 0.021 36);
+  --color-success: oklch(0.43 0.105 155);
+  --color-success-soft: oklch(0.955 0.025 155);
+  --color-warning: oklch(0.45 0.115 75);
+  --color-warning-soft: oklch(0.965 0.035 75);
+  --color-danger: oklch(0.46 0.155 28);
+  --color-danger-soft: oklch(0.96 0.025 28);
+  --color-info: oklch(0.44 0.1 245);
+  --color-info-soft: oklch(0.96 0.02 245);
+  --shadow-panel: 0 18px 48px oklch(0.2 0.01 260 / 0.08);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --duration-fast: 160ms;
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; }
+body { margin: 0; min-width: 320px; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+a { color: inherit; }
+img, svg { display: block; }
+::selection { background: var(--color-primary-soft); }
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

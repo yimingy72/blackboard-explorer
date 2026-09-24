@@ -1,0 +1,66 @@
+.app { min-height: 100dvh; display: flex; flex-direction: column; }
+.topbar { border-bottom: 1px solid var(--color-line); background: var(--color-bg); }
+.topbarInner {
+  max-width: 1600px;
+  min-height: 58px;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-ink);
+  font-size: 0.98rem;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.brandMark { position: relative; width: 24px; height: 24px; display: block; }
+.brandMark::before, .brandMark::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  height: 1px;
+  background: var(--color-primary);
+  transform-origin: left center;
+}
+.brandMark::before { width: 18px; left: 5px; top: 7px; transform: rotate(50deg); }
+.brandMark::after { width: 16px; left: 5px; top: 18px; transform: rotate(-42deg); }
+.brandMark span { position: absolute; z-index: 1; width: 6px; height: 6px; border-radius: 50%; background: var(--color-primary); }
+.brandMark span:first-child { left: 1px; top: 4px; }
+.brandMark span:nth-child(2) { right: 0; top: 10px; }
+.brandMark span:last-child { left: 1px; bottom: 0; }
+.nav { align-self: stretch; display: flex; align-items: stretch; }
+.navLink {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--color-muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.navLink:hover { color: var(--color-ink); }
+.navActive { border-color: var(--color-primary); color: var(--color-primary); }
+.actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.topbarError { margin: 0; padding: 4px 28px 9px; color: var(--color-danger); font-size: 0.78rem; text-align: right; }
+.main { flex: 1; min-height: 0; }
+.notFound { max-width: 600px; margin: 12vh auto 0; padding: 24px; }
+.notFound h1 { font-size: 1.5rem; margin: 0 0 12px; }
+.notFound p { color: var(--color-muted); margin-bottom: 26px; }
+.routeLoading { padding: 34px 36px; color: var(--color-muted); font-size: 0.875rem; }
+
+@media (max-width: 650px) {
+  .topbarInner { min-height: 54px; padding: 0 14px; gap: 12px; }
+  .brand { font-size: 0.9rem; }
+  .nav { display: none; }
+  .actions { gap: 2px; }
+  .actions a { min-height: 34px; padding: 7px 9px; font-size: 0.77rem; }
+  .logout { min-height: 34px; padding: 7px 8px; font-size: 0.77rem; }
+}

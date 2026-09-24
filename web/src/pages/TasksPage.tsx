@@ -1,0 +1,93 @@
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { api, ApiError, type TaskView } from '../api/client';
+import controls from '../styles/controls.module.css';
+import { formatCost, formatDate, taskStatusLabel } from './format';
+import styles from './TasksPage.module.css';
+
+function statusClass(status: string) {
+  if (status === 'running') return controls.badgeInfo;
+  if (status === 'finished') return controls.badgeSuccess;
+  if (status === 'failed') return controls.badgeDanger;
+  if (status === 'closing' || status === 'provisioning') return controls.badgeWarning;
+  return '';
+}
+
+function metCount(task: TaskView): string {
+  const states = Object.values(task.acceptance_state ?? {});
+  return `${states.filter((item) => item && typeof item === 'object' && 'status' in item && item.status === 'met').length} / ${states.length}`;
+}
+
+export default function TasksPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [search, setSearch] = useState('');
+  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks });
+  const unauthorized = query.error instanceof ApiError && query.error.status === 401;
+
+  useEffect(() => {
+    if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname } });
+  }, [unauthorized, navigate, location.pathname]);
+
+  const tasks = query.data ?? [];
+  const visible = tasks.filter((task) => task.goal.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+
+  return (
+    <div className={styles.page}>
+      <div className={styles.heading}>
+        <div>
+          <h1>任务</h1>
+          <p>查看当前探索任务及其验收进度。</p>
+        </div>
+        <Link to="/tasks/new" className={`${controls.button} ${controls.primary} ${styles.newButton}`}>新建任务</Link>
+      </div>
+
+      {query.isLoading ? (
+        <div className={styles.loading} aria-label="正在加载任务" role="status">
+          <span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} />
+        </div>
+      ) : query.isError && !unauthorized ? (
+        <div className={styles.state} role="alert">
+          <h2>任务加载失败</h2>
+          <p>{query.error instanceof ApiError ? query.error.message : '暂时无法连接黑板服务。'}</p>
+          <button type="button" className={controls.button} onClick={() => void query.refetch()}>重试</button>
+        </div>
+      ) : tasks.length === 0 ? (
+        <div className={styles.state}>
+          <div className={styles.emptyGlyph} aria-hidden="true">◇</div>
+          <h2>还没有探索任务</h2>
+          <p>创建任务、设定验收条件后，事实和意图会在工作台形成关系图。</p>
+          <Link to="/tasks/new" className={`${controls.button} ${controls.primary}`}>创建第一个任务</Link>
+        </div>
+      ) : (
+        <>
+          <div className={styles.toolbar}>
+            <label htmlFor="task-search" className={styles.searchLabel}>查找任务</label>
+            <input id="task-search" className={`${controls.input} ${styles.search}`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="按目标筛选" type="search" />
+            <span className={styles.count}>显示 {visible.length} 项任务</span>
+          </div>
+          {visible.length === 0 ? (
+            <div className={styles.noMatches} role="status">没有匹配“{search}”的任务。<button type="button" onClick={() => setSearch('')}>清除筛选</button></div>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead><tr><th scope="col">目标</th><th scope="col">状态</th><th scope="col">验收满足</th><th scope="col">已用金额</th><th scope="col">创建时间</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
+                <tbody>{visible.map((task) => (
+                  <tr key={task.id}>
+                    <td className={styles.goal}><Link to={`/tasks/${task.id}`}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
+                    <td><span className={`${controls.badge} ${statusClass(task.status)}`}>{taskStatusLabel(task.status)}</span></td>
+                    <td>{metCount(task)}</td>
+                    <td>{formatCost(task.usage?.cost)}</td>
+                    <td>{formatDate(task.created_at)}</td>
+                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

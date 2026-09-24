@@ -1,0 +1,284 @@
+.canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.node {
+  width: 280px;
+  height: 144px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  box-shadow: 0 3px 14px oklch(0.2 0.01 260 / 0.07);
+  transition: border-color var(--duration-fast) ease, background-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.node:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 6px 20px oklch(0.2 0.01 260 / 0.11);
+}
+
+.selected {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.nodeButton {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.nodeButton:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.handle {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--color-bg);
+  background: var(--color-line-strong);
+  pointer-events: none;
+}
+
+.nodeTop,
+.nodeMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nodeTop {
+  margin-bottom: 10px;
+}
+
+.nodeType {
+  color: var(--color-primary-hover);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nodeId {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statement,
+.goalText {
+  display: -webkit-box;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.nodeMeta {
+  min-height: 18px;
+  margin-top: 10px;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.nodeMeta span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal {
+  width: 260px;
+  height: 176px;
+  border-color: var(--color-primary);
+}
+
+.goalText {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.acceptance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 42px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.acceptanceBadge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.met {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.unmet {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.fact .nodeType { color: var(--color-primary-hover); }
+.inference .nodeType { color: var(--color-info); }
+.structure .nodeType { color: var(--color-success); }
+
+.disputed {
+  border: 2px solid var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.disputed .nodeType,
+.disputed .nodeMeta { color: var(--color-danger); }
+
+.selfReported { border-style: dashed; }
+
+.intent { height: 164px; }
+.intentOpen { border-style: dashed; }
+.intentClaimed {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.intentClosed {
+  border-style: solid;
+  background: var(--color-surface);
+}
+.confirmed {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.rejected {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.agent {
+  display: flex;
+  width: 152px;
+  height: 68px;
+  border-radius: 34px;
+  background: var(--color-surface);
+}
+
+.agent .nodeButton {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+}
+
+.agentDot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-info);
+}
+
+.agentText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agentText strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentText small {
+  color: var(--color-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.running { animation: breathing 2.4s ease-in-out infinite; }
+.concluding {
+  border-color: var(--color-warning);
+  animation: concluding 1.2s ease-in-out infinite;
+}
+.concluding .agentDot { background: var(--color-warning); }
+
+@keyframes breathing {
+  50% { box-shadow: 0 0 0 4px var(--color-info-soft); }
+}
+
+@keyframes concluding {
+  50% { background: var(--color-warning-soft); }
+}
+
+.controls {
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px oklch(0.2 0.01 260 / 0.1);
+}
+
+.controls :global(.react-flow__controls-button) {
+  border-bottom-color: var(--color-line);
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+
+.controls :global(.react-flow__controls-button:hover) { background: var(--color-surface-hover); }
+
+.minimap {
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 12px 16px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+@media (max-width: 700px) {
+  .canvas { min-height: 420px; }
+  .minimap { width: 110px; height: 74px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node { transition: none; }
+  .running,
+  .concluding { animation: none; }
+}

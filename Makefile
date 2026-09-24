@@ -70,3 +70,20 @@ eval-targets:
 eval-verify:
 	$(VENV)/python eval/answers/order-service/verify.py
 	uv run --no-project --python 3.12 --with-requirements eval/targets/mini-shop/src-main/requirements.txt python eval/answers/mini-shop/verify/run.py
+
+.PHONY: web-install web-dev web-build web-check web-types
+
+web-install:
+	pnpm --dir web install --frozen-lockfile
+
+web-dev:
+	pnpm --dir web dev
+
+web-build:
+	pnpm --dir web build
+
+web-check:
+	pnpm --dir web check
+
+web-types:
+	pnpm --dir web types
