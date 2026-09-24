@@ -8,7 +8,7 @@
 ## 0. 一页速览
 
 - **项目**：通用的黑板式多 Agent 探索系统——给定目标（Goal）与文字验收条件，多个 DeepSeek 驱动的探索 Agent 通过共享黑板（事实 Fact、意图 Intent）协作，close Agent 裁定是否达成。
-- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`、`m2`）。
+- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`、`m2`、`m3`）。
 - **设计正本**：`docs/design/` 下三份文档（桌面上的同名文件是指向它们的符号链接）。实现以它们为准。
 - **进度**：
 
@@ -23,10 +23,11 @@
   | M2a 技术验证与 runtime 骨架 | ✅ 173 普通、12 集成、4 DeepSeek live 检查通过，已合并 |
   | M2b 单 Agent 跑通 | ✅ 206 普通、13 集成检查与真实种子交接通过，已合并；`m2` 已打 |
   | M3a 调度器、清扫与恢复 | ✅ 293 普通、18 集成检查通过，决策覆盖率100%，已合并 |
-  | M3b 裁定、收尾与完整闭环 | 🟡 开始开发，工作树 `~/bbx-wt/m3b` |
-  | M4、EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
+  | M3b 裁定、收尾与完整闭环 | ✅ 304 普通、31 集成（含13场景）、真实e2e通过；已合并，m3已打 |
+  | M4 工作台 | 🟡 开始开发，工作树 `~/bbx-wt/m4` |
+  | EVAL-2、M5 | ⬜ 未开始；EVAL-2 由用户人工完成 |
 
-- **下一步（按用户指定顺序）**：M3b → M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
+- **下一步（按用户指定顺序）**：M4 → M5。EVAL-2 由用户人工完成，开始 M5 前确认已合并。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
 - **合并后验证**：`uv sync --locked`、`make check`（M1b 最终 141 passed）、`make test-integration`（M1b 最终 11 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。M1-W 另有 10 个前端测试通过，浏览器验收完成，已打 `m1`；M2a/M2b 已合并，M2b 最终 206 普通、13 集成检查通过，真实 DeepSeek 产出 6 条工具证据事实、1 条意图并完成 conclude/release；`m2` 已打。
 
 ---
@@ -74,7 +75,7 @@ blackboard-explorer/
 
 ### 2.1 git
 
-- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签为 `m0`、`m1`、`m2`。
+- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签为 `m0`、`m1`、`m2`、`m3`。
 - M1a：设计提交 `f47808d`，实现提交 `46bc578`，合并提交 `430c5ad`。
 - M2-env：token 设计 `ff8565f`、信号能力设计 `1d5f4c0`、实现 `bca1fd9`，合并提交 `108d0c5`。合并时保留两边依赖并重建 `uv.lock`。
 - M1b：接口设计 `6371507`、profile 正文快照 `561103c`、Agent 自主判重设计 `7de008a`、实现 `87f774f`，已快进合并；原 m1b 工作树与分支已删除。
@@ -102,13 +103,14 @@ blackboard-explorer/
 - **M2a**：设计 `1d5d853` / `1256820` / `701e214`、实现 `c025955` 已合并；普通检查 173、集成 12、真实 DeepSeek 4 项通过。详细逐项结论见 `docs/tasks/M2a-report.md`；M2b 必须遵循增量持久追加与缓存字段适配。
 - **M2b**：设计 `8e13d90` / `f42bcf0` / `0e46c91`、contracts `d947e1e`、实现 `9f8c853` 已合并，m2 指向实现提交。取消清理、内部 MCP 避免外部代理、单请求/整个 Agent.run 超时均有回归验证；真实检查详情见 M2b 报告。原 m2a/m2b 工作树和分支已删除，M2b 诊断产物保留在主工作树忽略目录 `.data/checkpoints/m2b/`。
 - **M3a**：归档/恢复计数 `8b2c5f3`、调度与部署 `74f67cc` 已合并；293 普通、18 集成、37 决策/100%覆盖、11 前端测试通过。runtime/blackboard 镜像已构建；3并发、重启零attempts、PG锁排他/丢失、镜像SIGTERM检查通过。M3b需接着验证13完整场景和真实e2e，m3尚未打。原m3a工作树/分支已删除。
+- **M3b**：核心/13场景 `55703c3`、真实e2e入口 `44686c4` 已合并，m3指向后者；304普通、31集成检查通过。真实任务 `25ca10e4-8e1e-46cf-8901-82e165f0ea6c` 完成2/2验收、5事实/2意图/4Agent，报告6233字节、归档5032793字节，账本估算USD0.070260516。模型/运行器等服务已停止，保留 `bbx-e2e-f7903553` 的blackboard/postgres/minio给M4浏览器验证（http://127.0.0.1:55013，隔离测试账号e2e/local-e2e-only）；M4结束须清理。产物/Compose配置保存在主工作树 `.data/checkpoints/m3b/e2e/bbx-e2e-f7903553/`。原m3b工作树和分支已删除。
 - **当前架构**：不再部署本地 embedding，Agent 根据快照/增量同步自行判断重复；黑板保留确定性写入规则与关键词查找。M1 阶段未调用真实 DeepSeek；M2a 按用户提供的配置指引，由测试子进程加载 DeepSeek 配置完成 4 项 live 验证，未显示或修改密钥。
 
 ---
 
 ## 3. 收尾记录与后续入口
 
-> 3.1、3.2 为已完成的收尾背景；当前从 M3b 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
+> 3.1、3.2 为已完成的收尾背景；当前从 M4 开始。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
 
 ### 3.1 收尾 M2-env（工作树 `~/bbx-wt/m2env`）
 
@@ -288,6 +290,7 @@ git worktree add -b <branch> ~/bbx-wt/<name>     # 每个任务一个工作树
 ### 5.2 网络与镜像
 
 - 外网经代理 `127.0.0.1:7897`；本机地址必须放进 `no_proxy`，否则访问本地容器会走代理。
+- M3b 期间镜像源曾出现TLS证书错误，未关闭校验；已用锁文件一致的已验证依赖缓存离线更新镜像，runtime/blackboard Dockerfile现在使用 BuildKit `bbx-uv` 缓存，随后正式构建通过。
 - Docker 配置了镜像加速源（xuanyuan）。它**不提供 MinIO 官方镜像**（`minio/minio`、`minio/mc` 返回 422），对象存储统一用 `pgsty/minio:RELEASE.2026-04-17T00-00-00Z`（自带 `mc`）。已确认可拉取：`pgvector/pgvector:pg16`、`ubuntu:24.04`、`python:3.12-slim`、`alpine:3.20`、`node:22-alpine`、`testcontainers/ryuk:0.11.0`。新增镜像前先 `docker pull` 确认。
 - Docker 构建中的 `apt` / `pip` / `apk` 直连官方源很慢，用国内源（3.1 的修改）。
 
@@ -331,7 +334,7 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。M2a 已同步宿主固定目标 relay、JWT 密钥仅属于 blackboard、DeepSeek 缓存用量适配和公开 Content 持久追加退路。M2b 已补 close 回执、宽限剩余 0 的成功语义、模型请求和整体运行超时。M3a 已同步并实现归档事件/API、PG 单实例锁与探测、排队 provisioning 恢复、全局出网白名单边界、终态守护、final 重试上限、种子首次认领后使用普通上限、runtime_restart 计数保持。M3b 待核对任务时间截止与交接宽限/运行器总超时配合。尚待后续任务同步的事项：
+token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。M2a 已同步宿主固定目标 relay、JWT 密钥仅属于 blackboard、DeepSeek 缓存用量适配和公开 Content 持久追加退路。M2b 已补 close 回执、宽限剩余 0 的成功语义、模型请求和整体运行超时。M3a 已同步并实现归档事件/API、PG 单实例锁与探测、排队 provisioning 恢复、全局出网白名单边界、终态守护、final 重试上限、种子首次认领后使用普通上限、runtime_restart 计数保持。M3b 已同步并验证硬时限留出交接余量、固定报告防重复覆盖、closing主动release不计attempts与完整证据引用。M4需明确全局出网白名单边界；M5前仍需确认EVAL-2已合并。尚待后续任务同步的事项：
 
 | 事项 | 来源 | 建议写法 | 位置 |
 |---|---|---|---|
