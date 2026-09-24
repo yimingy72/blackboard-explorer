@@ -17,7 +17,7 @@
 | B.9 | 按用户新设计完成无向量提交与关键词查询；移除模型和 native 依赖、清理本次下载的 91 MB 模型缓存；旧事件的废弃 embedding 字段不影响重放。 |
 | B.10 | 快照优先保留 open/claimed 意图及依据事实，再保留近期内容；陈述截断 80 字，控制行数并显示省略数量。 |
 | B.11 | Dockerfile、迁移后启动入口、Compose blackboard 服务、image-blackboard/openapi 目标、OpenAPI 快照守护；web/dist 存在时托管 SPA。 |
-| B.12 | HTTP demo 模拟器：多个 Agent、并发认领、争议与反争议、satisfies、judge 与 final，支持可调间隔。 |
+| B.12 | HTTP demo 模拟器：多个 Agent、并发认领、争议与反争议、satisfies、judge 与 final，支持可调间隔。后续修复补齐 Agent 生命周期：每次 judge 提交后 finish；进入 closing 后向 explore 发 conclude 并 finish；final 报告提交后 finish final Agent。 |
 
 ## 接口与鉴权
 
@@ -101,6 +101,10 @@ curl -N -H "Authorization: Bearer $SERVICE_TOKEN" 'http://127.0.0.1:58000/api/ta
 
 上述模拟器不调用 DeepSeek；真实 Agent 验证属于后续 M2。完整模拟器和 SSE 行为已由本阶段自动化集成验证，不需要额外授权才能进入 M1-W。
 
+## M1b 模拟器生命周期补修
+
+M1-W 浏览器检查发现，原 demo 虽已写 `task.finished`，但 7 个 Agent 仍为 `running`，缺少 `agent.finished`，无法演示 Agent 节点退场。模拟器现按既定接口完成 3 个 judge、3 个 explore 和 1 个 final Agent：explore 在 closing 时先收到 `agent.conclude_requested`，再以正常回执结束；final 在提交报告后结束。集成测试确认任务 finished 时全部 7 个 Agent 为 finished，事件中恰有 7 条 `agent.finished`、3 条 `agent.conclude_requested`，SSE 从 `since=0` 回放逐条匹配完整有序事件流。独立复核命令 `uv sync --locked`、`make check`、`make test-integration` 全部通过，分别为普通测试 **141 passed**、集成测试 **11 passed**；没有调用真实模型。该补修只涉及模拟器、其 HTTP 集成测试和本报告；不改变服务接口或领域规则。
+
 ## 偏差与待决
 
 - 用户取消 embedding 的决定覆盖原 M1a/M1b/M2b 向量预检要求。关键词查询只帮助定位原文，不进行语义判重。dry_run 保留为确定性校验接口。
@@ -116,3 +120,5 @@ curl -N -H "Authorization: Bearer $SERVICE_TOKEN" 'http://127.0.0.1:58000/api/ta
 共享修改：根 pyproject/uv.lock（objects workspace、HTTP/存储依赖、项目索引，移除向量依赖）；Makefile（检查objects、镜像与OpenAPI目标）；Compose（blackboard）；.dockerignore（排除开发缓存）；.env.example（移除EMBED配置）；contracts/profile loader/JSON Schema（提示词正文快照）；设计与M1b/M2b任务说明、M1a历史注记及HANDOFF。
 
 已先提交设计：`6371507`（接口和生命周期）、`561103c`（profile正文快照与身份）、`7de008a`（Agent自主判重）。实现、迁移、测试、OpenAPI、文档与上述共享文件建议作为一个完整提交：`Implement M1b HTTP API and agent-owned duplicate judgment`，随后合并 main，再进入 M1-W。
+
+后续模拟器生命周期补修在独立分支提交，只包含 `simulator.py`、`test_api_integration.py` 和本报告，不修改共享配置。

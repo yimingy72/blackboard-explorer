@@ -86,6 +86,13 @@ def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
         evidence_uris.append(uri)
         return posted["id"]
 
+    def finish(agent_id: str, receipt: dict[str, Any]) -> None:
+        call(
+            "POST",
+            f"{task}/agents/{agent_id}/finish",
+            body={"receipt": receipt, "end_reason": "normal"},
+        )
+
     evidence_uris: list[str] = []
     first = post_fact(agents[0], "gateway-error", "The gateway returned 502")
     _, proposed = call(
@@ -138,6 +145,10 @@ def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
         else:
             item["missing"] = missing
         call("POST", f"{task}/close", token=close_agent["token"], body={"verdicts": [item]})
+        finish(
+            close_agent["agent_id"],
+            {"accepted": True, "data": {"note": f"Judged A1 {verdict}"}},
+        )
 
     judge("met", "The trace supports the cause")
     challenge = post_fact(loser, "counterexample", "The trace may be stale", disputes=[root_cause])
@@ -148,6 +159,30 @@ def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
     judge("met", "The counter-dispute restores the supported trace")
 
     call("POST", f"{task}/status", body={"status": "closing"})
+    for agent in agents:
+        call(
+            "POST",
+            f"{task}/agents/{agent['agent_id']}/conclude",
+            body={"reason": "closing"},
+        )
+    posted_by = {
+        agents[0]["agent_id"]: [first, intent_id, counter],
+        winner["agent_id"]: [root_cause],
+        loser["agent_id"]: [challenge],
+    }
+    for agent in agents:
+        aid = agent["agent_id"]
+        finish(
+            aid,
+            {
+                "accepted": True,
+                "data": {
+                    "intent_result": "confirmed" if aid == winner["agent_id"] else "none",
+                    "posted": posted_by[aid],
+                    "note": "Demo exploration handoff complete",
+                },
+            },
+        )
     report_uri = f"reports/{tid}.md"
     report = f"# Final report\n\nThe upstream query exhausted the pool. Evidence: {root_cause}.\n"
     call("POST", f"{task}/uploads?{urlencode({'key': report_uri})}", raw=report.encode())
@@ -171,6 +206,7 @@ def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
             "report": report,
         },
     )
+    finish(final_agent["agent_id"], {"accepted": True, "data": {"note": "Final report submitted"}})
     _, events = call("GET", f"{task}/events")
     return {
         "task_id": tid,

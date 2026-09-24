@@ -138,7 +138,10 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
             assert state["task"]["acceptance_state"]["A1"]["status"] == "met"
             assert set(state["facts"]) == set(summary["fact_ids"])
             assert state["intents"][summary["intent_id"]]["result"] == "confirmed"
+            assert state["intents"][summary["intent_id"]]["attempts"] == 0
             assert state["facts"][summary["fact_ids"][1]]["status"] == "proposed"
+            assert len(state["agents"]) == 7
+            assert all(agent["status"] == "finished" for agent in state["agents"].values())
             assert sorted(status for _, status in summary["claim_results"]) == [200, 422]
             versions = summary["event_versions"]
             assert versions == sorted(set(versions))
@@ -151,10 +154,26 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
                 "acceptance.reverted",
                 "task.report",
                 "task.finished",
+                "agent.finished",
+                "agent.conclude_requested",
             ):
                 assert required in types
             assert types.count("acceptance.judged") == 4
+            assert types.count("agent.finished") == len(state["agents"])
+            assert types.count("agent.conclude_requested") == 3
+            assert types.index("agent.conclude_requested") < types.index("task.finished")
+            assert types[-1] == "agent.finished"
             assert (await client.get(f"/api/tasks/{tid}/report")).text.startswith("# Final report")
+
+            async with client.stream(
+                "GET", f"/api/tasks/{tid}/stream", params={"since": 0}
+            ) as response:
+                assert response.status_code == 200
+                lines = response.aiter_lines()
+                for version, kind in zip(versions, types, strict=True):
+                    item = await asyncio.wait_for(next_sse(lines), 10)
+                    assert int(item["id"]) == version
+                    assert item["event"] == kind
 
             other = (
                 await client.post(
