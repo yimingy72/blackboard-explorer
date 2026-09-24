@@ -1,0 +1,2 @@
+from shop.search import router as search_router
+app.include_router(search_router)

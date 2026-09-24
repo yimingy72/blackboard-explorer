@@ -1,0 +1,65 @@
+problems:
+  - id: P1
+    category: authorization
+    file: shop/detail.py
+    function: order_detail
+    mechanism_keywords: [owner, user_id, order_id]
+    trigger: "bob uses his token to GET alice's order"
+    reproduce: "Run verify/p1.py; a 200 response contains alice's order."
+  - id: P2
+    category: concurrent_loss
+    file: shop/refunds.py
+    function: refund_order
+    mechanism_keywords: [refund, eligibility, transaction, balance]
+    trigger: "two full refund requests pass the outstanding-amount check together"
+    reproduce: "Run verify/p2.py; both requests return 200 and balance rises twice."
+  - id: P3
+    category: concurrent_loss
+    file: shop/coupons.py
+    function: place_coupon_order
+    mechanism_keywords: [used, transaction, concurrent]
+    trigger: "two orders use one claimed coupon concurrently"
+    reproduce: "Run verify/p3.py; both orders succeed with the same coupon."
+  - id: P4
+    category: input_validation
+    file: shop/refunds.py
+    function: refund_order
+    mechanism_keywords: [negative, amount, limit]
+    trigger: "partial refund amount is negative or greater than paid total"
+    reproduce: "Run verify/p4.py; negative amount decreases balance."
+  - id: P5
+    category: injection
+    file: shop/search.py
+    function: search_orders
+    mechanism_keywords: [SQL, keyword, user_id]
+    trigger: "search keyword contains an OR clause"
+    reproduce: "Run verify/p5.py; alice's search returns bob's order."
+  - id: P6
+    category: money_calculation
+    file: shop/coupons.py
+    function: place_coupon_order
+    mechanism_keywords: [stacking, negative, floor]
+    trigger: "stack two 6000-cent coupons on a 10000-cent order"
+    reproduce: "Run verify/p6.py; total is -2000 and balance rises."
+distractors:
+  - id: D1
+    category: test_only
+    file: tests/test_cases.py
+    function: example_total
+    mechanism_keywords: [eval, test, not imported]
+    trigger: "test fixture numeric expression"
+    reproduce: "See verify/d1.md."
+  - id: D2
+    category: validated_identifier
+    file: shop/orders.py
+    function: list_orders
+    mechanism_keywords: [sort, allowlist, SQL]
+    trigger: "sort query parameter"
+    reproduce: "See verify/d2.md."
+  - id: D3
+    category: safe_transaction
+    file: shop/app.py
+    function: charge
+    mechanism_keywords: [BEGIN IMMEDIATE, balance, lock]
+    trigger: "concurrent balance charges"
+    reproduce: "See verify/d3.md."

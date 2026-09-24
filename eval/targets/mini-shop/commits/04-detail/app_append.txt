@@ -1,0 +1,2 @@
+from shop.detail import router as detail_router
+app.include_router(detail_router)

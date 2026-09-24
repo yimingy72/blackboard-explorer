@@ -1,0 +1,2 @@
+from shop.coupons import router as coupons_router
+app.include_router(coupons_router)

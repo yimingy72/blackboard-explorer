@@ -1,0 +1,5 @@
+import shop.coupons
+with connect() as conn:
+    conn.execute("INSERT INTO coupons(code, discount) VALUES(?,?)", ("SAVE60A", 6000))
+    conn.execute("INSERT INTO coupons(code, discount) VALUES(?,?)", ("SAVE60B", 6000))
+print("coupon codes: SAVE60A, SAVE60B")

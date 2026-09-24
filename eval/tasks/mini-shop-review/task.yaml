@@ -1,0 +1,11 @@
+goal: "审查 mini-shop 仓库 feature/coupon-refund 分支相对 main 的改动，找出所有可能导致资金损失、越权访问或数据错误的问题"
+domain_context: |
+  代码在 http://eval-targets/mini-shop.tar.gz（包含 .git，可用 git diff main..feature/coupon-refund 查看改动）。
+  Python 3.12 + FastAPI + SQLite，依赖已预装。按 README 可在本机启动服务，scripts/seed.py 生成测试用户与数据。
+  只审查该分支引入的改动。
+acceptance:
+  - id: A1
+    desc: "对每个发现的问题，给出代码位置、触发条件和危害，并附可复现的证据（请求与响应，或脚本与运行输出）"
+  - id: A2
+    desc: "列出改动涉及的全部接口，逐一说明检查了哪些方面，没有遗漏的接口"
+budget: {max_concurrent_agents: 5, max_cost: 10, max_minutes: 60}
