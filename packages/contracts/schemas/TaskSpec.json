@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "AcceptanceItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "验收条件编号",
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "desc": {
+          "description": "文字描述的验收条件",
+          "minLength": 1,
+          "title": "Desc",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "desc"
+      ],
+      "title": "AcceptanceItem",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrent_agents": {
+          "default": 5,
+          "description": "并发探索和推导上限",
+          "minimum": 1,
+          "title": "Max Concurrent Agents",
+          "type": "integer"
+        },
+        "max_cost": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "description": "同价格表币种的金额上限",
+          "title": "Max Cost"
+        },
+        "max_minutes": {
+          "description": "时间上限，分钟",
+          "exclusiveMinimum": 0,
+          "title": "Max Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_cost",
+        "max_minutes"
+      ],
+      "title": "Budget",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "goal": {
+      "description": "任务目标",
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "domain_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "领域提示",
+      "title": "Domain Context"
+    },
+    "acceptance": {
+      "description": "文字验收条件",
+      "items": {
+        "$ref": "#/$defs/AcceptanceItem"
+      },
+      "minItems": 1,
+      "title": "Acceptance",
+      "type": "array"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget",
+      "description": "金额、时长和并发预算"
+    },
+    "params": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "string"
+          }
+        ]
+      },
+      "description": "Agent 配置参数覆盖",
+      "title": "Params",
+      "type": "object"
+    },
+    "agent_profile": {
+      "description": "Agent 配置名称",
+      "minLength": 1,
+      "title": "Agent Profile",
+      "type": "string"
+    },
+    "egress_allowlist": {
+      "description": "允许出网的域名",
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress Allowlist",
+      "type": "array"
+    }
+  },
+  "required": [
+    "goal",
+    "acceptance",
+    "budget",
+    "agent_profile"
+  ],
+  "title": "TaskSpec",
+  "type": "object"
+}

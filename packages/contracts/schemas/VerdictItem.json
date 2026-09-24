@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "Verdict": {
+      "enum": [
+        "met",
+        "unmet"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "验收条件编号",
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict",
+      "description": "满足或未满足"
+    },
+    "reason": {
+      "description": "裁定理由",
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "missing": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "未满足时的行动缺口",
+      "title": "Missing"
+    },
+    "evidence_facts": {
+      "description": "支撑事实",
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Facts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "verdict",
+    "reason"
+  ],
+  "title": "VerdictItem",
+  "type": "object"
+}

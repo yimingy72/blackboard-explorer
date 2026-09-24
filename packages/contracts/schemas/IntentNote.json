@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "by": {
+      "description": "交接者",
+      "minLength": 1,
+      "title": "By",
+      "type": "string"
+    },
+    "at": {
+      "description": "交接时间",
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+    },
+    "text": {
+      "description": "交接说明",
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "by",
+    "at",
+    "text"
+  ],
+  "title": "IntentNote",
+  "type": "object"
+}

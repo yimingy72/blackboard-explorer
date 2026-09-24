@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "验收条件编号",
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "desc": {
+      "description": "文字描述的验收条件",
+      "minLength": 1,
+      "title": "Desc",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "desc"
+  ],
+  "title": "AcceptanceItem",
+  "type": "object"
+}

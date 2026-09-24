@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/EvidenceType",
+          "description": "证据类型"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "执行环境内的原路径",
+          "title": "Path"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "持久化后的对象 key",
+          "title": "Uri"
+        },
+        "summary": {
+          "description": "证据摘要",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "产生证据的工具调用",
+          "title": "Call Id"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "证据字节数",
+          "title": "Size"
+        },
+        "auto": {
+          "default": false,
+          "description": "是否由系统自动附加",
+          "title": "Auto",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "summary"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "EvidenceType": {
+      "enum": [
+        "http",
+        "file",
+        "script",
+        "log",
+        "code_ref",
+        "text",
+        "command_output"
+      ],
+      "title": "EvidenceType",
+      "type": "string"
+    },
+    "FactKind": {
+      "enum": [
+        "observation",
+        "inference",
+        "structure"
+      ],
+      "title": "FactKind",
+      "type": "string"
+    },
+    "IntentResult": {
+      "enum": [
+        "confirmed",
+        "rejected",
+        "inconclusive"
+      ],
+      "title": "IntentResult",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/FactKind"
+    },
+    "statement": {
+      "minLength": 1,
+      "title": "Statement",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "derived_from": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Derived From",
+      "type": "array"
+    },
+    "disputes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Disputes",
+      "type": "array"
+    },
+    "resolves": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolves"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntentResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "satisfies": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Satisfies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "statement",
+    "evidence"
+  ],
+  "title": "PostFactRequest",
+  "type": "object"
+}

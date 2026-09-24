@@ -1,0 +1,310 @@
+{
+  "$defs": {
+    "AgentStatus": {
+      "enum": [
+        "running",
+        "concluding",
+        "finished",
+        "failed"
+      ],
+      "title": "AgentStatus",
+      "type": "string"
+    },
+    "AgentTaskType": {
+      "enum": [
+        "explore",
+        "derive",
+        "close"
+      ],
+      "title": "AgentTaskType",
+      "type": "string"
+    },
+    "CloseMode": {
+      "enum": [
+        "judge",
+        "final"
+      ],
+      "title": "CloseMode",
+      "type": "string"
+    },
+    "EndReason": {
+      "enum": [
+        "normal",
+        "refused",
+        "limit",
+        "grace_timeout",
+        "heartbeat",
+        "runtime_error",
+        "runtime_restart"
+      ],
+      "title": "EndReason",
+      "type": "string"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "description": "所属任务",
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "id": {
+      "description": "Agent 编号",
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "task_type": {
+      "$ref": "#/$defs/AgentTaskType",
+      "description": "探索、推导或收尾"
+    },
+    "is_seed": {
+      "default": false,
+      "description": "是否种子探索",
+      "title": "Is Seed",
+      "type": "boolean"
+    },
+    "close_mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CloseMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "收尾的裁定或终结模式"
+    },
+    "judge_from_version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "裁定开始的版本",
+      "title": "Judge From Version"
+    },
+    "intent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "持有的意图",
+      "title": "Intent Id"
+    },
+    "status": {
+      "$ref": "#/$defs/AgentStatus",
+      "description": "运行状态"
+    },
+    "end_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EndReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "结束原因"
+    },
+    "steps": {
+      "default": 0,
+      "description": "模型调用次数",
+      "minimum": 0,
+      "title": "Steps",
+      "type": "integer"
+    },
+    "context_tokens": {
+      "default": 0,
+      "description": "最近输入 token",
+      "minimum": 0,
+      "title": "Context Tokens",
+      "type": "integer"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage",
+      "description": "累计用量"
+    },
+    "conclude_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "结束指令原因",
+      "title": "Conclude Reason"
+    },
+    "conclude_requested_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "结束指令时间",
+      "title": "Conclude Requested At"
+    },
+    "conclude_injected": {
+      "default": false,
+      "description": "是否已注入结束指令",
+      "title": "Conclude Injected",
+      "type": "boolean"
+    },
+    "grace_calls_left": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "剩余交接调用",
+      "title": "Grace Calls Left"
+    },
+    "last_seen_version": {
+      "default": 0,
+      "description": "已见黑板版本",
+      "minimum": 0,
+      "title": "Last Seen Version",
+      "type": "integer"
+    },
+    "last_heartbeat_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "最近心跳",
+      "title": "Last Heartbeat At"
+    },
+    "receipt": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "最终回执",
+      "title": "Receipt"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "开始时间",
+      "title": "Started At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "结束时间",
+      "title": "Finished At"
+    }
+  },
+  "required": [
+    "task_id",
+    "id",
+    "task_type",
+    "status"
+  ],
+  "title": "AgentRun",
+  "type": "object"
+}

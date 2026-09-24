@@ -1,0 +1,276 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/EvidenceType",
+          "description": "证据类型"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "执行环境内的原路径",
+          "title": "Path"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "持久化后的对象 key",
+          "title": "Uri"
+        },
+        "summary": {
+          "description": "证据摘要",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "产生证据的工具调用",
+          "title": "Call Id"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "证据字节数",
+          "title": "Size"
+        },
+        "auto": {
+          "default": false,
+          "description": "是否由系统自动附加",
+          "title": "Auto",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "summary"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "EvidenceType": {
+      "enum": [
+        "http",
+        "file",
+        "script",
+        "log",
+        "code_ref",
+        "text",
+        "command_output"
+      ],
+      "title": "EvidenceType",
+      "type": "string"
+    },
+    "FactKind": {
+      "enum": [
+        "observation",
+        "inference",
+        "structure"
+      ],
+      "title": "FactKind",
+      "type": "string"
+    },
+    "FactStatus": {
+      "enum": [
+        "proposed",
+        "disputed"
+      ],
+      "title": "FactStatus",
+      "type": "string"
+    },
+    "IntentResult": {
+      "enum": [
+        "confirmed",
+        "rejected",
+        "inconclusive"
+      ],
+      "title": "IntentResult",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "事实编号",
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/FactKind",
+      "description": "直接观察、推断或结构"
+    },
+    "statement": {
+      "description": "可复核的事实陈述",
+      "minLength": 1,
+      "title": "Statement",
+      "type": "string"
+    },
+    "evidence": {
+      "description": "持久化证据",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "derived_from": {
+      "description": "推断所依据的事实",
+      "items": {
+        "type": "string"
+      },
+      "title": "Derived From",
+      "type": "array"
+    },
+    "disputes": {
+      "description": "本事实反驳的事实",
+      "items": {
+        "type": "string"
+      },
+      "title": "Disputes",
+      "type": "array"
+    },
+    "resolves": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "本事实关闭的意图",
+      "title": "Resolves"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntentResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "意图结论"
+    },
+    "satisfies": {
+      "description": "声称满足的验收条件",
+      "items": {
+        "type": "string"
+      },
+      "title": "Satisfies",
+      "type": "array"
+    },
+    "author": {
+      "description": "提交者",
+      "minLength": 1,
+      "title": "Author",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FactStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "读时计算的争议状态"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "enum": [
+            "tool_backed",
+            "self_reported"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "依据工具调用计算的证据来源",
+      "title": "Provenance"
+    },
+    "relied_by": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "其他作者依赖此事实的次数",
+      "title": "Relied By"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "写入事件版本",
+      "title": "Version"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "statement",
+    "evidence",
+    "author"
+  ],
+  "title": "Fact",
+  "type": "object"
+}

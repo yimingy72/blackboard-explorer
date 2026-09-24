@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "EvidenceType": {
+      "enum": [
+        "http",
+        "file",
+        "script",
+        "log",
+        "code_ref",
+        "text",
+        "command_output"
+      ],
+      "title": "EvidenceType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "$ref": "#/$defs/EvidenceType",
+      "description": "证据类型"
+    },
+    "path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "执行环境内的原路径",
+      "title": "Path"
+    },
+    "uri": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "持久化后的对象 key",
+      "title": "Uri"
+    },
+    "summary": {
+      "description": "证据摘要",
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "call_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "产生证据的工具调用",
+      "title": "Call Id"
+    },
+    "size": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "证据字节数",
+      "title": "Size"
+    },
+    "auto": {
+      "default": false,
+      "description": "是否由系统自动附加",
+      "title": "Auto",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "type",
+    "summary"
+  ],
+  "title": "Evidence",
+  "type": "object"
+}

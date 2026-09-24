@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "statement": {
+      "minLength": 1,
+      "title": "Statement",
+      "type": "string"
+    },
+    "based_on": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Based On",
+      "type": "array"
+    },
+    "expected": {
+      "minLength": 1,
+      "title": "Expected",
+      "type": "string"
+    },
+    "method": {
+      "minLength": 1,
+      "title": "Method",
+      "type": "string"
+    },
+    "relates_to": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Relates To",
+      "type": "array"
+    },
+    "retry_of": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry Of"
+    },
+    "claim": {
+      "default": false,
+      "title": "Claim",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "statement",
+    "based_on",
+    "expected",
+    "method",
+    "relates_to"
+  ],
+  "title": "PostIntentRequest",
+  "type": "object"
+}

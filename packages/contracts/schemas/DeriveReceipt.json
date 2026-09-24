@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "DeriveReceiptData": {
+      "additionalProperties": false,
+      "properties": {
+        "posted": {
+          "description": "新提出的意图",
+          "items": {
+            "type": "string"
+          },
+          "title": "Posted",
+          "type": "array"
+        },
+        "excluded": {
+          "description": "排除的方向与理由",
+          "items": {
+            "type": "string"
+          },
+          "title": "Excluded",
+          "type": "array"
+        }
+      },
+      "title": "DeriveReceiptData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true,
+      "default": true,
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "data": {
+      "$ref": "#/$defs/DeriveReceiptData"
+    }
+  },
+  "required": [
+    "data"
+  ],
+  "title": "DeriveReceipt",
+  "type": "object"
+}

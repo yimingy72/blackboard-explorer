@@ -1,0 +1,370 @@
+{
+  "$defs": {
+    "ExecResources": {
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "description": "执行环境 CPU 限额",
+          "exclusiveMinimum": 0,
+          "title": "Cpus",
+          "type": "number"
+        },
+        "mem": {
+          "description": "执行环境内存限额",
+          "minLength": 1,
+          "title": "Mem",
+          "type": "string"
+        },
+        "pids": {
+          "description": "执行环境进程限额",
+          "exclusiveMinimum": 0,
+          "title": "Pids",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpus",
+        "mem",
+        "pids"
+      ],
+      "title": "ExecResources",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "description": "模型供应商",
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "description": "模型名称",
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "base_url": {
+          "description": "模型接口地址",
+          "minLength": 1,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "description": "推理强度",
+          "minLength": 1,
+          "title": "Reasoning Effort",
+          "type": "string"
+        },
+        "price": {
+          "$ref": "#/$defs/Price",
+          "description": "模型价格表"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "base_url",
+        "reasoning_effort",
+        "price"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "ModelSet": {
+      "additionalProperties": false,
+      "properties": {
+        "explore": {
+          "$ref": "#/$defs/ModelConfig"
+        },
+        "derive": {
+          "$ref": "#/$defs/ModelConfig"
+        },
+        "close": {
+          "$ref": "#/$defs/ModelConfig"
+        }
+      },
+      "required": [
+        "explore",
+        "derive",
+        "close"
+      ],
+      "title": "ModelSet",
+      "type": "object"
+    },
+    "Params": {
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrent_agents": {
+          "default": 5,
+          "description": "并发探索和推导上限",
+          "minimum": 1,
+          "title": "Max Concurrent Agents",
+          "type": "integer"
+        },
+        "explore_max_steps": {
+          "default": 60,
+          "description": "单次探索最多模型调用数",
+          "minimum": 1,
+          "title": "Explore Max Steps",
+          "type": "integer"
+        },
+        "seed_max_steps": {
+          "default": 20,
+          "description": "种子未认领意图的最大步数",
+          "minimum": 1,
+          "title": "Seed Max Steps",
+          "type": "integer"
+        },
+        "context_threshold": {
+          "default": 128000,
+          "description": "触发探索交接的上下文 token 数",
+          "minimum": 1,
+          "title": "Context Threshold",
+          "type": "integer"
+        },
+        "conclude_grace_calls": {
+          "default": 3,
+          "description": "结束指令后的交接工具调用次数",
+          "minimum": 0,
+          "title": "Conclude Grace Calls",
+          "type": "integer"
+        },
+        "grace_timeout": {
+          "default": 5,
+          "description": "结束宽限时长，分钟",
+          "minimum": 1,
+          "title": "Grace Timeout",
+          "type": "integer"
+        },
+        "heartbeat_timeout": {
+          "default": 30,
+          "description": "模型调用心跳超时，分钟",
+          "minimum": 1,
+          "title": "Heartbeat Timeout",
+          "type": "integer"
+        },
+        "intent_max_attempts": {
+          "default": 3,
+          "description": "意图未关闭时可被尝试的次数",
+          "minimum": 1,
+          "title": "Intent Max Attempts",
+          "type": "integer"
+        },
+        "max_consecutive_failures": {
+          "default": 3,
+          "description": "连续运行错误上限",
+          "minimum": 1,
+          "title": "Max Consecutive Failures",
+          "type": "integer"
+        },
+        "derive_empty_limit": {
+          "default": 2,
+          "description": "连续空推导次数上限",
+          "minimum": 1,
+          "title": "Derive Empty Limit",
+          "type": "integer"
+        },
+        "close_reserve_cost": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0.05",
+          "description": "总预算中为收尾预留的比例",
+          "title": "Close Reserve Cost"
+        },
+        "snapshot_max_lines": {
+          "default": 150,
+          "description": "YAML 快照最大行数",
+          "minimum": 1,
+          "title": "Snapshot Max Lines",
+          "type": "integer"
+        },
+        "delta_max_lines": {
+          "default": 15,
+          "description": "增量推送最大行数",
+          "minimum": 1,
+          "title": "Delta Max Lines",
+          "type": "integer"
+        },
+        "dispute_notify_depth": {
+          "default": 2,
+          "description": "争议点名最大深度",
+          "minimum": 0,
+          "title": "Dispute Notify Depth",
+          "type": "integer"
+        }
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "Price": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "计价币种",
+          "title": "Currency"
+        },
+        "cache_hit_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万缓存命中输入 token 单价",
+          "title": "Cache Hit Per M"
+        },
+        "cache_miss_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万缓存未命中输入 token 单价",
+          "title": "Cache Miss Per M"
+        },
+        "output_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万输出 token 单价",
+          "title": "Output Per M"
+        },
+        "off_peak": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "是否启用错峰价格",
+          "title": "Off Peak"
+        }
+      },
+      "title": "Price",
+      "type": "object"
+    },
+    "PromptPaths": {
+      "additionalProperties": false,
+      "properties": {
+        "explore": {
+          "description": "探索提示词模板路径",
+          "minLength": 1,
+          "title": "Explore",
+          "type": "string"
+        },
+        "derive": {
+          "description": "推导提示词模板路径",
+          "minLength": 1,
+          "title": "Derive",
+          "type": "string"
+        },
+        "close": {
+          "description": "收尾提示词模板路径",
+          "minLength": 1,
+          "title": "Close",
+          "type": "string"
+        }
+      },
+      "required": [
+        "explore",
+        "derive",
+        "close"
+      ],
+      "title": "PromptPaths",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "models": {
+      "$ref": "#/$defs/ModelSet",
+      "description": "各任务类型模型与价格"
+    },
+    "params": {
+      "$ref": "#/$defs/Params",
+      "description": "默认调度参数"
+    },
+    "prompts": {
+      "$ref": "#/$defs/PromptPaths",
+      "description": "提示词模板文件路径"
+    },
+    "exec_image": {
+      "description": "执行环境镜像",
+      "minLength": 1,
+      "title": "Exec Image",
+      "type": "string"
+    },
+    "exec_resources": {
+      "$ref": "#/$defs/ExecResources",
+      "description": "执行环境资源限制"
+    },
+    "privileged_allowlist": {
+      "description": "允许的提权命令前缀",
+      "items": {
+        "type": "string"
+      },
+      "title": "Privileged Allowlist",
+      "type": "array"
+    }
+  },
+  "required": [
+    "models",
+    "params",
+    "prompts",
+    "exec_image",
+    "exec_resources"
+  ],
+  "title": "AgentProfile",
+  "type": "object"
+}

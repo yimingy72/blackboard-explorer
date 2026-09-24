@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cpus": {
+      "description": "执行环境 CPU 限额",
+      "exclusiveMinimum": 0,
+      "title": "Cpus",
+      "type": "number"
+    },
+    "mem": {
+      "description": "执行环境内存限额",
+      "minLength": 1,
+      "title": "Mem",
+      "type": "string"
+    },
+    "pids": {
+      "description": "执行环境进程限额",
+      "exclusiveMinimum": 0,
+      "title": "Pids",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "cpus",
+    "mem",
+    "pids"
+  ],
+  "title": "ExecResources",
+  "type": "object"
+}

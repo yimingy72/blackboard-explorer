@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "intent_id": {
+      "minLength": 1,
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "note": {
+      "minLength": 1,
+      "title": "Note",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_id",
+    "note"
+  ],
+  "title": "ReleaseRequest",
+  "type": "object"
+}

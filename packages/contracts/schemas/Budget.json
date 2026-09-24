@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_concurrent_agents": {
+      "default": 5,
+      "description": "并发探索和推导上限",
+      "minimum": 1,
+      "title": "Max Concurrent Agents",
+      "type": "integer"
+    },
+    "max_cost": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "同价格表币种的金额上限",
+      "title": "Max Cost"
+    },
+    "max_minutes": {
+      "description": "时间上限，分钟",
+      "exclusiveMinimum": 0,
+      "title": "Max Minutes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "max_cost",
+    "max_minutes"
+  ],
+  "title": "Budget",
+  "type": "object"
+}

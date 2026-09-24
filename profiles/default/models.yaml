@@ -1,0 +1,14 @@
+explore: &default_model
+  provider: deepseek
+  model: deepseek-flash
+  base_url: https://api.deepseek.com
+  reasoning_effort: high
+  price:
+    # 按 DeepSeek 官方价格页填写
+    currency: null
+    cache_hit_per_m: null
+    cache_miss_per_m: null
+    output_per_m: null
+    off_peak: null
+derive: *default_model
+close: *default_model

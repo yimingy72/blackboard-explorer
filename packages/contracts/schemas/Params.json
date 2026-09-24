@@ -1,0 +1,114 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_concurrent_agents": {
+      "default": 5,
+      "description": "并发探索和推导上限",
+      "minimum": 1,
+      "title": "Max Concurrent Agents",
+      "type": "integer"
+    },
+    "explore_max_steps": {
+      "default": 60,
+      "description": "单次探索最多模型调用数",
+      "minimum": 1,
+      "title": "Explore Max Steps",
+      "type": "integer"
+    },
+    "seed_max_steps": {
+      "default": 20,
+      "description": "种子未认领意图的最大步数",
+      "minimum": 1,
+      "title": "Seed Max Steps",
+      "type": "integer"
+    },
+    "context_threshold": {
+      "default": 128000,
+      "description": "触发探索交接的上下文 token 数",
+      "minimum": 1,
+      "title": "Context Threshold",
+      "type": "integer"
+    },
+    "conclude_grace_calls": {
+      "default": 3,
+      "description": "结束指令后的交接工具调用次数",
+      "minimum": 0,
+      "title": "Conclude Grace Calls",
+      "type": "integer"
+    },
+    "grace_timeout": {
+      "default": 5,
+      "description": "结束宽限时长，分钟",
+      "minimum": 1,
+      "title": "Grace Timeout",
+      "type": "integer"
+    },
+    "heartbeat_timeout": {
+      "default": 30,
+      "description": "模型调用心跳超时，分钟",
+      "minimum": 1,
+      "title": "Heartbeat Timeout",
+      "type": "integer"
+    },
+    "intent_max_attempts": {
+      "default": 3,
+      "description": "意图未关闭时可被尝试的次数",
+      "minimum": 1,
+      "title": "Intent Max Attempts",
+      "type": "integer"
+    },
+    "max_consecutive_failures": {
+      "default": 3,
+      "description": "连续运行错误上限",
+      "minimum": 1,
+      "title": "Max Consecutive Failures",
+      "type": "integer"
+    },
+    "derive_empty_limit": {
+      "default": 2,
+      "description": "连续空推导次数上限",
+      "minimum": 1,
+      "title": "Derive Empty Limit",
+      "type": "integer"
+    },
+    "close_reserve_cost": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "default": "0.05",
+      "description": "总预算中为收尾预留的比例",
+      "title": "Close Reserve Cost"
+    },
+    "snapshot_max_lines": {
+      "default": 150,
+      "description": "YAML 快照最大行数",
+      "minimum": 1,
+      "title": "Snapshot Max Lines",
+      "type": "integer"
+    },
+    "delta_max_lines": {
+      "default": 15,
+      "description": "增量推送最大行数",
+      "minimum": 1,
+      "title": "Delta Max Lines",
+      "type": "integer"
+    },
+    "dispute_notify_depth": {
+      "default": 2,
+      "description": "争议点名最大深度",
+      "minimum": 0,
+      "title": "Dispute Notify Depth",
+      "type": "integer"
+    }
+  },
+  "title": "Params",
+  "type": "object"
+}

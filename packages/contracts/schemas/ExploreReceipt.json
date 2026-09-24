@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "ExploreReceiptData": {
+      "additionalProperties": false,
+      "properties": {
+        "intent_result": {
+          "description": "意图结果",
+          "enum": [
+            "confirmed",
+            "rejected",
+            "inconclusive",
+            "none"
+          ],
+          "title": "Intent Result",
+          "type": "string"
+        },
+        "posted": {
+          "description": "已提交对象编号",
+          "items": {
+            "type": "string"
+          },
+          "title": "Posted",
+          "type": "array"
+        },
+        "note": {
+          "description": "调度日志说明",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent_result",
+        "note"
+      ],
+      "title": "ExploreReceiptData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true,
+      "default": true,
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "data": {
+      "$ref": "#/$defs/ExploreReceiptData"
+    }
+  },
+  "required": [
+    "data"
+  ],
+  "title": "ExploreReceipt",
+  "type": "object"
+}

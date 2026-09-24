@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "AcceptanceStatus": {
+      "enum": [
+        "met",
+        "unmet"
+      ],
+      "title": "AcceptanceStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "$ref": "#/$defs/AcceptanceStatus",
+      "default": "unmet",
+      "description": "当前满足状态"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "裁定理由",
+      "title": "Reason"
+    },
+    "missing": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "未满足时缺少什么",
+      "title": "Missing"
+    },
+    "evidence_facts": {
+      "description": "支撑事实",
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Facts",
+      "type": "array"
+    },
+    "judged_version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "裁定时的黑板版本",
+      "title": "Judged Version"
+    }
+  },
+  "title": "AcceptanceItemState",
+  "type": "object"
+}

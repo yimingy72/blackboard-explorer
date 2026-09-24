@@ -1,0 +1,35 @@
+[project]
+name = "blackboard-explorer"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+dependencies = ["bbx-contracts", "bbx-blackboard", "bbx-runtime", "bbx-envd"]
+
+[dependency-groups]
+dev = ["ruff>=0.11,<1", "pyright>=1.1.400,<2", "pytest>=8,<9", "pytest-asyncio>=1,<2", "pre-commit>=4,<5"]
+
+[tool.uv.workspace]
+members = ["packages/contracts", "services/blackboard", "services/agent-runtime", "services/envd"]
+
+[tool.uv.sources]
+bbx-contracts = { workspace = true }
+bbx-blackboard = { workspace = true }
+bbx-runtime = { workspace = true }
+bbx-envd = { workspace = true }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+include = ["packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src", "packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
+extraPaths = ["packages/contracts/src", "services/blackboard/src", "services/agent-runtime/src", "services/envd/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/contracts/tests", "services/blackboard/tests", "services/agent-runtime/tests", "services/envd/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

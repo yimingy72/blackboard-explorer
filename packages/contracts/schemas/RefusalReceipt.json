@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": false,
+      "default": false,
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "无法开始的原因",
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "title": "RefusalReceipt",
+  "type": "object"
+}

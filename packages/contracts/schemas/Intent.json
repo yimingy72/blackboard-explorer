@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "IntentNote": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "description": "交接者",
+          "minLength": 1,
+          "title": "By",
+          "type": "string"
+        },
+        "at": {
+          "description": "交接时间",
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "text": {
+          "description": "交接说明",
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "by",
+        "at",
+        "text"
+      ],
+      "title": "IntentNote",
+      "type": "object"
+    },
+    "IntentResult": {
+      "enum": [
+        "confirmed",
+        "rejected",
+        "inconclusive"
+      ],
+      "title": "IntentResult",
+      "type": "string"
+    },
+    "IntentStatus": {
+      "enum": [
+        "open",
+        "claimed",
+        "closed"
+      ],
+      "title": "IntentStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "意图编号",
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "statement": {
+      "description": "要调查的方向",
+      "minLength": 1,
+      "title": "Statement",
+      "type": "string"
+    },
+    "based_on": {
+      "description": "至少一条依据事实",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Based On",
+      "type": "array"
+    },
+    "expected": {
+      "description": "成立时预期观察",
+      "minLength": 1,
+      "title": "Expected",
+      "type": "string"
+    },
+    "method": {
+      "description": "可交接的调查方法",
+      "minLength": 1,
+      "title": "Method",
+      "type": "string"
+    },
+    "relates_to": {
+      "description": "相关验收条件",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Relates To",
+      "type": "array"
+    },
+    "retry_of": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "换方法重试的意图",
+      "title": "Retry Of"
+    },
+    "status": {
+      "$ref": "#/$defs/IntentStatus",
+      "default": "open",
+      "description": "认领状态"
+    },
+    "holder": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "持有者",
+      "title": "Holder"
+    },
+    "claimed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "认领时间",
+      "title": "Claimed At"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntentResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "关闭结论"
+    },
+    "closed_by": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "关闭者",
+      "title": "Closed By"
+    },
+    "result_facts": {
+      "description": "结论事实",
+      "items": {
+        "type": "string"
+      },
+      "title": "Result Facts",
+      "type": "array"
+    },
+    "notes": {
+      "description": "交接说明",
+      "items": {
+        "$ref": "#/$defs/IntentNote"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "attempts": {
+      "default": 0,
+      "description": "未关闭释放次数",
+      "minimum": 0,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "author": {
+      "description": "提出者",
+      "minLength": 1,
+      "title": "Author",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "写入事件版本",
+      "title": "Version"
+    }
+  },
+  "required": [
+    "id",
+    "statement",
+    "based_on",
+    "expected",
+    "method",
+    "relates_to",
+    "author"
+  ],
+  "title": "Intent",
+  "type": "object"
+}

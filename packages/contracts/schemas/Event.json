@@ -1,0 +1,108 @@
+{
+  "$defs": {
+    "EventType": {
+      "enum": [
+        "task.created",
+        "task.provisioning",
+        "task.running",
+        "task.closing",
+        "task.finished",
+        "task.failed",
+        "task.stopped",
+        "fact.posted",
+        "fact.disputed",
+        "fact.undisputed",
+        "intent.posted",
+        "intent.claimed",
+        "intent.released",
+        "intent.closed",
+        "agent.spawned",
+        "agent.progress",
+        "agent.finished",
+        "agent.conclude_requested",
+        "derive.result",
+        "acceptance.judged",
+        "acceptance.reverted",
+        "task.report",
+        "budget.updated"
+      ],
+      "title": "EventType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "全局递增版本",
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "task_id": {
+      "description": "所属任务",
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "type": {
+      "$ref": "#/$defs/EventType",
+      "description": "事件类型"
+    },
+    "actor": {
+      "description": "事件触发者",
+      "minLength": 1,
+      "title": "Actor",
+      "type": "string"
+    },
+    "object_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "关联对象编号",
+      "title": "Object Id"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "description": "事件内容",
+      "title": "Payload",
+      "type": "object"
+    },
+    "addressed_to": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "点名目标，空值为广播",
+      "title": "Addressed To"
+    },
+    "created_at": {
+      "description": "创建时间",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "task_id",
+    "type",
+    "actor",
+    "created_at"
+  ],
+  "title": "Event",
+  "type": "object"
+}
