@@ -1,0 +1,14 @@
+{
+  "base_commit_before_e1": "1a97913",
+  "model": "deepseek-flash via configured profile",
+  "n_per_profile": 3,
+  "profiles": [
+    "default",
+    "single"
+  ],
+  "review_policy": {
+    "same-coupon-id-repeat-in-one-order": "false_positive when reported as independent; can support P6 evidence",
+    "repeat-claim-without-limit-policy": "false_positive without explicit per-user claim limit requirement",
+    "P2": "full only when concurrent refund evidence distinguishes race from ordinary over-refund boundary issue"
+  }
+}

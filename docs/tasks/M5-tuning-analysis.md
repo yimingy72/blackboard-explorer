@@ -61,3 +61,20 @@
 
 1. `Tighten profile evidence gates for evaluation`：profile 提示词与本分析报告。
 2. 若继续做 E2/E3：单独设计并实现调度参数，先更新设计正本，再改 scheduler 与测试。
+
+## E1 真实 3+3 验证结果（2026-09-25）
+
+按 `1a97913 Refine evaluation evidence gate prompts` 运行 E1：`make eval-run EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env EVAL_OUT=eval/results/e1-20260925-01 EVAL_N=3`。命令由 uv 子进程加载既有 `.env`，本轮没有读取、打印或修改密钥。原始结果目录 `eval/results/e1-20260925-01/` 被 `.gitignore` 忽略；精简检查点保存在 `.data/checkpoints/m5/e1-20260925-01/`。
+
+6 次 run 均为 success。复核后 `review_pending=[]`；`comparison.md` 仍显示 1 次待复核，是因为 default/run-001 没有兼容当前 replay 目标布局的未修改脚本，`reproducibility=null` 导致 `provisional=true`。其余 5 次 replay 全部通过。
+
+| Profile | Recall | Precision | Coverage | Replay | Cost | Elapsed(s) |
+|---|---:|---:|---:|---:|---:|---:|
+| default | 1.0000 | 0.7413 | 1.0000 | 1.0000（n=2） | 0.199761 | 329.0 |
+| single | 0.8611 | 0.7667 | 0.8333 | 1.0000（n=3） | 0.090711 | 226.2 |
+
+本次筛选说明 evidence-gate 调优对 default 有明显收益：default 3/3 次 P1–P6 召回满分，修复了上一批 default 常见的半分问题；single 仍有 run-001 只找到 P1/P4/P5/P6、run-003 的 P2 只能半分。default 也恢复了稳定的 14/14 接口覆盖。
+
+仍未解决的问题：default 平均成本约为 single 的 2.2 倍、平均耗时约为 1.45 倍，精确率略低。误报主要来自把同一 `coupon_id` 重复传参、公开券目录、重复 claim 或错误的路由遮蔽推断当成独立漏洞。default/run-003 还出现过 closing 后才留下一条待证伪路由线索的现象，虽然该线索本身不成立，但说明收尾阶段仍可能截断无关或低优先级补证。
+
+下一步不应直接宣称 default 胜出。建议把 E1 从 3+3 扩到 5+5；若 default 继续保持满召回，再考虑针对误报和成本做 E2/E3。若扩样后仍出现 closing 截断相关补证，再进入调度收尾条件修改；当前 3+3 暂不支持直接改调度代码。
