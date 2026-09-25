@@ -20,3 +20,4 @@ data/
 eval/targets/dist/
 web/test-results/
 web/playwright-report/
+eval/results/

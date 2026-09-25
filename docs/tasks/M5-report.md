@@ -1,0 +1,89 @@
+# M5 · 评估与单 Agent 基线报告
+
+日期：2026-09-25。前置 EVAL-2 已合并为 `f7db7a0`；本任务从 `b74921c` 开始。设计先行提交 `e34cb1c`。
+
+## 完成内容
+
+| 编号 | 完成内容 |
+|---|---|
+| E.1 | `Params.derive_enabled=true`、任务覆盖允许 bool、单 Agent Profile（仅此参数为 false）与启动注册。调度保留已有意图探索和最新裁定，再在静止时直接收尾；single 任务并发设为 1，close 的职责不变。同步 JSON Schema、OpenAPI、前端类型与终止说明。 |
+| E.2 | 已有黑板运行器与隔离批量入口；固定整个批次的完整 Profile/version。创建后启动前持久保存 ID；串行等待终态、超时停止/交接，导出状态/事件/报告/归档/全部持久证据映射，拒绝覆写旧结果。失败、超时或导出缺项返回非成功。 |
+| E.3 | 文件/函数/机制关键词自动候选、完整人工复核清单、P 的 0/0.5/1 评分、P/D 去重精确率、未知发现复核、接口覆盖、成本/缓存/过程指标。显式证据清单在全新离线容器重跑，保存退出码、输出与目标哈希。 |
+| E.4 | Markdown 对比报告列平均、最差、有效样本数和结束原因分布；未知值不是零。两组各至少 5 次且复核完整才给正式召回判断；召回持平时展示耗时变化，不擅自定义“明显更短”。 |
+| E.5 | HTTP 替身导出测试、评分/比较假数据、失败清理、路径校验、接口解析、真实离线重跑容器测试；完整 CLI 评分与报告生成已用两组模拟记录运行。 |
+
+## 实际运行的检查
+
+- `make check`：Ruff、Pyright 通过；**338 passed、38 deselected**。不加载 `.env`，没有真实模型调用。
+- `make test-integration`：**34 passed、342 deselected**，96.81 秒。包括原 32 项、新 single 完整生命周期、证据在两个全新容器中运行且无状态残留；全部测试容器清理。
+- `make web-check`：ESLint/TypeScript/Vitest 通过，**29 个测试**。
+- `make image-blackboard image-agent-runtime image-eval-env`：构建通过。评估镜像基于已有 exec-env，预装目标已有的 FastAPI/pytest/httpx 等依赖，不新增项目依赖。
+- 打包目标的路由差异解析得到 **14 个新增或修改接口**，保留 HTTP method 和路径；生成固定接口覆盖分母。
+- `make eval-score EVAL_OUT=.data/m5-demo`：两组模拟结果的 score、review-template 和 comparison.md 生成成功，正确报告待复核/样本不足。模拟结果仅验证流程，不代表 DeepSeek 实测效果。
+- `git diff --check` 通过；命令入口 `--help` 可运行。
+
+**本轮没有运行 5+5 次付费 DeepSeek 评估，也未声称多 Agent 已证明优于单 Agent。** M5 任务说明将实际评估运行与最终人工复核列为用户可执行检查点；本轮完成运行器与验证，不用假数据替代该检查点。此前的真实 M3b 玩具闭环结果仍保留。
+
+## 用户可执行的命令
+
+详细参数、复核字段、指标口径见 `eval/runner/README.md`。镜像已在本机构建；其他机器或代码变更后先重建。
+
+```sh
+cd ~/blackboard-explorer
+export UV_CACHE_DIR=/private/tmp/bbx-uv-cache
+export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897
+export all_proxy=socks5://127.0.0.1:7897 no_proxy=localhost,127.0.0.1,::1,host.docker.internal
+uv sync --locked
+
+# 显式付费：独立Compose，default/single各5次，默认每次金额预算10、时限60分钟。
+# uv子进程加载已有本地配置，代码不读取、打印或修改.env。
+make eval-run EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env \
+  EVAL_OUT=eval/results/experiment-01 EVAL_N=5
+make eval-score EVAL_OUT=eval/results/experiment-01
+
+# 根据每次review-template.json生成review.json并确认发现/接口；
+# 选择归档中的独立Python证据脚本写replay.json，再重跑：
+make eval-replay EVAL_OUT=eval/results/experiment-01 \
+  EVAL_RUN=eval/results/experiment-01/default/run-001
+make eval-score EVAL_OUT=eval/results/experiment-01
+```
+
+已有黑板也可用 `uv run --no-sync python -m eval.runner.run --task mini-shop-review --profile default --n 5 --out <新目录> --base-url http://127.0.0.1:58000 --exec-image bbx-eval-env:latest`，凭据来自环境的 `SERVICE_TOKEN`。已有服务必须已提供 eval-targets 和出网白名单。
+
+不传 `EVAL_OUT` 时 `eval-run` / `eval-score` 都使用 `eval/results/latest`；旧目录存在即拒绝覆盖，新实验应指定新路径。
+
+## 数据与指标定义
+
+- 每次 `run.json`：固定版本/完整 Profile/预算、task_id、终态与 outcome，启动至首次观察到终态的耗时；导出耗时另记 `export_seconds`，避免大归档下载扭曲对比。
+- 黑板、事件、报告、workspace 与证据对象均保存本地；证据文件名是 URI 的 SHA-256，映射保留原 URI。没有把目标答案注入 Agent 上下文。
+- 自动评分只给候选，人工确认的定位+机制计半分，再有可复现证据计一分；每个 P 取最高分，除以 6 得召回。
+- 精确率对确认的 P/D 按 ID 去重，新发现按 `unique_key` 或 finding ID 去重。未知发现不自动算真，也不自动算假；未完成分类时不输出确定的召回/精确率。
+- 接口分母从保存目标的 main..feature 路由函数差异生成，`review.json` 不能缩小；分子是人工确认报告已检查的接口。
+- 复现率只针对清单中选择的脚本，未运行是 null；退出码/输出匹配不能替代机制确认。当前不自动提取或执行报告命令。
+- 成本使用账本/固定 Profile 价格，缓存命中率为 hit/(hit+miss)；争议、裁定采用事件计数，satisfies 命中指最终 met 的支撑声明占全部声明的比例。
+
+## 偏差与待决
+
+1. 实际 5+5 运行、发现复核及真实比较结论仍未执行。代码完成不等于多 Agent 收益已经验证；不能据本报告进行效果宣传或针对答案调整提示词。
+2. 原 exec-env 实际未预装 mini-shop 的全部依赖。增加 `bbx-eval-env`，两组统一使用，保留 default/single 本地 Profile 只有 derive 参数不同的原则；实际发布快照记录镜像覆盖。
+3. 证据重跑第一版只支持归档中小于 200 KiB 的完整独立 Python 文件。工作目录/PYTHONPATH 固定为全新目标，旧端口/旧进程/额外脚本依赖不会自动恢复，明确失败或待人工处理。
+4. 每项重跑使用非 root、只读根、无外网、无宿主密钥/socket的独立容器，限制CPU/内存/进程数，默认120秒；目标压缩包128 MiB上限，接口提取展开512 MiB/50,000成员上限，归档脚本复用M4受限预览。
+5. 路由提取覆盖当前目标的静态 `@app/router.method` 与 APIRouter prefix，不承诺泛化到动态注册或任意框架。已有服务器单组运行没有自动接口清单时，需人工指定对应差异的分母。
+6. “明显更短”在正本中没有数值阈值，因此只显示实际百分比并留待判断，没有擅自引入新的验收门槛。
+7. 普通测试通过 HTTP 替身；容器测试不调用模型。最后还有人工判断边界，不能以生成 comparison.md 文件冒充完整实证评估。
+
+## 共享文件与提交划分
+
+- `packages/contracts`：Params、TaskSpec 的 bool 覆盖、Schema 与测试。
+- `profiles/default` 与新 `profiles/single`：新增开关及完全一致的其余快照模板；blackboard启动注册两者，runtime调度守护。
+- `Makefile`：将 eval/runner 纳入 lint，新增镜像/运行/评分/重跑入口，集成目标构建评估镜像。
+- 根 `pyproject.toml`：将 eval/runner 的测试/类型检查纳入普通检查，并配置项目根导入路径；无依赖和 uv.lock 变化。
+- `.gitignore`：忽略 eval/results。同步 OpenAPI、前端 Schema/参数测试与禁用推导的终止说明。
+
+建议并采用：
+
+1. `Define optional derivation for single-agent evaluation`：设计（已提交 e34cb1c）。
+2. `Add single-agent evaluation profile and derivation control`：contracts/profile/调度/注册/生成文件/对应测试。
+3. `Add reproducible evaluation exports and reviewed comparisons`：评估运行器、隔离重跑、评分比较、共享检查入口与文档。
+
+合并后打 m5，清理工作树与分支，更新 HANDOFF。保留模拟流程输出和实际检查日志，真实评估结果以后单独形成检查点。

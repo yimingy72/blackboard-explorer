@@ -1,5 +1,5 @@
 VENV = .venv/bin
-PYTHON_DIRS = packages/contracts packages/objects services/blackboard services/agent-runtime services/envd
+PYTHON_DIRS = packages/contracts packages/objects services/blackboard services/agent-runtime services/envd eval/runner
 
 .PHONY: up down clean-volumes fmt lint typecheck test test-integration check check-all schemas image-exec-env image-egress-proxy
 
@@ -56,7 +56,7 @@ typecheck:
 test:
 	$(VENV)/pytest -m "not integration and not live"
 
-test-integration: image-exec-env image-egress-proxy image-agent-runtime
+test-integration: image-exec-env image-egress-proxy image-agent-runtime image-eval-env
 	$(VENV)/pytest -m "integration and not live"
 
 check: lint typecheck test
@@ -81,6 +81,24 @@ eval-targets:
 eval-verify:
 	$(VENV)/python eval/answers/order-service/verify.py
 	uv run --no-project --python 3.12 --with-requirements eval/targets/mini-shop/src-main/requirements.txt python eval/answers/mini-shop/verify/run.py
+
+EVAL_ENV_FILE ?=
+EVAL_N ?= 5
+EVAL_OUT ?= eval/results/latest
+.PHONY: image-eval-env eval-run eval-score eval-replay
+
+image-eval-env: image-exec-env
+	docker build $(DOCKER_BUILD_ARGS) -f eval/runner/Dockerfile --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) -t bbx-eval-env:latest .
+
+eval-run: eval-targets
+	uv run $(if $(EVAL_ENV_FILE),--env-file "$(EVAL_ENV_FILE)") --no-sync python -m eval.runner.batch --n $(EVAL_N) --out "$(EVAL_OUT)"
+
+eval-score:
+	$(VENV)/python -m eval.runner.score "$(EVAL_OUT)"
+	$(VENV)/python -m eval.runner.compare "$(EVAL_OUT)"
+
+eval-replay:
+	$(VENV)/python -m eval.runner.replay "$(EVAL_RUN)" --target "$(EVAL_OUT)/target.tar.gz"
 
 .PHONY: web-install web-dev web-build web-check web-types
 
