@@ -1,0 +1,10 @@
+{
+  "n_per_profile": 5,
+  "task": "mini-shop-review",
+  "profiles": [
+    "default",
+    "single"
+  ],
+  "target_sha256": "7af69cf429696835ac7cfec55f7495f3596081b762923bdcded6c5a332eb55b2",
+  "project": "bbx-e2e-e0d9054c"
+}

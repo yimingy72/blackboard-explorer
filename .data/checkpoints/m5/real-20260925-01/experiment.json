@@ -1,0 +1,12 @@
+{
+  "source_commit": "eeb60943dd7d1485d84feb08e6072ceeee88fe00",
+  "captured_at": "2026-09-25T00:50:25.453657+00:00",
+  "images": {
+    "bbx-blackboard:latest": "sha256:0668efc2625460aee2115259063c6d663d70deddc71d23d769da946c5023ce16",
+    "bbx-agent-runtime:latest": "sha256:4c8300825f330b81dd61789cd7fd62f469c86aa1e366b590589b860f7b67ce6b",
+    "bbx-eval-env:latest": "sha256:f8034601ebc325304cd49886f9139b511cc34b3432a76489701e8d2da4530012"
+  },
+  "n_per_profile": 5,
+  "price_note": "Fixed USD profile estimate, not supplier invoice",
+  "reviewer": "Codex independent artifact review; not a human approval"
+}

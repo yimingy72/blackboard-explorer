@@ -87,3 +87,41 @@ make eval-score EVAL_OUT=eval/results/experiment-01
 3. `Add reproducible evaluation exports and reviewed comparisons`：评估运行器、隔离重跑、评分比较、共享检查入口与文档。
 
 合并后打 m5，清理工作树与分支，更新 HANDOFF。保留模拟流程输出和实际检查日志，真实评估结果以后单独形成检查点。
+
+---
+
+## 2026-09-25 真实 5+5 评估补充
+
+本节补充 M5 实现合并后的真实评估检查点。原报告中“未运行真实 5+5”的说明仅描述实现合并当时的状态；本次已按同一批次配置完成 `default` 与 `single` 各 5 次 DeepSeek 运行、逐 run 产物复核、所选证据 replay 和总评分。原始结果目录为 `eval/results/real-20260925-01/`，因 `eval/results/` 被忽略且含完整 workspace/evidence 归档，不纳入提交；不含原始证据输出的精简 checkpoint 保存在 `.data/checkpoints/m5/real-20260925-01/`。
+
+### 实际运行与复核
+
+- `make eval-run EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env EVAL_OUT=eval/results/real-20260925-01 EVAL_N=5`：真实 DeepSeek 批次完成，`default` 5 次、`single` 5 次均为 success。命令由 uv 子进程加载既有本地配置；本轮没有读取、打印或修改 `.env`。
+- 对 10 个 run 的 `report.md`、`state.json`、`events.json`、`evidence/index.json` 与归档脚本逐项复核，补齐 `review.json`、`REVIEW.md`、`replay.json`、`replay-results.json`。
+- `make eval-score EVAL_OUT=eval/results/real-20260925-01`：重算 10 个 `score.json` 与 `comparison.md`，0 个 run 仍有 `review_pending`，全部 `provisional=false`。
+- `make check`：Ruff、Pyright 通过；356 passed、39 deselected。不调用真实模型，不读取 `.env`。
+- `make test-integration`：构建/刷新 `bbx-exec-env`、`bbx-egress-proxy`、`bbx-agent-runtime`、`bbx-eval-env` 后通过；35 passed、360 deselected，用时 100.37 秒。不调用真实模型。
+- `git diff --check`：通过。
+- 交叉复核时统一了一个评分口径：同一 `coupon_id/user_coupon` 在一次请求中重复传入能辅助证明 P6 负总额，但目标没有把“重复同一参数”定义为独立列表外业务漏洞，因此 `default/run-004` 与 `default/run-005` 各补记同一个误报键 `same-coupon-id-repeat-in-one-order`；两者 precision 从 7/9 修正为 7/10。
+- 曾尝试把部分人工复核交给子代理，但两个子任务被模型服务以“可能的网络安全风险”拦截。按 HANDOFF 5.3，本轮没有改写措辞绕过，改由主会话人工复核。
+
+### 指标结果
+
+| Profile | Recall 平均/最差 | Precision 平均/最差 | 接口覆盖平均/最差 | 所选证据复现平均/最差 | 平均耗时 | 平均账本金额 |
+|---|---:|---:|---:|---:|---:|---:|
+| default 多 Agent | 0.9333 / 0.9167 | 0.7514 / 0.7000 | 1.0000 / 1.0000 | 0.4500 / 0.0000 | 287.9s | 0.187192 |
+| single 单 Agent | 1.0000 / 1.0000 | 0.7631 / 0.6667 | 0.9714 / 0.8571 | 0.8500 / 0.5000 | 195.1s | 0.088848 |
+
+按当前评分规则，真实 5+5 的结论是：多 Agent 平均召回提升不足一个问题，未达到“召回率显著提升”的判断标准；本批次 single 在召回、耗时、账本金额和所选证据复现率上均优于 default。default 的唯一稳定优势是接口覆盖均为 14/14；single 有一次只覆盖 12/14，但仍找齐了 P1–P6。
+
+### 偏差与待决
+
+1. 本轮评估没有证明当前 default 多 Agent 方案优于 single 基线；不能据此宣传收益，也不应立刻为了这道题改提示词。下一步应先分析 default 的重复劳动、裁定宽松、证据脚本可复现性和并发成本，再决定是否调整 profile 或调度策略。
+2. 复现率只针对人工挑选的归档脚本。部分失败来自旧脚本硬编码 `/workspace/shared/repo`、历史 token 或旧服务状态；失败会降低“可独立复查”指标，但不自动推翻原运行已保存的事实证据。
+3. 原始评估产物含完整 workspace/evidence 和目标归档，保留在本机 ignored 目录；提交只保留不含原始输出的精简 checkpoint 与本文指标。
+4. 当前 m5 标签仍指向 M5 工具实现提交 `d1f13f5`；本补充是评估检查点，不移动既有里程碑标签。
+
+### 补充提交建议
+
+1. `Harden evaluation scoring and replay review`：`eval/runner/score.py`、`eval/runner/replay.py`、对应测试与 README，保证多 assessment、误报去重和隔离 replay 配置能支撑本次复核。
+2. `Record real M5 evaluation checkpoint`：本补充报告、HANDOFF 状态更新与 `.data/checkpoints/m5/real-20260925-01/` 精简结果。
