@@ -8,7 +8,7 @@
 ## 0. 一页速览
 
 - **项目**：通用的黑板式多 Agent 探索系统——给定目标（Goal）与文字验收条件，多个 DeepSeek 驱动的探索 Agent 通过共享黑板（事实 Fact、意图 Intent）协作，close Agent 裁定是否达成。
-- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`、`m2`、`m3`、`m4`）。
+- **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`、`m2`、`m3`、`m4`、`m5`）。
 - **设计正本**：`docs/design/` 下三份文档（桌面上的同名文件是指向它们的符号链接）。实现以它们为准。
 - **进度**：
 
@@ -26,9 +26,9 @@
   | M3b 裁定、收尾与完整闭环 | ✅ 304 普通、31 集成（含13场景）、真实e2e通过；已合并，m3已打 |
   | M4 工作台 | ✅ 309 普通、29 前端、32 集成、6 Playwright 与真实运行 UI 复盘通过；已合并，m4 已打 |
   | EVAL-2 | ✅ 用户改由 Codex 完成；1434 行基线、6 个分支提交、54 项目标测试与既有验证通过，已合并 |
-  | M5 | 🟡 前置已满足，开始评估运行器与单 Agent 基线 |
+  | M5 | ✅ 运行器/评分/基线实现已合并，338普通/34集成/29前端通过，m5已打；真实5+5评估及复核待执行 |
 
-- **下一步（按用户指定顺序）**：M5。用户于 2026-09-25 改由 Codex 完成 EVAL-2，现已合并，前置依赖满足。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
+- **下一步**：执行真实评估并复核结果。用户于 2026-09-25 改由 Codex 完成 EVAL-2，现已合并；M0–M5的软件开发已完成，尚未执行M5的两组各5次付费评估，不能声称多Agent收益已证实。用户已授权后续开发、设计同步、构建、Git 操作和子代理协作，无需逐项重新申请。
 - **合并后验证**：`uv sync --locked`、`make check`（M1b 最终 141 passed）、`make test-integration`（M1b 最终 11 passed）均通过；后者使用 envd README 中的 `DOCKER_BUILD_ARGS`。M1-W 另有 10 个前端测试通过，浏览器验收完成，已打 `m1`；M2a/M2b 已合并，M2b 最终 206 普通、13 集成检查通过，真实 DeepSeek 产出 6 条工具证据事实、1 条意图并完成 conclude/release；`m2` 已打。
 
 ---
@@ -76,7 +76,7 @@ blackboard-explorer/
 
 ### 2.1 git
 
-- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签为 `m0`、`m1`、`m2`、`m3`、`m4`。
+- `main`：已包含 M0、EVAL、M1a、M2-env、M1b、全部任务说明与设计同步。现有标签为 `m0`、`m1`、`m2`、`m3`、`m4`、`m5`。
 - M1a：设计提交 `f47808d`，实现提交 `46bc578`，合并提交 `430c5ad`。
 - M2-env：token 设计 `ff8565f`、信号能力设计 `1d5f4c0`、实现 `bca1fd9`，合并提交 `108d0c5`。合并时保留两边依赖并重建 `uv.lock`。
 - M1b：接口设计 `6371507`、profile 正文快照 `561103c`、Agent 自主判重设计 `7de008a`、实现 `87f774f`，已快进合并；原 m1b 工作树与分支已删除。
@@ -107,13 +107,14 @@ blackboard-explorer/
 - **M3b**：核心/13场景 `55703c3`、真实e2e入口 `44686c4` 已合并，m3指向后者；304普通、31集成检查通过。真实任务 `25ca10e4-8e1e-46cf-8901-82e165f0ea6c` 完成2/2验收、5事实/2意图/4Agent，报告6233字节、归档5032793字节，账本估算USD0.070260516。M4已用 `bbx-e2e-f7903553` 完成真实浏览器复盘；2026-09-25 已清理该项目全部容器、网络和卷，原55013端口不再服务。产物/Compose配置保存在主工作树 `.data/checkpoints/m3b/e2e/bbx-e2e-f7903553/`。原m3b工作树和分支已删除。
 - **M4**：设计 `af29bb3`、只读归档 API `2b6f677`、工作台 `a4c6403` 已合并，`m4` 指向后者；309普通、29前端、32集成、6 Playwright通过，blackboard镜像已重建。真实任务可在UI追溯结束原因、事实证据、Agent回执与费用；回放不会泄漏后续费用/回执。新增 workspace/tree、workspace/file 受限预览；Profile默认固定版本仅存本浏览器。完整报告见 `docs/tasks/M4-report.md`。main已同步Python/前端依赖；Playwright缓存保存在 `.data/playwright`，日志在 `.data/checkpoints/m4`。M4工作树/分支已删除，临时浏览器页已关闭。
 - **EVAL-2**：用户改由Codex完成；基线 `63b4c6e`、分支正常查询与报告 `f7db7a0` 已合并。基线1434行/42测试，feature1942行/54测试、6个提交/512新增4删除，P1–P6与100/100玩具复现不变。309普通/32集成通过；原评估函数与答案未改。日志保存在 `.data/checkpoints/eval2`，工作树/分支已清理。
+- **M5**：设计 `e34cb1c`、基线 `2a96394`、评估工具 `d1f13f5` 已合并，m5指向工具提交。338普通/34集成/29前端通过；blackboard/runtime/eval镜像已构建，模拟记录跑通score/review-template/comparison。单Agent只关闭derive并限制探索并发为1；证据重跑使用新建离线容器。详细命令见 `eval/runner/README.md`、`docs/tasks/M5-report.md`。**没有运行真实5+5付费评估，未完成人工复核或效果比较**。日志/明确标记的模拟输出在 `.data/checkpoints/m5`；工作树/分支已清理，无本轮运行容器遗留。
 - **当前架构**：不再部署本地 embedding，Agent 根据快照/增量同步自行判断重复；黑板保留确定性写入规则与关键词查找。M1 阶段未调用真实 DeepSeek；M2a 按用户提供的配置指引，由测试子进程加载 DeepSeek 配置完成 4 项 live 验证，未显示或修改密钥。
 
 ---
 
 ## 3. 收尾记录与后续入口
 
-> 3.1、3.2 为已完成的收尾背景；M4 已完成，当前进入 M5。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
+> 3.1、3.2 为已完成的收尾背景；M4 已完成，M5实现已完成，当前等待真实评估及结果复核。软件源参数、README 与报告已落地；最新构建代理命令见 `services/envd/README.md`。
 
 ### 3.1 收尾 M2-env（工作树 `~/bbx-wt/m2env`）
 
@@ -337,11 +338,11 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。M2a 已同步宿主固定目标 relay、JWT 密钥仅属于 blackboard、DeepSeek 缓存用量适配和公开 Content 持久追加退路。M2b 已补 close 回执、宽限剩余 0 的成功语义、模型请求和整体运行超时。M3a 已同步并实现归档事件/API、PG 单实例锁与探测、排队 provisioning 恢复、全局出网白名单边界、终态守护、final 重试上限、种子首次认领后使用普通上限、runtime_restart 计数保持。M3b 已同步并验证硬时限留出交接余量、固定报告防重复覆盖、closing主动release不计attempts与完整证据引用。M4已明确全局出网白名单边界、浏览器固定默认 Profile、保留旧版的回滚语义与受限只读归档预览（设计提交 af29bb3）。EVAL-2现已按用户新指令完成并合并，M5前置满足。尚待后续任务同步的事项：
+token 归属、tool_call.recorded、任务创建引导例外已同步并合并。M1b 按用户 2026-09-24 的新决定取消本地 embedding 与向量预检，由 Agent 根据快照和增量同步自行判断重复；search 仅作关键词定位，原线性余弦 top-3 决定已废弃。此外，容器实测证明超时跨 UID 发信号需要 `KILL` capability，已先修改实现架构 2.4 并单独提交，再同步实现与测试。M2a 已同步宿主固定目标 relay、JWT 密钥仅属于 blackboard、DeepSeek 缓存用量适配和公开 Content 持久追加退路。M2b 已补 close 回执、宽限剩余 0 的成功语义、模型请求和整体运行超时。M3a 已同步并实现归档事件/API、PG 单实例锁与探测、排队 provisioning 恢复、全局出网白名单边界、终态守护、final 重试上限、种子首次认领后使用普通上限、runtime_restart 计数保持。M3b 已同步并验证硬时限留出交接余量、固定报告防重复覆盖、closing主动release不计attempts与完整证据引用。M4已明确全局出网白名单边界、浏览器固定默认 Profile、保留旧版的回滚语义与受限只读归档预览（设计提交 af29bb3）。EVAL-2已按用户新指令完成并合并。M5已同步derive_enabled默认true及关闭时先裁定再收尾的单Agent语义（e34cb1c），并完成实现。当前没有未同步的已采纳设计事项；真实效果仍待付费评估与人工复核。
 
 | 事项 | 来源 | 建议写法 | 位置 |
 |---|---|---|---|
-| `derive_enabled` 参数 | M5 任务 | 默认 true；为 false 时不触发 derive（单 Agent 基线用） | 设计文档第 9 节、5.4 |
+| `derive_enabled` 参数 | M5 任务 | ✅ 已同步并实现：默认 true；单 Agent 基线为 false | 设计文档第 9 节、5.4 |
 
 ## 7. 已确定的关键设计决策（避免重复讨论）
 
