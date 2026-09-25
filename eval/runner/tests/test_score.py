@@ -322,3 +322,108 @@ def test_new_findings_can_share_an_explicit_unique_key(tmp_path: Path) -> None:
     score, _ = score_run(tmp_path)
     assert score["review_pending"] == []
     assert score["metrics"]["precision"] == 0.5
+
+
+def test_one_fact_can_review_multiple_distinct_problems_and_new_findings(tmp_path: Path) -> None:
+    write_run(
+        tmp_path,
+        facts=example_facts(),
+        report=(
+            "The tests/test_cases.py example_total uses eval only in a test and is not imported."
+        ),
+    )
+    assessments = [
+        {
+            "classification": "problem",
+            "answer_id": answer_id,
+            "location": True,
+            "mechanism": True,
+            "reproducible": True,
+        }
+        for answer_id in ("P4", "P5")
+    ] + [
+        {
+            "classification": "new",
+            "location": True,
+            "mechanism": True,
+            "reproducible": True,
+        }
+        for _ in range(2)
+    ]
+    review = {
+        "findings": [
+            {
+                "id": "F1",
+                "classification": "problem",
+                "answer_id": "P1",
+                "location": True,
+                "mechanism": True,
+                "reproducible": True,
+            },
+            {"id": "F2", "assessments": assessments},
+            {"id": "R1", "classification": "distractor", "answer_id": "D1"},
+        ]
+    }
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    score, template = score_run(tmp_path)
+    assert score["review_pending"] == []
+    assert score["metrics"]["recall"] == pytest.approx(3 / 6)
+    assert score["metrics"]["precision"] == pytest.approx(5 / 6)
+    assert score["findings"][1]["review"]["assessments"] == assessments
+    assert all("assessments" in item for item in template["findings"])
+
+    assessments.extend(
+        [
+            {"classification": "false_positive"},
+            {"classification": "false_positive"},
+        ]
+    )
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    score, _ = score_run(tmp_path)
+    assert score["review_pending"] == []
+    assert score["metrics"]["precision"] == pytest.approx(5 / 8)
+    for assessment in assessments[-2:]:
+        assessment["unique_key"] = "same-unsupported-claim"
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    score, _ = score_run(tmp_path)
+    assert score["metrics"]["precision"] == pytest.approx(5 / 7)
+    assessments.pop()
+    assessments.pop()
+
+    for assessment in assessments[-2:]:
+        assessment["unique_key"] = "same-new-issue"
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    score, _ = score_run(tmp_path)
+    assert score["metrics"]["precision"] == pytest.approx(4 / 5)
+
+    del assessments[1]["reproducible"]
+    (tmp_path / "review.json").write_text(json.dumps(review))
+    score, _ = score_run(tmp_path)
+    assert score["review_pending"] == ["F2"]
+    assert score["metrics"]["recall"] is None
+    assert score["metrics"]["precision"] is None
+
+
+def test_legacy_false_positive_counts_against_precision(tmp_path: Path) -> None:
+    write_run(tmp_path, facts=example_facts())
+    (tmp_path / "review.json").write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "F1",
+                        "classification": "problem",
+                        "answer_id": "P1",
+                        "location": True,
+                        "mechanism": True,
+                        "reproducible": True,
+                    },
+                    {"id": "F2", "classification": "false_positive"},
+                ]
+            }
+        )
+    )
+    score, _ = score_run(tmp_path)
+    assert score["review_pending"] == []
+    assert score["metrics"]["recall"] == pytest.approx(1 / 6)
+    assert score["metrics"]["precision"] == 0.5

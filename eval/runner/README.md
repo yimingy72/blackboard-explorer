@@ -48,11 +48,25 @@ uv run --no-sync python -m eval.runner.run \
 
 把 `review-template.json` 复制为 `review.json`，逐项填写：
 
-- `classification`：`problem`（已知 P 问题）、`distractor`（报告把 D 当问题）、`new`（列表外已确认的新发现）或 `ignore`（背景、重复叙述、明确排除的问题）。
+- `classification`：`problem`（已知 P 问题）、`distractor`（报告把 D 当问题）、`new`（列表外已确认的新发现）、`false_positive`（列表外经复核不成立的发现）或 `ignore`（背景、重复叙述、明确排除的问题）。实际提出但不成立的发现须记为 `false_positive`，不能用 `ignore` 从精确率分母中移除。
 - `answer_id`：problem 填 P1–P6，distractor 填 D1–D3。
 - `location`、`mechanism`、`reproducible`：problem/new 由复核者填写布尔值；定位和机制齐全计 0.5，再有可复现证据计 1。
-- `unique_key`：同一个列表外新问题跨事实/段落重复时使用同一值；已知 P/D 按答案 ID 自动去重。
+- `unique_key`：同一个列表外新问题或误报跨事实/段落重复时使用同一值；已知 P/D 按答案 ID 自动去重。`false_positive` 不需 `answer_id`，计入精确率分母但不计真阳性。
 - `checked_interfaces`：逐一确认报告实际检查过的 `METHOD /path`。如存在导出的 `interfaces.json`，它固定覆盖率分母，review 不能缩小分母。
+
+一条事实或报告段落可包含多个独立发现。此时在该 finding 下填非空 `assessments` 列表，每项沿用上述分类、答案编号和证据布尔字段；列表中**每项**都有效才算该 finding 已复核。例如：
+
+```json
+{
+  "id": "F2",
+  "assessments": [
+    {"classification": "problem", "answer_id": "P4", "location": true, "mechanism": true, "reproducible": true},
+    {"classification": "problem", "answer_id": "P5", "location": true, "mechanism": true, "reproducible": false}
+  ]
+}
+```
+
+旧的单项 `classification` / `answer_id` 格式继续有效；模板中 `assessments: null` 表示仍可直接填写这些旧字段。多个 `new` 或 `false_positive` 项如果没有 `unique_key`，会按 finding ID 与列表位置分别计数；确属同一个发现时显式填写相同 `unique_key` 去重。P/D 始终按 `answer_id` 跨列表和跨 finding 去重。
 
 随后重跑 `make eval-score`。原 `review.json` 不会被覆盖；自动模板会更新。所有事实和报告段落都需分类，防止只确认命中的条目而忽略潜在误报。
 
@@ -66,6 +80,9 @@ uv run --no-sync python -m eval.runner.run \
     {
       "id": "F1-proof",
       "path": "agents/agent-1/reproduce.py",
+      "service_port": 8021,
+      "seed": true,
+      "files": ["agents/agent-1/repro/common.py"],
       "expected_exit_code": 0,
       "expected_output": "observed result: 2"
     }
@@ -79,7 +96,11 @@ make eval-replay EVAL_OUT=eval/results/experiment-01 \
 make eval-score EVAL_OUT=eval/results/experiment-01
 ```
 
-每项新建无外网、非 root、只读根目录的容器，限制内存/CPU/进程数，只把脚本和保存的目标挂载为只读输入；目标解包到 `/workspace/shared/mini-shop`，该目录也是 cwd/PYTHONPATH。依赖预装，不继承宿主环境密钥，不挂 Docker socket。归档脚本必须是正常相对路径、非链接、完整 UTF-8 Python 文件且小于 200 KiB；默认 120 秒后停止并清理。结果写 `replay-results.json`，包括退出码、受限输出、镜像与目标哈希。
+每项新建无外网、非 root、只读根目录的容器，限制内存/CPU/进程数；只读挂载显式选择的脚本、附件和保存的目标。目标解包到 `/workspace/shared/mini-shop`，该目录也是 cwd/PYTHONPATH；归档原脚本原文复制到 `/workspace/<path>`，其父目录会创建，不改脚本内容。依赖预装，不继承宿主环境密钥，不挂 Docker socket。归档脚本必须是正常相对路径、非链接、完整 UTF-8 Python 文件且小于 200 KiB；默认 120 秒后停止并清理。
+
+`service_port` 可选，范围 1024–65535；设置后先按 `seed`（默认 true）运行目标原 `scripts/seed.py`，再在容器内 `127.0.0.1:<service_port>` 启动 `uvicorn shop.app:app`，等待 `/products` 就绪，执行原脚本后停止服务。未设置端口沿用无需服务的旧行为。`files` 可显式列出归档内至多 16 个额外普通 UTF-8 文件，每个最多 200 KiB、合计最多 2 MiB；路径仅可在 `agents/` 或 `shared/` 下，不得覆盖目标 `shared/mini-shop` 或主脚本。文件逐个原文复制到 `/workspace/<path>`，不会恢复原运行时的数据库、虚拟环境或任意旧状态，也不接受 shell setup。
+
+若原脚本写死了目标 seed 用户的旧测试 token，可在 `seed: true` 且指定端口时附加 `seed_tokens: {"alice": "<32位十六进制>", "bob": "<32位十六进制>"}`。此设置仅在全新数据库运行原 seed 后，以参数化 SQL 更新这两个测试用户的 token，不改变余额或订单；不可填 API key。`replay-results.json` 记录端口、seed、附件列表、主脚本和附件 SHA-256、测试 token 的 SHA-256、退出码与受限输出，不保存 token 明文。
 
 脚本必须自行建立测试数据/服务并验证对应现象；依赖原进程、原端口或额外文件的脚本会明确失败，不能算已复现。当前只支持独立 Python 脚本，未选择或未执行的证据记为“未测”。重跑成功表示所选脚本的退出码和输出符合声明，不替代对问题机制的人工确认。
 

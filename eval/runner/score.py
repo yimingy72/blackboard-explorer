@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 ANSWER = Path(__file__).resolve().parents[1] / "answers/mini-shop/answer.yaml"
-CLASSIFICATIONS = {"problem", "distractor", "new", "ignore"}
+CLASSIFICATIONS = {"problem", "distractor", "new", "false_positive", "ignore"}
 INTERFACE = re.compile(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[\w/{}/.-]+", re.I)
 
 
@@ -134,8 +134,23 @@ def _review_map(review: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(row["id"]): row for row in _rows(rows) if isinstance(row.get("id"), str)}
 
 
-def _reviewed(row: dict[str, Any] | None, problem_ids: set[str], distractor_ids: set[str]) -> bool:
-    if row is None or row.get("classification") not in CLASSIFICATIONS:
+def _assessments(row: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if row is None:
+        return None
+    if "assessments" not in row or row["assessments"] is None:
+        return [row]
+    values = row["assessments"]
+    if (
+        not isinstance(values, list)
+        or not values
+        or not all(isinstance(item, dict) for item in values)
+    ):
+        return None
+    return values
+
+
+def _reviewed(row: dict[str, Any], problem_ids: set[str], distractor_ids: set[str]) -> bool:
+    if row.get("classification") not in CLASSIFICATIONS:
         return False
     classification = row["classification"]
     answer_id = row.get("answer_id")
@@ -168,24 +183,33 @@ def _review_metrics(
     scored = []
     for finding in findings:
         row = by_id.get(finding["id"])
-        confirmed = _reviewed(row, problem_ids, distractor_ids)
+        assessments = _assessments(row)
+        confirmed = assessments is not None and all(
+            [_reviewed(item, problem_ids, distractor_ids) for item in assessments]
+        )
         item = {**finding, "review": row if confirmed else None}
         if not confirmed:
             pending.append(finding["id"])
         else:
             assert row is not None
-            kind = row["classification"]
-            if kind != "ignore":
-                credit = _credit(row) if kind in {"problem", "new"} else 0.0
+            assert assessments is not None
+            for index, assessment in enumerate(assessments):
+                kind = assessment["classification"]
+                if kind == "ignore":
+                    continue
+                credit = _credit(assessment) if kind in {"problem", "new"} else 0.0
                 if kind == "problem":
-                    key = str(row["answer_id"])
+                    key = str(assessment["answer_id"])
                     credited[key] = max(credited.get(key, 0.0), credit)
+                elif kind == "distractor":
+                    key = str(assessment["answer_id"])
                 else:
-                    key = (
-                        str(row["answer_id"])
-                        if kind == "distractor"
-                        else str(row.get("unique_key") or finding["id"])
+                    fallback = (
+                        finding["id"]
+                        if row.get("assessments") is None
+                        else f"{finding['id']}:{index}"
                     )
+                    key = str(assessment.get("unique_key") or fallback)
                 group = (kind, key)
                 reviewed_groups[group] = max(reviewed_groups.get(group, 0.0), credit)
         scored.append(item)
@@ -334,6 +358,7 @@ def score_run(
                 "source": item["source"],
                 "candidates": item["candidates"],
                 "evidence_uris": item["evidence_uris"],
+                "assessments": None,
                 "classification": None,
                 "answer_id": None,
                 "location": None,
