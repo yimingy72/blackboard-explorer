@@ -820,6 +820,12 @@
             "title": "Derive Empty Limit",
             "type": "integer"
           },
+          "derive_enabled": {
+            "default": true,
+            "description": "探索静止且裁定后是否继续推导",
+            "title": "Derive Enabled",
+            "type": "boolean"
+          },
           "dispute_notify_depth": {
             "default": 2,
             "description": "争议点名最大深度",
@@ -917,6 +923,12 @@
             "minimum": 1.0,
             "title": "Derive Empty Limit",
             "type": "integer"
+          },
+          "derive_enabled": {
+            "default": true,
+            "description": "探索静止且裁定后是否继续推导",
+            "title": "Derive Enabled",
+            "type": "boolean"
           },
           "dispute_notify_depth": {
             "default": 2,
@@ -1568,6 +1580,9 @@
                 {
                   "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                   "type": "string"
+                },
+                {
+                  "type": "boolean"
                 }
               ]
             },

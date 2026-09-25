@@ -1,0 +1,10 @@
+prompts:
+  explore: prompts/explore.md.j2
+  derive: prompts/derive.md.j2
+  close: prompts/close.md.j2
+exec_image: bbx-exec-env:latest
+exec_resources:
+  cpus: 2
+  mem: 4g
+  pids: 256
+privileged_allowlist: []

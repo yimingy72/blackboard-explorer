@@ -148,8 +148,7 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
         actions.append(SpawnExplore(seed=True))
         return actions
     if quiescent and not judging and state["last_judgment_version"] >= state["last_change_version"]:
-        actions.append(SpawnDerive())
-        return actions
+        return [SpawnDerive()] if params.derive_enabled else [EnterClosing("terminated")]
 
     unmet = {key for key, item in acceptance.items() if item["status"] != "met"}
     open_intents = sorted(

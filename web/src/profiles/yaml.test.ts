@@ -15,6 +15,7 @@ const profile: ProfileInput = {
     explore_max_steps: 60, seed_max_steps: 20, context_threshold: 128000,
     conclude_grace_calls: 3, grace_timeout: 5, heartbeat_timeout: 30,
     intent_max_attempts: 3, max_consecutive_failures: 3, derive_empty_limit: 2,
+    derive_enabled: true,
     close_reserve_ratio: '0.05', snapshot_max_lines: 150, delta_max_lines: 15,
     dispute_notify_depth: 2,
   },

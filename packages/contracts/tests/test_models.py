@@ -237,6 +237,9 @@ def test_task_params_override_boundaries() -> None:
     assert str(m.Params().close_reserve_ratio) == "0.05"
     assert m.Params(close_reserve_ratio=Decimal(0)).close_reserve_ratio == 0
     assert m.TaskSpec.model_validate({**task, "params": {"close_reserve_ratio": 0.5}})
+    disabled = m.TaskSpec.model_validate({**task, "params": {"derive_enabled": False}})
+    assert disabled.params["derive_enabled"] is False
+    assert m.Params().derive_enabled is True
     for invalid_params in (
         {"max_concurrent_agents": 6},
         {"close_reserve_ratio": 1},
@@ -258,6 +261,17 @@ def test_default_profile() -> None:
     assert not notices
     assert profile.models.explore.price.is_complete()
     assert profile.models.explore.price.currency == "USD"
+    assert profile.params.derive_enabled is True
+
+
+def test_single_profile_only_disables_derive() -> None:
+    root = Path(__file__).resolve().parents[3] / "profiles"
+    default, _ = load_profile(root / "default")
+    single, notices = load_profile(root / "single")
+    expected = default.model_dump(mode="json")
+    expected["params"]["derive_enabled"] = False
+    assert single.model_dump(mode="json") == expected
+    assert not notices
 
 
 def test_json_log_format() -> None:

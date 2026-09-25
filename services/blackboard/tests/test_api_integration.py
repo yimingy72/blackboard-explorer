@@ -137,6 +137,23 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
         tid = summary["task_id"]
         headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
         async with httpx.AsyncClient(base_url=base_url, headers=headers, trust_env=False) as client:
+            profiles = (await client.get("/api/profiles")).json()
+            assert {item["name"] for item in profiles} >= {"default", "single"}
+            single_profile = (await client.get("/api/profiles/single/versions/1")).json()
+            assert single_profile["profile"]["params"]["derive_enabled"] is False
+            single_task = await client.post(
+                "/api/tasks",
+                json={
+                    "goal": "Single worker task",
+                    "acceptance": [{"id": "A1", "desc": "Check result"}],
+                    "budget": {"max_concurrent_agents": 1, "max_cost": "1", "max_minutes": 10},
+                    "agent_profile": "single",
+                },
+            )
+            assert single_task.status_code == 200
+            single_state = (await client.get(f"/api/tasks/{single_task.json()['id']}/state")).json()
+            assert single_state["task"]["params"]["derive_enabled"] is False
+
             state = (await client.get(f"/api/tasks/{tid}/state")).json()
             assert state["task"]["status"] == "finished"
             assert state["task"]["acceptance_state"]["A1"]["status"] == "met"

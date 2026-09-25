@@ -58,6 +58,7 @@ export function taskEndExplanation(state: BoardState): string | null {
   if (task.closingReason === 'terminated') {
     const reserve = Number(task.params?.close_reserve_ratio ?? 0.05);
     if (Number(task.usage.cost ?? 0) >= Number(task.budget.max_cost) * (1 - reserve)) return '探索金额预算用尽，系统使用预留额度收尾';
+    if (task.params?.derive_enabled === false) return '探索时限已到，或探索停止且继续推导已关闭，系统进入终结收尾';
     return '探索时限已到，或连续推导没有新方向，系统进入终结收尾';
   }
   return task.closingReason ? `结束原因：${task.closingReason}` : null;

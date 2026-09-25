@@ -999,6 +999,12 @@ export interface components {
              */
             derive_empty_limit: number;
             /**
+             * Derive Enabled
+             * @description 探索静止且裁定后是否继续推导
+             * @default true
+             */
+            derive_enabled: boolean;
+            /**
              * Dispute Notify Depth
              * @description 争议点名最大深度
              * @default 2
@@ -1079,6 +1085,12 @@ export interface components {
              * @default 2
              */
             derive_empty_limit: number;
+            /**
+             * Derive Enabled
+             * @description 探索静止且裁定后是否继续推导
+             * @default true
+             */
+            derive_enabled: boolean;
             /**
              * Dispute Notify Depth
              * @description 争议点名最大深度
@@ -1363,7 +1375,7 @@ export interface components {
              * @description Agent 配置参数覆盖
              */
             params?: {
-                [key: string]: number | string;
+                [key: string]: number | string | boolean;
             };
             /** Profile Version */
             profile_version?: number | null;

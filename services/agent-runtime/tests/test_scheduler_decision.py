@@ -289,6 +289,30 @@ def test_derive_requires_quiescence_and_latest_judgment() -> None:
     assert decide(state, Params(), NOW) == []
 
 
+def test_disabled_derive_waits_for_seed_intents_and_latest_judgment() -> None:
+    state = board()
+    params = Params(derive_enabled=False)
+    assert decide(state, params, NOW) == [SpawnExplore(seed=True)]
+
+    state["board_empty"] = False
+    state["last_change_version"] = 4
+    assert decide(state, params, NOW) == [SpawnClose("judge")]
+    state["agents"] = {"agent-1": agent("agent-1", task_type="close", close_mode="judge")}
+    assert decide(state, params, NOW) == []
+
+    state["agents"] = {}
+    state["last_judgment_version"] = 4
+    state["intents"] = {"I1": intent("I1")}
+    assert decide(state, params, NOW) == [SpawnExplore("I1")]
+    state["intents"]["I1"]["status"] = "claimed"
+    assert decide(state, params, NOW) == []
+    state["intents"]["I1"]["status"] = "closed"
+    state["last_change_version"] = 5
+    assert decide(state, params, NOW) == [SpawnClose("judge")]
+    state["last_judgment_version"] = 5
+    assert decide(state, params, NOW) == [EnterClosing("terminated")]
+
+
 def test_open_intents_prioritize_unmet_then_oldest_and_respect_slots() -> None:
     state = board()
     state["board_empty"] = False

@@ -242,6 +242,7 @@ class Params(ContractModel):
     intent_max_attempts: int = Field(default=3, ge=1, description="意图未关闭时可被尝试的次数")
     max_consecutive_failures: int = Field(default=3, ge=1, description="连续运行错误上限")
     derive_empty_limit: int = Field(default=2, ge=1, description="连续空推导次数上限")
+    derive_enabled: bool = Field(default=True, description="探索静止且裁定后是否继续推导")
     close_reserve_ratio: Decimal = Field(
         default=Decimal("0.05"), ge=0, lt=1, description="总预算中为收尾预留的比例"
     )
@@ -255,7 +256,7 @@ class TaskSpec(ContractModel):
     domain_context: str | None = Field(default=None, description="领域提示")
     acceptance: list[AcceptanceItem] = Field(min_length=1, description="文字验收条件")
     budget: Budget = Field(description="金额、时长和并发预算")
-    params: dict[str, int | float | Decimal] = Field(
+    params: dict[str, int | float | Decimal | bool] = Field(
         default_factory=dict, description="Agent 配置参数覆盖"
     )
     agent_profile: str = Field(min_length=1, description="Agent 配置名称")

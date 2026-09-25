@@ -315,7 +315,7 @@ def create_app(
             )
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
-        await app.state.profile_store.ensure_default(settings.profiles_dir)
+        await app.state.profile_store.ensure_bundled(settings.profiles_dir)
         if own_dispatcher:
             from bbx_blackboard.sse import SSEDispatcher
 

@@ -97,3 +97,8 @@ class ProfileStore:
     async def ensure_default(self, directory: Path) -> dict[str, Any]:
         profile, _ = load_profile(directory)
         return await self.create("default", profile, "system")
+
+    async def ensure_bundled(self, directory: Path) -> None:
+        await self.ensure_default(directory)
+        single, _ = load_profile(directory.parent / "single")
+        await self.create("single", single, "system")

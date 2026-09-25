@@ -64,6 +64,12 @@
       "title": "Derive Empty Limit",
       "type": "integer"
     },
+    "derive_enabled": {
+      "default": true,
+      "description": "探索静止且裁定后是否继续推导",
+      "title": "Derive Enabled",
+      "type": "boolean"
+    },
     "close_reserve_ratio": {
       "anyOf": [
         {
