@@ -12,9 +12,25 @@ from bbx_runtime.e2e import (
     compose_document,
     container_proxy,
     redact,
+    task_spec,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_task_selection_preserves_domain_specific_requirements():
+    diagnostic = task_spec(ROOT, "flaky-order-test")
+    analysis = task_spec(ROOT, "attendance-reconciliation")
+    assert "pytest" in diagnostic["domain_context"]
+    assert "summary.csv" in analysis["domain_context"]
+    assert "pytest" not in analysis["domain_context"]
+    assert analysis["acceptance"][0]["id"] == "A1"
+
+
+@pytest.mark.parametrize("name", ["missing", "../flaky-order-test", "/tmp/task"])
+def test_task_selection_rejects_names_outside_registered_tasks(name):
+    with pytest.raises(ValueError, match="Unknown task"):
+        task_spec(ROOT, name)
 
 
 def test_checkpoint_overrides_host_credentials_and_keeps_only_loopback_random_port():

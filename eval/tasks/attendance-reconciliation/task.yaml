@@ -1,0 +1,11 @@
+goal: "核对活动报名与签到记录，生成各活动的有效报名、有效到场与到场率，并列出需要人工核查的数据问题。"
+domain_context: |
+  合成CSV与公开处理规则在 http://eval-targets/attendance-reconciliation.tar.gz 。
+  解压后先读README.md。按其中的字段、去重规则和问题分类生成summary.csv与issues.csv。
+  可用Python标准库处理，不需第三方依赖。保持原始数据不变，产物与复查步骤保存为证据。
+acceptance:
+  - id: A1
+    desc: "按公开规则正确统计全部活动，summary.csv包含event_id,registered,attended,attendance_rate；说明统计口径。"
+  - id: A2
+    desc: "issues.csv逐行列出所有应报告问题，包含file,row,record_id,issue；提供可重做的步骤和证据引用，原始文件不变。"
+budget: {max_concurrent_agents: 3, max_cost: 3, max_minutes: 20}

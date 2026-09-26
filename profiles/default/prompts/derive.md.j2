@@ -43,7 +43,7 @@
 # 输出格式
 
 先通过 post_intent 提交你真正提出的每条意图，然后只返回一个原始 JSON 对象，不要附加 Markdown 或解释：
-{"accepted": true, "data": {"posted": ["I9", "I10"], "excluded": ["注入网络延迟：因 I3 已 rejected 排除"]}}
+{"accepted": true, "data": {"posted": ["I9", "I10"], "excluded": ["重复已有调查：因 I3 已 rejected 排除"]}}
 
 posted 为空表示没有新方向。无法开始且工具不可用时，可在不提交任何意图后返回：
 {"accepted": false, "reason": "..."}

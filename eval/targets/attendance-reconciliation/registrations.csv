@@ -1,0 +1,12 @@
+registration_id,event_id,person_id,status
+R001,E1,U01,confirmed
+R002,E1,U02,confirmed
+R003,E1,U03,cancelled
+R004,E1,U01,confirmed
+R005,E2,U04,confirmed
+R006,E2,U05,confirmed
+R007,E2,U06,confirmed
+R008,E2,U07,cancelled
+R009,E3,U08,confirmed
+R010,E3,U09,confirmed
+R010,E3,U09,confirmed

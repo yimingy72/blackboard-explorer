@@ -1,0 +1,18 @@
+{
+  "summary": [
+    {"event_id": "E1", "registered": 2, "attended": 1, "attendance_rate": "0.500000"},
+    {"event_id": "E2", "registered": 3, "attended": 2, "attendance_rate": "0.666667"},
+    {"event_id": "E3", "registered": 2, "attended": 2, "attendance_rate": "1.000000"}
+  ],
+  "issues": [
+    {"file": "registrations.csv", "row": 5, "record_id": "R004", "issue": "duplicate_registration"},
+    {"file": "registrations.csv", "row": 12, "record_id": "R010", "issue": "duplicate_registration"},
+    {"file": "checkins.csv", "row": 3, "record_id": "C002", "issue": "duplicate_checkin"},
+    {"file": "checkins.csv", "row": 4, "record_id": "C003", "issue": "ineligible_checkin"},
+    {"file": "checkins.csv", "row": 5, "record_id": "C004", "issue": "ineligible_checkin"},
+    {"file": "checkins.csv", "row": 8, "record_id": "C007", "issue": "duplicate_checkin"},
+    {"file": "checkins.csv", "row": 9, "record_id": "C008", "issue": "ineligible_checkin"},
+    {"file": "checkins.csv", "row": 12, "record_id": "C010", "issue": "duplicate_checkin"},
+    {"file": "checkins.csv", "row": 13, "record_id": "C011", "issue": "unknown_event"}
+  ]
+}

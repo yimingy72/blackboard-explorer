@@ -93,11 +93,13 @@ make test-live
 make e2e
 # 或由 uv 子进程显式加载用户选择的本地配置文件
 make e2e E2E_ENV_FILE=~/blackboard-explorer/.env
+# 同一引擎处理非代码的数据核对任务
+make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--task attendance-reconciliation'
 # 保留隔离工作台供浏览器复盘；--timeout 只限制任务等待时间
 make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--keep --timeout 1800'
 ```
 
-先按上面的部署命令构建前端和四个镜像；每次修改实现后重新构建对应镜像。该命令生成已有玩具素材，使用已构建镜像，以唯一 `bbx-e2e-*` Compose 项目启动全栈。黑板仅发布 localhost 随机端口，PG/MinIO 不发布宿主端口，控制凭据为本次随机生成，只有模型配置使用提供的 DEEPSEEK_API_KEY。Compose 文件不保存密钥值；每条 Compose 命令另有 180 秒上限。
+先按上面的部署命令构建前端和四个镜像；每次修改实现后重新构建对应镜像。该命令生成已有玩具素材，使用已构建镜像，以唯一 `bbx-e2e-*` Compose 项目启动全栈。默认任务为flaky-order-test，可用 `--task` 选择eval/tasks中的任务；领域要求只来自所选task.yaml，数据任务不会自动收到pytest准备指令。黑板仅发布localhost随机端口，PG/MinIO不发布宿主端口，控制凭据为本次随机生成，只有模型配置使用提供的DEEPSEEK_API_KEY。Compose文件不保存密钥值；每条Compose命令另有180秒上限。
 
 控制台会显示任务/工作台地址与进展。隔离测试账号是 `e2e / local-e2e-only`，只用于这套临时服务。任务结束后输出报告和账本费用估算，并在 `.data/e2e/<项目名>/` 保存报告、事件、状态、工作区压缩包和脱敏日志。默认停止服务并清理本项目卷与执行容器；`--keep` 仅在任务已终结并登记归档后保留工作台，并打印清理命令。
 

@@ -23,6 +23,13 @@ ROOT = Path(__file__).resolve().parents[4]
 TERMINAL = {"finished", "failed", "stopped"}
 
 
+def task_spec(root: Path, name: str) -> dict:
+    tasks = {path.parent.name: path for path in (root / "eval/tasks").glob("*/task.yaml")}
+    if name not in tasks:
+        raise ValueError(f"Unknown task: {name}")
+    return yaml.safe_load(tasks[name].read_text())
+
+
 def container_proxy(value: str) -> str:
     if not value:
         return ""
@@ -129,7 +136,8 @@ class ComposeCheckpoint:
             raise RuntimeError(f"Compose {' '.join(arguments)} failed: {output[-2000:]}")
         return output
 
-    async def run(self, *, keep: bool, timeout: int) -> dict:
+    async def run(self, *, keep: bool, timeout: int, task_name: str = "flaky-order-test") -> dict:
+        spec = task_spec(self.root, task_name)
         complete = False
         try:
             await self.docker("up", "-d")
@@ -144,21 +152,14 @@ class ComposeCheckpoint:
                             break
                         except (httpx.HTTPError, RuntimeError):
                             await asyncio.sleep(1)
-                spec = yaml.safe_load(
-                    (self.root / "eval/tasks/flaky-order-test/task.yaml").read_text()
-                )
                 spec["agent_profile"] = "default"
                 spec["egress_allowlist"] = self.environment["EGRESS_ALLOWLIST"].split(",")
-                spec["domain_context"] += (
-                    "\n依赖准备：在 /workspace/shared 下用 python3 -m venv 建立独立环境，"
-                    "再从 https://mirrors.aliyun.com/pypi/simple 安装 pytest，"
-                    "后续探索者复用该环境。"
-                )
                 tid = (await board.create_task(spec))["id"]
                 self.task_id = tid
                 await board.start_task(tid)
                 metadata = {
                     "project": self.project,
+                    "task": task_name,
                     "task_id": tid,
                     "url": f"{base_url}/tasks/{tid}",
                 }
@@ -275,7 +276,8 @@ class ComposeCheckpoint:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="运行真实 DeepSeek 玩具任务闭环（会产生费用）")
+    parser = argparse.ArgumentParser(description="运行真实 DeepSeek 任务闭环（会产生费用）")
+    parser.add_argument("--task", default="flaky-order-test", help="eval/tasks 下的任务目录名")
     parser.add_argument("--keep", action="store_true", help="结束后保留隔离工作台供复盘")
     parser.add_argument(
         "--timeout", type=int, default=1800, help="任务等待上限，秒；Compose 命令另限 180 秒"
@@ -285,7 +287,7 @@ def main() -> None:
         parser.error("timeout must be positive")
     checkpoint = ComposeCheckpoint(ROOT, dict(os.environ))
     try:
-        asyncio.run(checkpoint.run(keep=args.keep, timeout=args.timeout))
+        asyncio.run(checkpoint.run(keep=args.keep, timeout=args.timeout, task_name=args.task))
     except Exception as error:
         print(
             redact(f"检查失败：{type(error).__name__}: {error}", checkpoint.environment), flush=True

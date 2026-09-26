@@ -10,6 +10,7 @@ cp -R "$root/order-service/." "$tmp/order-service/"
 find "$tmp/order-service" -name __pycache__ -type d -prune -exec rm -rf {} +
 find "$tmp/order-service" -name .pytest_cache -type d -prune -exec rm -rf {} +
 tar -C "$tmp/order-service" -czf "$root/dist/order-service.tar.gz" .
+tar -C "$root/attendance-reconciliation" -czf "$root/dist/attendance-reconciliation.tar.gz" .
 
 mkdir "$tmp/mini-shop"
 cp -R "$root/mini-shop/src-main/." "$tmp/mini-shop/"
@@ -38,4 +39,4 @@ for layer in "$root"/mini-shop/commits/*; do
 done
 find .git/hooks -name "*.sample" -type f -delete
 tar -C "$tmp/mini-shop" -czf "$root/dist/mini-shop.tar.gz" .
-printf 'Built %s and %s\n' "$root/dist/order-service.tar.gz" "$root/dist/mini-shop.tar.gz"
+printf 'Built %s, %s and %s\n' "$root/dist/order-service.tar.gz" "$root/dist/mini-shop.tar.gz" "$root/dist/attendance-reconciliation.tar.gz"
