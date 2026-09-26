@@ -1,8 +1,6 @@
 """Pinned profile templates and the first context for one Agent run."""
 
 import json
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 from agent_framework import ContextProvider, SessionContext
@@ -28,25 +26,6 @@ def _acceptance(task: dict[str, Any]) -> str:
             f"｜支撑事实：{', '.join(result.get('evidence_facts') or []) or '无'}"
         )
     return "\n".join(lines)
-
-
-def _budget(task: dict[str, Any]) -> str:
-    budget = task["budget"]
-    left = max(
-        Decimal(0),
-        Decimal(str(budget["max_cost"])) - Decimal(str(task.get("usage", {}).get("cost", 0))),
-    )
-    minutes = int(budget["max_minutes"])
-    started = task.get("started_at")
-    if started:
-        stamp = (
-            started
-            if isinstance(started, datetime)
-            else datetime.fromisoformat(str(started).replace("Z", "+00:00"))
-        )
-        elapsed = (datetime.now(UTC) - stamp.astimezone(UTC)).total_seconds() / 60
-        minutes = max(0, minutes - int(elapsed))
-    return f"金额剩余 {left}；时间剩余约 {minutes} 分钟"
 
 
 def _fact_summary(fact: dict[str, Any]) -> dict[str, object]:
@@ -111,7 +90,8 @@ class OpeningContextProvider(ContextProvider):
             "goal": task["goal"],
             "domain_context": task.get("domain_context") or "无",
             "acceptance_status": _acceptance(task),
-            "budget_left": _budget(task),
+            # Published profile versions may still reference this placeholder.
+            "budget_left": "由系统管理",
             "agent_id": run.agent_id,
             "seed_max_steps": run.params.seed_max_steps,
             "conclude_grace_calls": run.params.conclude_grace_calls,
