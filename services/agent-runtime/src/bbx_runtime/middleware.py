@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
+from bbx_runtime.trace import model_content, record_trace
 
 DIGEST_TYPES = {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
 VERDICT_TYPES = {"acceptance.judged", "acceptance.reverted"}
@@ -238,6 +239,7 @@ class BoardSyncMiddleware(ChatMiddleware):
         if agent is None:
             raise RuntimeError(f"Agent {self.ctx.agent_id} is missing from the blackboard")
         last_seen = int(agent["last_seen_version"])
+        step = int(agent.get("steps") or 0) + 1
         if self.ctx.task_type == "explore":
             last_seen = max(last_seen, self.last_appended_version)
             events = await self.ctx.board.events(
@@ -255,10 +257,15 @@ class BoardSyncMiddleware(ChatMiddleware):
                 self.conclude_injected = True
             last_seen = max([last_seen, *(int(event["version"]) for event in events)])
             if lines:
-                append_board_update(context.messages, "[黑板更新]\n" + "\n".join(lines))
+                update = "[黑板更新]\n" + "\n".join(lines)
+                append_board_update(context.messages, update)
+                await record_trace(self.ctx, "board_update", step, update + "\n[黑板更新结束]")
                 self.last_appended_version = last_seen
         await call_next()
         response = context.result
+        if isinstance(response, ChatResponse):
+            output, reasoning = model_content(response)
+            await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
         details = response.usage_details if isinstance(response, ChatResponse) else None
         price = getattr(self.ctx.profile.models, self.ctx.task_type).price
         usage, self.price_warning = _usage(details, price)

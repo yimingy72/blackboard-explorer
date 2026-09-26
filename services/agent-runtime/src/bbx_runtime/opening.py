@@ -8,6 +8,7 @@ from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from bbx_runtime.context import RunContext
+from bbx_runtime.trace import record_trace
 
 
 def _json(value: object) -> str:
@@ -79,6 +80,7 @@ class OpeningContextProvider(ContextProvider):
         super().__init__(source_id=f"opening:{run.agent_id}")
         self.run = run
         self.environment = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+        self.trace_recorded = False
 
     async def render(self) -> str:
         run = self.run
@@ -152,4 +154,8 @@ class OpeningContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        context.extend_instructions(self.source_id, await self.render())
+        rendered = await self.render()
+        context.extend_instructions(self.source_id, rendered)
+        if not self.trace_recorded:
+            await record_trace(self.run, "initial_context", 0, f"开始。\n\n{rendered}")
+            self.trace_recorded = True

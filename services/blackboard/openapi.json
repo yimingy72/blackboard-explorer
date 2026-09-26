@@ -178,6 +178,42 @@
         "title": "AgentRegistered",
         "type": "object"
       },
+      "AgentTraceBody": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "initial_context",
+              "board_update",
+              "model_output"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "step": {
+            "minimum": 0.0,
+            "title": "Step",
+            "type": "integer"
+          },
+          "summary": {
+            "maxLength": 240,
+            "title": "Summary",
+            "type": "string"
+          },
+          "uri": {
+            "minLength": 1,
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "step",
+          "uri",
+          "summary"
+        ],
+        "title": "AgentTraceBody",
+        "type": "object"
+      },
       "ArchiveBody": {
         "properties": {
           "fallback": {
@@ -421,7 +457,8 @@
           "acceptance.reverted",
           "task.report",
           "budget.updated",
-          "tool_call.recorded"
+          "tool_call.recorded",
+          "agent.trace.recorded"
         ],
         "title": "EventType",
         "type": "string"
@@ -2750,6 +2787,73 @@
           }
         },
         "summary": "Grace",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/traces": {
+      "post": {
+        "operationId": "agent_trace_api_tasks__task_id__agents__agent_id__traces_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTraceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Agent Trace Api Tasks  Task Id  Agents  Agent Id  Traces Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Trace",
         "tags": [
           "system"
         ]

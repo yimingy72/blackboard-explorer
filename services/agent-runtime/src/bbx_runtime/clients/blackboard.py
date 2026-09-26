@@ -324,3 +324,12 @@ class BlackboardClient:
         self, task_id: UUID | str, call: dict[str, Any]
     ) -> list[dict[str, Any]]:
         return await self._json("POST", f"{self._task(task_id)}/tool_calls", json=call)
+
+    async def record_agent_trace(
+        self, task_id: UUID | str, agent_id: str, trace: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return await self._json(
+            "POST",
+            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/traces",
+            json=trace,
+        )

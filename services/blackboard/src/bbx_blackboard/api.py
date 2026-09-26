@@ -148,6 +148,13 @@ class ToolCallBody(BaseModel):
     result_uri: str | None = None
 
 
+class AgentTraceBody(BaseModel):
+    kind: Literal["initial_context", "board_update", "model_output"]
+    step: int = Field(ge=0)
+    uri: str = Field(min_length=1)
+    summary: str = Field(max_length=240)
+
+
 class SearchHit(BaseModel):
     id: str
     type: Literal["fact", "intent"]
@@ -253,7 +260,10 @@ def _key_task(uri: str) -> UUID | None:
         any(part in {"", ".", ".."} for part in parts)
         or (parts[0] == "evidence" and len(parts) != 4)
         or (parts[0] == "toolcalls" and (len(parts) != 3 or not parts[2].endswith(".txt")))
-        or parts[0] not in {"evidence", "toolcalls"}
+        or (
+            parts[0] == "traces" and (len(parts) != 4 or not re.fullmatch(r"[^/]+\.json", parts[3]))
+        )
+        or parts[0] not in {"evidence", "toolcalls", "traces"}
     ):
         return None
     try:
@@ -802,6 +812,14 @@ def create_app(
         await _task(request, task_id)
         data = body.model_dump(exclude={"agent_id"})
         return await _service(request).record_tool_call(task_id, body.agent_id, data)
+
+    @app.post("/api/tasks/{task_id}/agents/{agent_id}/traces", tags=["system"])
+    async def agent_trace(
+        request: Request, task_id: UUID, agent_id: str, body: AgentTraceBody
+    ) -> list[dict[str, Any]]:
+        require_service(request)
+        await _task(request, task_id)
+        return await _service(request).record_agent_trace(task_id, agent_id, body.model_dump())
 
     @app.post("/api/tasks/{task_id}/uploads", response_model=UploadResult, tags=["system"])
     async def upload(

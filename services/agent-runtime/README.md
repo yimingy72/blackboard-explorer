@@ -52,6 +52,8 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 
 回执按 explore / derive / close 的 contracts 校验，支持代码块与尾部 JSON；无效文本记为规定的回退回执并保留 raw_text，不把回执当作事实发布。
 
+每个新 Agent 还记录实际渲染的初始上下文、真正追加的黑板增量和逐轮模型输出。正文写入 `traces/{task_id}/{agent_id}/`，通过服务接口登记 `agent.trace.recorded` 元数据事件，工作台按需读取。DeepSeek 实际返回的 `reasoning_content` 作为记录元数据保留，不混入下一轮请求的普通回复文本；没有返回推理文本就不显示推理。Trace 写入失败记录警告，不妨碍模型用量记账和交接；旧任务无记录时不能事后还原。该记录机制不改变 Fact/Intent 和调度判断。
+
 ## 价格
 
 默认 profile 使用 2026-09-24 [DeepSeek 官方价格](https://api-docs.deepseek.com/quick_start/pricing/)的 USD 高峰单价，按每百万 token 计价：缓存命中 0.006、未命中 0.30、输出 1.20。推理 token 已含在输出中，不重复收费。这是固定版本的保守预算估算；错峰费率为一半，需在运行用 profile 中明确选定对应价格再核对账单。`off_peak` 是该价格快照的标记，不会动态切换时段。

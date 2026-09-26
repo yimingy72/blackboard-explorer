@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -23,6 +24,7 @@ from bbx_blackboard.domain import (
     dispute_fields,
     pending_claims,
 )
+from bbx_blackboard.domain.rules import event
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 
@@ -261,6 +263,66 @@ class BoardService:
         if data.get("result_head"):
             data["result_head"] = data["result_head"][:4096]
         return await self._write(tid, "record_tool_call", agent_id, data)
+
+    async def record_agent_trace(
+        self, tid: UUID, agent_id: str, trace: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        kind = trace.get("kind")
+        step = trace.get("step")
+        uri = trace.get("uri")
+        summary = trace.get("summary")
+        if (
+            kind not in {"initial_context", "board_update", "model_output"}
+            or not isinstance(step, int)
+            or isinstance(step, bool)
+            or step < 0
+            or (kind == "initial_context") != (step == 0)
+            or not isinstance(summary, str)
+            or len(summary) > 240
+            or not isinstance(uri, str)
+            or not re.fullmatch(
+                rf"traces/{re.escape(str(tid))}/{re.escape(agent_id)}/[^/.][^/]*\.json", uri
+            )
+            or any(part in {".", ".."} for part in uri.split("/"))
+        ):
+            raise RuleViolation("invalid_trace", "Trace 元数据或对象 key 不合法。")
+        if not await self.objects.exists(uri):
+            raise RuleViolation("trace_missing", "Trace 对象不存在，请先持久化正文。")
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            state = await self.repo.load(conn, tid)
+            agent = state.agents.get(agent_id)
+            if agent is None or agent["status"] not in {"running", "concluding"}:
+                raise RuleViolation("agent_inactive", "Trace 必须属于当前任务的活动 Agent。")
+            duplicates = [s.events.c.payload["uri"].astext == uri]
+            if kind == "initial_context":
+                duplicates.append(
+                    (s.events.c.payload["agent_id"].astext == agent_id)
+                    & (s.events.c.payload["kind"].astext == kind)
+                )
+            previous = await conn.execute(
+                select(s.events.c.version)
+                .where(
+                    s.events.c.task_id == tid,
+                    s.events.c.type == "agent.trace.recorded",
+                    or_(*duplicates),
+                )
+                .limit(1)
+            )
+            if previous.first() is not None:
+                raise RuleViolation("duplicate_trace", "Trace 或初始上下文已登记。")
+            payload = {
+                "agent_id": agent_id,
+                "kind": kind,
+                "step": step,
+                "uri": uri,
+                "summary": summary,
+            }
+            written = await self.repo.append(
+                conn, tid, [event("agent.trace.recorded", agent_id, payload)]
+            )
+        await self.repo.notify(tid, written[-1]["version"])
+        return written
 
     async def state(self, tid: UUID) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:

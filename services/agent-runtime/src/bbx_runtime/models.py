@@ -6,12 +6,26 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from agent_framework import UsageDetails
+from agent_framework import Content, UsageDetails
 from agent_framework.openai import OpenAIChatCompletionClient, OpenAIChatCompletionOptions
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.profile import load_profile
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessage
+from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
+
+
+def preserve_reasoning(
+    message: ChatCompletionMessage | ChoiceDelta, contents: list[Content]
+) -> list[Content]:
+    """Keep provider-returned reasoning as trace metadata, never as assistant text."""
+    reasoning = getattr(message, "reasoning_content", None)
+    if isinstance(reasoning, str) and reasoning:
+        if not contents:
+            contents = [Content.from_text("")]
+        contents[0].additional_properties["deepseek_reasoning"] = reasoning
+    return contents
 
 
 class DeepSeekChatOptions(OpenAIChatCompletionOptions[None], total=False):
@@ -55,6 +69,7 @@ def make_client(
         raise ValueError("Model key, step limit, and duration must be valid")
     return DeepSeekChatClient(
         model=model.model,
+        response_parser=preserve_reasoning,
         async_client=AsyncOpenAI(
             api_key=api_key,
             base_url=model.base_url,

@@ -22,7 +22,56 @@ ROOT = Path(__file__).resolve().parents[3]
 
 class FakeObjects:
     async def exists(self, uri):
-        return uri in {"evidence/one", "reports/final"}
+        return uri in {"evidence/one", "reports/final"} or uri.startswith("traces/")
+
+
+async def test_agent_numbers_are_task_local_under_concurrent_registration(board_service):
+    first, second = await asyncio.gather(task(board_service), task(board_service))
+    initial = await asyncio.gather(
+        board_service.register_agent(first, "explore"),
+        board_service.register_agent(second, "explore"),
+    )
+    assert initial == ["agent-1", "agent-1"]
+    same_task = await asyncio.gather(
+        *(board_service.register_agent(first, "explore") for _ in range(4))
+    )
+    assert sorted(same_task) == ["agent-2", "agent-3", "agent-4", "agent-5"]
+    assert await board_service.register_agent(second, "explore") == "agent-2"
+    assert (await board_service.state(first))["counters"]["agent"] == 5
+    assert (await board_service.state(second))["counters"]["agent"] == 2
+
+
+async def test_trace_events_are_isolated_and_do_not_change_board_projection(board_service):
+    first, second = await asyncio.gather(task(board_service), task(board_service))
+    assert await board_service.register_agent(first, "explore") == "agent-1"
+    assert await board_service.register_agent(second, "explore") == "agent-1"
+    before = await board_service.state(first)
+    uri = f"traces/{first}/agent-1/000000-initial_context-abcd.json"
+    body = {"kind": "initial_context", "step": 0, "uri": uri, "summary": "start"}
+    events = await board_service.record_agent_trace(first, "agent-1", body)
+    assert events[0]["type"] == "agent.trace.recorded"
+    assert events[0]["payload"] == {"agent_id": "agent-1", **body}
+    after = await board_service.state(first)
+    assert after["last_change_version"] == before["last_change_version"]
+    assert after["facts"] == before["facts"] == {}
+    assert after["intents"] == before["intents"] == {}
+    assert not any(e["type"] == "agent.trace.recorded" for e in await board_service.events(second))
+    for invalid in (
+        body,
+        {**body, "uri": f"traces/{second}/agent-1/other.json"},
+        {**body, "uri": f"traces/{first}/agent-2/other.json"},
+    ):
+        with pytest.raises(RuleViolation):
+            await board_service.record_agent_trace(first, "agent-1", invalid)
+    with pytest.raises(RuleViolation) as missing:
+        await board_service.record_agent_trace(
+            first, "agent-2", {**body, "uri": f"traces/{first}/agent-2/other.json"}
+        )
+    assert missing.value.code == "agent_inactive"
+    await board_service.replay(first)
+    assert (await board_service.state(first))["last_change_version"] == before[
+        "last_change_version"
+    ]
 
 
 @pytest.fixture(scope="module")

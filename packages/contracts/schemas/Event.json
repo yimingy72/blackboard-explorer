@@ -26,7 +26,8 @@
         "acceptance.reverted",
         "task.report",
         "budget.updated",
-        "tool_call.recorded"
+        "tool_call.recorded",
+        "agent.trace.recorded"
       ],
       "title": "EventType",
       "type": "string"

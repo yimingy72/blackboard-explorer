@@ -122,6 +122,7 @@ class EventType(StrEnum):
     TASK_REPORT = "task.report"
     BUDGET_UPDATED = "budget.updated"
     TOOL_CALL_RECORDED = "tool_call.recorded"
+    AGENT_TRACE_RECORDED = "agent.trace.recorded"
 
 
 class Evidence(ContractModel):

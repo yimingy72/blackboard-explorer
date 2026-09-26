@@ -169,6 +169,20 @@ async def test_scripted_seed_records_board_tools_usage_and_receipt(
                 assert len(records) == 4
                 for record in records:
                     assert await objects.exists(record["payload"]["result_uri"])
+                traces = [e for e in await board.events(tid) if e["type"] == "agent.trace.recorded"]
+                assert traces[0]["payload"]["kind"] == "initial_context"
+                outputs = [e for e in traces if e["payload"]["kind"] == "model_output"]
+                assert [e["payload"]["step"] for e in outputs] == [1, 2, 3, 4, 5]
+                for trace in traces:
+                    uri = trace["payload"]["uri"]
+                    assert await objects.exists(uri)
+                    response = await board_http.get(
+                        "http://board/api/evidence",
+                        params={"uri": uri},
+                        headers={"Authorization": "Bearer m2b-service"},
+                    )
+                    assert response.status_code == 200
+                    assert isinstance(response.json()["text"], str)
                 assert len(fake.commands) == 1
     finally:
         await engine.dispose()

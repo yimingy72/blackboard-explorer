@@ -302,7 +302,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 created_at=stamp,
             )
         )
-    elif kind in {"fact.disputed", "fact.undisputed"}:
+    elif kind in {"fact.disputed", "fact.undisputed", "agent.trace.recorded"}:
         pass
     else:
         raise ValueError(f"unhandled event type: {kind}")

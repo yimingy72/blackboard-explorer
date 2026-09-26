@@ -35,8 +35,15 @@ class FakeObjects:
 
 
 class FakeService:
+    def __init__(self) -> None:
+        self.trace_calls: list[tuple[Any, str, dict[str, Any]]] = []
+
     async def post_fact(self, _tid, _aid, _body, *, dry_run=False):
         return {"valid": True} if dry_run else {"id": "F1"}
+
+    async def record_agent_trace(self, tid, aid, body):
+        self.trace_calls.append((tid, aid, body))
+        return []
 
     async def get_object(self, _tid, _oid, _depth):
         raise RuleViolation("bad_object", "修正对象引用")
@@ -46,7 +53,8 @@ class FakeService:
 async def test_auth_and_task_scoped_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     config = settings()
     app = api.create_app(config)
-    app.state.board_service = FakeService()
+    service = FakeService()
+    app.state.board_service = service
     app.state.objects = FakeObjects()
 
     async def fake_task(_request, _task_id):
@@ -75,6 +83,42 @@ async def test_auth_and_task_scoped_evidence(monkeypatch: pytest.MonkeyPatch) ->
             "/api/evidence", params={"uri": f"toolcalls/{other_task}/call-1.txt"}, headers=agent
         )
         assert response.status_code == 403
+        trace_uri = f"traces/{task_id}/agent-1/000001-model_output-abcd.json"
+        response = await client.get("/api/evidence", params={"uri": trace_uri}, headers=agent)
+        assert response.status_code == 200
+        assert response.content == b"evidence"
+        for invalid_uri, expected in (
+            (f"traces/{other_task}/agent-1/output.json", 403),
+            (f"traces/{task_id}/agent-1/../output.json", 422),
+            (f"traces/{task_id}/agent-1/output.txt", 422),
+            (f"traces/{task_id}/agent-1/", 422),
+            (f"reports/{task_id}.md", 422),
+        ):
+            response = await client.get("/api/evidence", params={"uri": invalid_uri}, headers=agent)
+            assert response.status_code == expected
+
+        trace_body = {
+            "kind": "model_output",
+            "step": 1,
+            "uri": trace_uri,
+            "summary": "summary",
+        }
+        trace_path = f"/api/tasks/{task_id}/agents/agent-1/traces"
+        response = await client.post(trace_path, json=trace_body, headers=agent)
+        assert response.status_code == 403
+        response = await client.post(
+            trace_path,
+            json=trace_body,
+            headers={"Authorization": "Bearer service-test"},
+        )
+        assert response.status_code == 200
+        assert service.trace_calls == [(task_id, "agent-1", trace_body)]
+        response = await client.post(
+            trace_path,
+            json={**trace_body, "kind": "fabricated"},
+            headers={"Authorization": "Bearer service-test"},
+        )
+        assert response.status_code == 422
 
         fact: dict[str, Any] = {
             "kind": "observation",
