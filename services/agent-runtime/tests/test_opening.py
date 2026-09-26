@@ -120,7 +120,7 @@ async def test_seed_explore_has_only_l0_and_uses_pinned_template() -> None:
     assert "查明网关 502 的原因" in rendered
     assert "订单服务" in rendered
     assert "缺少复现" in rendered
-    assert "金额剩余 7.5" in rendered
+    assert "剩余预算" not in rendered
     assert "7 步内仍未认领" in rendered
     assert "黑板为空，你是第一个探索者" in rendered
     assert "# 任务图快照" not in rendered
@@ -184,3 +184,38 @@ async def test_template_is_strict_and_receives_no_host_objects() -> None:
     run.profile.prompt_templates.explore = "{{ goal.__class__ }}"
     with pytest.raises(SecurityError):
         await OpeningContextProvider(run).render()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile_name", ["default", "single"])
+@pytest.mark.parametrize(
+    "task_type, intent_id, mode",
+    [
+        ("explore", None, None),
+        ("explore", "I1", None),
+        ("derive", None, None),
+        ("close", None, "judge"),
+        ("close", None, "final"),
+    ],
+)
+async def test_budget_does_not_change_context_or_break_legacy_templates(
+    profile_name: str, task_type: str, intent_id: str | None, mode: str | None
+) -> None:
+    run, _ = run_context(task_type, intent_id=intent_id, mode=mode)
+    run.profile, _ = load_profile(ROOT / "profiles" / profile_name)
+    provider = OpeningContextProvider(run)
+    original = await provider.render()
+    assert "剩余预算" not in original
+    task = run.state["task"]
+    task.update(
+        budget={"max_cost": "9876.54321", "max_minutes": 43210},
+        usage={"cost": "1234.56789"},
+        started_at="2000-01-01T00:00:00Z",
+    )
+    assert await provider.render() == original
+
+    del task["budget"]
+    del task["usage"]
+    assert await provider.render() == original
+    setattr(run.profile.prompt_templates, task_type, "{{ goal }}｜{{ budget_left }}")
+    assert await provider.render() == f"{task['goal']}｜由系统管理"
