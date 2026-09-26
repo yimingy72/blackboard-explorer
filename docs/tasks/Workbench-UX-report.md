@@ -19,6 +19,7 @@
 - Playwright：**9 passed**，覆盖对话正文和模型返回推理、工具、历史隔离、拓扑/标签联动、运行时间增长、跨任务编号与选择、创建表单长文本及 390px 无横向溢出；原登录、证据、报告、归档、Profile 流程保持。
 - 浏览器截图复核：1440px 工作台图谱高度超过 500px，对话栏标题与关闭按钮在内容滚动时保持可见；桌面与移动创建表单无输入遮挡。
 - `git diff --check` 通过；执行环境、runtime、代理/评测测试镜像与 blackboard 镜像构建通过。没有调用真实 DeepSeek，没有读取或修改 `.env`。
+- 本地 blackboard/runtime 已更新；HTTP 页面与最终构建一致，新 trace 接口可见，runtime 已加载对话与推理字段适配。原两个 finished 任务和两份工作区归档均保留。截图与检查日志保存在主仓库忽略目录 `.data/checkpoints/workbench-ux/`。
 
 复现：`make check web-check web-build`；Docker 构建代理按 envd README 设置后运行 `make test-integration image-blackboard`；浏览器运行 `make web-e2e`（可复用主仓库 `.data/playwright` 缓存）。
 
