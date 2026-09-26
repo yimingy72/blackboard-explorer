@@ -72,7 +72,7 @@ class Containers:
 class Network:
     def __init__(self) -> None:
         self.connected: list[str] = []
-        self.attrs = {"Internal": True}
+        self.attrs = {"Internal": False}
 
     def reload(self) -> None:
         pass
@@ -100,13 +100,14 @@ class Objects:
         pass
 
 
-def settings(mode: str = "relay") -> Settings:
+def settings(mode: str = "relay", egress_mode: str = "direct") -> Settings:
     return Settings.model_construct(
         deepseek_api_key=SecretStr("fake-deepseek"),
         minio_root_password=SecretStr("fake-minio"),
         service_token=SecretStr("fake-service"),
         envd_token_secret=SecretStr("test-secret"),
         exec_access_mode=mode,
+        exec_egress_mode=egress_mode,
         exec_network="bbx-test-exec",
     )
 
@@ -118,7 +119,9 @@ def test_task_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provision_idempotent_with_isolated_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_provision_idempotent_with_direct_egress_and_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     fake = Docker()
     manager = ExecEnvManager(
@@ -144,6 +147,7 @@ async def test_provision_idempotent_with_isolated_relay(monkeypatch: pytest.Monk
     assert envd.kwargs["cap_drop"] == ["ALL"]
     assert "KILL" in envd.kwargs["cap_add"]
     assert envd.kwargs["environment"]["PRIVILEGED_PREFIXES"] == ""
+    assert not any("PROXY" in key.upper() for key in envd.kwargs["environment"])
     assert envd.kwargs["security_opt"] == ["no-new-privileges"]
     assert envd.kwargs["nano_cpus"] == 2_000_000_000
     assert relay.kwargs["network"] == "bridge"
@@ -212,18 +216,47 @@ async def test_failed_provision_keeps_preexisting_envd(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_non_internal_exec_network_is_rejected_before_creation() -> None:
+@pytest.mark.parametrize(
+    "egress_mode, internal, error",
+    [("direct", True, "non-internal"), ("proxy", False, "must be internal")],
+)
+async def test_wrong_exec_network_is_rejected_before_creation(
+    egress_mode: str, internal: bool, error: str
+) -> None:
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     fake = Docker()
-    fake.networks.network.attrs["Internal"] = False
+    fake.networks.network.attrs["Internal"] = internal
     manager = ExecEnvManager(
-        settings(),
+        settings(egress_mode=egress_mode),
         docker_client=cast(docker.DockerClient, fake),
         objects=cast(ObjectStore, Objects()),
     )
     task_id = uuid4()
-    with pytest.raises(RuntimeError, match="must be internal"):
+    with pytest.raises(RuntimeError, match=error):
         await manager.provision(task_id, profile)
     assert fake.containers.items == []
-    with pytest.raises(RuntimeError, match="must be internal"):
+    with pytest.raises(RuntimeError, match=error):
         await manager.find(task_id)
+
+
+@pytest.mark.asyncio
+async def test_explicit_proxy_mode_injects_proxy_on_internal_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    fake = Docker()
+    fake.networks.network.attrs["Internal"] = True
+    manager = ExecEnvManager(
+        settings(egress_mode="proxy"),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+
+    async def healthy(_handle):
+        return None
+
+    monkeypatch.setattr(manager, "wait_healthy", healthy)
+    await manager.provision(uuid4(), profile)
+    env = fake.containers.items[0].kwargs["environment"]
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        assert env[key] == "http://egress-proxy:8888"

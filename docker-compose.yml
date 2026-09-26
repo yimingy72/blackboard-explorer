@@ -78,6 +78,7 @@ services:
 
   egress-proxy:
     image: bbx-egress-proxy:latest
+    profiles: [egress-proxy]
     environment:
       EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-}
     networks: [exec, default]
@@ -101,7 +102,8 @@ services:
       ENVD_TOKEN_SECRET: ${ENVD_TOKEN_SECRET}
       EXEC_NETWORK: ${EXEC_NETWORK:-blackboard-explorer_exec}
       EXEC_ACCESS_MODE: network
-      EGRESS_PROXY_URL: http://egress-proxy:8888
+      EXEC_EGRESS_MODE: ${EXEC_EGRESS_MODE:-direct}
+      EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8888}
       MAX_RUNNING_TASKS: ${MAX_RUNNING_TASKS:-1}
       HTTP_PROXY: ${RUNTIME_HTTP_PROXY:-}
       HTTPS_PROXY: ${RUNTIME_HTTPS_PROXY:-}
@@ -117,8 +119,6 @@ services:
         condition: service_completed_successfully
       blackboard:
         condition: service_started
-      egress-proxy:
-        condition: service_started
     restart: unless-stopped
     stop_grace_period: 120s
     networks: [internal, exec]
@@ -126,7 +126,7 @@ services:
 networks:
   internal: {}
   exec:
-    internal: true
+    internal: ${EXEC_NETWORK_INTERNAL:-false}
 
 volumes:
   postgres_data: {}

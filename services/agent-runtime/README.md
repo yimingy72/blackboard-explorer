@@ -40,7 +40,7 @@ docker compose --project-name blackboard-explorer up -d
 
 停止服务会先阻止新派发，再以 runtime_restart 取消并等待 finish；保留执行容器。重启结束旧记录（不增加 attempts/种子空产，不清零失败连击），健康容器接管；尚无容器的 provisioning 继续排队，running/closing 丢失或无法恢复容器则 failed。终态任务先完成交接，然后归档上传、服务 API 登记 task.archived、最后销毁；登记失败保留容器重试。归档事件会让工作台的下载入口即时出现。
 
-v1 **实际出网限制是部署级 EGRESS_ALLOWLIST**，所有执行容器共享；任务的 egress_allowlist 记录需求，不动态改代理，也不额外收窄部署策略。可把 eval-targets 和依赖镜像源列在部署白名单中。runtime 访问模型可使用独立 RUNTIME_HTTP_PROXY/RUNTIME_HTTPS_PROXY（本机 Docker Desktop 例：`http://host.docker.internal:7897`）；黑板与 envd HTTP 客户端不读取外部代理变量。
+执行容器默认直接出网：`EXEC_EGRESS_MODE=direct`配合带网关的exec网络（`EXEC_NETWORK_INTERNAL=false`），运行时不给Agent命令注入代理变量。任务的`egress_allowlist`只记录需求，不限制默认出网。需要白名单时显式设`EXEC_EGRESS_MODE=proxy`、`EXEC_NETWORK_INTERNAL=true`，并用`docker compose --profile egress-proxy up -d`启动可选代理；此时部署级`EGRESS_ALLOWLIST`实际生效，任务字段不会动态改变它。两种模式配错网络时运行时拒绝创建执行容器。runtime访问模型仍可使用独立`RUNTIME_HTTP_PROXY/RUNTIME_HTTPS_PROXY`（本机Docker Desktop例：`http://host.docker.internal:7897`）；黑板与envd内部HTTP客户端不读取外部代理变量。
 
 ## 执行与同步
 
@@ -69,7 +69,7 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 
 ## 执行容器网络
 
-生产使用 `EXEC_ACCESS_MODE=network`，runtime 与 envd 在 `EXEC_NETWORK` 指定的 internal 网络内通信。宿主机开发可设 `relay`：单独中转容器只转发到该任务 envd:8080，宿主端口随机分配且只绑定 127.0.0.1。执行容器始终只连 internal 网络、不发布端口，出网仍经过 egress-proxy。
+生产使用`EXEC_ACCESS_MODE=network`，runtime与envd在`EXEC_NETWORK`指定的exec网络内通信，默认该网络有网关。宿主机开发可设`relay`：单独中转容器只转发到该任务envd:8080，宿主端口随机分配且只绑定127.0.0.1。执行容器不发布端口；relay只改变宿主机访问envd的方式，不改变所选出网模式。
 
 容器按完整任务 UUID 标记归属，短名称冲突会报错；provision 失败清理本次新建容器。`ENVD_TOKEN` 由 runtime 的 secret 和规范 UUID 字符串经 HMAC-SHA256 派生。工具进程看不到该 secret/token。
 

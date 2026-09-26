@@ -106,11 +106,13 @@ class ExecEnvManager:
     def _labels(task_id: UUID, role: str) -> dict[str, str]:
         return {MANAGED: "agent-runtime", TASK_ID: str(task_id), ROLE: role}
 
-    async def _internal_network(self) -> Any:
+    async def _execution_network(self) -> Any:
         network = await asyncio.to_thread(self.docker.networks.get, self.settings.exec_network)
         await asyncio.to_thread(network.reload)
-        if network.attrs.get("Internal") is not True:
-            raise RuntimeError(f"Execution network {self.settings.exec_network} must be internal")
+        required_internal = self.settings.exec_egress_mode == "proxy"
+        if network.attrs.get("Internal") is not required_internal:
+            expected = "internal" if required_internal else "non-internal"
+            raise RuntimeError(f"Execution network {self.settings.exec_network} must be {expected}")
         return network
 
     async def _role(self, task_id: UUID, role: str) -> Any | None:
@@ -145,7 +147,17 @@ class ExecEnvManager:
         name = self._name(task_id)
         await self._check_name(name, task_id, "envd")
         token = task_token(self.settings.envd_token_secret.get_secret_value(), task_id)
-        proxy = self.settings.egress_proxy_url
+        environment = {
+            "ENVD_TOKEN": token,
+            "PRIVILEGED_PREFIXES": ",".join(profile.privileged_allowlist),
+        }
+        if self.settings.exec_egress_mode == "proxy":
+            proxy = self.settings.egress_proxy_url
+            if not proxy:
+                raise RuntimeError("Proxy egress requires EGRESS_PROXY_URL")
+            environment.update(
+                {key: proxy for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
+            )
         container = await asyncio.to_thread(
             self.docker.containers.create,
             profile.exec_image,
@@ -153,14 +165,7 @@ class ExecEnvManager:
             detach=True,
             network=self.settings.exec_network,
             labels=self._labels(task_id, "envd"),
-            environment={
-                "ENVD_TOKEN": token,
-                "HTTP_PROXY": proxy,
-                "HTTPS_PROXY": proxy,
-                "http_proxy": proxy,
-                "https_proxy": proxy,
-                "PRIVILEGED_PREFIXES": ",".join(profile.privileged_allowlist),
-            },
+            environment=environment,
             cap_drop=["ALL"],
             cap_add=CAPABILITIES,
             security_opt=["no-new-privileges"],
@@ -194,7 +199,7 @@ class ExecEnvManager:
         )
         try:
             await asyncio.to_thread(relay.start)
-            network = await self._internal_network()
+            network = await self._execution_network()
             assert relay.id is not None
             await asyncio.to_thread(network.connect, relay.id)
         except BaseException:
@@ -239,7 +244,7 @@ class ExecEnvManager:
 
     async def provision(self, task_id: UUID | str, profile: AgentProfile) -> ExecEnvHandle:
         task = self._task(task_id)
-        await self._internal_network()
+        await self._execution_network()
         created: list[Any] = []
         try:
             envd = await self._role(task, "envd")
@@ -266,7 +271,7 @@ class ExecEnvManager:
 
     async def find(self, task_id: UUID | str) -> ExecEnvHandle | None:
         task = self._task(task_id)
-        await self._internal_network()
+        await self._execution_network()
         envd = await self._role(task, "envd")
         if envd is None:
             return None

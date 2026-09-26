@@ -153,7 +153,6 @@ class ComposeCheckpoint:
                         except (httpx.HTTPError, RuntimeError):
                             await asyncio.sleep(1)
                 spec["agent_profile"] = "default"
-                spec["egress_allowlist"] = self.environment["EGRESS_ALLOWLIST"].split(",")
                 tid = (await board.create_task(spec))["id"]
                 self.task_id = tid
                 await board.start_task(tid)

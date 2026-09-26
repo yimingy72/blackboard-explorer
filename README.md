@@ -4,6 +4,8 @@
 
 任务提供 `goal`、`domain_context` 和文字验收条件。Explore 调查并提交事实与意图，derive 根据缺口提出新方向，Close 核对证据、裁定完成状态并生成报告。Agent 自行判断语义重复；费用、时间和并发由调度器管理，Agent 不接收剩余费用或时间数值。
 
+执行容器默认直接出网，仍使用每Agent独立用户、文件权限与控制接口鉴权。需要部署级出网白名单时，可显式切换到代理隔离模式；配置见[运行时说明](services/agent-runtime/README.md)。
+
 通用 Profile 只规定协作、证据与收尾规则；测试任务的专属标准放在任务文件中。mini-shop 是评测案例之一，不是平台定位。
 
 先将 `.env.example` 复制为 `.env` 并替换密钥占位符。运行 `uv sync` 安装依赖，`make check` 检查代码，`make schemas` 导出契约。`make up` 启动基础设施，`make down` 停止容器，`make clean-volumes` 删除本地数据卷。

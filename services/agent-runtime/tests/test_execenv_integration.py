@@ -1,4 +1,4 @@
-"""Real envd lifecycle across an internal Docker network and localhost relay."""
+"""Real envd lifecycle across direct and proxy Docker networks."""
 
 from __future__ import annotations
 
@@ -27,7 +27,10 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_execenv_lifecycle_with_archive(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("egress_mode, internal", [("direct", False), ("proxy", True)])
+async def test_execenv_lifecycle_with_archive(
+    monkeypatch: pytest.MonkeyPatch, egress_mode: str, internal: bool
+) -> None:
     monkeypatch.setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
     docker_client = docker.from_env()
     try:
@@ -40,10 +43,10 @@ async def test_execenv_lifecycle_with_archive(monkeypatch: pytest.MonkeyPatch) -
         docker_client.networks.create,
         f"bbx-m2a-exec-{task_id.hex[:8]}",
         driver="bridge",
-        internal=True,
+        internal=internal,
     )
     network.reload()
-    assert network.attrs["Internal"] is True
+    assert network.attrs["Internal"] is internal
     minio = (
         DockerContainer("pgsty/minio:RELEASE.2026-04-17T00-00-00Z")
         .with_name(f"bbx-m2a-minio-{task_id.hex[:8]}")
@@ -79,6 +82,7 @@ async def test_execenv_lifecycle_with_archive(monkeypatch: pytest.MonkeyPatch) -
                 envd_token_secret=SecretStr("integration-only-secret"),
                 exec_network=network.name,
                 exec_access_mode="relay",
+                exec_egress_mode=egress_mode,
             )
             profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
             manager = ExecEnvManager(settings, docker_client=docker_client, objects=objects)
@@ -93,6 +97,12 @@ async def test_execenv_lifecycle_with_archive(monkeypatch: pytest.MonkeyPatch) -
             assert envd_container.attrs["HostConfig"]["CapDrop"] == ["ALL"]
             assert envd_container.labels["bbx.task-id"] == str(task_id)
             assert "PRIVILEGED_PREFIXES=" in envd_container.attrs["Config"]["Env"]
+            proxy_vars = [
+                item
+                for item in envd_container.attrs["Config"]["Env"]
+                if item.split("=", 1)[0].lower() in {"http_proxy", "https_proxy"}
+            ]
+            assert bool(proxy_vars) is internal
 
             assert (await manager.create_user(handle, "agent-1"))["home"].endswith("agent-1")
             async with EnvdClient(handle.base_url, handle.token) as envd:

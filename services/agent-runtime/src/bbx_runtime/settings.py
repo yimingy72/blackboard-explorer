@@ -23,6 +23,7 @@ class Settings(ControlSettings):
     envd_token_secret: SecretStr
     exec_network: str = "blackboard-explorer_exec"
     exec_access_mode: Literal["network", "relay"] = "network"
+    exec_egress_mode: Literal["direct", "proxy"] = "direct"
     egress_proxy_url: str = "http://egress-proxy:8888"
     max_running_tasks: int = Field(default=1, ge=1)
     otel_enabled: bool = False

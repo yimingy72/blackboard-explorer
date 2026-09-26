@@ -260,7 +260,9 @@ class TaskSpec(ContractModel):
         default_factory=dict, description="Agent 配置参数覆盖"
     )
     agent_profile: str = Field(min_length=1, description="Agent 配置名称")
-    egress_allowlist: list[str] = Field(default_factory=list, description="允许出网的域名")
+    egress_allowlist: list[str] = Field(
+        default_factory=list, description="任务希望访问的域名（仅记录，不限制默认直连）"
+    )
 
     @model_validator(mode="after")
     def check_params(self) -> TaskSpec:

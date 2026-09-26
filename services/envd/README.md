@@ -55,7 +55,7 @@ make test-integration
 
 ## 隔离运行
 
-agent-runtime 创建容器时应使用可写根文件系统、`cap_drop=ALL`，仅加 `CHOWN,DAC_OVERRIDE,FOWNER,SETUID,SETGID,KILL`，`KILL` 用于在超时时终止其他 UID 的 Agent 进程组；启用 `no-new-privileges`，并按 profile 设置 CPU、内存、PID 上限。执行容器只接入内部 `exec` 网络，设置 `HTTP_PROXY`、`HTTPS_PROXY`、`http_proxy`、`https_proxy` 指向代理。代理容器同时接入 `exec` 与有外网的网络。
+agent-runtime创建容器时应使用可写根文件系统、`cap_drop=ALL`，仅加`CHOWN,DAC_OVERRIDE,FOWNER,SETUID,SETGID,KILL`，`KILL`用于在超时时终止其他UID的Agent进程组；启用`no-new-privileges`，并按profile设置CPU、内存、PID上限。默认执行容器只接入有网关的exec网络，不设置代理。下例为**显式代理隔离模式**：exec网络改为internal，HTTP(S)代理变量指向同时接入exec与有网关网络的egress-proxy。
 
 以下示例可直接运行；使用示例 token，请在实际任务中替换。结束后执行末尾清理命令。
 

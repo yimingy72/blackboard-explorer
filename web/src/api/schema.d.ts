@@ -1362,7 +1362,7 @@ export interface components {
             domain_context?: string | null;
             /**
              * Egress Allowlist
-             * @description 允许出网的域名
+             * @description 任务希望访问的域名（仅记录，不限制默认直连）
              */
             egress_allowlist?: string[];
             /**

@@ -143,7 +143,7 @@ export default function NewTaskPage() {
             </div>
             {(profiles.isError || versions.isError) && !unauthorized && <p className={controls.error} role="alert">配置加载失败。<button type="button" className={styles.textButton} onClick={() => void (profiles.isError ? profiles.refetch() : versions.refetch())}>重试</button></p>}
             {!profiles.isLoading && profiles.data?.length === 0 && <p className={controls.error} role="status">当前没有可用的 Agent 配置，暂时无法创建任务。</p>}
-            <div className={controls.field}><label className={controls.label} htmlFor="allowlist">任务所需域名（记录）</label><textarea id="allowlist" className={controls.textarea} rows={2} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" disabled={pending} /><span className={controls.hint}>可选。v1 实际出网策略由部署级 EGRESS_ALLOWLIST 决定；这里记录需求，不会动态改变策略。</span></div>
+            <div className={controls.field}><label className={controls.label} htmlFor="allowlist">任务所需域名（记录）</label><textarea id="allowlist" className={controls.textarea} rows={2} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" disabled={pending} /><span className={controls.hint}>可选。执行容器默认直接出网；这里仅记录目标域名，不限制访问。显式代理隔离部署由全局白名单控制。</span></div>
           </div>
         </section>
 
