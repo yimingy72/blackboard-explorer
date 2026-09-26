@@ -1,0 +1,798 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "expected_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "expected_interfaces_note": "Fixed 14 changed endpoints from target diff; F12 and archived repro_coverage.out confirm checks for all 14.",
+  "expected_interfaces_source": "manual",
+  "findings": [
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P1",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "order_id"
+          ]
+        },
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund",
+            "balance"
+          ]
+        },
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "used"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "amount",
+            "limit"
+          ]
+        },
+        {
+          "answer_id": "P5",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "SQL"
+          ]
+        },
+        {
+          "answer_id": "D2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "distractor",
+          "mechanism_keywords": [
+            "sort",
+            "SQL"
+          ]
+        },
+        {
+          "answer_id": "D3",
+          "file_match": true,
+          "function_match": true,
+          "kind": "distractor",
+          "mechanism_keywords": [
+            "balance"
+          ]
+        }
+      ],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/16159252fcd2-repro_coverage.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/2f843643432f-routes.txt",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/85c30967c054-diff.txt",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out"
+      ],
+      "id": "F12",
+      "location": null,
+      "mechanism": null,
+      "note": "14接口逐项检查与路由覆盖事实。重复claim、公开券目录在这里是观察；没有每人限领或目录保密业务规则，不能升级为独立漏洞。已知与new行为在F2/F4-F11计分。",
+      "reproducible": null,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P1",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "user_id",
+            "order_id"
+          ]
+        },
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund"
+          ]
+        },
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "used"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "amount"
+          ]
+        },
+        {
+          "answer_id": "P5",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "SQL",
+            "user_id"
+          ]
+        }
+      ],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1dba2e986936-repro_concurrency.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1de5826c8ff8-repro_refund_negative.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/363d4ec0e955-repro_stock_500.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/4a9ef49cfb36-pytest_branch.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/a6305dc1cd36-repro_refund_negative.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/beb6b39550dd-uvicorn_stock.log",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/cca59eb46c84-repro_money.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/daba7cefeb09-repro_concurrency.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ee4f7ebffb0f-repro_union2.out"
+      ],
+      "id": "F13",
+      "location": null,
+      "mechanism": null,
+      "note": "A1汇总，逐项重复F2/F4-F11；其“并发超卖”限于CHECK抛500。报告自编号①-⑥不是隐藏答案编号。",
+      "reproducible": null,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/4a9ef49cfb36-pytest_branch.out",
+        "toolcalls/c2cc076f-f385-4a0f-81ae-63a6f31187a2/c_tqyc7nshaamt.txt"
+      ],
+      "id": "F3",
+      "location": null,
+      "mechanism": null,
+      "note": "现有测试覆盖范围的观察，不是目标缺陷；54 passed 不反证已复现行为。",
+      "reproducible": null,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/85c30967c054-diff.txt",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/daa0722b54c8-start_shop.sh",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/dd99a62e6015-seed_output.txt"
+      ],
+      "id": "F1",
+      "location": null,
+      "mechanism": null,
+      "note": "环境、目标版本与启动方式的结构事实，无独立缺陷主张。",
+      "reproducible": null,
+      "source": "fact"
+    },
+    {
+      "answer_id": "P1",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P1",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "user_id",
+            "order_id"
+          ]
+        },
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out"
+      ],
+      "id": "F10",
+      "location": true,
+      "mechanism": true,
+      "note": "detail.py 按订单id读取不查归属；alice 令牌 GET bob 订单返回200及user_id=2。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": "P5",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P5",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "SQL",
+            "user_id"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/cca59eb46c84-repro_money.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ee4f7ebffb0f-repro_union2.out"
+      ],
+      "id": "F11",
+      "location": true,
+      "mechanism": true,
+      "note": "search.py 的 q 拼入SQL；OR注入让alice搜索返回bob订单。UNION外带 token 未成功，不计。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "new",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out"
+      ],
+      "id": "F2",
+      "location": true,
+      "mechanism": true,
+      "note": "同一张 user_coupon 在一个请求中按出现次数抵扣；本 run 的 B 段一次 claim、[3,3,3,3]、total=-14000，券行只消费一次。独立于负总价下限。",
+      "reproducible": true,
+      "source": "fact",
+      "unique_key": "same-coupon-id-repeat-in-one-order"
+    },
+    {
+      "answer_id": "P4",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund",
+            "balance"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "amount"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1de5826c8ff8-repro_refund_negative.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/a6305dc1cd36-repro_refund_negative.out"
+      ],
+      "id": "F4",
+      "location": true,
+      "mechanism": true,
+      "note": "负退款：refunds.py 无 amount>0；独立脚本显示 -5000 被接受并使余额减少、remaining 增为15000。F4 起始余额数字笔误按原输出60000→55000修正。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": "P2",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "amount"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1dba2e986936-repro_concurrency.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/daba7cefeb09-repro_concurrency.py"
+      ],
+      "id": "F5",
+      "location": true,
+      "mechanism": true,
+      "note": "同单两个并发全额退款均200、余额多增10000；同前置串行第二个409。不是普通单次超额退款。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": "P6",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": []
+        },
+        {
+          "answer_id": "P6",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": []
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/cca59eb46c84-repro_money.py"
+      ],
+      "id": "F6",
+      "location": true,
+      "mechanism": true,
+      "note": "两张不同券各6000叠加于10000订单，total=-2000、余额20000→22000；缺金额下界。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "used"
+          ]
+        }
+      ],
+      "classification": "new",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/363d4ec0e955-repro_stock_500.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/beb6b39550dd-uvicorn_stock.log"
+      ],
+      "id": "F7",
+      "location": true,
+      "mechanism": true,
+      "note": "两张不同零折扣券争最后一件库存：并发200/500，串行200/409；日志定位 stock CHECK。计库存并发竞争导致未处理500，不宣称实际库存为负或失败券已消费。",
+      "reproducible": true,
+      "source": "fact",
+      "unique_key": "coupon-checkout-stock-race-500"
+    },
+    {
+      "answer_id": "P4",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund",
+            "balance"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": true,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "amount"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/a6305dc1cd36-repro_refund_negative.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out"
+      ],
+      "id": "F8",
+      "location": true,
+      "mechanism": true,
+      "note": "退款输入金额上界缺失，属于隐藏答案P4（负数或超过已付总额的amount输入校验）：10000订单单次退100000、8000+8000累计超额，均有本run输出。与F4同一答案ID去重；仍区别于隐藏P2的并发双全额退款。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": "P3",
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "used"
+          ]
+        }
+      ],
+      "classification": "problem",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1dba2e986936-repro_concurrency.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/daba7cefeb09-repro_concurrency.py"
+      ],
+      "id": "F9",
+      "location": true,
+      "mechanism": true,
+      "note": "同一已领取券行两个并发订单都200、各抵扣6000；串行第二个409，SELECT used与UPDATE used缺事务。",
+      "reproducible": true,
+      "source": "fact"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R1",
+      "location": null,
+      "mechanism": null,
+      "note": "标题，无缺陷主张。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/16159252fcd2-repro_coverage.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/2f843643432f-routes.txt",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/85c30967c054-diff.txt",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out"
+      ],
+      "id": "R11",
+      "location": null,
+      "mechanism": null,
+      "note": "14接口与证据链说明，覆盖率单列计分。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R13",
+      "location": null,
+      "mechanism": null,
+      "note": "被否定intent为空的状态说明。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R15",
+      "location": null,
+      "mechanism": null,
+      "note": "争议fact为空的状态说明。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R16",
+      "location": null,
+      "mechanism": null,
+      "note": "单源事实小节标题。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R17",
+      "location": null,
+      "mechanism": null,
+      "note": "provenance与被引用状态说明，不是目标缺陷。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R18",
+      "location": null,
+      "mechanism": null,
+      "note": "未决intent小节标题。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R19",
+      "location": null,
+      "mechanism": null,
+      "note": "明确把F4数字笔误与F7失败券消费列为待关注，未将旁枝确认为新问题。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R21",
+      "location": null,
+      "mechanism": null,
+      "note": "验收状态说明，无独立缺陷主张。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R3",
+      "location": null,
+      "mechanism": null,
+      "note": "A1裁定标题，无独立缺陷主张。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R4",
+      "location": null,
+      "mechanism": null,
+      "note": "引用已核事实，无新主张。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R5",
+      "location": null,
+      "mechanism": null,
+      "note": "引出已证实清单的标题。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [
+        {
+          "answer_id": "P1",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "user_id",
+            "order_id"
+          ]
+        },
+        {
+          "answer_id": "P2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "refund",
+            "balance"
+          ]
+        },
+        {
+          "answer_id": "P3",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "used"
+          ]
+        },
+        {
+          "answer_id": "P4",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "negative",
+            "amount"
+          ]
+        },
+        {
+          "answer_id": "P5",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "SQL",
+            "user_id"
+          ]
+        },
+        {
+          "answer_id": "P6",
+          "file_match": true,
+          "function_match": false,
+          "kind": "problem",
+          "mechanism_keywords": [
+            "negative"
+          ]
+        },
+        {
+          "answer_id": "D2",
+          "file_match": true,
+          "function_match": false,
+          "kind": "distractor",
+          "mechanism_keywords": [
+            "SQL"
+          ]
+        }
+      ],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1dba2e986936-repro_concurrency.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/1de5826c8ff8-repro_refund_negative.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/363d4ec0e955-repro_stock_500.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/a6305dc1cd36-repro_refund_negative.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ad79009ddfb9-repro_money.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/beb6b39550dd-uvicorn_stock.log",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/c9ecbb428e4d-repro_coverage.out",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/cca59eb46c84-repro_money.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/daba7cefeb09-repro_concurrency.py",
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/ee4f7ebffb0f-repro_union2.out"
+      ],
+      "id": "R6",
+      "location": null,
+      "mechanism": null,
+      "note": "八项报告发现分别已由F6/P6、F8/new超额、F4/P4、F5/P2、F9/P3、F7/new库存500、F10/P1、F11/P5计分；B段同券ID另由F2/new计分。报告自编号P1-P8不沿用为答案编号。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [
+        "evidence/c2cc076f-f385-4a0f-81ae-63a6f31187a2/agent-1/4a9ef49cfb36-pytest_branch.out"
+      ],
+      "id": "R7",
+      "location": null,
+      "mechanism": null,
+      "note": "测试覆盖辅助证据，已在F3处理。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R8",
+      "location": null,
+      "mechanism": null,
+      "note": "对已计问题的证据归纳，无新增主张。",
+      "reproducible": null,
+      "source": "report"
+    },
+    {
+      "answer_id": null,
+      "assessments": null,
+      "candidates": [],
+      "classification": "ignore",
+      "evidence_uris": [],
+      "id": "R9",
+      "location": null,
+      "mechanism": null,
+      "note": "A2裁定标题，无独立缺陷主张。",
+      "reproducible": null,
+      "source": "report"
+    }
+  ],
+  "interface_candidates": [],
+  "profile": "default",
+  "task_id": "c2cc076f-f385-4a0f-81ae-63a6f31187a2"
+}

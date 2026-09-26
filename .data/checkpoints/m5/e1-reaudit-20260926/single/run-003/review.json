@@ -1,0 +1,195 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F7",
+      "classification": "ignore",
+      "note": "仍 ignore：接口覆盖中“无 per-user 领取上限，可重复领取同一 code”和 catalog 无需鉴权为行为观察，未独立声称限领漏洞；明确问题重复 F2–F6（含 F4 同券重复抵扣 new）。F8 后续把 catalog 称为信息暴露的肯定主张另计 FP。"
+    },
+    {
+      "id": "F8",
+      "assessments": [
+        {
+          "classification": "false_positive",
+          "unique_key": "public-coupon-catalog",
+          "note": "仍 false_positive：F8 明确称 catalog 公开 code+discount 为“信息暴露”，报告 R5/R13 延续该肯定主张。coupon_catalog 返回券目录字段、无用户私有数据；缺少保密/鉴权规则或私有信息依据，故已确认漏洞的断言不受证据支持。不是证明公开目录在所有业务中绝对无缺陷。其余已知问题与重复券 new 均在其他 finding 计分。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "复核改判：F4 明确描述同券 id 重复累计 discount，a45a61d08db9-repro_vulns_out.txt 记录 [c3,c3] 买 10000 商品得 total=-2000、余额增加 2000；24f6e6c3ade2-coupons.py 证实逐项校验 used 后累加且无去重。同券本应只折扣 6000，多计的 6000 是独立去重缺陷，P6 负总额评分保持。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F6",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": false,
+          "note": "并发 400+400 over total 500 不能区分 P2 竞态与 P4 额度缺失，按位置+机制半分。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F9",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R10",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R11",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R12",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R13",
+      "classification": "ignore",
+      "note": "仍 ignore：已知 P 问题、F4 同券重复抵扣 new 与 F8 catalog 信息暴露 FP 的重复报告；不得因本段 ignore 而删除 F8 已提出的肯定缺陷主张。"
+    },
+    {
+      "id": "R2",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "note": "仍 ignore：已知 P 问题、F4 同券重复抵扣 new 与 F8 catalog 信息暴露 FP 的重复报告；不得因本段 ignore 而删除 F8 已提出的肯定缺陷主张。"
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R8",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R9",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    }
+  ]
+}

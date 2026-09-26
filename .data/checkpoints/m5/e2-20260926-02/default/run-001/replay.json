@@ -1,0 +1,10 @@
+{
+  "scripts": [
+    {
+      "id": "primary-static-findings",
+      "path": "agents/agent-1/poc/poc_static.py",
+      "expected_exit_code": 0,
+      "expected_output": "inj_user_ids: [1, 2]"
+    }
+  ]
+}

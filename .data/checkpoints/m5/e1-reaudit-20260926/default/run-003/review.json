@@ -1,0 +1,228 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F10",
+      "classification": "ignore",
+      "note": "统一复核：已知问题/覆盖的重复叙述继续ignore；其中正总价同券重复抵扣是独立new的补强证据，已归入F5的same-coupon-id-repeat-in-one-order，未因本fact ignore丢失。"
+    },
+    {
+      "id": "F9",
+      "classification": "ignore",
+      "note": "统一复核：已知问题/覆盖的重复叙述继续ignore；其中正总价同券重复抵扣是独立new的补强证据，已归入F5的same-coupon-id-repeat-in-one-order，未因本fact ignore丢失。"
+    },
+    {
+      "id": "F1",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F11",
+      "assessments": [
+        {
+          "classification": "new",
+          "unique_key": "coupon-checkout-nonatomicity",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "统一复核保留new：repro_overdraw.py H/I使用不同user_coupon id，仍分别出现余额300→-300、失败500线程将券置used=1但无订单；repro_overdraw.out终态支持余额守恒和失败回滚缺口。与P3的同券并发重复使用可用不同券输入隔离，不能只因同处结算且完整事务可能一并修复就合并；H/I按同一结算原子性缺口仍只计一次。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F2",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "统一复核：F5本身的负总价重复抵扣由repro_static.out第6节证实；同run的F9/F10及repro_i1.out E、coverage_neg.out进一步独立隔离：500商品、唯一200券id重复两次，HTTP200 total=100（单次应300），余额仅扣100、该券一行used=1。重复折扣独立于负total和跨请求竞态，计new，跨fact只计一次。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F6",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "unique_key": "repeat-claim-without-limit-policy",
+          "note": "统一复核：本fact逐项记录同码claim五次的真实结果并称负total/券并发问题的放大器，没有给出一次领取上限；作为观察和既有问题利用步骤不单独计FP。但报告R5将claim无幂等并列已确认资金/并发问题，该肯定性升级在R5保留同key的FP，不因F6改分类消除本run误报。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F7",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F8",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "R1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R10",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R11",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R12",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R13",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R14",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R2",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R3",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "assessments": [
+        {
+          "classification": "false_positive",
+          "unique_key": "repeat-claim-without-limit-policy",
+          "note": "统一复核：本段将claim无幂等与已确认资金/并发缺陷并列；R4又以F6支撑A1 met。动态证据仅证明同码可领取多个不同券，目标及代码没有每用户同码一次/幂等的业务不变量，因此该肯定性缺陷断言超出证据。保留一次FP；其余P问题与重复券new为已计分的重复叙述。不等同断言该业务绝对不可能有缺陷。"
+        }
+      ]
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R8",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R9",
+      "assessments": [
+        {
+          "classification": "false_positive",
+          "unique_key": "activity-route-shadowing",
+          "note": "统一复核保留FP：I2与R13的未证实假设本身不计FP；R9中段却肯定宣称既有/orders/history|summary|monthly会被/orders/{order_id}遮蔽并导致功能回归。目标src-main/shop/activity.py:11的/account前缀与同目标归档路由表表明真实路径是/account/orders/...，肯定性机制错误。句末再称未证实不抵消该断言。"
+        }
+      ],
+      "classification": "ignore"
+    }
+  ]
+}

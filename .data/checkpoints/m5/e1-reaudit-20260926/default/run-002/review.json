@@ -1,0 +1,206 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F10",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F6",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F8",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F11",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F12",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F13",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "统一复核：repro_coupon_negative.py/out 只claim一次得到id=1，同一请求[1,1,1]，商品10000、单券6000，却返回total=-8000并入订单/余额。coupons.py逐元素查询及累计、对同一行SET used=1证明重复折扣机制，独立于total下界；与多张不同券的stacking样本区分，计new。"
+        },
+        {
+          "classification": "ignore",
+          "unique_key": "repeat-claim-without-limit-policy",
+          "note": "统一复核：F2(b)及repro_coupon_stacking.out中连续claim得到五个不同id，是负total问题的真实利用步骤/放大路径；没有独立断言每用户同码只能领一次。与F2的P6合并，不因缺少领取次数规则把实际利用步骤拆成FP。F7/F8及报告R4重复此路径，同样去重；F9另行肯定的最小权限问题仍保留FP。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F9",
+      "assessments": [
+        {
+          "classification": "false_positive",
+          "unique_key": "public-coupon-catalog",
+          "note": "目标未要求公开券目录必须鉴权或保密。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "R1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R10",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R11",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R12",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R3",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R8",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R9",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    }
+  ]
+}

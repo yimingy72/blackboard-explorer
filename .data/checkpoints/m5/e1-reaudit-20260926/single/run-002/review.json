@@ -1,0 +1,201 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "ignore",
+          "unique_key": "repeat-claim-without-limit-policy",
+          "note": "本条重复 claim 是获得两个不同 user_coupons.id 以触发 P6 的步骤，未给出独立限领契约或独立损害，不单独计 FP；F7 明确称其为“缺口”的另一次肯定主张仍按同 unique_key 计 FP。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F6",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F7",
+      "classification": "ignore",
+      "note": "除单列的重复领券缺陷断言，其余为接口覆盖、公开 catalog 行为观察或已计 P1/P4/P5/P6 的重复叙述。catalog 仅描述匿名可枚举，未在本条称其为漏洞，不另计 FP。",
+      "assessments": [
+        {
+          "classification": "false_positive",
+          "unique_key": "repeat-claim-without-limit-policy",
+          "note": "F7 明确称“缺口：同码可无限重复领取（第 2 次仍 200）”，属于肯定缺陷主张。endpoint_matrix.out 与 claim_coupon 仅证明重复领取行为；缺少限领/幂等业务规则依据，故已确认漏洞的断言不受证据支持。保留旧 FP 计数但从 F4 触发步骤迁到本条；不声称已证明此业务行为绝对无缺陷。"
+        }
+      ]
+    },
+    {
+      "id": "F8",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F9",
+      "assessments": [
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "复核改判：F9 明确主张独立根因；878dd84af5fd-repro_duplicate_coupon_ids.py 与 f54cef209acd-duplicate_coupon_ids.out 显示只 claim 一次，单行 user_coupons 的同一 id 重复两次，500 分商品被扣 12000，total=-11500、余额 31500。coupons.py 逐项累计而不去重；额外 6000 折扣源于重复计数，独立于 P6 的负总额下限。"
+        }
+      ],
+      "classification": "ignore"
+    },
+    {
+      "id": "F1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R10",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R11",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R12",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R13",
+      "classification": "ignore",
+      "note": "仍 ignore：问题清单重复 F2–F6/F8/F9；同券重复抵扣已在 F9 计 new。重复领券作为 P6 触发步骤不另计问题，独立“缺口”主张由 F7 的 repeat-claim-without-limit-policy 计 FP，避免重复计数。"
+    },
+    {
+      "id": "R2",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "note": "仍 ignore：问题清单重复 F2–F6/F8/F9；同券重复抵扣已在 F9 计 new。重复领券作为 P6 触发步骤不另计问题，独立“缺口”主张由 F7 的 repeat-claim-without-limit-policy 计 FP，避免重复计数。"
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R8",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R9",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    }
+  ]
+}

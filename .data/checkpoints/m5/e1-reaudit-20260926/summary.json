@@ -1,0 +1,134 @@
+[
+  {
+    "profile": "default",
+    "run": "run-001",
+    "task_id": "ad5623e9-4ec6-447d-82e9-9ac6a4ca939a",
+    "metrics": {
+      "cache_hit_rate": 0.899640725460973,
+      "cost": 0.176188992,
+      "disputes": 0,
+      "elapsed_seconds": 285.8382263319945,
+      "end_reasons": {
+        "normal": 7
+      },
+      "interface_coverage": 1.0,
+      "judgments": 3,
+      "precision": 0.875,
+      "recall": 1.0,
+      "reproducibility": null,
+      "satisfies_hit_rate": 1.0
+    },
+    "provisional": true,
+    "review_pending": []
+  },
+  {
+    "profile": "default",
+    "run": "run-002",
+    "task_id": "29eaa23a-51fa-455a-b163-e9eb2c4d9de3",
+    "metrics": {
+      "cache_hit_rate": 0.94100314195657,
+      "cost": 0.23131052399999996,
+      "disputes": 0,
+      "elapsed_seconds": 294.1202229569899,
+      "end_reasons": {
+        "normal": 5
+      },
+      "interface_coverage": 1.0,
+      "judgments": 3,
+      "precision": 0.875,
+      "recall": 1.0,
+      "reproducibility": 1.0,
+      "satisfies_hit_rate": 0.75
+    },
+    "provisional": false,
+    "review_pending": []
+  },
+  {
+    "profile": "default",
+    "run": "run-003",
+    "task_id": "a5f6288d-e505-4299-8bb7-f0541e216493",
+    "metrics": {
+      "cache_hit_rate": 0.9262366102187316,
+      "cost": 0.19178487600000008,
+      "disputes": 0,
+      "elapsed_seconds": 406.8992178699991,
+      "end_reasons": {
+        "normal": 5
+      },
+      "interface_coverage": 1.0,
+      "judgments": 3,
+      "precision": 0.8,
+      "recall": 1.0,
+      "reproducibility": 1.0,
+      "satisfies_hit_rate": 0.5
+    },
+    "provisional": false,
+    "review_pending": []
+  },
+  {
+    "profile": "single",
+    "run": "run-001",
+    "task_id": "1d44179e-e55f-4d31-9fe8-7fbf29bcaf14",
+    "metrics": {
+      "cache_hit_rate": 0.9358411232496152,
+      "cost": 0.055316976000000004,
+      "disputes": 2,
+      "elapsed_seconds": 259.608429016007,
+      "end_reasons": {
+        "normal": 4
+      },
+      "interface_coverage": 0.5,
+      "judgments": 3,
+      "precision": 1.0,
+      "recall": 0.6666666666666666,
+      "reproducibility": 1.0,
+      "satisfies_hit_rate": 0.0
+    },
+    "provisional": false,
+    "review_pending": []
+  },
+  {
+    "profile": "single",
+    "run": "run-002",
+    "task_id": "e3c97c86-1a43-446f-baba-d8e8654d9c32",
+    "metrics": {
+      "cache_hit_rate": 0.9358772271706423,
+      "cost": 0.13145315999999999,
+      "disputes": 0,
+      "elapsed_seconds": 259.8563649360003,
+      "end_reasons": {
+        "normal": 4
+      },
+      "interface_coverage": 1.0,
+      "judgments": 3,
+      "precision": 0.875,
+      "recall": 1.0,
+      "reproducibility": 1.0,
+      "satisfies_hit_rate": 1.0
+    },
+    "provisional": false,
+    "review_pending": []
+  },
+  {
+    "profile": "single",
+    "run": "run-003",
+    "task_id": "62960d6c-c560-43f4-be6d-badfd3613008",
+    "metrics": {
+      "cache_hit_rate": 0.9224683544303798,
+      "cost": 0.085363248,
+      "disputes": 0,
+      "elapsed_seconds": 159.1272886779916,
+      "end_reasons": {
+        "normal": 3
+      },
+      "interface_coverage": 1.0,
+      "judgments": 2,
+      "precision": 0.875,
+      "recall": 0.9166666666666666,
+      "reproducibility": 1.0,
+      "satisfies_hit_rate": 1.0
+    },
+    "provisional": false,
+    "review_pending": []
+  }
+]

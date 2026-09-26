@@ -1,0 +1,8 @@
+{
+  "task_id": "a1cc69fe-ab50-4080-aa80-f553f0272dd9",
+  "status": "interrupted",
+  "elapsed_seconds": 285.65777391399024,
+  "reason": "Paused the old-judge evaluation after user proposed changing completion ownership; user then clarified that existing judge ownership should remain. No architecture changes were made.",
+  "completed_runs": 0,
+  "cost": "unavailable; canceled run did not export its ledger"
+}

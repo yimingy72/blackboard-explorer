@@ -1,0 +1,106 @@
+{
+  "checked_interfaces": [
+    "GET /coupons",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F3",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F1",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "F2",
+      "classification": "ignore",
+      "note": "仍 ignore：F2 虽被 F4 以冒烟测试为由撤回，但其 total 未做下限处理的陈述确有源码依据，属于已在 R8 计分的 P6 重复叙述；不因撤回而掩盖错误断言。F3 仅调试占位，不含缺陷主张。"
+    },
+    {
+      "id": "F4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R3",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    },
+    {
+      "id": "R8",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "复核改判：BUG2 仅一张 6000 分券，20000 分商品使用 [2,2] 后 total=8000（本应 14000），且券列表仅一行 used=1。coupons.py 对 coupon_ids 逐项累计折扣、无去重，正总额也产生额外折扣，独立于 P6 负总额下限与 P3 并发。见 123f5b0c53f5-repro.py、4c7a30bcf36b-repro_output.txt 与 24f6e6c3ade2-coupons.py。"
+        }
+      ],
+      "note": "正式 fact 提交失败；按报告引用的持久化复现输出计端点定位+触发+结果，未计 P2/P3。",
+      "classification": "ignore"
+    },
+    {
+      "id": "R9",
+      "classification": "ignore",
+      "note": "背景、覆盖验证、被撤回内容，或已在其他 finding 计分的重复叙述。"
+    }
+  ]
+}

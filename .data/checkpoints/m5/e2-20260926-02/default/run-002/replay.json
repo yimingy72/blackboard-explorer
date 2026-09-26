@@ -1,0 +1,10 @@
+{
+  "scripts": [
+    {
+      "id": "primary-money-findings",
+      "path": "agents/agent-1/repro_money.py",
+      "expected_exit_code": 0,
+      "expected_output": "balance after refund: 126000"
+    }
+  ]
+}

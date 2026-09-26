@@ -1,0 +1,26 @@
+{
+  "implementation_commit": "3c17f81313458a620b5d30bfe9b32f9067acce1f",
+  "baseline": "e1-20260925-01; re-audited copy e1-reaudit-20260926",
+  "n_per_profile": 3,
+  "changes": [
+    "actionable field validation feedback",
+    "fact confidence and conclusion discipline prompts"
+  ],
+  "unchanged": [
+    "scheduler",
+    "model",
+    "budget",
+    "target",
+    "answer key",
+    "scoring algorithm"
+  ],
+  "profile_prompt_parity": true,
+  "review_policy": {
+    "known_problems": "Existing location/mechanism/trigger evidence requirements; P2 needs evidence distinguishing concurrency from ordinary over-refund.",
+    "independent_findings": "Independent violated invariant and behavior can be new even outside the answer key; repeated variants merged, not false positives.",
+    "hypotheses": "Explicit unconfirmed hypotheses or neutral observations ignored as findings; affirmative unsupported defect claims remain false positives across all facts/reports, including later corrections.",
+    "replay": "Select at least one primary behavioral reproduction script per run before execution when present; no script editing or fallback after failure; record missing/incompatible artifacts separately. Sampled success does not mean every finding reproducible."
+  },
+  "interpretation": "Exploratory 3+3 on the same task. Two changes tested together; no causal or general architecture superiority claim.",
+  "runtime_image_id": "sha256:559380b08789b76495e88a89b8a4edf45547a547b028310dd08768345161ef70"
+}

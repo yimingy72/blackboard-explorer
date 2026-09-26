@@ -1,0 +1,10 @@
+{
+  "scripts": [
+    {
+      "id": "primary-behavioral-findings",
+      "path": "shared/repro/repro.py",
+      "expected_exit_code": 0,
+      "expected_output": "\"total\": -11500"
+    }
+  ]
+}

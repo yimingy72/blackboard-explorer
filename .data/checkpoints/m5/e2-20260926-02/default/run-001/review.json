@@ -1,0 +1,188 @@
+{
+  "profile": "default",
+  "task_id": "f8b82e80-b8fe-4583-827b-396e89a99e8f",
+  "expected_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "problem",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#7；detail.py:10-16仅按order_id查；static_results B显示bob身份GET alice订单4返回200且user_id=1，poc_static.py B明确切换两人身份。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#3；refunds.py:30-42在未锁定事务中读累计、sleep、写；poc_concurrency.py使用线程栅栏，同一10000订单两个并发全额退款均200，concurrency_results.refund_race显示refund_count=2、refunded=20000、最终余额30000。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#4；coupons.py:50-68未原子消费used；同一claim所得id被两线程使用，concurrency_results.coupon_race显示两张各4000订单均200、券仅used=1、余额20000→12000。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#2；RefundRequest.amount无边界且refund_order只查已退总额；static_results D2真实amount=-5000返回200，购买后余额10000再降5000。D的两次6000及第三次409作补充，满分依据D2非法单次请求，不以累计超额替代隐藏触发。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#6；search.py:23-25直接拼q；static_results A正常仅alice两单，OR注入200返回三单并包含bob的user_id=2与999订单；不是单独SQL错误。"
+        },
+        {
+          "classification": "problem",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#1；coupons.py:62/70总额无下界并反向记余额；static_results C使用两张不同6000券买500商品，200 total=-11500，余额20000→31500。"
+        },
+        {
+          "classification": "new",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "poc_static.py C2只claim一次DUP券，向同一请求传[d1.id,d1.id]；static_results C2记录500商品减两次6000后total=-11500、余额+11500。coupons.py逐元素累计却对同一行SET used=1，违反单券消费不变量，独立于total下界和跨请求竞态；沿用E1口径，不因报告将其并入负额就忽略，也不要求正总价样本才确认重复抵扣。"
+        },
+        {
+          "classification": "new",
+          "unique_key": "coupon-checkout-nonatomicity",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true,
+          "note": "F2#5；使用零折扣券隔离折扣金额影响，原toolcall c_w6zbyrz7rmch内poc_overspend.py创建新用户并充值10000，栅栏并发两笔10000订单；overspend_results显示两单均200且余额10000→-10000，源码余额检查与扣款不原子。初次concurrency_results的30000→10000不作为超支证据。只计余额超支，不声称本run验证失败扣券/回滚。"
+        }
+      ],
+      "note": "全量主张已核对；同码重复claim仅作观察/利用前置，非独立确诊。退款和余额起点笔误列入review-notes，不扩为新业务问题。"
+    },
+    {
+      "id": "F3",
+      "classification": "ignore",
+      "note": "14个改动接口均给出具体检查维度，并由full.diff、相关源码支持；以静态审查和实际行为证据确认覆盖，不采信不完整E_route_table或“openapi已核对”子主张。catalog公开码/面额且无用户数据是普通观察，未肯定违反保密/鉴权规则；重复claim明确是问题1前置，非独立业务漏洞。问题重复叙述归F2。"
+    },
+    {
+      "id": "F1",
+      "classification": "ignore",
+      "note": "环境与复用说明；未主张新业务缺陷。日志为空/服务状态不可复用属于证据与replay限制，非业务FP。"
+    },
+    {
+      "id": "R1",
+      "classification": "ignore",
+      "note": "报告标题，无业务发现。"
+    },
+    {
+      "id": "R10",
+      "classification": "ignore",
+      "note": "明确指出F3“openapi已核对”没有证据且不得用于完整性验收，app.routes的五路由结果仍保留。没有肯定断言目标业务路由被删除或遮蔽，属记录问题/未决解释，不计业务FP。"
+    },
+    {
+      "id": "R11",
+      "classification": "ignore",
+      "note": "无rejected intent的状态说明。"
+    },
+    {
+      "id": "R12",
+      "classification": "ignore",
+      "note": "无disputed fact的状态说明。"
+    },
+    {
+      "id": "R13",
+      "classification": "ignore",
+      "note": "来源与relied_by状态说明，无业务发现。"
+    },
+    {
+      "id": "R14",
+      "classification": "ignore",
+      "note": "未决记录与附带观察：catalog明确非vuln；测试夹具eval明确排除；路由计数疑点无业务缺陷断言。原始观察未被隐藏，不计FP或D1。"
+    },
+    {
+      "id": "R15",
+      "classification": "ignore",
+      "note": "验收收尾结论，无额外业务发现。"
+    },
+    {
+      "id": "R2",
+      "classification": "ignore",
+      "note": "范围和黑板状态说明，无业务发现。"
+    },
+    {
+      "id": "R4",
+      "classification": "ignore",
+      "note": "A1裁定摘要；实际发现均在F2计分，去重。"
+    },
+    {
+      "id": "R5",
+      "classification": "ignore",
+      "note": "F2的六个已知问题及并发超支的重复汇总；同券重复id虽并在负额项内，仍已在F2按独立new计分。重复claim为利用步骤，未拆成业务FP。"
+    },
+    {
+      "id": "R6",
+      "classification": "ignore",
+      "note": "原始证据索引，不另计发现；证据已用于F2各项。"
+    },
+    {
+      "id": "R7",
+      "classification": "ignore",
+      "note": "原事实纠正与证据边界说明；负退款真实增量为-5000，另有下单-10000，不能将从起始余额下降15000都算负退款效果。该数字表述不构成独立业务缺陷；P4已由对应非法请求成立。"
+    },
+    {
+      "id": "R8",
+      "classification": "ignore",
+      "note": "A2覆盖摘要；14接口的源码检查由F3和full.diff支持，不以所有接口均动态调用为前提。"
+    },
+    {
+      "id": "R9",
+      "classification": "ignore",
+      "note": "F3代码/差异证据索引，重复叙述。"
+    }
+  ]
+}

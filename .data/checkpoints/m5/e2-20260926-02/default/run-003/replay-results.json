@@ -1,0 +1,21 @@
+{
+  "scripts": [
+    {
+      "id": "primary-behavioral-findings",
+      "status": "failed",
+      "path": "shared/repro/repro.py",
+      "service_port": null,
+      "seed": null,
+      "files": [],
+      "seed_token_sha256": {},
+      "script_sha256": "7b80aefc295692855a67caa7a3ecf7452c21e7ea60409669feb92fced60ae303",
+      "attachment_sha256": {},
+      "exit_code": 1,
+      "output": "Traceback (most recent call last):\n  File \"/workspace/shared/repro/repro.py\", line 23, in <module>\n    seed = run([sys.executable, \"scripts/seed.py\"])\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/shared/repro/repro.py\", line 20, in run\n    return subprocess.run(cmd, env=env, cwd=REPO, capture_output=True, text=True, **kw)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 548, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/subprocess.py\", line 1026, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n  File \"/usr/lib/python3.12/subprocess.py\", line 1955, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/workspace/shared/repo'\n"
+    }
+  ],
+  "reproducibility": 0.0,
+  "image": "bbx-eval-env:latest",
+  "target_sha256": "634b36609eb0f2d7516bf64d5b0ad7f5ab1218faa36dad4bdab4c42316216edf",
+  "scope": "selected standalone Python scripts, each in a fresh offline container"
+}
