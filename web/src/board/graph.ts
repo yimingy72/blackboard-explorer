@@ -1,6 +1,7 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 
 import type { BoardState } from './types';
+import { agentLabel } from './agents';
 
 export type GraphRelation =
   | 'derived_from'
@@ -36,7 +37,7 @@ export interface GraphEdgeData extends Record<string, unknown> {
 export type GraphNode = Node<GraphNodeData, 'goal' | 'fact' | 'intent' | 'agent'>;
 export type GraphEdge = Edge<GraphEdgeData>;
 
-export function deriveGraph(state: BoardState): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function deriveGraph(state: BoardState, numbers: Record<string, number> = {}): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const edge = (relation: GraphRelation, source: string, target: string, color: string, dash?: string) => {
@@ -115,7 +116,7 @@ export function deriveGraph(state: BoardState): { nodes: GraphNode[]; edges: Gra
         status: intent.status,
         author: intent.author,
         attempts: intent.attempts,
-        holder: intent.holder,
+        holder: intent.holder ? agentLabel(intent.holder, numbers) : null,
         result: intent.result,
       },
     });
@@ -136,7 +137,7 @@ export function deriveGraph(state: BoardState): { nodes: GraphNode[]; edges: Gra
         position: { x: 960, y: index * 80 },
         className: `agent-${agent.status}`,
         data: {
-          label: agent.id,
+          label: agentLabel(agent.id, numbers),
           status: agent.status,
           isSeed: agent.isSeed,
           taskType: agent.taskType,

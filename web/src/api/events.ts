@@ -22,6 +22,7 @@ export const BOARD_EVENT_TYPES = [
   'agent.progress',
   'agent.finished',
   'agent.conclude_requested',
+  'agent.trace.recorded',
   'derive.result',
   'acceptance.judged',
   'acceptance.reverted',

@@ -72,5 +72,6 @@ export const eventLabels: Record<string, string> = {
   'intent.claimed': '认领意图', 'intent.released': '交接意图', 'intent.closed': '关闭意图',
   'agent.spawned': 'Agent 开始', 'agent.progress': '运行进度', 'agent.finished': 'Agent 结束',
   'agent.conclude_requested': '请求交接', 'derive.result': '推导结果', 'acceptance.judged': '验收裁定',
+  'agent.trace.recorded': 'Agent 对话记录',
   'acceptance.reverted': '验收回退', 'budget.updated': '用量更新', 'tool_call.recorded': '工具调用',
 };

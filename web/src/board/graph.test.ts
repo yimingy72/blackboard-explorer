@@ -44,6 +44,12 @@ const state: BoardState = {
 };
 
 describe('deriveGraph', () => {
+  it('shows task-local labels on active Agent nodes while keeping graph IDs', () => {
+    const { nodes } = deriveGraph(state, { 'agent-1': 2, 'agent-2': 1 });
+    expect(nodes.find((node) => node.id === 'agent-1')?.data.label).toBe('Agent 2');
+    expect(nodes.find((node) => node.id === 'I1')?.data.holder).toBe('Agent 2');
+    expect(nodes.some((node) => node.id === 'agent-2')).toBe(false);
+  });
   it('emits semantic nodes and all six directed relationship edges', () => {
     const { nodes, edges } = deriveGraph(state);
     expect(nodes.map((node) => [node.id, node.type])).toEqual([

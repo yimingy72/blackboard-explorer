@@ -48,7 +48,8 @@ describe('openBoardStream', () => {
     source.emit('error');
     source.emit('open');
     source.emit('fact.disputed', JSON.stringify({ version: 14, task_id: taskId, type: 'fact.disputed', actor: 'system', created_at: '2026-01-01T00:00:01Z', payload: { fact_id: 'F1' } }));
-    expect(received.map((event) => event.version)).toEqual([13, 14]);
+    source.emit('agent.trace.recorded', JSON.stringify({ version: 15, task_id: taskId, type: 'agent.trace.recorded', actor: 'agent-1', created_at: '2026-01-01T00:00:02Z', payload: { agent_id: 'agent-1', kind: 'model_output', uri: 'traces/test/output.json', step: 1, summary: 'New reply' } }));
+    expect(received.map((event) => event.version)).toEqual([13, 14, 15]);
     expect(statuses).toEqual(['connecting', 'open', 'reconnecting', 'open']);
     expect(factory).toHaveBeenCalledTimes(1);
     expect(connection).toBe(source);

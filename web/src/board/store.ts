@@ -57,12 +57,14 @@ export const useBoardStore = create<BoardStore>((set) => ({
 }));
 
 export function useBoard(taskId: string | undefined): {
+  taskId: string | null;
   state: BoardState;
   events: BoardEvent[];
   loading: boolean;
   error: Error | null;
   connection: StreamConnection;
 } {
+  const activeTaskId = useBoardStore((board) => board.taskId);
   const state = useBoardStore((board) => board.state);
   const events = useBoardStore((board) => board.events);
   const loading = useBoardStore((board) => board.loading);
@@ -103,5 +105,5 @@ export function useBoard(taskId: string | undefined): {
     };
   }, [taskId]);
 
-  return { state, events, loading, error, connection };
+  return { taskId: activeTaskId, state, events, loading, error, connection };
 }

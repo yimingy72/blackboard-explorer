@@ -2,6 +2,7 @@ import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { BoardEvent, BoardState } from '../board/types';
 import { eventLabels } from '../board/view';
 import { formatCost } from '../pages/format';
+import { agentLabel, agentRole } from '../board/agents';
 import WorkspaceExplorer from './WorkspaceExplorer';
 import styles from './WorkbenchDrawer.module.css';
 
@@ -14,6 +15,7 @@ type Props = {
   version: number | null;
   onVersion: (value: number | null) => void;
   onSelect: (id: string | null) => void;
+  agentNumbers: Record<string, number>;
 };
 const tabs: Array<[Tab, string]> = [
   ['agents', 'Agent 记录'], ['events', '事件流'], ['judgments', '裁定历史'],
@@ -36,25 +38,25 @@ function payloadPreview(payload: BoardEvent['payload']): { text: string; truncat
   };
 }
 
-function EventRow({ event, state, onVersion, onSelect }: {
-  event: BoardEvent; state: BoardState; onVersion: Props['onVersion']; onSelect: Props['onSelect'];
+function EventRow({ event, state, onVersion, onSelect, agentNumbers }: {
+  event: BoardEvent; state: BoardState; onVersion: Props['onVersion']; onSelect: Props['onSelect']; agentNumbers: Props['agentNumbers'];
 }) {
   const [expanded, setExpanded] = useState(false);
   const preview = expanded ? payloadPreview(event.payload) : null;
   const objectId = event.object_id;
   const selectable = objectId && (state.facts[objectId] || state.intents[objectId] || state.agents[objectId]);
   return <li><details onToggle={(value) => setExpanded(value.currentTarget.open)}>
-    <summary><span className={styles.version}>v{event.version}</span><strong>{eventLabels[event.type] ?? event.type}</strong><span>{event.actor}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleTimeString()}</time></summary>
-    <div className={styles.eventActions}><button type="button" onClick={() => onVersion(event.version)}>回放到此版本</button>{selectable && <button type="button" onClick={() => onSelect(objectId)}>查看 {objectId}</button>}</div>
+    <summary><span className={styles.version}>v{event.version}</span><strong>{eventLabels[event.type] ?? event.type}</strong><span>{state.agents[event.actor] ? agentLabel(event.actor, agentNumbers) : event.actor}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleTimeString()}</time></summary>
+    <div className={styles.eventActions}><button type="button" onClick={() => onVersion(event.version)}>回放到此版本</button>{selectable && <button type="button" onClick={() => onSelect(objectId)}>查看 {state.agents[objectId] ? agentLabel(objectId, agentNumbers) : objectId}</button>}</div>
     {preview && <>{preview.truncated && <p className={styles.previewNotice}>事件内容共 {preview.size.toLocaleString()} 字节；仅显示开头与结尾各 100 KiB。</p>}<pre tabIndex={0}>{preview.text}</pre></>}
   </details></li>;
 }
 
-function AgentRecords({ state, onSelect }: { state: BoardState; onSelect: Props['onSelect'] }) {
+function AgentRecords({ state, onSelect, agentNumbers }: { state: BoardState; onSelect: Props['onSelect']; agentNumbers: Props['agentNumbers'] }) {
   const agents = Object.values(state.agents);
   if (!agents.length) return <p className={styles.empty}>当前版本还没有 Agent 运行记录。</p>;
   return <div className={styles.tableScroll}><table><thead><tr><th>Agent</th><th>任务</th><th>状态 / 结束原因</th><th>模型调用</th><th>上下文</th><th>输出 / 推理 token</th><th>花费</th><th>当前意图</th></tr></thead><tbody>
-    {agents.map((agent) => <tr key={agent.id}><td><button type="button" onClick={() => onSelect(agent.id)}>{agent.id}</button></td><td>{agent.isSeed ? '种子探索' : agent.taskType === 'explore' ? '探索' : agent.taskType === 'derive' ? '推导' : agent.closeMode === 'final' ? '终结' : '裁定'}</td><td>{statusLabels[agent.status]}{agent.endReason && <small>{reasonLabels[agent.endReason] ?? agent.endReason}</small>}</td><td>{agent.steps}</td><td>{agent.contextTokens.toLocaleString()}</td><td>{agent.usage.output_tokens ?? 0} / {agent.usage.reasoning_tokens ?? 0}</td><td>{formatCost(agent.usage.cost ?? 0)}</td><td>{agent.intentId ? <button type="button" onClick={() => onSelect(agent.intentId)}>{agent.intentId}</button> : '—'}</td></tr>)}
+    {agents.map((agent) => <tr key={agent.id}><td><button type="button" onClick={() => onSelect(agent.id)} title={agent.id}>{agentLabel(agent.id, agentNumbers)}</button></td><td>{agentRole(agent)}</td><td>{statusLabels[agent.status]}{agent.endReason && <small>{reasonLabels[agent.endReason] ?? agent.endReason}</small>}</td><td>{agent.steps}</td><td>{agent.contextTokens.toLocaleString()}</td><td>{agent.usage.output_tokens ?? 0} / {agent.usage.reasoning_tokens ?? 0}</td><td>{formatCost(agent.usage.cost ?? 0)}</td><td>{agent.intentId ? <button type="button" onClick={() => onSelect(agent.intentId)}>{agent.intentId}</button> : '—'}</td></tr>)}
   </tbody></table></div>;
 }
 
@@ -79,7 +81,7 @@ function Judgments({ events, onVersion, onSelect }: {
   })}</div>;
 }
 
-export default function WorkbenchDrawer({ taskId, state, events, allEvents, version, onVersion, onSelect }: Props) {
+export default function WorkbenchDrawer({ taskId, state, events, allEvents, version, onVersion, onSelect, agentNumbers }: Props) {
   const [tab, setTab] = useState<Tab>('agents');
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(100);
@@ -109,10 +111,10 @@ export default function WorkbenchDrawer({ taskId, state, events, allEvents, vers
       <button type="button" className={styles.toggle} aria-controls={panelId} aria-expanded={open} onClick={() => setOpen(!open)} aria-label={open ? '收起运行记录' : '展开运行记录'}>{open ? '收起 ↓' : '展开 ↑'}</button>
     </div>
     <div className={styles.content} id={panelId} role="tabpanel" aria-labelledby={`${id}-tab-${tab}`} tabIndex={0} hidden={!open}>
-      {open && tab === 'agents' && <AgentRecords state={state} onSelect={onSelect} />}
+      {open && tab === 'agents' && <AgentRecords state={state} onSelect={onSelect} agentNumbers={agentNumbers} />}
       {open && tab === 'events' && <>
         <label className={styles.inlineField}>事件类型<select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="">全部</option>{['task.', 'agent.', 'fact.', 'intent.', 'acceptance.', 'tool_call.', 'budget.', 'derive.'].map((type) => <option key={type} value={type}>{type}</option>)}</select><span>{filtered.length} 条</span></label>
-        {filtered.length ? <ol className={styles.events}>{filtered.slice(-shown).reverse().map((event) => <EventRow key={event.version} event={event} state={state} onVersion={onVersion} onSelect={onSelect} />)}</ol> : <p className={styles.empty}>当前筛选没有事件。</p>}
+        {filtered.length ? <ol className={styles.events}>{filtered.slice(-shown).reverse().map((event) => <EventRow key={event.version} event={event} state={state} onVersion={onVersion} onSelect={onSelect} agentNumbers={agentNumbers} />)}</ol> : <p className={styles.empty}>当前筛选没有事件。</p>}
         {filtered.length > shown && <button type="button" onClick={() => setShown((count) => count + 100)}>再显示 100 条</button>}
       </>}
       {open && tab === 'judgments' && <Judgments events={events} onVersion={onVersion} onSelect={onSelect} />}

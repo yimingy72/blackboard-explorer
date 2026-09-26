@@ -45,7 +45,7 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
   await slider.press('Home');
-  await expect(page.getByRole('progressbar', { name: '金额预算已用比例' })).toHaveAttribute('value', '0');
+  await expect(page.getByText('花费 0.000 / 10.00', { exact: true })).toBeVisible();
   for (let index = 0; index < 4; index += 1) await slider.press('ArrowRight');
   await expect(page.getByText('历史回放 · v5').first()).toBeVisible();
 
@@ -56,11 +56,12 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   await expect(detail).not.toContainText(FUTURE_NOTE);
 
   await page.getByRole('tab', { name: /Agent 记录/ }).click();
-  await page.getByRole('tabpanel').getByRole('button', { name: 'agent-1' }).click();
-  await expect(detail).not.toContainText(FUTURE_RECEIPT);
+  await page.getByRole('tabpanel').getByRole('button', { name: 'Agent 1', exact: true }).click();
+  const conversation = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
+  await expect(conversation).not.toContainText(FUTURE_RECEIPT);
   await page.getByRole('tab', { name: '时间轴' }).click();
   await page.getByRole('button', { name: '返回实时' }).last().click();
-  await expect(page.getByRole('complementary', { name: '对象详情' })).toContainText(FUTURE_RECEIPT);
+  await expect(conversation).toContainText(FUTURE_RECEIPT);
   await page.getByRole('tab', { name: '裁定历史' }).click();
   await expect(page.getByRole('tabpanel')).toContainText('连接池证据充分');
   expect(mock.unexpected).toEqual([]);
@@ -116,7 +117,7 @@ test('超过 300 个对象默认折叠，手机视口无页面横向溢出', asy
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/tasks/${TASK_ID}`);
   await expect(page.getByRole('checkbox', { name: '折叠已关闭分支' })).toBeChecked();
-  await expect(page.getByText('显示 151 / 302 个对象')).toBeVisible();
+  await expect(page.getByText(/对象 151\/302/)).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
     .toBeLessThanOrEqual(1);
   expect(mock.unexpected).toEqual([]);

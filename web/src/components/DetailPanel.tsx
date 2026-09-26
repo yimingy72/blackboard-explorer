@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 import type { BoardAgent, BoardFact, BoardIntent, BoardState } from '../board/types';
+import { agentLabel } from '../board/agents';
 import controls from '../styles/controls.module.css';
 import { disputeChain, retryChain } from './detailRelations';
 import EvidenceViewer from './EvidenceViewer';
@@ -11,7 +12,10 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   historical?: boolean;
+  agentNumbers?: Record<string, number>;
 };
+
+const AgentNumbers = createContext<Record<string, number>>({});
 
 const factKinds: Record<string, string> = { observation: '观察事实', inference: '推断事实', structure: '结构事实' };
 const intentStatus: Record<string, string> = { open: '待认领', claimed: '已认领', closed: '已关闭' };
@@ -25,17 +29,19 @@ function printable(value: unknown): string {
 }
 
 function Meta({ label, value }: { label: string; value: unknown }) {
-  return <div className={styles.meta}><dt>{label}</dt><dd>{printable(value)}</dd></div>;
+  const numbers = useContext(AgentNumbers);
+  return <div className={styles.meta}><dt>{label}</dt><dd>{typeof value === 'string' && numbers[value] ? agentLabel(value, numbers) : printable(value)}</dd></div>;
 }
 
 function ObjectLinks({ ids, state, onSelect }: { ids: string[]; state: BoardState; onSelect: Props['onSelect'] }) {
+  const numbers = useContext(AgentNumbers);
   const unique = [...new Set(ids)];
   if (!unique.length) return <p className={styles.muted}>暂无记录。</p>;
   return <ul className={styles.related}>{unique.map((id) => {
     const object = state.facts[id] ?? state.intents[id] ?? state.agents[id];
     const label = state.facts[id]?.statement ?? state.intents[id]?.statement
       ?? (state.agents[id] ? `Agent · ${state.agents[id].taskType}` : '当前快照中不可用');
-    return <li key={id}>{object ? <button type="button" className={styles.objectLink} onClick={() => onSelect(id)}><strong>{id}</strong><span>{label}</span></button> : <span className={styles.unavailable}>{id} · {label}</span>}</li>;
+    return <li key={id}>{object ? <button type="button" className={styles.objectLink} onClick={() => onSelect(id)}><strong>{state.agents[id] ? agentLabel(id, numbers) : id}</strong><span>{label}</span></button> : <span className={styles.unavailable}>{id} · {label}</span>}</li>;
   })}</ul>;
 }
 
@@ -68,9 +74,10 @@ function IntentDetail({ intent, state, onSelect }: { intent: BoardIntent; state:
 }
 
 function AgentDetail({ agent, state, onSelect }: { agent: BoardAgent; state: BoardState; onSelect: Props['onSelect'] }) {
+  const numbers = useContext(AgentNumbers);
   const calls = Object.values(state.toolCalls ?? {}).filter((call) => call.agentId === agent.id).sort((a, b) => a.version - b.version);
   return <>
-    <div className={styles.titleBlock}><span className={styles.type}>Agent · {agent.taskType}{agent.isSeed ? ' · 种子' : ''}{agent.closeMode ? ` · ${agent.closeMode}` : ''}</span><h2 tabIndex={-1}>{agent.id}</h2><span className={`${controls.badge} ${agent.status === 'failed' ? controls.badgeDanger : agent.status === 'running' ? controls.badgeInfo : ''}`}>{agentStatus[agent.status] ?? agent.status}</span></div>
+    <div className={styles.titleBlock}><span className={styles.type}>Agent · {agent.taskType}{agent.isSeed ? ' · 种子' : ''}{agent.closeMode ? ` · ${agent.closeMode}` : ''}</span><h2 tabIndex={-1}>{agentLabel(agent.id, numbers)}</h2><span className={`${controls.badge} ${agent.status === 'failed' ? controls.badgeDanger : agent.status === 'running' ? controls.badgeInfo : ''}`}>{agentStatus[agent.status] ?? agent.status}</span></div>
     <section className={styles.section}><h3>运行情况</h3><dl className={styles.metaList}><Meta label="模型调用" value={agent.steps} /><Meta label="上下文 token" value={agent.contextTokens} /><Meta label="最后版本" value={agent.lastSeenVersion} /><Meta label="结束原因" value={agent.endReason} /><Meta label="收尾原因" value={agent.concludeReason} /><Meta label="开始时间" value={agent.startedAt} /><Meta label="结束时间" value={agent.finishedAt} /></dl></section>
     {agent.intentId && <section className={styles.section}><h3>当前意图</h3><ObjectLinks ids={[agent.intentId]} state={state} onSelect={onSelect} /></section>}
     <section className={styles.section}><h3>用量与花费</h3>{Object.keys(agent.usage).length ? <dl className={styles.metaList}>{Object.entries(agent.usage).map(([key, value]) => <Meta key={key} label={key === 'cost' ? '估算花费' : key.replaceAll('_', ' ')} value={key === 'cost' ? Number(value).toFixed(6) : value} />)}</dl> : <p className={styles.muted}>暂无用量记录。</p>}</section>
@@ -79,7 +86,7 @@ function AgentDetail({ agent, state, onSelect }: { agent: BoardAgent; state: Boa
   </>;
 }
 
-export default function DetailPanel({ taskId, state, selectedId, onSelect, historical = false }: Props) {
+export default function DetailPanel({ taskId, state, selectedId, onSelect, historical = false, agentNumbers = {} }: Props) {
   const panel = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { if (selectedId) body.current?.querySelector('h2')?.focus(); }, [selectedId]);
@@ -87,7 +94,7 @@ export default function DetailPanel({ taskId, state, selectedId, onSelect, histo
   const intent = selectedId ? state.intents[selectedId] : undefined;
   const agent = selectedId ? state.agents[selectedId] : undefined;
   function close() { onSelect(null); requestAnimationFrame(() => panel.current?.focus()); }
-  return <aside key={taskId} ref={panel} tabIndex={-1} className={styles.panel} aria-label={historical ? '历史快照详情' : '对象详情'} onKeyDown={(event) => { if (event.key === 'Escape' && selectedId) close(); }}>
+  return <AgentNumbers.Provider value={agentNumbers}><aside key={taskId} ref={panel} tabIndex={-1} className={styles.panel} aria-label={historical ? '历史快照详情' : '对象详情'} onKeyDown={(event) => { if (event.key === 'Escape' && selectedId) close(); }}>
     <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}</div>
     {!selectedId ? <div className={styles.placeholder}><h2>选择图上的节点</h2><p>查看任务目标、事实、意图或 Agent 的详细信息。</p></div> :
       <div ref={body} className={styles.body}>{selectedId === 'goal' ? <>
@@ -96,5 +103,5 @@ export default function DetailPanel({ taskId, state, selectedId, onSelect, histo
         {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><p className={styles.prose}>{state.task.domain_context}</p></section>}
         <section className={styles.section}><h3>验收条件</h3><ul className={styles.acceptance}>{(state.task?.acceptance ?? []).map(({ id, desc }) => { const item = state.acceptance[id]; return <li key={id}><strong>{id} · {desc}</strong><span className={`${controls.badge} ${item?.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item?.status === 'met' ? '已满足' : '未满足'}</span>{item?.reason && <small>裁定：{item.reason}</small>}{item?.missing && <small>缺口：{item.missing}</small>}{item?.evidence_facts.length ? <ObjectLinks ids={item.evidence_facts} state={state} onSelect={onSelect} /> : null}</li>; })}</ul></section>
       </> : fact ? <FactDetail fact={fact} state={state} onSelect={onSelect} /> : intent ? <IntentDetail intent={intent} state={state} onSelect={onSelect} /> : agent ? <AgentDetail agent={agent} state={state} onSelect={onSelect} /> : <div className={styles.message}><h2 tabIndex={-1}>节点已不在当前视图中</h2><p>选择其他节点继续查看。</p></div>}</div>}
-  </aside>;
+  </aside></AgentNumbers.Provider>;
 }

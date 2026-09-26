@@ -23,6 +23,7 @@ import styles from './TopologyFlowCanvas.module.css'
 
 type CanvasProps = {
   state: BoardState
+  agentNumbers?: Record<string, number>
   selectedId?: string | null
   onSelect: (id: string | null) => void
 }
@@ -149,11 +150,11 @@ function AgentNode({ id, data, selected }: NodeProps<GraphNode>) {
       id={id}
       selected={selected}
       className={`${styles.agent} ${concluding ? styles.concluding : styles.running}`}
-      label={`Agent ${id}，${concluding ? '收尾中' : '运行中'}，已执行 ${data.steps ?? 0} 步`}
+      label={`${data.label}，${concluding ? '收尾中' : '运行中'}，已执行 ${data.steps ?? 0} 步`}
     >
       <span className={styles.agentDot} aria-hidden="true" />
       <span className={styles.agentText}>
-        <strong>{id}</strong>
+        <strong>{data.label}</strong>
         <small>{data.isSeed ? '种子探索' : data.taskType ?? '探索'} · {concluding ? '收尾中' : '运行中'}</small>
       </span>
     </NodeShell>
@@ -202,9 +203,9 @@ function styleEdges(edges: GraphEdge[], state: BoardState): GraphEdge[] {
   })
 }
 
-function GraphCanvas({ state, selectedId, onSelect }: CanvasProps) {
+function GraphCanvas({ state, agentNumbers = {}, selectedId, onSelect }: CanvasProps) {
   const { fitView } = useReactFlow<GraphNode, GraphEdge>()
-  const graph = useMemo(() => deriveGraph(state), [state])
+  const graph = useMemo(() => deriveGraph(state, agentNumbers), [state, agentNumbers])
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [layoutRevision, setLayoutRevision] = useState(0)
