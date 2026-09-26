@@ -1,4 +1,4 @@
-# 黑板画布
+# 任务工作台
 
 React 18、TypeScript、Vite、React Query、Zustand、React Flow 与 ELK。接口类型从已提交的 OpenAPI 生成；运行时使用真实 HTTP API 与 Cookie 登录。
 
@@ -22,4 +22,4 @@ pnpm 缓存在 `/private/tmp/bbx-pnpm-store`，项目级 npm 镜像配置见 `.n
 
 未操作画布时，新增拓扑自动进入视野；平移、缩放或选择节点后保持视口。切换任务会关闭旧订阅并重置状态。事件去重只处理网络重传的同一版本，不判断事实或意图的语义重复；语义重复由 Agent 根据黑板同步自行判断。
 
-真实 Agent 运行由后续 runtime 提供。当前可启动黑板后运行 M1b 的 HTTP 模拟器，查看节点生长、认领、争议和生命周期变化；模拟器不调用模型。证据查看器、时间轴、完整 Agent 面板与 profile 编辑属于 M4。
+当前工作台支持登录、创建任务、实时黑板、证据与事件查看、Agent 状态、报告与工作区归档，以及 Profile 管理。真实任务由 agent-runtime 调度，启动和网络配置见[使用与部署](../docs/使用与部署.md)。开发时仍可使用不调用模型的 HTTP 模拟器验证画布事件；真实任务会调用配置的模型。

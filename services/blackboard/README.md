@@ -2,6 +2,8 @@
 
 服务以 `python -m bbx_blackboard.server` 启动：先执行 Alembic 迁移，再在 8000 端口启动 FastAPI。配置来自环境变量，不自动加载 `.env`。Compose 将服务发布到 `127.0.0.1:58000`，`web/dist` 存在时同时托管前端。
 
+黑板在完整探索中的作用、Fact/Intent 写入与 Close 裁定规则见[项目 README](../../README.md#探索如何运转)；本页说明服务接口与开发检查。
+
 ## 模型与重复判断
 
 Agent 使用 DeepSeek，并根据启动快照与增量黑板信息自行判断是否重复。黑板不下载模型或计算向量；`/search` 按关键词查找原文。事实与意图通过证据、引用、身份和状态校验后直接写入。可选的 `dry_run=true` 只返回校验结果 `{valid: true}`，不写入。

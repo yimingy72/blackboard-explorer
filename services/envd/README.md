@@ -2,14 +2,15 @@
 
 `bbx-exec-env:latest` 在容器内以 root 运行 envd，监听 8080。每任务传入独立的 `ENVD_TOKEN`；`/mcp` 和内部接口均需 `Authorization: Bearer <ENVD_TOKEN>`。`/mcp` 的 `execute_command` 还需 `X-Agent-Id: agent-1` 一类请求头，用户须先通过 `/users` 创建。
 
-token 约定：agent-runtime 持有 `ENVD_TOKEN_SECRET`，以任务 UUID 的标准小写连字符字符串为消息，计算 HMAC-SHA256 的十六进制摘要作为 token，并在创建容器时以环境变量 `ENVD_TOKEN` 注入。envd 只读取 `ENVD_TOKEN`，不接收 `ENVD_TOKEN_SECRET`；命令子进程会移除这两个环境变量，同时保留出网代理配置。派生逻辑由后续 agent-runtime 任务实现。
+token 约定：agent-runtime 持有 `ENVD_TOKEN_SECRET`，以任务 UUID 的标准小写连字符字符串为消息，计算 HMAC-SHA256 的十六进制摘要作为 token，并在创建容器时以环境变量 `ENVD_TOKEN` 注入。envd 只读取 `ENVD_TOKEN`，不接收 `ENVD_TOKEN_SECRET`；命令子进程会移除这两个环境变量。默认直连模式不注入代理变量；显式代理隔离模式才保留代理配置。派生逻辑由 agent-runtime 实现。
 
 ## 构建
 
-在仓库根目录执行以下命令，默认通过阿里云软件源构建两个镜像：
+在仓库根目录构建执行环境镜像；只有使用代理隔离模式时才额外构建可选代理镜像：
 
 ```sh
-make image-exec-env image-egress-proxy
+make image-exec-env
+# 显式代理隔离模式另运行：make image-egress-proxy
 ```
 
 | Make 变量 / Docker 构建参数 | Make 默认值 | 用途 |
@@ -21,7 +22,8 @@ make image-exec-env image-egress-proxy
 Make 将这些变量通过 `--build-arg` 传给对应的 Dockerfile；可以在命令行覆盖任意一项。将三项显式设为空即可使用官方源：
 
 ```sh
-make image-exec-env image-egress-proxy APT_MIRROR= PIP_INDEX_URL= APK_MIRROR=
+make image-exec-env APT_MIRROR= PIP_INDEX_URL=
+# 可选代理镜像：make image-egress-proxy APK_MIRROR=
 ```
 
 两个 Dockerfile 的参数默认均为空，直接运行 `docker build` 时默认保留官方源。这些参数只用于镜像构建，不配置容器运行时的出网代理。
@@ -30,13 +32,14 @@ make image-exec-env image-egress-proxy APT_MIRROR= PIP_INDEX_URL= APK_MIRROR=
 
 ```sh
 export DOCKER_BUILD_ARGS='--add-host host.docker.internal:host-gateway --build-arg http_proxy=http://host.docker.internal:7897 --build-arg https_proxy=http://host.docker.internal:7897 --build-arg no_proxy=localhost,127.0.0.1,::1,host.docker.internal'
-make image-exec-env image-egress-proxy
+make image-exec-env
+# 可选代理模式还需：make image-egress-proxy
 make test-integration
 ```
 
-`DOCKER_BUILD_ARGS` 默认为空，用于向两个镜像目标传入额外 Docker 构建参数；构建和集成测试使用相同值可复用缓存。它不配置容器运行时环境。
+`DOCKER_BUILD_ARGS` 默认为空，用于向镜像构建目标传入额外 Docker 构建参数；构建和集成测试使用相同值可复用缓存。它不配置容器运行时环境。
 
-镜像构建需要 Docker 可用；受限沙箱不能构建时需申请在沙箱外执行。`make test-integration` 依赖上述两个镜像构建目标；如需切换软件源，应同样传入对应变量。仓库 `.dockerignore` 排除真实 `.env`、Git 元数据与本地虚拟环境，避免它们进入构建上下文。
+镜像构建需要 Docker 可用。`make test-integration` 会按 Makefile 构建集成测试需要的执行环境、代理、运行器与评测环境镜像，即使日常部署默认直连；如需切换软件源，应同样传入对应变量。仓库 `.dockerignore` 排除真实 `.env`、Git 元数据与本地虚拟环境，避免它们进入构建上下文。
 
 ## 接口
 

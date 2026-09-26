@@ -1,6 +1,6 @@
 # AGENTS.md — 给 Codex 的项目规则
 
-本仓库实现"黑板式多 Agent 探索系统"。开发由用户使用 Codex 推进：Codex 按任务说明实现，用户在检查点验收，并批准需要越过沙箱的操作。
+本仓库实现通用问题求解引擎，以黑板式多 Agent 协作为执行机制。开发由用户使用 Codex 推进：Codex 按任务说明实现，用户在检查点验收，并批准需要越过沙箱的操作。
 
 ## 1. 设计正本
 
@@ -43,6 +43,7 @@
 
 - 本机：macOS（Intel，amd64），Docker Desktop 4 核、约 9.7GB 内存。
 - 外网访问经代理：`http_proxy` / `https_proxy` = `http://127.0.0.1:7897`，`all_proxy` = `socks5://127.0.0.1:7897`，`no_proxy` = `localhost,127.0.0.1,::1,host.docker.internal`（本机地址必须在 `no_proxy` 中）。
+- 上述是宿主机访问外网及下载依赖的配置，不是 Ubuntu 执行容器的默认策略。执行容器当前默认直接出网；显式代理隔离模式和模型访问代理是独立配置，见 `docs/使用与部署.md`。
 - uv 下载缓存使用 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache`（沙箱写不了 uv 默认缓存；多个 Codex 共用）。Python 3.12 解释器已安装在 uv 默认位置，直接 `uv sync` 即可，不要把解释器装到临时目录。
 - 如果当前环境缺少上述变量（例如从桌面应用启动），在命令前显式设置，不要修改全局配置。
 - Docker：本机配置了镜像加速源，它不提供 MinIO 官方镜像（`minio/minio`、`minio/mc` 均返回 422）。对象存储统一使用 `pgsty/minio:RELEASE.2026-04-17T00-00-00Z`（自带 `mc`）。新增任何镜像前，先确认能通过 `docker pull` 拉取。
