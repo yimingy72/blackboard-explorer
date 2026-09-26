@@ -20,7 +20,7 @@ from agent_framework import (
     Message,
 )
 from bbx_contracts.models import Price, Usage
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
@@ -62,7 +62,23 @@ class ToolLogMiddleware(FunctionMiddleware):
         try:
             await call_next()
         except Exception as exc:
-            context.result = f"工具调用失败（{type(exc).__name__}）。请检查参数或换一种方法后重试。"
+            cause = exc.__cause__
+            if type(exc).__name__ == "_FunctionArgumentValidationError" and isinstance(
+                cause, ValidationError
+            ):
+                errors = []
+                for error in cause.errors():
+                    path = "".join(
+                        f"[{part}]" if isinstance(part, int) else f".{part}"
+                        for part in error["loc"]
+                    ).lstrip(".")
+                    issue = "缺少必填字段" if error["type"] == "missing" else "字段值不合法"
+                    errors.append(f"{issue} {path}")
+                context.result = "工具参数不合法：" + "；".join(errors) + "。请修正后重试。"
+            else:
+                context.result = (
+                    f"工具调用失败（{type(exc).__name__}）。请检查参数或换一种方法后重试。"
+                )
         call_id = _call_id()
         args = _arguments(context.arguments)
         result = _result_text(context.result)

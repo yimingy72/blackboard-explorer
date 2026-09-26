@@ -9,12 +9,14 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import FunctionTool
+from agent_framework import Agent, FunctionTool
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
 from bbx_runtime.context import RunContext
+from bbx_runtime.middleware import ToolLogMiddleware
 from bbx_runtime.testing.fake_envd import FakeEnvd
+from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from bbx_runtime.tools import EvidenceInput, make_board_tools
 from pydantic import ValidationError
 
@@ -45,11 +47,18 @@ class Board:
         self.evidence: bytes = b"original evidence"
         self.status = "closing"
         self.close_calls = 0
+        self.post_fact_calls = 0
+        self.tool_calls: list[dict[str, Any]] = []
+
+    async def record_tool_call(self, _task_id: str, call: dict[str, Any]) -> list[Any]:
+        self.tool_calls.append(call)
+        return []
 
     async def state(self, _task_id: str) -> dict[str, Any]:
         return {"task": {"status": self.status}}
 
     async def post_fact(self, _task_id: str, request: Any) -> dict[str, Any]:
+        self.post_fact_calls += 1
         self.fact = request
         if self.fact_error is not None:
             raise self.fact_error
@@ -155,6 +164,91 @@ async def test_post_fact_uploads_file_and_system_toolcall_evidence(tmp_path: Pat
     assert evidence[1].uri == f"toolcalls/{TASK}/{CALL_ID}.txt"
     assert evidence[1].auto is True and evidence[1].type == "command_output"
     assert objects.data[uri] == b"proof"
+
+
+@pytest.mark.asyncio
+async def test_post_fact_missing_evidence_type_reports_field_and_can_retry(tmp_path: Path) -> None:
+    fake = FakeEnvd(tmp_path)
+    objects = MemoryObjects()
+    board = Board()
+    path = "/workspace/agents/agent-1/proof.txt"
+    bad = {
+        "kind": "observation",
+        "statement": "reproducible fact",
+        "evidence": [{"path": path, "summary": "proof"}],
+    }
+    good = {
+        **bad,
+        "evidence": [{"type": "text", "path": path, "summary": "proof"}],
+    }
+    client = ScriptedChatClient(
+        [
+            ScriptStep(calls=(ScriptToolCall("post_fact", bad),)),
+            ScriptStep(
+                calls=(ScriptToolCall("post_fact", good),),
+                expect_contains="缺少必填字段 evidence[0].type",
+            ),
+            ScriptStep(text="done", expect_contains="已提交事实 F1"),
+        ]
+    )
+    async with fake:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=fake.app), trust_env=False
+        ) as http:
+            envd = EnvdClient("http://envd.test", fake.token, http)
+            await envd.create_user("agent-1")
+            fake.put_file(path, b"proof")
+            ctx = context(board, objects, envd)
+            response = await Agent(
+                client=client,
+                tools=[named(ctx)["post_fact"]],
+                middleware=[ToolLogMiddleware(ctx)],
+            ).run("start")
+    assert response.text == "done"
+    assert board.fact is not None and board.fact.statement == "reproducible fact"
+    assert board.post_fact_calls == 1
+    assert len(board.tool_calls) == 2
+    assert "缺少必填字段 evidence[0].type" in board.tool_calls[0]["result_head"]
+    assert (
+        "缺少必填字段 evidence[0].type" in objects.data[board.tool_calls[0]["result_uri"]].decode()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"type": "text", "path": "/workspace/x", "summary": "proof", "extra": "sentinel"},
+        {"type": "sentinel", "path": "/workspace/x", "summary": "proof"},
+    ],
+)
+async def test_post_fact_invalid_arguments_do_not_echo_values(evidence: dict[str, str]) -> None:
+    board = Board()
+    objects = MemoryObjects()
+    ctx = context(board, objects)
+    client = ScriptedChatClient(
+        [
+            ScriptStep(
+                calls=(
+                    ScriptToolCall(
+                        "post_fact",
+                        {"kind": "observation", "statement": "fact", "evidence": [evidence]},
+                    ),
+                )
+            ),
+            ScriptStep(text="done", expect_contains="工具参数不合法"),
+        ]
+    )
+    await Agent(
+        client=client,
+        tools=[named(ctx)["post_fact"]],
+        middleware=[ToolLogMiddleware(ctx)],
+    ).run("start")
+    assert board.post_fact_calls == 0
+    assert len(board.tool_calls) == 1
+    feedback = board.tool_calls[0]["result_head"]
+    assert "evidence[0]" in feedback
+    assert "sentinel" not in feedback
 
 
 @pytest.mark.asyncio
