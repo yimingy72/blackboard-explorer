@@ -1,0 +1,286 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "14接口覆盖及已计问题的重复；领取与目录明确为观察。"
+        }
+      ]
+    },
+    {
+      "id": "F8",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "F2/F4/F5/F6/F7问题汇总。"
+        }
+      ]
+    },
+    {
+      "id": "F1",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "环境与产物位置。"
+        }
+      ]
+    },
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "订单归属检查缺失及跨用户200响应。",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "两张不同券使500总价变成-11500且余额增加。",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "new",
+          "note": "同一券ID在一请求重复计价，scan输出和代码支持，不因最终合并而丢失独立发现。",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "单次1000000退款超过10000已付；串行累计超额是同一金额约束缺口，未将负数未实测分支额外计分。",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F6",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "scan2及原HTTP输出证明跨用户查询；更强影响均合并同一问题。",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F7",
+      "assessments": [
+        {
+          "classification": "new",
+          "note": "四张不同券并发下单余额10000到-6000，串行仅前两次成功，证明独立余额检查/扣减非原子。",
+          "unique_key": "coupon-checkout-nonatomicity",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F9",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "同一券两次并发均200与used=1；串行第二次409。退款6000两次也可串行，不能作为P2竞态证据，未形成P2定位+机制的缺陷主张。",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "R1",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R10",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R11",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R12",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R13",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R14",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R15",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R16",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R17",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R18",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R5",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R6",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R7",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R8",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    },
+    {
+      "id": "R9",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：上述事实的重复或明确观察、证据限制、状态说明；无额外肯定性业务缺陷断言。"
+        }
+      ]
+    }
+  ]
+}

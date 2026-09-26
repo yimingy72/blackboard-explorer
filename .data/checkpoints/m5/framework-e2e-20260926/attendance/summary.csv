@@ -1,0 +1,4 @@
+event_id,registered,attended,attendance_rate
+E1,2,1,0.500000
+E2,3,2,0.666667
+E3,2,2,1.000000

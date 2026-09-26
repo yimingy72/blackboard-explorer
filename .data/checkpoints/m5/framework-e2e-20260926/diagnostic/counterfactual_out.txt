@@ -1,0 +1,2 @@
+A) real test w/ LockedInventory + jitter=0: N=300 failures=0 rate=0.000
+B) no-jitter driver w/ LockedInventory: N=200 failures=0 rate=0.000

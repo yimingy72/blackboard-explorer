@@ -1,0 +1,10 @@
+{
+  "scripts": [
+    {
+      "id": "primary-scan",
+      "path": "shared/repro/scan.py",
+      "expected_exit_code": 0,
+      "expected_output": "delta=11500"
+    }
+  ]
+}

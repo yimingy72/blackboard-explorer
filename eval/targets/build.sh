@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Keep macOS resource-fork metadata out of portable task inputs.
+export COPYFILE_DISABLE=1
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 mkdir -p "$root/dist"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/bbx-eval-build.XXXXXX")

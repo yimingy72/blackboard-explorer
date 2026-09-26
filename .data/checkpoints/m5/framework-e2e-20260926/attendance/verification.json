@@ -1,0 +1,51 @@
+{
+  "task_id": "2023545d-ad7c-4aca-b546-ed197985b9df",
+  "status": "finished",
+  "acceptance": {
+    "A1": {
+      "reason": "我按 README.md 公开规则用原始 CSV 内容逐行独立复核：有效报名=status=confirmed 且活动存在，(event_id,person_id) 去重保留首次 → E1{U01,U02}=2、E2{U04,U05,U06}=3、E3{U08,U09}=2（R003/R008 cancelled 排除；registrations.csv 第5/12 行 R004、R010 重复）；有效到场按签到优先级判定 → E1{U01}=1、E2{U04,U05}=2、E3{U08,U09}=2（C002/C007/C010 duplicate、C003/C004/C008 ineligible、C011 unknown_event）；rate 1/2=0.500000、2/3=0.666667、2/2=1.000000，六位小数。summary.csv 四字段齐全且按 event_id 升序，与产物完全一致。统计口径在 README 与 F2 中均有明确依据，F1 给出可复现的 reconcile.py/verify.py 与输入 md5，F5 用不同数据结构的独立实现（agent-3）逐字段复算得到同一三元组。边界（本数据集未触发）已在 F4/F5 标注：registered=0 留空分支、confirmed 指向不存在活动的分支、duplicate_checkin 与 ineligible_checkin 的优先级反例均未被实测，属未验证实现，但不影响本数据集全部 3 个活动的统计正确性。",
+      "status": "met",
+      "missing": null,
+      "evidence_facts": [
+        "F2",
+        "F1",
+        "F4",
+        "F5"
+      ],
+      "judged_version": 178
+    },
+    "A2": {
+      "reason": "我按 README 规则对原始行独立核对，issues.csv 逐行列出全部 9 条应报告问题且无遗漏/多余：registrations.csv,5,R004,duplicate_registration；registrations.csv,12,R010,duplicate_registration；checkins.csv,3,C002,duplicate_checkin；checkins.csv,4,C003,ineligible_checkin；checkins.csv,5,C004,ineligible_checkin；checkins.csv,8,C007,duplicate_checkin；checkins.csv,9,C008,ineligible_checkin；checkins.csv,12,C010,duplicate_checkin；checkins.csv,13,C011,unknown_event。字段 file,row,record_id,issue 齐全；row 为原 CSV 物理行号（表头=第1行），已由 grep -n/sed -n 逐行对回原文（registrations.csv:5=R004、:12=R010、checkins.csv:3/4/5/8/9/12/13=C002/C003/C004/C007/C008/C010/C011）；cancelled 的 R003/R008 依 README 属正常取消不报问题；每行至多一个问题且优先级 unknown_event>duplicate_checkin>ineligible_checkin 得到落实。可重做步骤与证据：F1 的脚本、F2/F3 引用的 decisions_audit.csv 逐行审计、verify.py 输出 RESULT: PASS，运行前后三份原始 CSV md5（8e0979b271062a2a7001b43e0aeeb657 / 51851ebbea2721097b3f84df8422b698 / 671b914889c317c1c8d7c03c653f8f41）一致，原始文件未被修改。F5 独立实现以集合比较得同一 9 条且行序相同，out_alt_sorted 为等价集合（README 未规定行序）。残余说明：F5 指出重复两行 record_id 相同（第11/12行均为 R010、第11/12行均为 C010），row 是唯一判别依据且被标记者为后一次出现，与产物一致，不构成缺陷。",
+      "status": "met",
+      "missing": null,
+      "evidence_facts": [
+        "F3",
+        "F1",
+        "F4",
+        "F5"
+      ],
+      "judged_version": 178
+    }
+  },
+  "checked_artifacts": [
+    "agents/agent-1/evidence/issues.csv",
+    "agents/agent-1/evidence/summary.csv"
+  ],
+  "input_sha256": {
+    "shared/attendance/checkins.csv": "180756679e108de0db33a960afdec1d37e86b8ada627490f18564ac3025b7e78",
+    "shared/attendance/events.csv": "b60fde746705707755f4ea5d9098f4bcef196ba144b7e025462acf635a9e87b1",
+    "shared/attendance/registrations.csv": "029c9d1df5d4ef488d2ad503313896c764fba03ef8c7617a6a3345859cb0750b"
+  },
+  "summary_rows": 3,
+  "issue_rows": 9,
+  "usage": {
+    "cost": 0.08072447999999999,
+    "output_tokens": 41220,
+    "cache_hit_tokens": 842880,
+    "reasoning_tokens": 18317,
+    "cache_miss_tokens": 87344
+  },
+  "agents": 4,
+  "facts": 5,
+  "intents": 2
+}

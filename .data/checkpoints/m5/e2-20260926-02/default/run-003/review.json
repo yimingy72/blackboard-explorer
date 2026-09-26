@@ -1,0 +1,289 @@
+{
+  "checked_interfaces": [
+    "GET /account/coupons",
+    "GET /account/refunds",
+    "GET /coupons",
+    "GET /coupons/catalog",
+    "GET /coupons/{coupon_id}",
+    "GET /orders",
+    "GET /orders/search",
+    "GET /orders/{order_id}",
+    "GET /orders/{order_id}/refund-summary",
+    "GET /orders/{order_id}/refunds",
+    "POST /balance/charge",
+    "POST /coupons/{code}/claim",
+    "POST /orders/with-coupon",
+    "POST /orders/{order_id}/refund"
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "assessments": [
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P1",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P2",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P3",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P4",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P5",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "problem",
+          "note": "已回读本run原始输出与代码引用；P5跨用户证据来自repro2，P2/P3另由F4串行对照补强。",
+          "answer_id": "P6",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        },
+        {
+          "classification": "false_positive",
+          "note": "F1把重复领取列入已复现问题，F2明确称缺陷；缺少限领规则依据。最终降级不能消除既有过强断言。",
+          "unique_key": "repeat-claim-without-limit-policy"
+        }
+      ]
+    },
+    {
+      "id": "F2",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "完整接口覆盖说明及F1问题的重复；计数15是笔误，逐项14接口齐全。重复领取错误主张已计F1。"
+        }
+      ]
+    },
+    {
+      "id": "F4",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "P1/P2/P3/P6与覆盖补强；领取和目录只是利用前置，未另确诊保密或限领缺陷。"
+        }
+      ]
+    },
+    {
+      "id": "F3",
+      "assessments": [
+        {
+          "classification": "new",
+          "note": "repro5正价对照6500与重复同券500，原始输出和逐项计价代码支持独立重复抵扣。",
+          "unique_key": "same-coupon-id-repeat-in-one-order",
+          "location": true,
+          "mechanism": true,
+          "reproducible": true
+        }
+      ]
+    },
+    {
+      "id": "F5",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "同一P5的更强影响证据，合并F1，不单列新问题。"
+        }
+      ]
+    },
+    {
+      "id": "R1",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R10",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R11",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R13",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R14",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R15",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R17",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R18",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R19",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R20",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R21",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R22",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R23",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R5",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R6",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R7",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R8",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    },
+    {
+      "id": "R9",
+      "assessments": [
+        {
+          "classification": "ignore",
+          "note": "已读报告段落：重复上述事实、明确观察/待证假设或过程/引用说明；早期重复领取主张仍保留在F1的FP中。"
+        }
+      ]
+    }
+  ]
+}

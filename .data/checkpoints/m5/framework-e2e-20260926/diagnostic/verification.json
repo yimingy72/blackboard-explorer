@@ -1,0 +1,46 @@
+{
+  "task_id": "9918846a-fd8e-4596-b36e-bda9e33bee2d",
+  "status": "finished",
+  "acceptance": {
+    "A1": {
+      "reason": "代码位置与机制有原始资料与对照实验直接支撑。原始 orders.py（evidence/9918846a-fd8e-4596-b36e-bda9e33bee2d/agent-1/2abb4e510b38-orders.py）逐行核对：Inventory.reserve 位于第 78-85 行，第 81 行 current=available(sku)，第 82-83 行 `current < quantity` 判断并可 raise，第 84 行 time.sleep(0.0011)，第 85 行才 _set_quantity(sku, current-quantity)；Inventory 内无 Lock。OrderService.place 的 _order_lock 只包住 self._orders 写入，未覆盖 catalog.get/inventory.reserve。摘录文件 bc20536dab2b-code_inventory.txt 与之一致。F5 的强制交错对照（efdf4d0b8c63-repro_out.txt：PART2 placed=2, available('BOOK')=0）直接展示两线程在同一写回前读到相同库存导致两单都成交，即第 59 行 sum(...)==1 断言失败的机制；jitter 扫描（565902d79416-exp_out.txt：jitter=0→200/200 失败、jitter=0.0005→199/200、不固定→0.4）表明失败概率由两线程进入 reserve 的时间差是否落在约 1.1ms 窗口决定，与机制一致。负对照 F7（d4af18d66df0-counterfactual_out.txt：仅给副本 Inventory 的 receive/reserve/restore 加 Lock 后 A)300/300、B)200/200 全通过）在只改副本、未动共享代码的前提下消除了失败，进一步排除其他独立机制。",
+      "status": "met",
+      "missing": null,
+      "evidence_facts": [
+        "F5",
+        "F1",
+        "F4",
+        "F7",
+        "F6"
+      ],
+      "judged_version": 135
+    },
+    "A2": {
+      "reason": "存在经验证、复现率远超 90% 的稳定复现方法，且给出两条互不依赖的路径。方法一：/workspace/shared/.venv/bin/python /workspace/agents/agent-1/repro.py 100 —— 直接调用仓库真实测试函数 tests/test_orders.py::test_concurrent_orders，仅在调用前将 test_orders.random.uniform 固定为 0.0，未改动任何被测代码；实测 PART1 N=100 failures=100（rate=1.000），失败点与原始偶发失败一致（test_orders.py 第 59 行 AssertionError）。抖动扫描 565902d79416-exp_out.txt 独立复核：jitter=0.0→200/200、jitter=0.0005→199/200，均≥90%；不固定抖动仅 0.4，说明该方法正是把测试内随机启动抖动确定化。方法二 F6：/workspace/shared/.venv/bin/python /workspace/agents/agent-1/repro_natural.py 200 —— 完全不插桩、直接 import 未改动的 orders.py，复刻测试场景仅省略测试自身 0-6ms 抖动，实测 200/200 失败（rate=1.000，154ff1754ad5-repro_natural_out.txt）。原始自然复现率仅 30-41%（F4），上述方法相较自然运行显著稳定化，满足≥90%要求。",
+      "status": "met",
+      "missing": null,
+      "evidence_facts": [
+        "F3",
+        "F6"
+      ],
+      "judged_version": 135
+    }
+  },
+  "usage": {
+    "cost": 0.06399821999999998,
+    "output_tokens": 31082,
+    "cache_hit_tokens": 603520,
+    "reasoning_tokens": 15431,
+    "cache_miss_tokens": 76929
+  },
+  "agents": 3,
+  "facts": 7,
+  "intents": 2,
+  "source_unchanged_sha256": "2abb4e510b38bd0a1728b1aa1cc39c1f5549df02492003e31c08c641bd390eb1",
+  "archive_outputs_read": [
+    "counterfactual_out.txt",
+    "orders.py",
+    "repro_natural_out.txt",
+    "repro_out.txt"
+  ]
+}

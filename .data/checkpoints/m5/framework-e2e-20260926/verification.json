@@ -1,0 +1,123 @@
+{
+  "source_commit": "21ac0dc8084df44cd2265b4ecb345ea8b838a886",
+  "scope": "Two-domain functional verification using identical generic profiles; no claim of statistical performance or architectural superiority.",
+  "prompt_sha256": {
+    "explore": "0e917fb06565b552f4eea2253933498c66166c2422ee8af94e9e6f3854432b66",
+    "derive": "843999db82ec2626ffc053f424e0cd79289c33face41617715b766fdabb80db0",
+    "close": "cf239f2eddcdfad0138c9bad25851c98303f9bb0f691ccb694f12ba24451febf"
+  },
+  "profile_prompt_parity": true,
+  "checks": {
+    "ordinary_passed": 373,
+    "integration_passed": 35,
+    "web_build": "passed"
+  },
+  "tasks": [
+    "attendance-reconciliation",
+    "flaky-order-test"
+  ],
+  "prompt_unchanged_during_runs": true,
+  "results": {
+    "attendance": {
+      "task_id": "2023545d-ad7c-4aca-b546-ed197985b9df",
+      "status": "finished",
+      "acceptance": {
+        "A1": {
+          "reason": "我按 README.md 公开规则用原始 CSV 内容逐行独立复核：有效报名=status=confirmed 且活动存在，(event_id,person_id) 去重保留首次 → E1{U01,U02}=2、E2{U04,U05,U06}=3、E3{U08,U09}=2（R003/R008 cancelled 排除；registrations.csv 第5/12 行 R004、R010 重复）；有效到场按签到优先级判定 → E1{U01}=1、E2{U04,U05}=2、E3{U08,U09}=2（C002/C007/C010 duplicate、C003/C004/C008 ineligible、C011 unknown_event）；rate 1/2=0.500000、2/3=0.666667、2/2=1.000000，六位小数。summary.csv 四字段齐全且按 event_id 升序，与产物完全一致。统计口径在 README 与 F2 中均有明确依据，F1 给出可复现的 reconcile.py/verify.py 与输入 md5，F5 用不同数据结构的独立实现（agent-3）逐字段复算得到同一三元组。边界（本数据集未触发）已在 F4/F5 标注：registered=0 留空分支、confirmed 指向不存在活动的分支、duplicate_checkin 与 ineligible_checkin 的优先级反例均未被实测，属未验证实现，但不影响本数据集全部 3 个活动的统计正确性。",
+          "status": "met",
+          "missing": null,
+          "evidence_facts": [
+            "F2",
+            "F1",
+            "F4",
+            "F5"
+          ],
+          "judged_version": 178
+        },
+        "A2": {
+          "reason": "我按 README 规则对原始行独立核对，issues.csv 逐行列出全部 9 条应报告问题且无遗漏/多余：registrations.csv,5,R004,duplicate_registration；registrations.csv,12,R010,duplicate_registration；checkins.csv,3,C002,duplicate_checkin；checkins.csv,4,C003,ineligible_checkin；checkins.csv,5,C004,ineligible_checkin；checkins.csv,8,C007,duplicate_checkin；checkins.csv,9,C008,ineligible_checkin；checkins.csv,12,C010,duplicate_checkin；checkins.csv,13,C011,unknown_event。字段 file,row,record_id,issue 齐全；row 为原 CSV 物理行号（表头=第1行），已由 grep -n/sed -n 逐行对回原文（registrations.csv:5=R004、:12=R010、checkins.csv:3/4/5/8/9/12/13=C002/C003/C004/C007/C008/C010/C011）；cancelled 的 R003/R008 依 README 属正常取消不报问题；每行至多一个问题且优先级 unknown_event>duplicate_checkin>ineligible_checkin 得到落实。可重做步骤与证据：F1 的脚本、F2/F3 引用的 decisions_audit.csv 逐行审计、verify.py 输出 RESULT: PASS，运行前后三份原始 CSV md5（8e0979b271062a2a7001b43e0aeeb657 / 51851ebbea2721097b3f84df8422b698 / 671b914889c317c1c8d7c03c653f8f41）一致，原始文件未被修改。F5 独立实现以集合比较得同一 9 条且行序相同，out_alt_sorted 为等价集合（README 未规定行序）。残余说明：F5 指出重复两行 record_id 相同（第11/12行均为 R010、第11/12行均为 C010），row 是唯一判别依据且被标记者为后一次出现，与产物一致，不构成缺陷。",
+          "status": "met",
+          "missing": null,
+          "evidence_facts": [
+            "F3",
+            "F1",
+            "F4",
+            "F5"
+          ],
+          "judged_version": 178
+        }
+      },
+      "checked_artifacts": [
+        "agents/agent-1/evidence/issues.csv",
+        "agents/agent-1/evidence/summary.csv"
+      ],
+      "input_sha256": {
+        "shared/attendance/checkins.csv": "180756679e108de0db33a960afdec1d37e86b8ada627490f18564ac3025b7e78",
+        "shared/attendance/events.csv": "b60fde746705707755f4ea5d9098f4bcef196ba144b7e025462acf635a9e87b1",
+        "shared/attendance/registrations.csv": "029c9d1df5d4ef488d2ad503313896c764fba03ef8c7617a6a3345859cb0750b"
+      },
+      "summary_rows": 3,
+      "issue_rows": 9,
+      "usage": {
+        "cost": 0.08072447999999999,
+        "output_tokens": 41220,
+        "cache_hit_tokens": 842880,
+        "reasoning_tokens": 18317,
+        "cache_miss_tokens": 87344
+      },
+      "agents": 4,
+      "facts": 5,
+      "intents": 2
+    },
+    "diagnostic": {
+      "task_id": "9918846a-fd8e-4596-b36e-bda9e33bee2d",
+      "status": "finished",
+      "acceptance": {
+        "A1": {
+          "reason": "代码位置与机制有原始资料与对照实验直接支撑。原始 orders.py（evidence/9918846a-fd8e-4596-b36e-bda9e33bee2d/agent-1/2abb4e510b38-orders.py）逐行核对：Inventory.reserve 位于第 78-85 行，第 81 行 current=available(sku)，第 82-83 行 `current < quantity` 判断并可 raise，第 84 行 time.sleep(0.0011)，第 85 行才 _set_quantity(sku, current-quantity)；Inventory 内无 Lock。OrderService.place 的 _order_lock 只包住 self._orders 写入，未覆盖 catalog.get/inventory.reserve。摘录文件 bc20536dab2b-code_inventory.txt 与之一致。F5 的强制交错对照（efdf4d0b8c63-repro_out.txt：PART2 placed=2, available('BOOK')=0）直接展示两线程在同一写回前读到相同库存导致两单都成交，即第 59 行 sum(...)==1 断言失败的机制；jitter 扫描（565902d79416-exp_out.txt：jitter=0→200/200 失败、jitter=0.0005→199/200、不固定→0.4）表明失败概率由两线程进入 reserve 的时间差是否落在约 1.1ms 窗口决定，与机制一致。负对照 F7（d4af18d66df0-counterfactual_out.txt：仅给副本 Inventory 的 receive/reserve/restore 加 Lock 后 A)300/300、B)200/200 全通过）在只改副本、未动共享代码的前提下消除了失败，进一步排除其他独立机制。",
+          "status": "met",
+          "missing": null,
+          "evidence_facts": [
+            "F5",
+            "F1",
+            "F4",
+            "F7",
+            "F6"
+          ],
+          "judged_version": 135
+        },
+        "A2": {
+          "reason": "存在经验证、复现率远超 90% 的稳定复现方法，且给出两条互不依赖的路径。方法一：/workspace/shared/.venv/bin/python /workspace/agents/agent-1/repro.py 100 —— 直接调用仓库真实测试函数 tests/test_orders.py::test_concurrent_orders，仅在调用前将 test_orders.random.uniform 固定为 0.0，未改动任何被测代码；实测 PART1 N=100 failures=100（rate=1.000），失败点与原始偶发失败一致（test_orders.py 第 59 行 AssertionError）。抖动扫描 565902d79416-exp_out.txt 独立复核：jitter=0.0→200/200、jitter=0.0005→199/200，均≥90%；不固定抖动仅 0.4，说明该方法正是把测试内随机启动抖动确定化。方法二 F6：/workspace/shared/.venv/bin/python /workspace/agents/agent-1/repro_natural.py 200 —— 完全不插桩、直接 import 未改动的 orders.py，复刻测试场景仅省略测试自身 0-6ms 抖动，实测 200/200 失败（rate=1.000，154ff1754ad5-repro_natural_out.txt）。原始自然复现率仅 30-41%（F4），上述方法相较自然运行显著稳定化，满足≥90%要求。",
+          "status": "met",
+          "missing": null,
+          "evidence_facts": [
+            "F3",
+            "F6"
+          ],
+          "judged_version": 135
+        }
+      },
+      "usage": {
+        "cost": 0.06399821999999998,
+        "output_tokens": 31082,
+        "cache_hit_tokens": 603520,
+        "reasoning_tokens": 15431,
+        "cache_miss_tokens": 76929
+      },
+      "agents": 3,
+      "facts": 7,
+      "intents": 2,
+      "source_unchanged_sha256": "2abb4e510b38bd0a1728b1aa1cc39c1f5549df02492003e31c08c641bd390eb1",
+      "archive_outputs_read": [
+        "counterfactual_out.txt",
+        "orders.py",
+        "repro_natural_out.txt",
+        "repro_out.txt"
+      ]
+    }
+  },
+  "image_ids": {
+    "bbx-agent-runtime:latest": "sha256:e65f7775c1aada25a2177aee0574981e12d43ef336252090a7a00a7c98c74ed2",
+    "bbx-blackboard:latest": "sha256:62ca5c7dca35dbcdcb2e1881e0be742d8158bdb42d293fb168b50b9c8edbaca5"
+  }
+}

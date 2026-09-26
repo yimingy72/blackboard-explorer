@@ -1,0 +1,10 @@
+file,row,record_id,issue
+registrations.csv,5,R004,duplicate_registration
+registrations.csv,12,R010,duplicate_registration
+checkins.csv,3,C002,duplicate_checkin
+checkins.csv,4,C003,ineligible_checkin
+checkins.csv,5,C004,ineligible_checkin
+checkins.csv,8,C007,duplicate_checkin
+checkins.csv,9,C008,ineligible_checkin
+checkins.csv,12,C010,duplicate_checkin
+checkins.csv,13,C011,unknown_event

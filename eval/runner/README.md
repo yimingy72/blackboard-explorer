@@ -2,6 +2,8 @@
 
 M5 比较同一目标上的 `default` 与 `single`。两份 Profile 只有 `derive_enabled` 不同；single 的任务并发为 1，close 仍负责裁定与终结。每批固定 Profile 版本，结果保留完整配置与预算。命令不向 Agent 提供答案目录。
 
+这里的已知问题匹配与P/D评分是mini-shop-review的专用评测适配，不是通用求解引擎的验收规则。其他领域任务按自身验收条件和参考产物验证，可用`make e2e E2E_ARGS='--task <任务名>'`进行闭环检查。
+
 ## 准备与运行
 
 普通测试 `make check` 使用 HTTP 替身，不读 `.env`、不访问真实模型。以下 `eval-run` 是显式付费操作：默认两组各 5 次，每次任务预算最多 10 个配置币种单位、60 分钟。当前默认价格币种为 USD，实际费用按服务商计费。

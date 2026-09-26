@@ -1,0 +1,11 @@
+PART1: real test function, jitter=0, N=100, failures=100, rate=1.000
+Traceback (most recent call last):
+  File "/workspace/agents/agent-1/repro.py", line 31, in <module>
+    T.test_concurrent_orders()
+  File "/workspace/shared/order-service/tests/test_orders.py", line 59, in test_concurrent_orders
+    assert sum(order is not None for order in orders) == 1
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+PART2: forced interleaving -> placed=2, inventory.available('BOOK')=0
+PART2: this violates the test invariant 'exactly 1 order placed'
