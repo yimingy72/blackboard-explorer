@@ -17,7 +17,9 @@
 - `make test-integration`：36 passed、379 deselected；同一真实envd生命周期在有网关直连和internal代理两种网络下均通过。
 - Compose渲染检查：direct得到`exec.internal=false`，proxy得到`true`。在有网关Docker网络中，不经代理访问用户靶机和依赖镜像站均为HTTP 200。
 - `bbx-agent-runtime:latest`、`bbx-blackboard:latest`均已按本工作树构建；后者带更新后的前端资源。
-- 主工作树运行实例切换、旧任务/卷保留及新执行容器直连靶机的验证：待部署后补充。
+- 主工作树实例已切换：`blackboard-explorer_exec`的`internal=false`，runtime的`EXEC_EGRESS_MODE=direct`；前端HTTP 200，原有default/single配置可读，runtime持有PG实例锁。原任务`de1ab8e4-1752-44af-a03f-f56b3b6f3724`仍为finished且workspace归档存在；主项目数据库/MinIO卷未删除。
+- 独立部署冒烟：通过ExecEnvManager创建临时Ubuntu环境，预建agent-1，用正式MCP`execute_command`执行不走代理的curl；容器代理变量为空，靶机返回`BBX_TARGET_READY_200`。检查后销毁临时envd/relay容器。没有调用模型，也没有创建黑板任务。
+- 旧Compose实例切换时，已停用的egress-proxy因profile被隐藏仍占着原exec网络；只清理本项目这一个旧代理容器及其旧网络，然后重试部署成功。没有清理其他Docker项目或数据卷。
 
 复现：
 
