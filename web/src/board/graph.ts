@@ -1,7 +1,7 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 
 import type { BoardState } from './types';
-import { agentLabel } from './agents';
+import { agentColors, agentLabel, agentStyle } from './agents';
 
 export type GraphRelation =
   | 'derived_from'
@@ -13,6 +13,8 @@ export type GraphRelation =
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string;
+  ownerLabel?: string;
+  ownerAccent?: string;
   version?: number;
   status?: string;
   kind?: string;
@@ -151,5 +153,13 @@ export function deriveGraph(state: BoardState, numbers: Record<string, number> =
       }
     });
 
+  for (const node of nodes) {
+    const owner = node.type === 'agent' ? node.id : node.data.author;
+    if (owner && numbers[owner]) {
+      node.style = agentStyle(numbers[owner]);
+      node.data.ownerLabel = agentLabel(owner, numbers);
+      node.data.ownerAccent = agentColors(numbers[owner]).accent;
+    }
+  }
   return { nodes, edges };
 }

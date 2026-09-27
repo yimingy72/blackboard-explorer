@@ -28,11 +28,13 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   await mkdir('../.data/qa', { recursive: true });
   await page.screenshot({ path: '../.data/qa/workbench-desktop.png', fullPage: true });
 
+  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
   await page.getByRole('tab', { name: '时间轴' }).click();
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
   await slider.press('Home');
   for (let index = 0; index < 3; index += 1) await slider.press('ArrowRight');
+  await page.getByRole('button', { name: '关闭复盘记录' }).click();
   await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   await expect(conversation).not.toContainText(BOARD_UPDATE);
   await expect(conversation).not.toContainText(MODEL_OUTPUT);

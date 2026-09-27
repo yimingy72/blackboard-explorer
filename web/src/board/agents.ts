@@ -1,4 +1,24 @@
 import type { BoardAgent, BoardEvent, BoardState } from './types';
+import type { CSSProperties } from 'react';
+
+export function agentColors(number: number) {
+  const hue = Math.round(((number - 1) * 137.508 + 210) % 360);
+  return { accent: `hsl(${hue} 58% 26%)`, border: `hsl(${hue} 42% 66%)`, tint: `hsl(${hue} 65% 94%)` };
+}
+
+export function agentStyle(number: number): CSSProperties {
+  const colors = agentColors(number);
+  return { '--agent-accent': colors.accent, '--agent-border': colors.border, '--agent-tint': colors.tint } as CSSProperties;
+}
+
+export function agentContributions(state: BoardState, events: readonly BoardEvent[]) {
+  const counts: Record<string, { facts: string[]; intents: string[]; judgments: number }> = {};
+  for (const id of Object.keys(state.agents)) counts[id] = { facts: [], intents: [], judgments: 0 };
+  for (const fact of Object.values(state.facts)) counts[fact.author]?.facts.push(fact.id);
+  for (const intent of Object.values(state.intents)) counts[intent.author]?.intents.push(intent.id);
+  for (const event of events) if (event.type === 'acceptance.judged' && counts[event.actor]) counts[event.actor].judgments += 1;
+  return counts;
+}
 
 export function agentNumbers(events: readonly BoardEvent[]): Record<string, number> {
   const numbers: Record<string, number> = {};

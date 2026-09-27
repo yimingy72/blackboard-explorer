@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api, type PreviewData } from '../api/client';
-import { agentEndReasonLabel, agentRole, agentStatusLabel } from '../board/agents';
+import { agentEndReasonLabel, agentRole, agentStatusLabel, taskDuration } from '../board/agents';
+import { formatCost } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
 import type { BoardAgent, BoardEvent, BoardState, BoardToolCall } from '../board/types';
 import EvidenceViewer from './EvidenceViewer';
@@ -9,6 +10,9 @@ import styles from './AgentConversation.module.css';
 type Props = {
   taskId: string; agent: BoardAgent; label: string; events: BoardEvent[]; state: BoardState;
   historical: boolean; onClose: () => void;
+  contribution?: { facts: string[]; intents: string[]; judgments: number };
+  color: CSSProperties;
+  onSelect: (id: string) => void;
 };
 
 const traceLabels = { initial_context: '初始上下文', board_update: '黑板同步注入', model_output: '模型回复' };
@@ -73,17 +77,20 @@ function ToolCall({ call }: { call: BoardToolCall }) {
   </article>;
 }
 
-export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose }: Props) {
+export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, contribution, color, onSelect }: Props) {
   const heading = useRef<HTMLHeadingElement>(null);
   const entries = useMemo(() => conversationEntries(agent.id, events, state), [agent.id, events, state]);
   const hasTrace = entries.some((entry) => entry.type === 'trace');
+  const elapsed = taskDuration(agent.startedAt, agent.finishedAt, historical ? events.at(-1)?.created_at : null, Date.now());
   useEffect(() => { heading.current?.focus(); }, [taskId, agent.id]);
-  return <aside className={styles.panel} aria-label={`${label} 对话记录`} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+  return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
     <header className={styles.header}>
       <div><span className={styles.overline}>Agent 对话{historical ? ' · 历史快照' : ''}</span><h2 tabIndex={-1} ref={heading} title={agent.id}>{label} <span>· {agentRole(agent)}</span></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div>
       <button type="button" className={styles.close} onClick={onClose} aria-label="关闭对话">×</button>
     </header>
     <div className={styles.scroll}>
+      <details className={styles.metrics}><summary>运行概况 · {elapsed}</summary><dl><dt>模型调用</dt><dd>{agent.steps} 次</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens ?? 0).toLocaleString()} / {(agent.usage.reasoning_tokens ?? 0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatCost(agent.usage.cost)}</dd></dl></details>
+      {contribution && <details className={styles.contribution}><summary>产出 · {contribution.facts.length} Fact · {contribution.intents.length} Intent{contribution.judgments ? ` · ${contribution.judgments} 次裁定` : ''}</summary><div>{[...contribution.facts, ...contribution.intents].map((id) => <button key={id} type="button" onClick={() => onSelect(id)}>{id}</button>)}{!contribution.facts.length && !contribution.intents.length && <p>此 Agent 暂无创建的事实或意图。</p>}</div></details>}
       {!hasTrace && <p className={styles.empty}>{agent.status === 'running' || agent.status === 'concluding' ? '对话记录尚未到达；工具调用会在此显示。' : '此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
       {entries.length > 0 && <ol className={styles.entries}>{entries.map((entry) => <li key={`${entry.type}-${entry.version}`}>{entry.type === 'tool' ? <ToolCall call={entry.call} /> :
         <article className={styles.entry}>

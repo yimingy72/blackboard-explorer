@@ -50,3 +50,9 @@
 :is(.agentItem, .history button):focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 @media (max-width: 900px) { .page { height: auto; min-height: calc(100dvh - 59px); } .workspace, .workspace.withPanel { display: flex; flex-direction: column; overflow: visible; } .canvasArea { height: 58vh; min-height: 390px; flex: none; } .workspace > aside { flex: none; } }
 @media (max-width: 650px) { .header { padding: 12px 16px; } .titleRow { align-items: start; flex-direction: column; } .titleGroup h1 { font-size: 1.12rem; } .actions { justify-content: flex-start; } .agentBar { padding: 7px 16px; } .agentItem { flex-direction: column; gap: 2px; } .canvasArea { height: 53vh; min-height: 350px; } }
+
+.agentItem { border-color: var(--agent-border, var(--color-line)); background: var(--agent-tint, var(--color-bg)); }
+.agentItem:hover { background: var(--agent-tint, var(--color-surface)); border-color: var(--agent-accent); }
+.agentItem[aria-pressed='true'] { border-color: var(--agent-accent); color: var(--agent-accent); background: var(--agent-tint); box-shadow: inset 0 0 0 1px var(--agent-accent); }
+.agentItem > span, .agentItem .contribution { color: var(--agent-accent); }
+.contribution { font-variant-numeric: tabular-nums; }

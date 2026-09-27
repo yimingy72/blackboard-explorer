@@ -41,6 +41,7 @@ test('事实详情展示六类证据，文本与命令输出可预览', async ({
 test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回到实时', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto(`/tasks/${TASK_ID}`);
+  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
   await page.getByRole('tab', { name: '时间轴' }).click();
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
@@ -49,19 +50,22 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   for (let index = 0; index < 4; index += 1) await slider.press('ArrowRight');
   await expect(page.getByText('历史回放 · v5').first()).toBeVisible();
 
+  await page.getByRole('button', { name: '关闭复盘记录' }).click();
   const canvas = page.getByRole('region', { name: '黑板关系图' });
   await canvas.getByRole('button', { name: /意图 I1，调查中/ }).click();
   const detail = page.getByRole('complementary', { name: '历史快照详情' });
   await expect(detail.getByRole('heading', { name: '意图 · I1' })).toBeVisible();
   await expect(detail).not.toContainText(FUTURE_NOTE);
 
-  await page.getByRole('tab', { name: /Agent 记录/ }).click();
-  await page.getByRole('tabpanel').getByRole('button', { name: 'Agent 1', exact: true }).click();
+  await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   const conversation = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
   await expect(conversation).not.toContainText(FUTURE_RECEIPT);
+  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
   await page.getByRole('tab', { name: '时间轴' }).click();
   await page.getByRole('button', { name: '返回实时' }).last().click();
+  await page.getByRole('button', { name: '关闭复盘记录' }).click();
   await expect(conversation).toContainText(FUTURE_RECEIPT);
+  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
   await page.getByRole('tab', { name: '裁定历史' }).click();
   await expect(page.getByRole('tabpanel')).toContainText('连接池证据充分');
   expect(mock.unexpected).toEqual([]);
@@ -70,12 +74,14 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
 test('工作区目录、文件预览与 Markdown 报告', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto(`/tasks/${TASK_ID}`);
+  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
   await page.getByRole('tab', { name: '工作区' }).click();
   const tree = page.getByRole('region', { name: '工作区目录' });
   await tree.getByText('agents/').click();
   await tree.getByText('agent-1/').click();
   await tree.getByRole('button', { name: 'notes.txt' }).click();
   await expect(page.getByRole('region', { name: '文件预览' })).toContainText('归档文件预览内容');
+  await page.getByRole('button', { name: '关闭复盘记录' }).click();
   await page.getByRole('link', { name: '查看报告' }).click();
   await expect(page).toHaveURL(new RegExp(`/tasks/${TASK_ID}/report$`));
   await expect(page.getByRole('article', { name: '最终报告正文' }).getByRole('heading', { name: '最终报告' })).toBeVisible();

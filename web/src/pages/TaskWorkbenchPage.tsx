@@ -5,7 +5,7 @@ import { api, ApiError } from '../api/client';
 import { useBoard } from '../board/store';
 import { reduceBoard } from '../board/reducer';
 import { taskEndExplanation } from '../board/view';
-import { agentLabel, agentNumbers, agentRole, agentStatusLabel, orderedAgents, taskDuration } from '../board/agents';
+import { agentContributions, agentStyle, agentLabel, agentNumbers, agentRole, agentStatusLabel, orderedAgents, taskDuration } from '../board/agents';
 import AgentConversation from '../components/AgentConversation';
 import WorkbenchDrawer from '../components/WorkbenchDrawer';
 import DetailPanel from '../components/DetailPanel';
@@ -34,6 +34,7 @@ export default function TaskWorkbenchPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const [recordsOpen, setRecordsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const agentButtons = useRef(new Map<string, HTMLButtonElement>());
   const [action, setAction] = useState<'start' | 'stop' | null>(null);
@@ -48,6 +49,7 @@ export default function TaskWorkbenchPage() {
   const unauthorized = (taskQuery.error instanceof ApiError && taskQuery.error.status === 401) || (board.error instanceof ApiError && board.error.status === 401);
   const numbers = useMemo(() => agentNumbers(viewEvents), [viewEvents]);
   const agents = useMemo(() => orderedAgents(viewState, numbers), [viewState, numbers]);
+  const contributions = useMemo(() => agentContributions(viewState, viewEvents), [viewState, viewEvents]);
   const selectedAgent = selectedId ? viewState.agents[selectedId] : undefined;
   function closeAgent(id: string) {
     setSelectedId(null);
@@ -61,7 +63,7 @@ export default function TaskWorkbenchPage() {
     return () => window.clearInterval(timer);
   }, [version, board.state.task?.status]);
 
-  useEffect(() => { setSelectedId(null); setVersion(null); }, [taskId]);
+  useEffect(() => { setSelectedId(null); setVersion(null); setRecordsOpen(false); }, [taskId]);
   useEffect(() => {
     if (selectedId && board.state.agents[selectedId] && !viewState.agents[selectedId]) setSelectedId(null);
   }, [selectedId, board.state.agents, viewState.agents]);
@@ -115,7 +117,7 @@ export default function TaskWorkbenchPage() {
         <div className={styles.topline}><Link to="/tasks" className={styles.back}>← 返回任务</Link><span className={styles.taskId}>{taskId.slice(0, 8)}</span></div>
         <div className={styles.titleRow}>
           <div className={styles.titleGroup}><h1>{boardTask?.goal ?? task?.goal ?? '探索任务'}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>运行 {duration}</span><span>花费 {formatCost(usedCost)}{maxCost === undefined ? '' : ` / ${formatCost(maxCost)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
-          <div className={styles.actions}>
+          <div className={styles.actions}><button type="button" className={controls.button} onClick={() => setRecordsOpen(true)}>复盘记录</button>
             {reportUri && <Link to={`/tasks/${encodeURIComponent(taskId)}/report`} className={controls.button}>查看报告</Link>}
             {(boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) && <a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`} className={controls.button}>下载归档</a>}
             {status === 'created' && <button type="button" className={`${controls.button} ${controls.primary}`} onClick={() => void changeStatus('start')} disabled={action !== null || version !== null}>{action === 'start' ? '正在启动…' : '启动任务'}</button>}
@@ -134,16 +136,16 @@ export default function TaskWorkbenchPage() {
 
       <div className={styles.agentBar} role="group" aria-label="全部 Agent">
         <strong>Agent <span>{agents.length}</span></strong>
-        <div className={styles.agentList}>{agents.length ? agents.map((agent) => <button key={agent.id} ref={(node) => { if (node) agentButtons.current.set(agent.id, node); else agentButtons.current.delete(agent.id); }} type="button" className={styles.agentItem} aria-pressed={selectedId === agent.id} onClick={() => setSelectedId(agent.id)}><span>{agentLabel(agent.id, numbers)}</span><small>{agentRole(agent)} · {agentStatusLabel[agent.status]}</small></button>) : <span className={styles.agentEmpty}>尚无 Agent，任务启动后会出现在这里。</span>}</div>
+        <div className={styles.agentList}>{agents.length ? agents.map((agent) => <button key={agent.id} ref={(node) => { if (node) agentButtons.current.set(agent.id, node); else agentButtons.current.delete(agent.id); }} type="button" className={styles.agentItem} style={agentStyle(numbers[agent.id])} aria-pressed={selectedId === agent.id} onClick={() => setSelectedId(agent.id)}><span>{agentLabel(agent.id, numbers)}</span><small>{agentRole(agent)} · {agentStatusLabel[agent.status]}</small><small className={styles.contribution}>{contributions[agent.id]?.facts.length ?? 0} Fact · {contributions[agent.id]?.intents.length ?? 0} Intent{contributions[agent.id]?.judgments ? ` · ${contributions[agent.id].judgments} 次裁定` : ''}</small></button>) : <span className={styles.agentEmpty}>尚无 Agent，任务启动后会出现在这里。</span>}</div>
       </div>
 
       <div className={`${styles.workspace} ${selectedId ? styles.withPanel : ''}`}>
         <section className={styles.canvasArea} aria-label="黑板关系图">
           {board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}
         </section>
-        {selectedAgent ? <AgentConversation key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id, numbers)} events={viewEvents} state={viewState} historical={version !== null} onClose={() => closeAgent(selectedAgent.id)} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version !== null} agentNumbers={numbers} /> : null}
+        {selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id, numbers)} events={viewEvents} state={viewState} historical={version !== null} onClose={() => closeAgent(selectedAgent.id)} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version !== null} agentNumbers={numbers} /> : null}
       </div>
-      <WorkbenchDrawer taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers} />
+      <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers} />
     </div>
   );
 }

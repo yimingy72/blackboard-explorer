@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { BoardAgent, BoardFact, BoardIntent, BoardState } from '../board/types';
 import { agentLabel } from '../board/agents';
@@ -6,6 +6,7 @@ import controls from '../styles/controls.module.css';
 import { disputeChain, retryChain } from './detailRelations';
 import EvidenceViewer from './EvidenceViewer';
 import styles from './DetailPanel.module.css';
+import { readableProse } from './readable';
 
 type Props = {
   taskId: string;
@@ -23,15 +24,23 @@ const intentStatus: Record<string, string> = { open: '待认领', claimed: '已�
 const agentStatus: Record<string, string> = { running: '运行中', concluding: '收尾中', finished: '已结束', failed: '失败' };
 const resultLabels: Record<string, string> = { confirmed: '确认', rejected: '否定', inconclusive: '未定' };
 
-function MarkdownBody({ children }: { children: string }) {
-  return <div className={styles.markdown}><ReactMarkdown components={{
+function MarkdownBody({ children, sourceToggle = false }: { children: string; sourceToggle?: boolean }) {
+  const [source, setSource] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
+  async function copy() {
+    try { await navigator.clipboard.writeText(children); setCopyStatus('已复制'); }
+    catch { setCopyStatus('请选中原文复制'); }
+  }
+  return <div className={styles.markdown}>
+    {sourceToggle && <div className={styles.readingTools}><button type="button" aria-pressed={!source} onClick={() => setSource(false)}>阅读排版</button><button type="button" aria-pressed={source} onClick={() => setSource(true)}>原文</button><button type="button" onClick={() => void copy()}>复制原文</button><span role="status">{copyStatus}</span></div>}
+    {source ? <pre className={styles.rawText}>{children}</pre> : <ReactMarkdown remarkPlugins={[readableProse]} components={{
     h1: ({ children }) => <h3>{children}</h3>,
     h2: ({ children }) => <h3>{children}</h3>,
     h3: ({ children }) => <h4>{children}</h4>,
     pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
     a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className={styles.muted}>图片：{alt || '未自动加载'}</span>,
-  }}>{children}</ReactMarkdown></div>;
+  }}>{children}</ReactMarkdown>}</div>;
 }
 
 function printable(value: unknown): string {
@@ -65,7 +74,7 @@ function FactDetail({ fact, state, onSelect }: { fact: BoardFact; state: BoardSt
   const claimedAcceptance = fact.satisfies.map((id) => state.acceptance[id]).filter(Boolean);
   const judgedAcceptance = Object.values(state.acceptance).filter((item) => item.evidence_facts.includes(fact.id));
   return <>
-    <div className={styles.titleBlock}><h2 tabIndex={-1}>{factKinds[fact.kind] ?? '事实'} · {fact.id}</h2><span className={`${controls.badge} ${fact.status === 'disputed' ? controls.badgeDanger : controls.badgeInfo}`}>{fact.status === 'disputed' ? '有争议' : '已提出'}</span></div><MarkdownBody>{fact.statement}</MarkdownBody>
+    <div className={styles.titleBlock}><h2 tabIndex={-1}>{factKinds[fact.kind] ?? '事实'} · {fact.id}</h2><span className={`${controls.badge} ${fact.status === 'disputed' ? controls.badgeDanger : controls.badgeInfo}`}>{fact.status === 'disputed' ? '有争议' : '已提出'}</span></div><MarkdownBody key={fact.id} sourceToggle>{fact.statement}</MarkdownBody>
     <section className={styles.section}><h3>基本信息</h3><dl className={styles.metaList}><Meta label="作者" value={fact.author} /><Meta label="版本" value={fact.version} /><Meta label="来源" value={fact.provenance === 'tool_backed' ? '工具支持' : 'Agent 自述'} /><Meta label="被依赖次数" value={fact.reliedBy} />{fact.result && <Meta label="结论" value={resultLabels[fact.result]} />}</dl></section>
     <section className={styles.section}><h3>证据 · {fact.evidence.length}</h3>{fact.evidence.length ? <ul className={styles.evidence}>{fact.evidence.map((item, index) => <li key={index}><EvidenceViewer evidence={item} /></li>)}</ul> : <p className={styles.muted}>当前快照没有证据记录。</p>}</section>
     <section className={styles.section}><h3>争议链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === fact.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.disputes.length ? `质疑 ${item.disputes.join('、')}` : '原始陈述'} · {item.status === 'disputed' ? '有争议' : '已提出'}</small></li>)}</ol> : <p className={styles.muted}>暂无争议。</p>}</section>
@@ -77,7 +86,7 @@ function FactDetail({ fact, state, onSelect }: { fact: BoardFact; state: BoardSt
 function IntentDetail({ intent, state, onSelect }: { intent: BoardIntent; state: BoardState; onSelect: Props['onSelect'] }) {
   const chain = retryChain(state, intent.id);
   return <>
-    <div className={styles.titleBlock}><h2 tabIndex={-1}>意图 · {intent.id}</h2><span className={`${controls.badge} ${intent.status === 'closed' ? controls.badgeSuccess : intent.status === 'claimed' ? controls.badgeInfo : controls.badgeWarning}`}>{intentStatus[intent.status]}</span></div><MarkdownBody>{intent.statement}</MarkdownBody>
+    <div className={styles.titleBlock}><h2 tabIndex={-1}>意图 · {intent.id}</h2><span className={`${controls.badge} ${intent.status === 'closed' ? controls.badgeSuccess : intent.status === 'claimed' ? controls.badgeInfo : controls.badgeWarning}`}>{intentStatus[intent.status]}</span></div><MarkdownBody key={intent.id} sourceToggle>{intent.statement}</MarkdownBody>
     <section className={styles.section}><h3>预期结果</h3><MarkdownBody>{intent.expected}</MarkdownBody></section><section className={styles.section}><h3>调查方法</h3><MarkdownBody>{intent.method}</MarkdownBody></section><section className={styles.section}><h3>状态</h3><dl className={styles.metaList}><Meta label="作者" value={intent.author} /><Meta label="版本" value={intent.version} /><Meta label="持有者" value={intent.holder} /><Meta label="尝试次数" value={intent.attempts} /><Meta label="结果" value={intent.result ? resultLabels[intent.result] : null} /><Meta label="关闭者" value={intent.closedBy} /></dl></section>
     <section className={styles.section}><h3>执行记录</h3>{intent.notes?.length ? <ol className={styles.notes}>{intent.notes.map((note, index) => <li key={`${note.at}-${index}`}><small>{note.by} · <time dateTime={note.at}>{note.at}</time></small><MarkdownBody>{note.text}</MarkdownBody></li>)}</ol> : <p className={styles.muted}>暂无记录。</p>}</section>
     <section className={styles.section}><h3>重试链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === intent.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.retryOf ? `重试 ${item.retryOf}` : '初次尝试'} · {item.result ? resultLabels[item.result] : intentStatus[item.status]}</small></li>)}</ol> : <p className={styles.muted}>暂无重试。</p>}</section>

@@ -110,6 +110,7 @@ function FactNode({ id, data, selected }: NodeProps<GraphNode>) {
     >
       <div className={styles.nodeTop}>
         <span className={styles.nodeType}>{factKinds[data.kind ?? ''] ?? '事实'}</span>
+        {data.ownerLabel && <span className={styles.author}>{data.ownerLabel}</span>}
         <span className={styles.nodeId}>{id}</span>
       </div>
       <p className={styles.statement} title={data.label}>{data.label}</p>
@@ -132,6 +133,7 @@ function IntentNode({ id, data, selected }: NodeProps<GraphNode>) {
     >
       <div className={styles.nodeTop}>
         <span className={styles.nodeType}>调查意图</span>
+        {data.ownerLabel && <span className={styles.author}>{data.ownerLabel}</span>}
         <span className={styles.nodeId}>{id}</span>
       </div>
       <p className={styles.statement} title={data.label}>{data.label}</p>
@@ -310,7 +312,7 @@ function GraphCanvas({ state, agentNumbers = {}, selectedId, onSelect }: CanvasP
             className={styles.minimap}
             onPointerDown={markUserInteraction}
             onWheel={markUserInteraction}
-            nodeColor={(node) => node.type === 'goal' ? 'var(--color-primary)' : node.type === 'agent' ? 'var(--color-info)' : node.data.status === 'disputed' ? 'var(--color-danger)' : 'var(--color-line-strong)'}
+            nodeColor={(node) => (typeof node.data.ownerAccent === 'string' ? node.data.ownerAccent : undefined) ?? (node.type === 'goal' ? 'var(--color-primary)' : 'var(--color-line-strong)')}
           />
         </ReactFlow>
         {!nodes.length && <div className={styles.empty}>等待黑板对象进入画布…</div>}

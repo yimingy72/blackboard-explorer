@@ -1,13 +1,14 @@
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { BoardEvent, BoardState } from '../board/types';
 import { eventLabels } from '../board/view';
-import { formatCost } from '../pages/format';
-import { agentLabel, agentRole } from '../board/agents';
+import { agentLabel } from '../board/agents';
 import WorkspaceExplorer from './WorkspaceExplorer';
 import styles from './WorkbenchDrawer.module.css';
 
-type Tab = 'events' | 'agents' | 'judgments' | 'timeline' | 'workspace';
+type Tab = 'events' | 'judgments' | 'timeline' | 'workspace';
 type Props = {
+  open: boolean;
+  onClose: () => void;
   taskId: string;
   state: BoardState;
   events: BoardEvent[];
@@ -18,11 +19,9 @@ type Props = {
   agentNumbers: Record<string, number>;
 };
 const tabs: Array<[Tab, string]> = [
-  ['agents', 'Agent 记录'], ['events', '事件流'], ['judgments', '裁定历史'],
+  ['events', '事件流'], ['judgments', '裁定历史'],
   ['timeline', '时间轴'], ['workspace', '工作区'],
 ];
-const statusLabels: Record<string, string> = { running: '运行中', concluding: '交接中', finished: '已结束', failed: '失败' };
-const reasonLabels: Record<string, string> = { normal: '正常结束', refused: '拒绝开始', limit: '达到上限', grace_timeout: '交接超时', heartbeat: '心跳超时', runtime_error: '运行错误', runtime_restart: '运行器重启' };
 const previewLimit = 200 * 1024;
 
 function payloadPreview(payload: BoardEvent['payload']): { text: string; truncated: boolean; size: number } {
@@ -52,14 +51,6 @@ function EventRow({ event, state, onVersion, onSelect, agentNumbers }: {
   </details></li>;
 }
 
-function AgentRecords({ state, onSelect, agentNumbers }: { state: BoardState; onSelect: Props['onSelect']; agentNumbers: Props['agentNumbers'] }) {
-  const agents = Object.values(state.agents);
-  if (!agents.length) return <p className={styles.empty}>当前版本还没有 Agent 运行记录。</p>;
-  return <div className={styles.tableScroll}><table><thead><tr><th>Agent</th><th>任务</th><th>状态 / 结束原因</th><th>模型调用</th><th>上下文</th><th>输出 / 推理 token</th><th>花费</th><th>当前意图</th></tr></thead><tbody>
-    {agents.map((agent) => <tr key={agent.id}><td><button type="button" onClick={() => onSelect(agent.id)} title={agent.id}>{agentLabel(agent.id, agentNumbers)}</button></td><td>{agentRole(agent)}</td><td>{statusLabels[agent.status]}{agent.endReason && <small>{reasonLabels[agent.endReason] ?? agent.endReason}</small>}</td><td>{agent.steps}</td><td>{agent.contextTokens.toLocaleString()}</td><td>{agent.usage.output_tokens ?? 0} / {agent.usage.reasoning_tokens ?? 0}</td><td>{formatCost(agent.usage.cost ?? 0)}</td><td>{agent.intentId ? <button type="button" onClick={() => onSelect(agent.intentId)}>{agent.intentId}</button> : '—'}</td></tr>)}
-  </tbody></table></div>;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -81,9 +72,14 @@ function Judgments({ events, onVersion, onSelect }: {
   })}</div>;
 }
 
-export default function WorkbenchDrawer({ taskId, state, events, allEvents, version, onVersion, onSelect, agentNumbers }: Props) {
-  const [tab, setTab] = useState<Tab>('agents');
-  const [open, setOpen] = useState(false);
+export default function WorkbenchDrawer({ open, onClose, taskId, state, events, allEvents, version, onVersion, onSelect: selectObject, agentNumbers }: Props) {
+  const [tab, setTab] = useState<Tab>('events');
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (open && !dialog.current?.open) dialog.current?.showModal();
+    else if (!open) dialog.current?.close();
+  }, [open]);
+  const onSelect = (id: string | null) => { selectObject(id); onClose(); };
   const [shown, setShown] = useState(100);
   const [eventFilter, setEventFilter] = useState('');
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
@@ -100,18 +96,16 @@ export default function WorkbenchDrawer({ taskId, state, events, allEvents, vers
       : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
     const nextTab = tabs[next][0];
     setTab(nextTab);
-    setOpen(true);
     tabRefs.current[nextTab]?.focus();
   }
-  return <section className={styles.drawer} aria-label="任务运行记录">
+  return <dialog ref={dialog} className={styles.drawer} aria-label="复盘记录" onCancel={onClose} onClose={onClose}>
+    <header className={styles.dialogHeader}><h2>复盘记录</h2><button type="button" onClick={onClose} aria-label="关闭复盘记录">×</button></header>
     <div className={styles.tabs}>
       <div className={styles.tabList} role="tablist" aria-label="记录分类" onKeyDown={keySwitch}>
-        {tabs.map(([name, label]) => <button key={name} ref={(node) => { tabRefs.current[name] = node; }} type="button" role="tab" id={`${id}-tab-${name}`} aria-selected={tab === name} aria-controls={panelId} tabIndex={tab === name ? 0 : -1} onClick={() => { setTab(name); setOpen(true); }}>{label}{name === 'agents' ? ` · ${Object.keys(state.agents).length}` : ''}</button>)}
+        {tabs.map(([name, label]) => <button key={name} ref={(node) => { tabRefs.current[name] = node; }} type="button" role="tab" id={`${id}-tab-${name}`} aria-selected={tab === name} aria-controls={panelId} tabIndex={tab === name ? 0 : -1} onClick={() => { setTab(name); }}>{label}</button>)}
       </div>
-      <button type="button" className={styles.toggle} aria-controls={panelId} aria-expanded={open} onClick={() => setOpen(!open)} aria-label={open ? '收起运行记录' : '展开运行记录'}>{open ? '收起 ↓' : '展开 ↑'}</button>
     </div>
     <div className={styles.content} id={panelId} role="tabpanel" aria-labelledby={`${id}-tab-${tab}`} tabIndex={0} hidden={!open}>
-      {open && tab === 'agents' && <AgentRecords state={state} onSelect={onSelect} agentNumbers={agentNumbers} />}
       {open && tab === 'events' && <>
         <label className={styles.inlineField}>事件类型<select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="">全部</option>{['task.', 'agent.', 'fact.', 'intent.', 'acceptance.', 'tool_call.', 'budget.', 'derive.'].map((type) => <option key={type} value={type}>{type}</option>)}</select><span>{filtered.length} 条</span></label>
         {filtered.length ? <ol className={styles.events}>{filtered.slice(-shown).reverse().map((event) => <EventRow key={event.version} event={event} state={state} onVersion={onVersion} onSelect={onSelect} agentNumbers={agentNumbers} />)}</ol> : <p className={styles.empty}>当前筛选没有事件。</p>}
@@ -121,5 +115,5 @@ export default function WorkbenchDrawer({ taskId, state, events, allEvents, vers
       {open && tab === 'timeline' && <div className={styles.timeline}><label htmlFor={`${id}-replay-version`}>{version === null ? '实时版本' : '历史回放'} · v{current}</label><input id={`${id}-replay-version`} type="range" min={allEvents[0]?.version ?? 0} max={last} step="1" value={current} onChange={(event) => onVersion(Number(event.target.value))} aria-label="回放版本" disabled={!allEvents.length} /><p>选择版本后，图谱、详情和运行记录都会还原到当时。新事件继续接收。</p><button type="button" onClick={() => onVersion(null)} disabled={version === null}>返回实时</button><span>{allEvents.length} 个事件 · 当前显示 {events.length} 个</span></div>}
       {open && tab === 'workspace' && <WorkspaceExplorer taskId={taskId} available={Boolean(state.task?.workspace_uri)} />}
     </div>
-  </section>;
+  </dialog>;
 }

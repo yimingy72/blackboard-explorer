@@ -26,7 +26,7 @@
 }
 
 .selected {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--agent-accent, var(--color-primary));
   outline-offset: 2px;
 }
 
@@ -136,7 +136,7 @@
 }
 
 .met {
-  background: var(--color-success-soft);
+  background: var(--agent-tint, var(--color-success-soft));
   color: var(--color-success);
 }
 
@@ -151,7 +151,7 @@
 
 .disputed {
   border: 2px solid var(--color-danger);
-  background: var(--color-danger-soft);
+  background: var(--agent-tint, var(--color-danger-soft));
 }
 
 .disputed .nodeType,
@@ -163,7 +163,7 @@
 .intentOpen { border-style: dashed; }
 .intentClaimed {
   border-color: var(--color-primary);
-  background: var(--color-primary-soft);
+  background: var(--agent-tint, var(--color-primary-soft));
 }
 .intentClosed {
   border-style: solid;
@@ -171,11 +171,11 @@
 }
 .confirmed {
   border-color: var(--color-success);
-  background: var(--color-success-soft);
+  background: var(--agent-tint, var(--color-success-soft));
 }
 .rejected {
   border-color: var(--color-danger);
-  background: var(--color-danger-soft);
+  background: var(--agent-tint, var(--color-danger-soft));
 }
 
 .agent {
@@ -281,3 +281,8 @@
   .running,
   .concluding { animation: none; }
 }
+
+.fact, .intent, .agent { background: var(--agent-tint, var(--color-bg)); }
+.fact:not(.disputed), .intent:not(.rejected) { border-color: var(--agent-border, var(--color-line-strong)); }
+.agentDot { background: var(--agent-accent, var(--color-info)); }
+.author { margin-left: auto; font-size: 11px; color: var(--agent-accent, var(--color-muted)); font-weight: 650; white-space: nowrap; }

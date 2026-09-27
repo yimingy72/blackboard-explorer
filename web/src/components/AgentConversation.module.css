@@ -4,6 +4,16 @@
 .overline { color: var(--color-muted); font-size: .75rem; font-weight: 650; }
 .header h2 { margin: 5px 0 4px; font-size: 1rem; line-height: 1.35; }
 .header h2 span { color: var(--color-muted); font-weight: 500; }
+.header { background: var(--agent-tint, var(--color-bg)); }
+.header h2 { color: var(--agent-accent, var(--color-ink)); }
+.contribution { margin-bottom: 16px; border: 1px solid var(--agent-border); border-radius: var(--radius-sm); padding: 10px 12px; font-size: .8rem; }
+.contribution summary { cursor: pointer; color: var(--agent-accent); font-weight: 600; }
+.contribution > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.contribution button { border: 1px solid var(--agent-border); background: var(--agent-tint); color: var(--agent-accent); padding: 4px 8px; border-radius: 4px; }
+.metrics { margin-bottom: 14px; color: var(--color-muted); font-size: .77rem; }
+.metrics summary { cursor: pointer; }
+.metrics dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 7px 12px; margin: 10px 0; }
+.metrics dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
 .header p { margin: 0; color: var(--color-muted); font-size: .73rem; line-height: 1.5; overflow-wrap: anywhere; }
 .close { align-self: start; flex: none; width: 32px; height: 32px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-ink); font-size: 1.25rem; cursor: pointer; }
 .close:hover, .load:hover, .contentActions button:hover { background: var(--color-surface); }

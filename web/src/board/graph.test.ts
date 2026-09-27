@@ -2,6 +2,7 @@ import { MarkerType } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 
 import { deriveGraph } from './graph';
+import { agentContributions, agentStyle } from './agents';
 import type { BoardState } from './types';
 
 const state: BoardState = {
@@ -44,6 +45,17 @@ const state: BoardState = {
 };
 
 describe('deriveGraph', () => {
+  it('uses creator colors and counts, independently of holder and object status', () => {
+    const changed = { ...state, intents: { ...state.intents, I1: { ...state.intents.I1, holder: 'agent-2' } } };
+    const { nodes } = deriveGraph(changed, { 'agent-1': 1, 'agent-2': 2 });
+    expect(nodes.find((node) => node.id === 'F1')?.style).toEqual(agentStyle(1));
+    expect(nodes.find((node) => node.id === 'I1')?.style).toEqual(agentStyle(1));
+    expect(nodes.find((node) => node.id === 'F2')?.style).toEqual(agentStyle(2));
+    expect(nodes.find((node) => node.id === 'F2')?.className).toContain('disputed');
+    expect(agentContributions(changed, [])['agent-1']).toEqual({ facts: ['F1', 'F3'], intents: ['I1'], judgments: 0 });
+    const past = { ...changed, facts: { F1: changed.facts.F1 }, intents: {} };
+    expect(agentContributions(past, [])['agent-1']).toEqual({ facts: ['F1'], intents: [], judgments: 0 });
+  });
   it('shows task-local labels on active Agent nodes while keeping graph IDs', () => {
     const { nodes } = deriveGraph(state, { 'agent-1': 2, 'agent-2': 1 });
     expect(nodes.find((node) => node.id === 'agent-1')?.data.label).toBe('Agent 2');

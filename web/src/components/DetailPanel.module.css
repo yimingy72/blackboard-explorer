@@ -57,3 +57,13 @@
 .message p { color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
 @media (max-width: 900px) { .panel { border-left: 0; border-top: 1px solid var(--color-line); } .placeholder { padding: 30px 20px; } }
 @media (max-width: 480px) { .body { padding: 18px 16px 32px; } .meta { grid-template-columns: 82px minmax(0, 1fr); gap: 8px; } }
+
+.readingTools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 18px; font-size: .72rem; }
+.readingTools button { border: 1px solid var(--color-line); border-radius: 4px; color: var(--color-muted); padding: 4px 7px; background: var(--color-bg); }
+.readingTools button[aria-pressed=true] { color: var(--color-ink); background: var(--color-surface); border-color: var(--color-line-strong); }
+.readingTools span { color: var(--color-muted); }
+.markdown { font-size: .9rem; line-height: 1.85; }
+.markdown p { margin-bottom: 16px; }
+.markdown li { margin: 10px 0; padding-left: 6px; }
+.markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.markdown .rawText { max-height: none; white-space: pre-wrap; }
