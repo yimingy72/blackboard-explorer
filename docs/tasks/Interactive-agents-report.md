@@ -40,3 +40,8 @@
 ## 提交划分与交付
 
 设计单独提交；会话存储/API与迁移；运行时/发布并发策略；前端和使用文档。合并后迁移本地服务，并发布包含通用新提示词的default/single新版，已有任务固定版本保留。新任务选择最新配置，旧任务可直接打开Agent进行legacy只读复盘。
+
+
+## 本地交付
+
+已部署 blackboard/runtime，确认迁移版本0004、会话/删除API与最终前端可用，runtime持有唯一PG运行锁。原3个finished任务及3份归档保留。default/single启动时发布为v2，已有任务仍固定v1；旧任务复盘会标明legacy。部署前数据库备份位于主仓库忽略目录`.data/backups/pre-interactive-agents.dump`；检查、截图和真实闭环产物在`.data/checkpoints/interactive-agents/`。
