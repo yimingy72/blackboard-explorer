@@ -40,3 +40,10 @@
   .count { flex-basis: 100%; margin-left: 0; }
   .newButton { display: none; }
 }
+.deleteButton { margin-left: 14px; border: 0; padding: 4px; background: none; color: var(--color-danger); font-size: .78rem; }
+.deleteButton:disabled { color: var(--color-muted); opacity: .45; }
+.deleteDialog { width: min(460px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--color-line); border-radius: var(--radius-md); color: var(--color-ink); background: var(--color-bg); }
+.deleteDialog::backdrop { background: rgb(15 20 30 / 35%); }
+.deleteDialog h2 { margin: 0 0 14px; font-size: 1.15rem; }
+.deleteDialog p { font-size: .86rem; line-height: 1.7; overflow-wrap: anywhere; }
+.deleteDialog > div { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }

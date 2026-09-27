@@ -79,6 +79,7 @@ export interface BoardAgent {
   id: string;
   taskType: 'explore' | 'derive' | 'close';
   isSeed: boolean;
+  deriveParallel?: boolean;
   closeMode: 'judge' | 'final' | null;
   status: 'running' | 'concluding' | 'finished' | 'failed';
   steps: number;

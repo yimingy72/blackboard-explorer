@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskView } from '../api/client';
 import controls from '../styles/controls.module.css';
@@ -23,12 +23,32 @@ export default function TasksPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [search, setSearch] = useState('');
-  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks });
+  const queryClient = useQueryClient();
+  const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const dialog = useRef<HTMLDialogElement>(null);
+  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks, refetchInterval: (query) => query.state.data?.some((task) => 'deleting' in task && task.deleting) ? 2000 : false });
   const unauthorized = query.error instanceof ApiError && query.error.status === 401;
 
   useEffect(() => {
     if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname } });
   }, [unauthorized, navigate, location.pathname]);
+  useEffect(() => {
+    if (deleteTarget && !dialog.current?.open) dialog.current?.showModal();
+    else if (!deleteTarget) dialog.current?.close();
+  }, [deleteTarget]);
+
+  async function removeTask() {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true); setDeleteError('');
+    try {
+      await api.deleteTask(deleteTarget.id);
+      setDeleteTarget(null);
+      await queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    } catch (error) { setDeleteError(error instanceof Error ? error.message : '删除失败，请重试。'); }
+    finally { setDeleting(false); }
+  }
 
   const tasks = query.data ?? [];
   const visible = tasks.filter((task) => task.goal.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
@@ -76,11 +96,11 @@ export default function TasksPage() {
                 <tbody>{visible.map((task) => (
                   <tr key={task.id}>
                     <td className={styles.goal}><Link to={`/tasks/${task.id}`}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
-                    <td><span className={`${controls.badge} ${statusClass(task.status)}`}>{taskStatusLabel(task.status)}</span></td>
+                    <td><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
                     <td>{metCount(task)}</td>
                     <td>{formatCost(task.usage?.cost)}</td>
                     <td>{formatDate(task.created_at)}</td>
-                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link></td>
+                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${task.goal}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -88,6 +108,11 @@ export default function TasksPage() {
           )}
         </>
       )}
+      <dialog ref={dialog} className={styles.deleteDialog} aria-label="删除任务" onCancel={(event) => { if (deleting) event.preventDefault(); else setDeleteTarget(null); }} onClose={() => setDeleteTarget(null)}>
+        <h2>删除这个任务？</h2><p>{deleteTarget?.goal}</p><p>黑板、证据、报告、归档及所有 Agent 会话将一起删除，无法恢复。</p>
+        {deleteError && <p className={controls.error} role="alert">{deleteError}</p>}
+        <div><button type="button" className={controls.button} disabled={deleting} onClick={() => setDeleteTarget(null)}>取消</button><button type="button" className={`${controls.button} ${controls.danger}`} disabled={deleting} onClick={() => void removeTask()}>{deleting ? '正在提交…' : '确认删除'}</button></div>
+      </dialog>
     </div>
   );
 }

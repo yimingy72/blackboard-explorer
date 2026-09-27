@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/conversations/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending Conversations */
+        get: operations["pending_conversations_api_conversations_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Recover Conversations */
+        post: operations["recover_conversations_api_conversations_recover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence": {
         parameters: {
             query?: never;
@@ -125,6 +159,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending Deletions */
+        get: operations["pending_deletions_api_tasks_deletions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -136,7 +187,8 @@ export interface paths {
         get: operations["task_detail_api_tasks__task_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Task */
+        delete: operations["delete_task_api_tasks__task_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -221,6 +273,93 @@ export interface paths {
         put?: never;
         /** Grace */
         post: operations["grace_api_tasks__task_id__agents__agent_id__grace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agent Messages */
+        get: operations["agent_messages_api_tasks__task_id__agents__agent_id__messages_get"];
+        put?: never;
+        /** Post Agent Message */
+        post: operations["post_agent_message_api_tasks__task_id__agents__agent_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Agent Message */
+        post: operations["claim_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Agent Message */
+        post: operations["complete_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Agent Message */
+        post: operations["fail_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__fail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Session */
+        get: operations["get_agent_session_api_tasks__task_id__agents__agent_id__session_get"];
+        /** Put Agent Session */
+        put: operations["put_agent_session_api_tasks__task_id__agents__agent_id__session_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -408,6 +547,23 @@ export interface paths {
         get: operations["get_object_api_tasks__task_id__objects__object_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Purge Task */
+        post: operations["purge_task_api_tasks__task_id__purge_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -702,6 +858,8 @@ export interface components {
         AgentRegisterBody: {
             /** Close Mode */
             close_mode?: ("judge" | "final") | null;
+            /** Derive Parallel */
+            derive_parallel?: boolean | null;
             /**
              * Is Seed
              * @default false
@@ -765,6 +923,14 @@ export interface components {
              */
             max_minutes: number;
         };
+        /** ClaimBody */
+        ClaimBody: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "active" | "review";
+        };
         /** ClaimForBody */
         ClaimForBody: {
             /** Agent Id */
@@ -781,10 +947,53 @@ export interface components {
             /** Verdicts */
             verdicts: components["schemas"]["VerdictItem"][];
         };
+        /** CompleteBody */
+        CompleteBody: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Content */
+            content: string;
+            /** Deliveries */
+            deliveries?: components["schemas"]["DeliveryBody"][];
+            /** Expected Revision */
+            expected_revision: number;
+            /** Opening Instructions */
+            opening_instructions: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "native" | "legacy";
+            review_claim?: components["schemas"]["DeliveryBody"] | null;
+            /** Session */
+            session: {
+                [key: string]: unknown;
+            };
+            /** Usage */
+            usage?: {
+                [key: string]: unknown;
+            };
+        };
         /** ConcludeBody */
         ConcludeBody: {
             /** Reason */
             reason: string;
+        };
+        /** DeliveryBody */
+        DeliveryBody: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** Event */
         Event: {
@@ -834,7 +1043,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded";
+        EventType: "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
         /** Evidence */
         Evidence: {
             /**
@@ -899,6 +1108,16 @@ export interface components {
          * @enum {string}
          */
         FactKind: "observation" | "inference" | "structure";
+        /** FailBody */
+        FailBody: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Error */
+            error: string;
+        };
         /** FinishBody */
         FinishBody: {
             /** End Reason */
@@ -1353,6 +1572,25 @@ export interface components {
              */
             type: "fact" | "intent";
         };
+        /** SessionBody */
+        SessionBody: {
+            /** Deliveries */
+            deliveries?: components["schemas"]["DeliveryBody"][];
+            /** Expected Revision */
+            expected_revision: number;
+            /** Opening Instructions */
+            opening_instructions: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "native" | "legacy";
+            review_claim?: components["schemas"]["DeliveryBody"] | null;
+            /** Session */
+            session: {
+                [key: string]: unknown;
+            };
+        };
         /** StatusBody */
         StatusBody: {
             /** Reason */
@@ -1442,6 +1680,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Deleting */
+            deleting: boolean;
             /** Goal */
             goal: string;
             /**
@@ -1516,6 +1756,16 @@ export interface components {
              * @default 0
              */
             reasoning_tokens: number;
+        };
+        /** UserMessageBody */
+        UserMessageBody: {
+            /** Content */
+            content: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1599,6 +1849,50 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    pending_conversations_api_conversations_pending_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    recover_conversations_api_conversations_recover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
     evidence_api_evidence_get: {
         parameters: {
             query: {
@@ -1870,6 +2164,26 @@ export interface operations {
             };
         };
     };
+    pending_deletions_api_tasks_deletions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
     task_detail_api_tasks__task_id__get: {
         parameters: {
             query?: never;
@@ -1888,6 +2202,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_task_api_tasks__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -2070,6 +2417,269 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_messages_api_tasks__task_id__agents__agent_id__messages_get: {
+        parameters: {
+            query?: {
+                status?: "queued" | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_agent_message_api_tasks__task_id__agents__agent_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserMessageBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__fail_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FailBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_session_api_tasks__task_id__agents__agent_id__session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_agent_session_api_tasks__task_id__agents__agent_id__session_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
                     };
                 };
             };
@@ -2472,6 +3082,39 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_task_api_tasks__task_id__purge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
                     };
                 };
             };

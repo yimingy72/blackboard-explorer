@@ -25,5 +25,7 @@ export const eventLabels: Record<string, string> = {
   'agent.spawned': 'Agent 开始', 'agent.progress': '运行进度', 'agent.finished': 'Agent 结束',
   'agent.conclude_requested': '请求交接', 'derive.result': '推导结果', 'acceptance.judged': '验收裁定',
   'agent.trace.recorded': 'Agent 对话记录',
+  'agent.message.posted': '用户发送消息', 'agent.message.delivered': '消息已送达',
+  'agent.message.replied': 'Agent 回复用户', 'agent.message.failed': '消息处理失败',
   'acceptance.reverted': '验收回退', 'budget.updated': '用量更新', 'tool_call.recorded': '工具调用',
 };

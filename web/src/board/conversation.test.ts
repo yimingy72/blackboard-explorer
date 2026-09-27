@@ -3,6 +3,7 @@ import { agentLabel, agentNumbers, taskDuration } from './agents';
 import { conversationEntries } from './conversation';
 import { reduce } from './reducer';
 import type { BoardEvent, BoardEventType } from './types';
+import type { AgentMessage } from '../api/client';
 
 function event(taskId: string, version: number, type: string, payload: Record<string, unknown>): BoardEvent {
   return {
@@ -12,6 +13,24 @@ function event(taskId: string, version: number, type: string, payload: Record<st
 }
 
 describe('Agent display and conversation history', () => {
+  it('keeps queued user messages and later replies on their recorded replay versions', () => {
+    const events = [
+      event('one', 1, 'task.created', { goal: 'Test', acceptance: [], budget: {}, usage: {} }),
+      event('one', 2, 'agent.spawned', { id: 'agent-1', task_type: 'explore' }),
+      event('one', 3, 'agent.message.posted', { id: 'm1', agent_id: 'agent-1' }),
+      event('one', 5, 'agent.message.delivered', { id: 'm1', agent_id: 'agent-1' }),
+      event('one', 7, 'agent.message.replied', { id: 'm2', reply_to: 'm1', agent_id: 'agent-1' }),
+    ];
+    const question: AgentMessage = { id: 'm1', task_id: 'one', agent_id: 'agent-1', role: 'user', content: 'Explain', status: 'completed', reply_to: null, usage: null, created_at: events[2].created_at, updated_at: events[4].created_at };
+    const answer: AgentMessage = { ...question, id: 'm2', role: 'assistant', content: 'Answer', reply_to: 'm1', created_at: events[4].created_at };
+    const cutoff = events.slice(0, 3);
+    const past = conversationEntries('agent-1', cutoff, reduce(cutoff), [question, answer], true);
+    expect(past).toHaveLength(1);
+    expect(past[0].type === 'chat' && past[0].message.status).toBe('queued');
+    const present = conversationEntries('agent-1', events, reduce(events), [question, answer], true);
+    expect(present.map((item) => item.version)).toEqual([3, 7]);
+    expect(present[0].type === 'chat' && present[0].message.status).toBe('completed');
+  });
   it('numbers agents by registration version within each task and cutoff', () => {
     const first = [
       event('one', 5, 'agent.spawned', { id: 'agent-9', task_type: 'explore' }),

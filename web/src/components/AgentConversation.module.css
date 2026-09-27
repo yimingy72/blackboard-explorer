@@ -27,6 +27,20 @@
 .loaded { margin-top: 10px; font-size: .77rem; line-height: 1.55; }
 .loaded p { margin: 8px 0; }
 .recordNote { color: var(--color-muted); font-size: .73rem; }
+.userMessage { background: var(--agent-tint, var(--color-surface)); border-color: var(--agent-border, var(--color-line)); }
+.chatText { font-size: .84rem; line-height: 1.75; overflow-wrap: anywhere; }
+.chatText p { margin: 9px 0; white-space: pre-wrap; }
+.chatText pre { padding: 10px; overflow: auto; border-radius: 5px; background: var(--color-surface); white-space: pre-wrap; }
+.chatText code { font-size: .77rem; font-family: ui-monospace, Menlo, monospace; }
+.composer { flex: none; border-top: 1px solid var(--color-line); padding: 12px 16px; background: var(--color-bg); }
+.composer label { display: block; margin-bottom: 7px; font-size: .8rem; font-weight: 650; }
+.composer textarea { display: block; width: 100%; max-height: 220px; min-height: 76px; resize: vertical; padding: 9px 10px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-sm); color: var(--color-ink); background: var(--color-bg); font-size: .83rem; line-height: 1.55; }
+.composer textarea:focus { outline: 2px solid var(--agent-border, var(--color-primary)); outline-offset: 1px; }
+.composer > div { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-top: 8px; }
+.composer p, .composer span { color: var(--color-muted); font-size: .7rem; line-height: 1.5; margin: 5px 0; }
+.composer p[role=alert] { color: var(--color-danger); }
+.composer button { flex: none; padding: 7px 14px; border: 1px solid var(--agent-accent, var(--color-primary)); border-radius: var(--radius-sm); background: var(--agent-accent, var(--color-primary)); color: white; font-size: .8rem; }
+.composer button:disabled { opacity: .5; cursor: not-allowed; }
 .contentActions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
 .contentActions a, .contentActions button { color: var(--color-primary); font: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
 .contentActions button { border: 0; padding: 0; background: transparent; cursor: pointer; }
@@ -38,8 +52,9 @@
 .toolDetails { margin-bottom: 10px; }
 .toolDetails h4 { margin: 10px 0 5px; font-size: .74rem; }
 .empty { margin: 0 0 13px; padding: 11px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-muted); font-size: .78rem; line-height: 1.55; }
-.receipt { margin-top: 18px; }
-.receipt h3 { font-size: .8rem; }
+.receipt { margin: 0 0 14px; }
+.receipt summary { cursor: pointer; color: var(--color-muted); font-size: .77rem; }
+.receipt pre { margin-top: 8px; }
 .endReason { color: var(--color-muted); font-size: .76rem; overflow-wrap: anywhere; }
 :is(.close, .load, .contentActions button, .contentActions a, summary):focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 @media (max-width: 900px) { .panel { border-left: 0; border-top: 1px solid var(--color-line); min-height: 320px; max-height: 65vh; } }

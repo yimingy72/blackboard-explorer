@@ -108,6 +108,8 @@ export default function TaskWorkbenchPage() {
   const cacheInput = cacheHit + (boardTask?.usage.cache_miss_tokens ?? 0);
   const cachePercent = cacheInput ? `${(cacheHit / cacheInput * 100).toFixed(1)}%` : '—';
   const steps = Object.values(viewState.agents).reduce((count, agent) => count + agent.steps, 0);
+  const workers = agents.filter((agent) => agent.taskType !== 'close' && ['running', 'concluding'].includes(agent.status)).length;
+  const workerLimit = Number(boardTask?.budget.max_concurrent_agents) || '—';
   const cutoffAt = version === null ? null : viewEvents.at(-1)?.created_at;
   const duration = taskDuration(boardTask?.startedAt, boardTask?.finishedAt, cutoffAt, now);
 
@@ -127,7 +129,7 @@ export default function TaskWorkbenchPage() {
         <hr className={styles.statusDivider} />
         <div className={styles.runSummary}>
           {explanation && <p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}
-          <span className={styles.runStats} aria-label="运行统计">对象 {totalObjects} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
+          <span className={styles.runStats} aria-label="运行统计">对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
         </div>
         {version !== null && <div className={styles.history} role="status"><strong>历史回放 · v{version}</strong><span>已接收 {board.events.length - viewEvents.length} 条后续事件；当前视图只读。</span><button type="button" onClick={() => setVersion(null)}>返回实时</button></div>}
         {(actionError || (board.error && !unauthorized)) && <div className={styles.notice} role="alert"><span>{actionError || board.error?.message}</span>{board.error && <button type="button" onClick={() => window.location.reload()}>重新连接</button>}</div>}

@@ -217,6 +217,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           id,
           taskType: p.task_type as BoardAgent['taskType'],
           isSeed: p.is_seed === true,
+          deriveParallel: p.derive_parallel === true,
           closeMode: (p.close_mode ?? null) as BoardAgent['closeMode'],
           status: 'running',
           steps: 0,

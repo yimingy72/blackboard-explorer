@@ -150,6 +150,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
     if (path === '/api/tasks' && method === 'GET') return json(route, [task]);
     if (path === `/api/tasks/${TASK_ID}` && method === 'GET') return json(route, task);
+    if (/\/api\/tasks\/[^/]+\/agents\/[^/]+\/messages$/.test(path) && method === 'GET') return json(route, { messages: [], session_available: false, session_origin: null, mode: 'review' });
     if (path === `/api/tasks/${TASK_ID}/events` && method === 'GET') return json(route, events);
     if (path === `/api/tasks/${TASK_ID}/stream` && method === 'GET') {
       return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });

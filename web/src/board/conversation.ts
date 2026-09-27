@@ -1,4 +1,5 @@
 import type { BoardEvent, BoardState, BoardToolCall } from './types';
+import type { AgentMessage } from '../api/client';
 
 export type TraceKind = 'initial_context' | 'board_update' | 'model_output';
 export type TraceEntry = {
@@ -6,13 +7,14 @@ export type TraceEntry = {
   step: number; uri: string; summary: string;
 };
 export type ToolEntry = { type: 'tool'; version: number; at: string; call: BoardToolCall };
-export type ConversationEntry = TraceEntry | ToolEntry;
+export type ChatEntry = { type: 'chat'; version: number; at: string; message: AgentMessage };
+export type ConversationEntry = TraceEntry | ToolEntry | ChatEntry;
 
 function isTraceKind(value: unknown): value is TraceKind {
   return value === 'initial_context' || value === 'board_update' || value === 'model_output';
 }
 
-export function conversationEntries(agentId: string, events: readonly BoardEvent[], state: BoardState): ConversationEntry[] {
+export function conversationEntries(agentId: string, events: readonly BoardEvent[], state: BoardState, messages: readonly AgentMessage[] = [], historical = false): ConversationEntry[] {
   const traces: TraceEntry[] = [];
   const cutoff = Math.max(0, ...events.map((event) => event.version));
   for (const event of events) {
@@ -28,5 +30,18 @@ export function conversationEntries(agentId: string, events: readonly BoardEvent
   const tools: ToolEntry[] = Object.values(state.toolCalls ?? {})
     .filter((call) => call.agentId === agentId && call.version <= cutoff)
     .map((call) => ({ type: 'tool', version: call.version, at: call.createdAt, call }));
-  return [...traces, ...tools].sort((a, b) => a.version - b.version || (a.type === 'trace' ? -1 : 1));
+  const chats: ChatEntry[] = [];
+  for (const message of messages) {
+    if (message.agent_id !== agentId) continue;
+    const event = events.find((item) => String(item.type).startsWith('agent.message.') && item.payload?.id === message.id);
+    if (historical && !event) continue;
+    let shown = message;
+    if (historical) {
+      const progress = events.filter((item) => String(item.type).startsWith('agent.message.') && (item.payload?.id === message.id || item.payload?.reply_to === message.id)).at(-1);
+      const type = String(progress?.type);
+      shown = { ...message, status: type.endsWith('.failed') ? 'failed' : type.endsWith('.replied') ? 'completed' : type.endsWith('.delivered') ? 'delivered' : 'queued', error: type.endsWith('.failed') ? String(progress?.payload?.error ?? '回复失败') : null };
+    }
+    chats.push({ type: 'chat', version: event?.version ?? Number.MAX_SAFE_INTEGER, at: message.created_at, message: shown });
+  }
+  return [...traces, ...tools, ...chats].sort((a, b) => a.version - b.version || Date.parse(a.at) - Date.parse(b.at));
 }

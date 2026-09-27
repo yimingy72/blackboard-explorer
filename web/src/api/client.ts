@@ -9,6 +9,16 @@ export type ProfileDocument = components['schemas']['ProfileDocument'];
 export type ProfileInput = components['schemas']['AgentProfile-Input'];
 export type BoardEvent = components['schemas']['Event'];
 export type PreviewData = { text: string; size: number; truncated: boolean; binary: boolean };
+export type AgentMessage = {
+  id: string; task_id: string; agent_id: string; role: 'user' | 'assistant'; content: string;
+  status: 'queued' | 'processing' | 'delivered' | 'completed' | 'failed';
+  reply_to: string | null; error?: string | null; usage: Record<string, unknown> | null;
+  created_at: string; updated_at: string;
+};
+export type AgentMessages = {
+  messages: AgentMessage[]; session_available: boolean; session_origin: 'native' | 'legacy' | null;
+  mode: 'active' | 'review';
+};
 export type WorkspaceEntry = { path: string; kind: 'file' | 'directory' | 'link'; size: number };
 export type WorkspaceTree = { entries: WorkspaceEntry[] };
 export type WorkspacePreview = PreviewData & { path: string };
@@ -110,6 +120,10 @@ export const api = {
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string) => request<TaskView>(taskPath(id)),
+  deleteTask: (id: string) => request<{ deleting: boolean }>(taskPath(id), { method: 'DELETE' }),
+  getAgentMessages: (id: string, agent: string) => request<AgentMessages>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`),
+  sendAgentMessage: (id: string, agent: string, message: { id: string; content: string }) =>
+    request<AgentMessage>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`, { method: 'POST', body: JSON.stringify(message) }),
   startTask: (id: string) =>
     request<components['schemas']['StatusResult']>(`${taskPath(id)}/start`, { method: 'POST' }),
   stopTask: (id: string) =>
