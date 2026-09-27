@@ -42,7 +42,14 @@ test('详情用 Markdown 展示正文和代码，缩略图紧凑且筛选全部�
   expect(imageRequests).toEqual([]);
   await expect(page.getByRole('combobox')).toHaveCount(0);
   await expect(page.getByRole('checkbox')).toHaveCount(0);
-  await expect(page.locator('summary').filter({ hasText: '验收 1/1' })).toBeVisible();
+  await expect(page.locator('summary').filter({ hasText: /^验收/ })).toHaveCount(0);
+  const reason = await page.getByText(/^结束原因：/).boundingBox();
+  const stats = await page.getByLabel('运行统计', { exact: true }).boundingBox();
+  expect(Math.abs((reason?.y ?? 0) - (stats?.y ?? 0))).toBeLessThanOrEqual(2);
+  const divider = await page.getByRole('separator').boundingBox();
+  const status = await page.getByText('已完成', { exact: true }).boundingBox();
+  expect(divider?.y).toBeGreaterThan((status?.y ?? 0) + (status?.height ?? 0));
+  expect(divider?.y).toBeLessThan(reason?.y ?? 0);
   const minimap = await page.locator('.react-flow__minimap').boundingBox();
   expect(minimap?.width).toBeLessThanOrEqual(130);
   expect(minimap?.height).toBeLessThanOrEqual(86);

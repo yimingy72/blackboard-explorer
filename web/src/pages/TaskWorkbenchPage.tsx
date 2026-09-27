@@ -96,8 +96,6 @@ export default function TaskWorkbenchPage() {
   const task = taskQuery.data;
   const boardTask = viewState.task;
   const status = boardTask?.status ?? task?.status ?? 'created';
-  const acceptance = Object.values(viewState.acceptance);
-  const met = acceptance.filter((item) => item.status === 'met').length;
   const usedCost = boardTask?.usage.cost ?? (version === null ? task?.usage?.cost : 0) ?? 0;
   const maxCost = boardTask?.budget.max_cost;
   const costLimit = Number(maxCost);
@@ -124,16 +122,15 @@ export default function TaskWorkbenchPage() {
             {['created', 'provisioning', 'running'].includes(status) && <button type="button" className={`${controls.button} ${controls.danger}`} onClick={() => void changeStatus('stop')} disabled={action !== null || version !== null}>{action === 'stop' ? '正在停止…' : '停止'}</button>}
           </div>
         </div>
-        {explanation && <p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}
+        <hr className={styles.statusDivider} />
+        <div className={styles.runSummary}>
+          {explanation && <p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}
+          <span className={styles.runStats} aria-label="运行统计">对象 {totalObjects} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
+        </div>
         {version !== null && <div className={styles.history} role="status"><strong>历史回放 · v{version}</strong><span>已接收 {board.events.length - viewEvents.length} 条后续事件；当前视图只读。</span><button type="button" onClick={() => setVersion(null)}>返回实时</button></div>}
         {(actionError || (board.error && !unauthorized)) && <div className={styles.notice} role="alert"><span>{actionError || board.error?.message}</span>{board.error && <button type="button" onClick={() => window.location.reload()}>重新连接</button>}</div>}
         {board.connection === 'reconnecting' && !board.error && <div className={styles.reconnect} role="status">实时连接暂时中断，正在自动重连；已提交的内容会在恢复后补齐。</div>}
       </header>
-
-      <div className={styles.summaryBar} aria-label="验收与运行统计">
-        <details className={styles.acceptanceBlock}><summary>验收 {met}/{acceptance.length}</summary><div className={styles.acceptancePop}>{acceptance.length ? <ul className={styles.acceptance}>{acceptance.map((item) => <li key={item.id}><div><span className={`${controls.badge} ${item.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item.id} · {item.status === 'met' ? '已满足' : '未满足'}</span><strong>{item.desc}</strong></div>{item.reason && <p>裁定：{item.reason}</p>}{item.missing && <p>缺口：{item.missing}</p>}</li>)}</ul> : <p className={styles.summaryEmpty}>验收信息正在同步。</p>}</div></details>
-        <span className={styles.runStats}>对象 {totalObjects} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
-      </div>
 
       <div className={styles.agentBar} role="group" aria-label="全部 Agent">
         <strong>Agent <span>{agents.length}</span></strong>
