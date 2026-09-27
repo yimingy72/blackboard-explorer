@@ -279,7 +279,7 @@ async def scenario(runtime_infrastructure, tmp_path: Path):
         endpoint, "bbxm2buser", "bbxm2b-test-password", board_settings.minio_bucket
     )
     await objects.ensure_bucket()
-    engine = create_async_engine(database_url)
+    engine = create_async_engine(database_url, pool_pre_ping=True)
     app = create_app(board_settings, engine=engine, objects=objects)
     fake = FakeEnvd(tmp_path)
     try:

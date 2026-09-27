@@ -6,9 +6,18 @@ import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 import httpx
-from agent_framework import Agent, AgentSession, BaseChatClient, FunctionTool, MCPStreamableHTTPTool
+from agent_framework import (
+    Agent,
+    AgentSession,
+    BaseChatClient,
+    Content,
+    FunctionTool,
+    MCPStreamableHTTPTool,
+    Message,
+)
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient
@@ -18,6 +27,7 @@ from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, Too
 from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.receipts import parse_receipt
+from bbx_runtime.scheduler.decision import _ever_claimed
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
     SessionCheckpoint,
@@ -25,6 +35,7 @@ from bbx_runtime.session import (
 )
 from bbx_runtime.settings import Settings
 from bbx_runtime.tools import make_board_tools
+from bbx_runtime.trace import record_trace
 
 
 @dataclass(frozen=True)
@@ -138,12 +149,61 @@ class AgentRunner:
                 require_per_service_call_history_persistence=checkpoint is not None,
             ) as agent:
                 async with asyncio.timeout(run_limit):
-                    response = await agent.run(
-                        "开始。",
-                        session=checkpoint.session if checkpoint else agent.create_session(),
-                        options=model_run_options(model),
-                    )
-            receipt = parse_receipt(response.text, task_type)
+                    session = checkpoint.session if checkpoint else agent.create_session()
+                    prompt: str | Message = "开始。"
+                    while True:
+                        confirmed_before = (
+                            set(checkpoint.delivered_message_ids) if checkpoint else set()
+                        )
+                        response = await agent.run(
+                            prompt, session=session, options=model_run_options(model)
+                        )
+                        receipt = parse_receipt(response.text, task_type)
+                        if not (
+                            "raw_text" in receipt
+                            and checkpoint
+                            and checkpoint.delivered_message_ids - confirmed_before
+                        ):
+                            break
+                        latest = await self.service.state(task_id)
+                        current = latest["agents"][agent_id]
+                        if current["status"] not in {"running", "concluding"}:
+                            break
+                        step_limit = (
+                            ctx.params.seed_max_steps
+                            if current.get("is_seed") and not _ever_claimed(latest, current)
+                            else ctx.params.explore_max_steps
+                        )
+                        limit_reached = task_type == "explore" and (
+                            int(current.get("steps") or 0) >= step_limit
+                            or int(current.get("context_tokens") or 0)
+                            >= ctx.params.context_threshold
+                        )
+                        handoff = (
+                            current["status"] == "concluding"
+                            or latest["task"]["status"] != "running"
+                            or limit_reached
+                        )
+                        note = (
+                            "刚才的自然语言答复已回应用户，但不是任务回执。"
+                            "若用户要求暂停或结束，或者系统已进入结束阶段，请停止探索，"
+                            "立即按原任务格式返回有效交接回执。"
+                            if handoff
+                            else "刚才的自然语言答复已回应用户，但不是任务回执。"
+                            "若用户要求暂停或结束，请按原任务格式返回有效交接回执；"
+                            "否则继续当前任务。不要因进度问答结束本次任务。"
+                        )
+                        await record_trace(
+                            ctx,
+                            "board_update",
+                            int(current.get("steps") or 0) + 1,
+                            "[运行控制]\n" + note,
+                        )
+                        prompt = Message(
+                            role="user",
+                            message_id=f"bbx-control-{uuid4()}",
+                            contents=[Content.from_text(note)],
+                        )
             end_reason = "normal" if receipt.get("accepted") else "refused"
         except asyncio.CancelledError as error:
             cancelled = True

@@ -355,7 +355,7 @@ def create_app(
         own_engine = app.state.engine is None
         own_dispatcher = app.state.dispatcher is None
         if own_engine:
-            app.state.engine = create_async_engine(settings.database_url)
+            app.state.engine = create_async_engine(settings.database_url, pool_pre_ping=True)
         if app.state.objects is None:
             from bbx_objects import ObjectStore as MinioStore
 

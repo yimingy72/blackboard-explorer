@@ -92,6 +92,7 @@ class SessionCheckpoint:
         self.origin: Literal["native", "legacy"] = origin
         self.revision = revision
         self.deliveries: list[dict[str, str]] = []
+        self.delivered_message_ids: set[str] = set()
         self.review_claim: dict[str, str] | None = None
         self._lock = asyncio.Lock()
 
@@ -158,6 +159,7 @@ class SessionCheckpoint:
                 ):
                     raise
             self.revision = int(saved["revision"])
+            self.delivered_message_ids.update(item["id"] for item in deliveries)
             self.deliveries = [item for item in self.deliveries if item not in deliveries]
 
 
