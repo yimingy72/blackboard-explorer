@@ -156,6 +156,26 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
         key=lambda intent: _priority(intent, unmet),
     )
     actions.extend(SpawnExplore(intent_id=intent["id"]) for intent in open_intents[:slots])
+    if (
+        params.derive_enabled
+        and not judging
+        and not open_intents
+        and any(agent["task_type"] == "explore" for agent in workers)
+        and not any(agent["task_type"] == "derive" for agent in workers)
+    ):
+        latest_fact = max(
+            (int(fact.get("version") or 0) for fact in state["facts"].values()), default=0
+        )
+        latest_derive = max(
+            (
+                int(agent["derive_from_version"])
+                for agent in agents
+                if agent["task_type"] == "derive" and agent.get("derive_from_version") is not None
+            ),
+            default=0,
+        )
+        if latest_fact > latest_derive:
+            actions.append(SpawnDerive(parallel=True))
     return actions
 
 

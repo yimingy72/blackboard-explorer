@@ -149,6 +149,21 @@ async def test_explore_intent_includes_handoff_evidence_and_l2() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("profile_name", ["default", "single"])
+async def test_explore_prompts_publish_intermediate_findings_and_independent_intents(
+    profile_name: str,
+) -> None:
+    run, _ = run_context("explore")
+    run.profile, _ = load_profile(ROOT / "profiles" / profile_name)
+    rendered = await OpeningContextProvider(run).render()
+    assert "可复核的中间发现" in rendered
+    assert "可供他人独立使用的最小部分" in rendered
+    assert "有事实支撑且可由他人独立推进" in rendered
+    assert "不要为了增加并发伪造发现" in rendered
+    assert "用 post_intent(claim=true) 认领它" in rendered
+
+
+@pytest.mark.asyncio
 async def test_derive_includes_all_objects_and_latest_excluded() -> None:
     run, board = run_context("derive")
     rendered = await OpeningContextProvider(run).render()

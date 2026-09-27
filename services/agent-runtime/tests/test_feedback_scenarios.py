@@ -53,7 +53,6 @@ async def test_s10_disputed_support_reverts_met_and_is_judged_again(
 ) -> None:
     fast_ticks(monkeypatch)
     worker_gate = Gate()
-    derive_gate = Gate()
     judge_count = 0
 
     def factory(task_type, intent_id, mode, aid, state):
@@ -91,7 +90,17 @@ async def test_s10_disputed_support_reverts_met_and_is_judged_again(
                 ]
             )
         if task_type == "derive":
-            return GateClient([receipt_step("derive")], aid, derive_gate)
+            return ScriptedChatClient([receipt_step("derive")])
+        if task_type == "close" and mode == "final":
+            return ScriptedChatClient(
+                [
+                    close_step(
+                        [verdict("A1", False), verdict("A2", False)],
+                        report="# Final report\nBoth acceptance items remain unmet.",
+                    ),
+                    receipt_step("close"),
+                ]
+            )
         raise AssertionError(f"Unexpected run: {task_type}/{mode}")
 
     async with scenario(
@@ -108,17 +117,38 @@ async def test_s10_disputed_support_reverts_met_and_is_judged_again(
         async with asyncio.timeout(20):
             while True:
                 events = await run.events()
-                judgments = [event for event in events if event["type"] == "acceptance.judged"]
+                judgments = [
+                    event
+                    for event in events
+                    if event["type"] == "acceptance.judged" and event["payload"]["mode"] == "judge"
+                ]
                 if len(judgments) >= 2:
                     break
                 await asyncio.sleep(0.05)
+        await run.wait(
+            lambda state: any(
+                agent["task_type"] == "derive" and not agent["derive_parallel"]
+                for agent in state["agents"].values()
+            )
+        )
+        events = await run.events()
         assert len(judgments) == 2
         assert judgments[0]["payload"]["verdicts"][0]["verdict"] == "met"
         assert judgments[1]["payload"]["verdicts"][0]["verdict"] == "unmet"
         reverted = [event for event in events if event["type"] == "acceptance.reverted"]
         assert len(reverted) == 1 and reverted[0]["payload"]["fact_id"] == "F1"
         assert judgments[0]["version"] < reverted[0]["version"] < judgments[1]["version"]
-        assert (await run.state())["task"]["acceptance_state"]["A1"]["status"] == "unmet"
+        settled = await run.state()
+        assert settled["task"]["acceptance_state"]["A1"]["status"] == "unmet"
+        quiescent_derives = [
+            event
+            for event in events
+            if event["type"] == "agent.spawned"
+            and event["payload"]["task_type"] == "derive"
+            and not event["payload"].get("derive_parallel")
+        ]
+        assert quiescent_derives
+        assert all(event["version"] > judgments[1]["version"] for event in quiescent_derives)
 
 
 @pytest.mark.asyncio
@@ -179,6 +209,8 @@ async def test_s11_new_satisfies_during_judge_waits_for_next_single_judge(
                     receipt_step("close"),
                 ]
             )
+        if task_type == "derive":
+            return ScriptedChatClient([receipt_step("derive")])
         raise AssertionError(f"Unexpected run: {task_type}/{mode}")
 
     async with scenario(

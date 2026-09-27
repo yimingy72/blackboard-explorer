@@ -3,8 +3,10 @@
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
-from agent_framework import Agent, Content, Message, tool
+import pytest
+from agent_framework import Agent, AgentSession, Content, Message, tool
 from bbx_contracts.models import Price, Usage
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
@@ -19,6 +21,7 @@ from bbx_runtime.middleware import (
     append_board_update,
 )
 from bbx_runtime.models import load_runtime_profile
+from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,
     ScriptStep,
@@ -33,6 +36,7 @@ class FakeService:
     def __init__(self) -> None:
         self.status = "running"
         self.last_seen = 0
+        self.steps = 0
         self.conclude_requested_at: str | None = None
         self.conclude_reason: str | None = None
         self.grace: list[int | RemoteError] = []
@@ -45,6 +49,7 @@ class FakeService:
                 "agent-1": {
                     "status": self.status,
                     "last_seen_version": self.last_seen,
+                    "steps": self.steps,
                     "conclude_requested_at": self.conclude_requested_at,
                     "conclude_reason": self.conclude_reason,
                 }
@@ -64,6 +69,7 @@ class FakeService:
     async def heartbeat(self, _task_id: str, _agent_id: str, **kwargs: Any) -> dict:
         self.beats.append(kwargs)
         self.last_seen = kwargs["last_seen_version"]
+        self.steps += kwargs["steps"]
         return {"warning": None}
 
 
@@ -379,3 +385,212 @@ async def test_board_sync_missing_price_costs_zero_and_derive_skips_events(caplo
         )
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    ("task_type", "published", "reminder_expected"),
+    [
+        ("explore", False, True),
+        ("explore", True, False),
+        ("derive", False, False),
+        ("close", False, False),
+    ],
+)
+async def test_publication_reminder_after_five_model_rounds(
+    task_type, published, reminder_expected
+):
+    service, board = FakeService(), FakeBoard()
+    ctx = run_context(service, board=board)
+    ctx.task_type = task_type
+    calls = 0
+
+    @tool
+    async def step() -> str:
+        nonlocal calls
+        calls += 1
+        if published and calls == 2:
+            board.log.append(
+                {
+                    "version": 1,
+                    "type": "fact.posted",
+                    "actor": "agent-1",
+                    "object_id": "F1",
+                    "payload": {"statement": "already shared"},
+                }
+            )
+        return "progress"
+
+    client = ScriptedChatClient(
+        [*(ScriptStep(calls=(ScriptToolCall("step"),)) for _ in range(5)), ScriptStep(text="done")]
+    )
+    async with Agent(client=client, tools=[step], middleware=[BoardSyncMiddleware(ctx)]) as agent:
+        assert (await agent.run("start", session=agent.create_session())).text == "done"
+    seen = message_text(client.received_messages[-1])
+    assert ("[协作检查]" in seen) is reminder_expected
+
+
+async def test_queued_user_messages_enter_next_model_call_once():
+    class MessageService(FakeService):
+        def __init__(self):
+            super().__init__()
+            self.queued = []
+            self.delivered = []
+            self.revision = 0
+            self.saved = None
+
+        async def agent_messages(self, _task_id, _agent_id, *, status):
+            assert status == "queued"
+            return {"messages": list(self.queued)}
+
+        async def claim_agent_message(self, _task_id, _agent_id, message_id, _mode):
+            item = next(item for item in self.queued if item["id"] == message_id)
+            self.queued.remove(item)
+            return {"message": item, "claim_token": f"token-{message_id}"}
+
+        async def put_agent_session(
+            self,
+            _task_id,
+            _agent_id,
+            *,
+            session,
+            opening_instructions,
+            origin,
+            expected_revision,
+            deliveries,
+            review_claim,
+        ):
+            assert expected_revision == self.revision
+            self.revision += 1
+            self.saved = session
+            self.delivered.extend(deliveries)
+            return {"revision": self.revision}
+
+    service, board = MessageService(), FakeBoard()
+    ctx = run_context(service, board=board)
+    checkpoint = SessionCheckpoint(
+        cast(BlackboardClient, service), ctx.task_id, ctx.agent_id, AgentSession()
+    )
+    ctx.checkpoint = checkpoint
+    ids = [str(uuid4()), str(uuid4())]
+
+    @tool
+    async def step() -> str:
+        service.queued.extend({"id": message_id, "content": "same question"} for message_id in ids)
+        board.log.extend(
+            {
+                "version": index,
+                "type": "agent.message.posted",
+                "actor": "user",
+                "addressed_to": [ctx.agent_id],
+                "payload": {"summary": "same question"},
+            }
+            for index in (1, 2)
+        )
+        board.log.append(
+            {
+                "version": 3,
+                "type": "fact.posted",
+                "actor": "agent-2",
+                "object_id": "F1",
+                "payload": {"statement": "independent finding"},
+            }
+        )
+        return "ready"
+
+    client = ScriptedChatClient(
+        [
+            ScriptStep(calls=(ScriptToolCall("step"),)),
+            ScriptStep(text="answered", expect_contains="same question"),
+        ]
+    )
+    async with Agent(
+        client=client,
+        tools=[step],
+        context_providers=[CheckpointHistoryProvider(checkpoint)],
+        middleware=[BoardSyncMiddleware(ctx)],
+        require_per_service_call_history_persistence=True,
+    ) as agent:
+        assert (await agent.run("start", session=checkpoint.session)).text == "answered"
+    received = client.received_messages[1]
+    assert [message.message_id for message in received if message.message_id in ids] == ids
+    assert len(service.delivered) == 2
+    assert service.queued == []
+    assert service.saved is not None
+    history = AgentSession.from_dict(service.saved).state["in_memory"]["messages"]
+    assert any(
+        "independent finding" in str(content.result)
+        for message in history
+        for content in message.contents
+        if content.type == "function_result"
+    )
+
+
+async def test_message_arriving_after_final_model_call_remains_for_review():
+    class LateService(FakeService):
+        def __init__(self):
+            super().__init__()
+            self.queued = []
+            self.revision = 0
+            self.saved = None
+
+        async def agent_messages(self, _task_id, _agent_id, *, status):
+            assert status == "queued"
+            return {"messages": list(self.queued)}
+
+        async def put_agent_session(
+            self,
+            _task_id,
+            _agent_id,
+            *,
+            session,
+            opening_instructions,
+            origin,
+            expected_revision,
+            deliveries,
+            review_claim,
+        ):
+            assert expected_revision == self.revision
+            assert deliveries == []
+            self.revision += 1
+            self.saved = session
+            return {"revision": self.revision}
+
+        async def pending_conversations(self):
+            if self.status != "finished":
+                return []
+            return [
+                {"task_id": "task", "agent_id": "agent-1", "id": item["id"]} for item in self.queued
+            ]
+
+    service, board = LateService(), FakeBoard()
+    ctx = run_context(service, board=board)
+    checkpoint = SessionCheckpoint(
+        cast(BlackboardClient, service), ctx.task_id, ctx.agent_id, AgentSession()
+    )
+    ctx.checkpoint = checkpoint
+    message_id = str(uuid4())
+
+    class FinalClient(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            response = super()._inner_get_response(**kwargs)
+
+            async def post_during_response():
+                result = await response
+                service.queued.append({"id": message_id, "content": "late question"})
+                return result
+
+            return post_during_response()
+
+    client = FinalClient([ScriptStep(text="final receipt")])
+    async with Agent(
+        client=client,
+        context_providers=[CheckpointHistoryProvider(checkpoint)],
+        middleware=[BoardSyncMiddleware(ctx)],
+        require_per_service_call_history_persistence=True,
+    ) as agent:
+        assert (await agent.run("start", session=checkpoint.session)).text == "final receipt"
+    service.status = "finished"
+    assert (await service.pending_conversations())[0]["id"] == message_id
+    assert service.saved is not None
+    history = AgentSession.from_dict(service.saved).state["in_memory"]["messages"]
+    assert all(message.message_id != message_id for message in history)

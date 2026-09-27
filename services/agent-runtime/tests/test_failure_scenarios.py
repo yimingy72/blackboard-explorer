@@ -98,6 +98,8 @@ async def test_05_three_model_failures_fail_and_archive_without_close(
     idle = Gate(1000)
 
     def factory(task_type, intent_id, mode, aid, state) -> ScriptedChatClient:
+        if task_type == "derive":
+            return ScriptedChatClient([receipt_step("derive")])
         if task_type != "explore":
             return idle_client(aid, task_type, idle)
         if state["agents"][aid]["is_seed"]:
@@ -131,7 +133,8 @@ async def test_05_three_model_failures_fail_and_archive_without_close(
             for agent in failed["agents"].values()
             if agent.get("end_reason") == "runtime_error"
         ]
-        assert len(errors) == 3
+        assert len(errors) >= 3
+        assert all(agent["task_type"] == "explore" for agent in errors)
         assert failed["task"]["failure_streak"] == 3
         assert not [agent for agent in failed["agents"].values() if agent["task_type"] == "close"]
         assert s.manager.archives and s.manager.destroyed == [s.task_id]

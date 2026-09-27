@@ -102,6 +102,18 @@ class ToolLogMiddleware(FunctionMiddleware):
             },
         )
         context.result = _append_call_id(context.result, call_id)
+        checkpoint = self.ctx.checkpoint
+        model_call_id = context.metadata.get("call_id")
+        if (
+            checkpoint is not None
+            and context.session is checkpoint.session
+            and isinstance(model_call_id, str)
+        ):
+            result_content = Content.from_function_result(model_call_id, result=context.result)
+            checkpoint.session.state.setdefault("bbx_tool_results", {})[model_call_id] = (
+                result_content.to_dict()
+            )
+            await checkpoint.save()
 
 
 class GraceGateMiddleware(FunctionMiddleware):
@@ -178,6 +190,8 @@ def _render_events(events: Sequence[Mapping[str, Any]], aid: str, max_lines: int
     verdicts: list[str] = []
     digest: list[Mapping[str, Any]] = []
     for event in events:
+        if event.get("type") == "agent.message.posted":
+            continue
         addressed = event.get("addressed_to")
         if addressed:
             if aid in addressed:
@@ -232,6 +246,55 @@ class BoardSyncMiddleware(ChatMiddleware):
         self.last_appended_version = 0
         self.price_warning: str | None = None
         self._warned_missing_price = False
+        self.last_publication_check_version = int(ctx.state["task"].get("version") or 0)
+
+    async def _inject_user_messages(self, context: ChatContext) -> None:
+        checkpoint = self.ctx.checkpoint
+        if checkpoint is None:
+            return
+        queued = await self.ctx.service.agent_messages(
+            self.ctx.task_id, self.ctx.agent_id, status="queued"
+        )
+        for message in queued["messages"]:
+            try:
+                claimed = await self.ctx.service.claim_agent_message(
+                    self.ctx.task_id, self.ctx.agent_id, str(message["id"]), "active"
+                )
+            except RemoteError as error:
+                if error.status == 409:
+                    continue
+                raise
+            item = claimed["message"]
+            context.messages = [
+                *context.messages,
+                Message(
+                    role="user",
+                    contents=[Content.from_text(item["content"])],
+                    message_id=str(item["id"]),
+                ),
+            ]
+            checkpoint.stage_delivery(str(item["id"]), str(claimed["claim_token"]))
+
+    async def _publication_reminder(self, step: int, last_seen: int) -> str | None:
+        if step <= 1 or (step - 1) % 5:
+            return None
+        events = await self.ctx.board.events(
+            self.ctx.task_id, since=self.last_publication_check_version
+        )
+        self.last_publication_check_version = max(
+            [last_seen, *(int(event["version"]) for event in events)]
+        )
+        if any(
+            event.get("actor") == self.ctx.agent_id
+            and event.get("type") in {"fact.posted", "intent.posted"}
+            for event in events
+        ):
+            return None
+        return (
+            "[协作检查] 若已有可复核的中间发现，请现在提交 Fact；若发现可独立推进的方向，"
+            "请基于已发布事实提出 Intent 供其他 Agent 认领；证据不足则继续调查，"
+            "不要为凑并发伪造或重复提交。不要等结束统一整理。"
+        )
 
     async def process(self, context: ChatContext, call_next) -> None:
         board = await self.ctx.service.state(self.ctx.task_id)
@@ -255,12 +318,17 @@ class BoardSyncMiddleware(ChatMiddleware):
                     "完成交接，然后返回回执 JSON。",
                 )
                 self.conclude_injected = True
+            if not agent.get("conclude_requested_at"):
+                reminder = await self._publication_reminder(step, last_seen)
+                if reminder:
+                    lines.append(reminder)
             last_seen = max([last_seen, *(int(event["version"]) for event in events)])
             if lines:
                 update = "[黑板更新]\n" + "\n".join(lines)
                 append_board_update(context.messages, update)
                 await record_trace(self.ctx, "board_update", step, update + "\n[黑板更新结束]")
                 self.last_appended_version = last_seen
+        await self._inject_user_messages(context)
         await call_next()
         response = context.result
         if isinstance(response, ChatResponse):

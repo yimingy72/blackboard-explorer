@@ -3,6 +3,7 @@
 import asyncio
 import signal
 
+from bbx_runtime.chatworker import ChatWorker
 from bbx_runtime.clients import BlackboardClient, object_store
 from bbx_runtime.execenv import ExecEnvManager
 from bbx_runtime.runner import AgentRunner
@@ -28,18 +29,26 @@ async def serve(settings: SchedulerSettings) -> None:
             manager = ExecEnvManager(settings, objects=objects)
             runner = AgentRunner(settings, service, objects, manager)
             supervisor = TaskSupervisor(settings, service, manager, runner)
+            await service.recover_conversations()
+            chat = ChatWorker(settings, service)
             work = asyncio.create_task(supervisor.run(), name="task-supervision")
+            chat_work = asyncio.create_task(chat.run(), name="review-conversations")
             shutdown = asyncio.create_task(stopped.wait())
             lost = asyncio.create_task(instance.lost.wait())
             try:
                 done, _ = await asyncio.wait(
-                    [work, shutdown, lost], return_when=asyncio.FIRST_COMPLETED
+                    [work, chat_work, shutdown, lost], return_when=asyncio.FIRST_COMPLETED
                 )
                 if lost in done:
                     raise RuntimeError("Runtime database lock connection was lost")
                 if work in done:
                     await work
+                if chat_work in done:
+                    await chat_work
             finally:
+                await chat.stop()
+                chat_work.cancel()
+                await asyncio.gather(chat_work, return_exceptions=True)
                 await supervisor.stop()
                 await work
                 shutdown.cancel()

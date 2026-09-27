@@ -144,12 +144,29 @@ class TaskSupervisor:
             )
         self.cleaned.add(tid)
 
+    async def _purge_deleted(self, tid: str) -> None:
+        if cleanup := self.cleanups.pop(tid, None):
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+        if loop := self.loops.pop(tid, None):
+            await loop.stop(reason="runtime_restart")
+            await self.loop_tasks.pop(tid)
+        await self.manager.destroy(tid)
+        await self.service.purge_task(tid)
+        self.cleaned.discard(tid)
+
     async def tick(self) -> None:
         async with self.tick_lock:
             if not self.stopping.is_set():
                 await self._tick()
 
     async def _tick(self) -> None:
+        deletion_reader = getattr(self.service, "pending_deletions", None)
+        for tid in await deletion_reader() if deletion_reader is not None else []:
+            try:
+                await self._purge_deleted(str(tid))
+            except Exception as error:
+                LOGGER.error("Deletion cleanup failed for task %s: %s", tid, type(error).__name__)
         tasks = await self.service.list_tasks()
         for tid, future in list(self.cleanups.items()):
             if future.done():
@@ -160,7 +177,12 @@ class TaskSupervisor:
                 del self.cleanups[tid]
         for task in tasks:
             tid = str(task["id"])
-            if task["status"] in TERMINAL and tid not in self.cleaned and tid not in self.cleanups:
+            if (
+                task["status"] in TERMINAL
+                and not task.get("deleting")
+                and tid not in self.cleaned
+                and tid not in self.cleanups
+            ):
                 self.cleanups[tid] = asyncio.create_task(self._cleanup(tid), name=f"cleanup:{tid}")
         occupied = {str(t["id"]) for t in tasks if t["status"] in {"running", "closing"}}
         occupied.update(self.cleanups)
@@ -194,7 +216,8 @@ class TaskSupervisor:
                     future.result()
                 except Exception as error:
                     LOGGER.error("Scheduler exited for task %s: %s", tid, type(error).__name__)
-                await self._fail_if_active(tid, "调度循环异常退出")
+                if tid not in {str(item["id"]) for item in tasks if item["status"] == "deleting"}:
+                    await self._fail_if_active(tid, "调度循环异常退出")
 
     async def run(self) -> None:
         async with self.tick_lock:

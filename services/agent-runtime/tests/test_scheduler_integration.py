@@ -228,6 +228,14 @@ class ScriptedRunner(AgentRunner):
                     agent_id,
                     self.gate,
                 )
+        elif task_type == "derive":
+            model = ScriptedChatClient(
+                [
+                    ScriptStep(
+                        text='{"accepted":true,"data":{"posted":[],"excluded":[]}}', usage=USAGE
+                    )
+                ]
+            )
         else:
             model = GatedScriptedClient(
                 [ScriptStep(text='{"accepted":true,"data":{"note":"Idle"}}', usage=USAGE)],

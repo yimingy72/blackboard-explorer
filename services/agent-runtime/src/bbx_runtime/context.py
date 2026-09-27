@@ -1,12 +1,17 @@
 """Dependencies and the pinned opening snapshot for one agent run."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bbx_contracts.models import AgentProfile, Params
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient
+
+if TYPE_CHECKING:
+    from bbx_runtime.session import SessionCheckpoint
 
 TaskType = Literal["explore", "derive", "close"]
 CloseMode = Literal["judge", "final"]
@@ -25,6 +30,7 @@ class RunContext:
     envd: EnvdClient | None = None
     intent_id: str | None = None
     mode: CloseMode | None = None
+    checkpoint: SessionCheckpoint | None = None
 
     @property
     def params(self) -> Params:

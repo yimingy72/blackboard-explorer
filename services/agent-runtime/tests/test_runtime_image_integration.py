@@ -16,16 +16,28 @@ pytestmark = pytest.mark.integration
 EMPTY_BOARD = """
 from http.server import BaseHTTPRequestHandler, HTTPServer
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        allowed = self.headers.get('Authorization') == 'Bearer image-test'
-        if self.path != '/api/tasks?limit=500&offset=0' or not allowed:
-            self.send_error(403)
-            return
+    def respond(self, payload):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', '2')
+        self.send_header('Content-Length', str(len(payload)))
         self.end_headers()
-        self.wfile.write(b'[]')
+        self.wfile.write(payload)
+    def do_GET(self):
+        allowed = self.headers.get('Authorization') == 'Bearer image-test'
+        if not allowed or self.path not in (
+            '/api/tasks?limit=500&offset=0',
+            '/api/tasks/deletions',
+            '/api/conversations/pending',
+        ):
+            self.send_error(403)
+            return
+        self.respond(b'[]')
+    def do_POST(self):
+        if (self.headers.get('Authorization') != 'Bearer image-test'
+                or self.path != '/api/conversations/recover'):
+            self.send_error(403)
+            return
+        self.respond(b'{"requeued":0}')
 HTTPServer(('0.0.0.0', 8000), Handler).serve_forever()
 """
 

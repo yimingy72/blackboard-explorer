@@ -123,6 +123,35 @@ def supervisor(service: Service, manager: Manager, *, limit: int = 1) -> TaskSup
 
 
 @pytest.mark.asyncio
+async def test_deletion_failure_retries_without_restarting_archive_cleanup() -> None:
+    class DeletionService(Service):
+        def __init__(self, tasks: list[dict]) -> None:
+            super().__init__(tasks)
+            self.purges = 0
+
+        async def pending_deletions(self) -> list[str]:
+            return ["old"]
+
+        async def purge_task(self, _tid: str) -> dict[str, bool]:
+            self.purges += 1
+            if self.purges == 1:
+                raise RuntimeError("storage offline")
+            return {"purged": True}
+
+    deleting = task("old", "finished")
+    deleting["deleting"] = True
+    service = DeletionService([deleting])
+    manager = Manager()
+    owner = supervisor(service, manager)
+    await owner.tick()
+    assert owner.cleanups == {}
+    assert ("archive", "old") not in manager.calls
+    await owner.tick()
+    assert service.purges == 2
+    assert ("archive", "old") not in manager.calls
+
+
+@pytest.mark.asyncio
 async def test_fifo_queue_respects_max_running_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     service = Service([task("new", "provisioning", 2), task("old", "provisioning", 0)])
     manager = Manager()

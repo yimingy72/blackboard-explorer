@@ -106,3 +106,12 @@ make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--keep --timeout 1800
 控制台会显示任务/工作台地址与进展。隔离测试账号是 `e2e / local-e2e-only`，只用于这套临时服务。任务结束后输出报告和账本费用估算，并在 `.data/e2e/<项目名>/` 保存报告、事件、状态、工作区压缩包和脱敏日志。默认停止服务并清理本项目卷与执行容器；`--keep` 仅在任务已终结并登记归档后保留工作台，并打印清理命令。
 
 生产请求去重仍由 Agent 判断；e2e 不使用 embedding，也不会让普通检查调用模型。固定 profile 的价格是预算估算，不能代替供应商实际账单。
+
+
+## 持久会话与干预
+
+探索运行使用 MAF 公共 `AgentSession.to_dict/from_dict` 和逐模型调用历史持久化；初始指令单独保存，工具执行中断的未配对调用明确标为结果未知，恢复时不重跑旧命令。模型调用前认领用户消息，以稳定消息 ID 注入；消息确认与 checkpoint 同事务。CAS、claim token 与租约防止覆盖或重复回复；不确定提交读回对账。
+
+ChatWorker 对不同 Agent 最多四路并行，同一 Agent 串行。已结束的 Agent 仅有 get/search/read_evidence，恢复原会话回答用户；没有原生会话时标为 legacy。复盘单次最长180秒、最多8轮工具迭代，用量保存于消息，不重开任务或改变验收。
+
+Supervisor 处理删除标记时停止残余cleanup、销毁执行容器，再调用幂等purge；普通归档不删除会话。derive 有新事实与空闲槽位时可提前并行，登记时锁内核对阶段和事实版本；无效的过期派发跳过。

@@ -14,7 +14,7 @@ class SpawnExplore:
 
 @dataclass(frozen=True, slots=True)
 class SpawnDerive:
-    pass
+    parallel: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -227,6 +227,84 @@ class BlackboardClient:
     async def get_profile(self, name: str, version: int) -> dict[str, Any]:
         return await self._json("GET", f"/profiles/{quote(name, safe='')}/versions/{version}")
 
+    def _agent(self, task_id: UUID | str, agent_id: str) -> str:
+        return f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}"
+
+    async def get_agent_session(self, task_id: UUID | str, agent_id: str) -> dict[str, Any]:
+        return await self._json("GET", f"{self._agent(task_id, agent_id)}/session")
+
+    async def put_agent_session(
+        self,
+        task_id: UUID | str,
+        agent_id: str,
+        *,
+        session: dict[str, Any],
+        opening_instructions: str,
+        origin: Literal["native", "legacy"],
+        expected_revision: int,
+        deliveries: list[dict[str, str]] | None = None,
+        review_claim: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._json(
+            "PUT",
+            f"{self._agent(task_id, agent_id)}/session",
+            json={
+                "session": session,
+                "opening_instructions": opening_instructions,
+                "origin": origin,
+                "expected_revision": expected_revision,
+                "deliveries": deliveries or [],
+                **({"review_claim": review_claim} if review_claim is not None else {}),
+            },
+        )
+
+    async def agent_messages(
+        self, task_id: UUID | str, agent_id: str, *, status: str | None = None
+    ) -> dict[str, Any]:
+        params = {"status": status} if status is not None else None
+        return await self._json("GET", f"{self._agent(task_id, agent_id)}/messages", params=params)
+
+    async def claim_agent_message(
+        self, task_id: UUID | str, agent_id: str, message_id: str, mode: Literal["active", "review"]
+    ) -> dict[str, Any]:
+        return await self._json(
+            "POST",
+            f"{self._agent(task_id, agent_id)}/messages/{quote(message_id, safe='')}/claim",
+            json={"mode": mode},
+        )
+
+    async def complete_agent_message(
+        self, task_id: UUID | str, agent_id: str, message_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        path = f"{self._agent(task_id, agent_id)}/messages/{quote(message_id, safe='')}/complete"
+        try:
+            return await self._json("POST", path, json=body)
+        except httpx.TransportError:
+            # The first request may have committed. The endpoint returns the same reply
+            # for a repeated completion with the same claim token.
+            return await self._json("POST", path, json=body)
+
+    async def fail_agent_message(
+        self, task_id: UUID | str, agent_id: str, message_id: str, claim_token: str, error: str
+    ) -> dict[str, Any]:
+        return await self._json(
+            "POST",
+            f"{self._agent(task_id, agent_id)}/messages/{quote(message_id, safe='')}/fail",
+            json={"claim_token": claim_token, "error": error},
+        )
+
+    async def pending_conversations(self) -> list[dict[str, Any]]:
+        return await self._json("GET", "/conversations/pending")
+
+    async def recover_conversations(self) -> dict[str, Any]:
+        return await self._json("POST", "/conversations/recover")
+
+    async def pending_deletions(self) -> list[str]:
+        return await self._json("GET", "/tasks/deletions")
+
+    async def purge_task(self, task_id: UUID | str) -> dict[str, Any]:
+        return await self._json("POST", f"{self._task(task_id)}/purge")
+
     async def register_agent(
         self,
         task_id: UUID | str,
@@ -234,11 +312,15 @@ class BlackboardClient:
         *,
         is_seed: bool = False,
         close_mode: Literal["judge", "final"] | None = None,
+        derive_parallel: bool | None = None,
     ) -> dict[str, str]:
+        body = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
+        if derive_parallel is not None:
+            body["derive_parallel"] = derive_parallel
         return await self._json(
             "POST",
             f"{self._task(task_id)}/agents",
-            json={"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode},
+            json=body,
         )
 
     async def heartbeat(

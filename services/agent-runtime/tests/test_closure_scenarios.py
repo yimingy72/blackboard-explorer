@@ -78,6 +78,8 @@ async def test_scenario_1_successful_parallel_closure(
                 others,
                 at_call=2,
             )
+        if task_type == "derive":
+            return ScriptedChatClient([receipt_step("derive")])
         if task_type == "close" and mode == "judge":
             support = next(
                 fid
@@ -209,6 +211,8 @@ async def test_scenario_2_failed_judgments_feed_explore_and_derive(
                 verdict = met(support)
             return ScriptedChatClient([close_step([verdict]), receipt_step("close")])
         if task_type == "derive":
+            if state["agents"][aid]["derive_parallel"]:
+                return ScriptedChatClient([receipt_step("derive")])
             derive_count += 1
             derive_client = ScriptedChatClient(
                 [

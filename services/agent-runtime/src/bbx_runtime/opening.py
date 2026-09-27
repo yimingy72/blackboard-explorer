@@ -8,6 +8,7 @@ from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from bbx_runtime.context import RunContext
+from bbx_runtime.session import SessionCheckpoint
 from bbx_runtime.trace import record_trace
 
 
@@ -76,11 +77,12 @@ def _previous_excluded(agents: dict[str, dict[str, Any]]) -> str:
 
 
 class OpeningContextProvider(ContextProvider):
-    def __init__(self, run: RunContext) -> None:
+    def __init__(self, run: RunContext, checkpoint: SessionCheckpoint | None = None) -> None:
         super().__init__(source_id=f"opening:{run.agent_id}")
         self.run = run
         self.environment = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
         self.trace_recorded = False
+        self.checkpoint = checkpoint
 
     async def render(self) -> str:
         run = self.run
@@ -154,7 +156,12 @@ class OpeningContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        rendered = await self.render()
+        rendered = self.checkpoint.opening_instructions if self.checkpoint else ""
+        if not rendered:
+            rendered = await self.render()
+            if self.checkpoint is not None:
+                self.checkpoint.opening_instructions = rendered
+                await self.checkpoint.save()
         context.extend_instructions(self.source_id, rendered)
         if not self.trace_recorded:
             await record_trace(self.run, "initial_context", 0, f"开始。\n\n{rendered}")

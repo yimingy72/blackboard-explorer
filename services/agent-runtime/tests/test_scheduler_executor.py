@@ -6,10 +6,11 @@ from typing import cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.runner import AgentRunner, RunResult
-from bbx_runtime.scheduler.actions import EnterClosing, Fail, SpawnExplore, SystemClose
+from bbx_runtime.scheduler.actions import EnterClosing, Fail, SpawnDerive, SpawnExplore, SystemClose
 from bbx_runtime.scheduler.executor import ActionExecutor
 
 
@@ -95,6 +96,24 @@ async def test_lost_claim_finishes_registration_without_starting_agent():
     )
     manager.create_user.assert_not_awaited()
     assert not runner.started.is_set() and executor.tasks == {}
+
+
+async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
+    executor, service, _manager, runner, _ = setup_executor()
+    service.register_agent.side_effect = RemoteError(422, "Derive phase changed", "stale_derive")
+    await executor.execute([SpawnDerive(parallel=True)])
+    service.register_agent.assert_awaited_once_with(
+        "task", "derive", is_seed=False, close_mode=None, derive_parallel=True
+    )
+    assert not runner.started.is_set() and executor.tasks == {}
+
+    service.register_agent.reset_mock(side_effect=True)
+    service.register_agent.side_effect = RemoteError(422, "Other validation error", "invalid")
+    with pytest.raises(RemoteError):
+        await executor.execute([SpawnDerive()])
+    service.register_agent.assert_awaited_once_with(
+        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False
+    )
 
 
 async def test_closing_transitions_then_concludes_and_failure_concludes_then_transitions():

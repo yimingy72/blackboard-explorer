@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from agent_framework import Agent, BaseChatClient, FunctionTool, MCPStreamableHTTPTool
+from agent_framework import Agent, AgentSession, BaseChatClient, FunctionTool, MCPStreamableHTTPTool
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient
@@ -18,6 +18,11 @@ from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, Too
 from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.receipts import parse_receipt
+from bbx_runtime.session import (
+    CheckpointHistoryProvider,
+    SessionCheckpoint,
+    repair_unpaired_tool_calls,
+)
 from bbx_runtime.settings import Settings
 from bbx_runtime.tools import make_board_tools
 
@@ -58,6 +63,7 @@ class AgentRunner:
         envd = None
         mcp_http = envd_http_client
         cancelled = False
+        checkpoint: SessionCheckpoint | None = None
         try:
             state = await self.service.state(task_id)
             run = state["agents"][agent_id]
@@ -85,6 +91,11 @@ class AgentRunner:
                 intent_id=intent_id or run.get("intent_id"),
                 mode=mode or run.get("close_mode"),
             )
+            if hasattr(self.service, "get_agent_session"):
+                checkpoint = await SessionCheckpoint.load(self.service, task_id, agent_id)
+                if checkpoint is None:
+                    checkpoint = SessionCheckpoint(self.service, task_id, agent_id, AgentSession())
+                ctx.checkpoint = checkpoint
             model = getattr(profile.models, task_type)
             # The scheduler stops exploration at the budget deadline; this is only a hard guard.
             run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
@@ -115,16 +126,22 @@ class AgentRunner:
                 client=client,
                 name=agent_id,
                 tools=tools,
-                context_providers=[OpeningContextProvider(ctx)],
+                context_providers=[
+                    OpeningContextProvider(ctx, checkpoint),
+                    *([CheckpointHistoryProvider(checkpoint)] if checkpoint else []),
+                ],
                 middleware=[
                     ToolLogMiddleware(ctx),
                     GraceGateMiddleware(ctx),
                     BoardSyncMiddleware(ctx),
                 ],
+                require_per_service_call_history_persistence=checkpoint is not None,
             ) as agent:
                 async with asyncio.timeout(run_limit):
                     response = await agent.run(
-                        "开始。", session=agent.create_session(), options=model_run_options(model)
+                        "开始。",
+                        session=checkpoint.session if checkpoint else agent.create_session(),
+                        options=model_run_options(model),
                     )
             receipt = parse_receipt(response.text, task_type)
             end_reason = "normal" if receipt.get("accepted") else "refused"
@@ -150,7 +167,21 @@ class AgentRunner:
                     resources.push_async_callback(owned_client.client.close)
                 if mcp_http is not None and envd_http_client is None:
                     resources.push_async_callback(mcp_http.aclose)
-                await self.service.finish_agent(task_id, agent_id, receipt, end_reason)
+                save_error: Exception | None = None
+                if checkpoint is not None:
+                    try:
+                        repair_unpaired_tool_calls(checkpoint.session, include_interrupted=False)
+                        await checkpoint.save()
+                    except Exception as error:
+                        save_error = error
+                await self.service.finish_agent(
+                    task_id,
+                    agent_id,
+                    {"accepted": False, "reason": "会话持久化失败"} if save_error else receipt,
+                    "runtime_error" if save_error else end_reason,
+                )
+                if save_error is not None:
+                    raise save_error
 
         # Finish and resource cleanup must complete even if a sweeper cancels again.
         cleanup = asyncio.create_task(finalize())

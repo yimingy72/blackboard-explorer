@@ -55,6 +55,7 @@ def agent(
     intent_id: str | None = None,
     close_mode: str | None = None,
     end_reason: str | None = None,
+    derive_from_version: int | None = None,
 ) -> dict[str, Any]:
     return {
         "id": aid,
@@ -66,6 +67,7 @@ def agent(
         "intent_id": intent_id,
         "close_mode": close_mode,
         "end_reason": end_reason,
+        "derive_from_version": derive_from_version,
     }
 
 
@@ -287,6 +289,64 @@ def test_derive_requires_quiescence_and_latest_judgment() -> None:
     assert decide(state, Params(), NOW) == []
     state["agents"] = {"agent-1": agent("agent-1", task_type="close", close_mode="judge")}
     assert decide(state, Params(), NOW) == []
+
+
+def test_fact_during_explore_starts_one_derive_then_dispatches_its_intents() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["agents"] = {"seed": agent("seed", is_seed=True, intent_id="I0")}
+    state["intents"] = {"I0": intent("I0", status="claimed")}
+    assert decide(state, Params(), NOW) == []
+
+    state["facts"] = {"F1": {"version": 4, "author": "seed"}}
+    assert decide(state, Params(), NOW) == [SpawnDerive(parallel=True)]
+    state["agents"]["derive-1"] = agent("derive-1", task_type="derive", derive_from_version=4)
+    assert decide(state, Params(), NOW) == []
+
+    state["agents"]["derive-1"]["status"] = "finished"
+    state["intents"].update(
+        I1=intent("I1", relates_to=["A1"], version=5),
+        I2=intent("I2", relates_to=["A2"], version=6),
+    )
+    assert decide(state, Params(), NOW) == [SpawnExplore("I1"), SpawnExplore("I2")]
+
+
+def test_parallel_derive_waits_for_a_new_fact_version() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["facts"] = {"F1": {"version": 4}}
+    state["agents"] = {
+        "explore": agent("explore"),
+        "derive-1": agent("derive-1", task_type="derive", status="finished", derive_from_version=4),
+    }
+    assert decide(state, Params(), NOW) == []
+    state["last_change_version"] = 8  # An unrelated board event is insufficient.
+    assert decide(state, Params(), NOW) == []
+    state["facts"]["F2"] = {"version": 9}
+    assert decide(state, Params(), NOW) == [SpawnDerive(parallel=True)]
+
+
+def test_parallel_derive_respects_slots_open_intents_and_single_baseline() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["facts"] = {"F1": {"version": 4}}
+    state["agents"] = {"explore": agent("explore")}
+    state["task"]["budget"]["max_concurrent_agents"] = 1
+    assert decide(state, Params(), NOW) == []
+
+    state["task"]["budget"]["max_concurrent_agents"] = 2
+    assert decide(state, Params(derive_enabled=False), NOW) == []
+    state["intents"] = {"I1": intent("I1")}
+    assert decide(state, Params(), NOW) == [SpawnExplore("I1")]
+
+
+def test_parallel_derive_waits_for_claim_judgment() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["facts"] = {"F1": {"version": 4}}
+    state["agents"] = {"explore": agent("explore")}
+    state["pending_claims"] = True
+    assert decide(state, Params(), NOW) == [SpawnClose("judge")]
 
 
 def test_disabled_derive_waits_for_seed_intents_and_latest_judgment() -> None:

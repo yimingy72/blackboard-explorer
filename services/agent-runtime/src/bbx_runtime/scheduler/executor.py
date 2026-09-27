@@ -64,7 +64,7 @@ class ActionExecutor:
                 case SpawnExplore():
                     await self._spawn("explore", intent_id=action.intent_id, seed=action.seed)
                 case SpawnDerive():
-                    await self._spawn("derive")
+                    await self._spawn("derive", derive_parallel=action.parallel)
                 case SpawnClose():
                     await self._spawn("close", mode=action.mode)
                 case Conclude():
@@ -87,10 +87,20 @@ class ActionExecutor:
         intent_id: str | None = None,
         seed: bool = False,
         mode: CloseMode | None = None,
+        derive_parallel: bool | None = None,
     ) -> None:
-        registration = await self.service.register_agent(
-            self.task_id, task_type, is_seed=seed, close_mode=mode
-        )
+        try:
+            registration = await self.service.register_agent(
+                self.task_id,
+                task_type,
+                is_seed=seed,
+                close_mode=mode,
+                **({"derive_parallel": derive_parallel} if derive_parallel is not None else {}),
+            )
+        except RemoteError as error:
+            if task_type == "derive" and error.status == 422 and error.code == "stale_derive":
+                return
+            raise
         aid, token = registration["agent_id"], registration["token"]
         try:
             self._check_stopped()
