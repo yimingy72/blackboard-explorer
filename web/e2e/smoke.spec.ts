@@ -27,7 +27,7 @@ test('事实详情展示六类证据，文本与命令输出可预览', async ({
   const canvas = page.getByRole('region', { name: '黑板关系图' });
   await canvas.getByRole('button', { name: /事实 F1，已提出/ }).click();
   const detail = page.getByRole('complementary', { name: '对象详情' });
-  await expect(detail.getByRole('heading', { name: '数据库连接池出现等待' })).toBeVisible();
+  await expect(detail.getByRole('heading', { name: '观察事实 · F1' })).toBeVisible();
   for (const kind of ['文本', '命令输出', 'HTTP', '日志', '代码引用', '脚本']) {
     await expect(detail.locator('summary').filter({ hasText: kind }).first()).toBeVisible();
   }
@@ -52,7 +52,7 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   const canvas = page.getByRole('region', { name: '黑板关系图' });
   await canvas.getByRole('button', { name: /意图 I1，调查中/ }).click();
   const detail = page.getByRole('complementary', { name: '历史快照详情' });
-  await expect(detail.getByRole('heading', { name: '检查连接池上限' })).toBeVisible();
+  await expect(detail.getByRole('heading', { name: '意图 · I1' })).toBeVisible();
   await expect(detail).not.toContainText(FUTURE_NOTE);
 
   await page.getByRole('tab', { name: /Agent 记录/ }).click();
@@ -111,13 +111,14 @@ test('Profile YAML 校验、版本比较、发布与本浏览器默认', async (
   expect(mock.unexpected).toEqual([]);
 });
 
-test('超过 300 个对象默认折叠，手机视口无页面横向溢出', async ({ page }) => {
+test('完整展示超过 300 个对象且无筛选，手机视口无页面横向溢出', async ({ page }) => {
   test.setTimeout(90_000);
   const mock = await installMockApi(page, { largeGraph: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/tasks/${TASK_ID}`);
-  await expect(page.getByRole('checkbox', { name: '折叠已关闭分支' })).toBeChecked();
-  await expect(page.getByText(/对象 151\/302/)).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '折叠已关闭分支' })).toHaveCount(0);
+  await expect(page.getByRole('combobox')).toHaveCount(0);
+  await expect(page.getByText(/对象 302/)).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
     .toBeLessThanOrEqual(1);
   expect(mock.unexpected).toEqual([]);

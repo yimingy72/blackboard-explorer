@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { BoardAgent, BoardFact, BoardIntent, BoardState } from '../board/types';
 import { agentLabel } from '../board/agents';
 import controls from '../styles/controls.module.css';
@@ -21,6 +22,17 @@ const factKinds: Record<string, string> = { observation: '观察事实', inferen
 const intentStatus: Record<string, string> = { open: '待认领', claimed: '已认领', closed: '已关闭' };
 const agentStatus: Record<string, string> = { running: '运行中', concluding: '收尾中', finished: '已结束', failed: '失败' };
 const resultLabels: Record<string, string> = { confirmed: '确认', rejected: '否定', inconclusive: '未定' };
+
+function MarkdownBody({ children }: { children: string }) {
+  return <div className={styles.markdown}><ReactMarkdown components={{
+    h1: ({ children }) => <h3>{children}</h3>,
+    h2: ({ children }) => <h3>{children}</h3>,
+    h3: ({ children }) => <h4>{children}</h4>,
+    pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
+    a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
+    img: ({ alt }) => <span className={styles.muted}>图片：{alt || '未自动加载'}</span>,
+  }}>{children}</ReactMarkdown></div>;
+}
 
 function printable(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
@@ -53,7 +65,7 @@ function FactDetail({ fact, state, onSelect }: { fact: BoardFact; state: BoardSt
   const claimedAcceptance = fact.satisfies.map((id) => state.acceptance[id]).filter(Boolean);
   const judgedAcceptance = Object.values(state.acceptance).filter((item) => item.evidence_facts.includes(fact.id));
   return <>
-    <div className={styles.titleBlock}><span className={styles.type}>{factKinds[fact.kind] ?? '事实'} · {fact.id}</span><h2 tabIndex={-1}>{fact.statement}</h2><span className={`${controls.badge} ${fact.status === 'disputed' ? controls.badgeDanger : controls.badgeInfo}`}>{fact.status === 'disputed' ? '有争议' : '已提出'}</span></div>
+    <div className={styles.titleBlock}><h2 tabIndex={-1}>{factKinds[fact.kind] ?? '事实'} · {fact.id}</h2><span className={`${controls.badge} ${fact.status === 'disputed' ? controls.badgeDanger : controls.badgeInfo}`}>{fact.status === 'disputed' ? '有争议' : '已提出'}</span></div><MarkdownBody>{fact.statement}</MarkdownBody>
     <section className={styles.section}><h3>基本信息</h3><dl className={styles.metaList}><Meta label="作者" value={fact.author} /><Meta label="版本" value={fact.version} /><Meta label="来源" value={fact.provenance === 'tool_backed' ? '工具支持' : 'Agent 自述'} /><Meta label="被依赖次数" value={fact.reliedBy} />{fact.result && <Meta label="结论" value={resultLabels[fact.result]} />}</dl></section>
     <section className={styles.section}><h3>证据 · {fact.evidence.length}</h3>{fact.evidence.length ? <ul className={styles.evidence}>{fact.evidence.map((item, index) => <li key={index}><EvidenceViewer evidence={item} /></li>)}</ul> : <p className={styles.muted}>当前快照没有证据记录。</p>}</section>
     <section className={styles.section}><h3>争议链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === fact.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.disputes.length ? `质疑 ${item.disputes.join('、')}` : '原始陈述'} · {item.status === 'disputed' ? '有争议' : '已提出'}</small></li>)}</ol> : <p className={styles.muted}>暂无争议。</p>}</section>
@@ -65,9 +77,9 @@ function FactDetail({ fact, state, onSelect }: { fact: BoardFact; state: BoardSt
 function IntentDetail({ intent, state, onSelect }: { intent: BoardIntent; state: BoardState; onSelect: Props['onSelect'] }) {
   const chain = retryChain(state, intent.id);
   return <>
-    <div className={styles.titleBlock}><span className={styles.type}>意图 · {intent.id}</span><h2 tabIndex={-1}>{intent.statement}</h2><span className={`${controls.badge} ${intent.status === 'closed' ? controls.badgeSuccess : intent.status === 'claimed' ? controls.badgeInfo : controls.badgeWarning}`}>{intentStatus[intent.status]}</span></div>
-    <section className={styles.section}><h3>计划与状态</h3><dl className={styles.metaList}><Meta label="作者" value={intent.author} /><Meta label="版本" value={intent.version} /><Meta label="预期" value={intent.expected} /><Meta label="方法" value={intent.method} /><Meta label="持有者" value={intent.holder} /><Meta label="尝试次数" value={intent.attempts} /><Meta label="结果" value={intent.result ? resultLabels[intent.result] : null} /><Meta label="关闭者" value={intent.closedBy} /></dl></section>
-    <section className={styles.section}><h3>执行记录</h3>{intent.notes?.length ? <ol className={styles.notes}>{intent.notes.map((note, index) => <li key={`${note.at}-${index}`}><small>{note.by} · <time dateTime={note.at}>{note.at}</time></small><p>{note.text}</p></li>)}</ol> : <p className={styles.muted}>暂无记录。</p>}</section>
+    <div className={styles.titleBlock}><h2 tabIndex={-1}>意图 · {intent.id}</h2><span className={`${controls.badge} ${intent.status === 'closed' ? controls.badgeSuccess : intent.status === 'claimed' ? controls.badgeInfo : controls.badgeWarning}`}>{intentStatus[intent.status]}</span></div><MarkdownBody>{intent.statement}</MarkdownBody>
+    <section className={styles.section}><h3>预期结果</h3><MarkdownBody>{intent.expected}</MarkdownBody></section><section className={styles.section}><h3>调查方法</h3><MarkdownBody>{intent.method}</MarkdownBody></section><section className={styles.section}><h3>状态</h3><dl className={styles.metaList}><Meta label="作者" value={intent.author} /><Meta label="版本" value={intent.version} /><Meta label="持有者" value={intent.holder} /><Meta label="尝试次数" value={intent.attempts} /><Meta label="结果" value={intent.result ? resultLabels[intent.result] : null} /><Meta label="关闭者" value={intent.closedBy} /></dl></section>
+    <section className={styles.section}><h3>执行记录</h3>{intent.notes?.length ? <ol className={styles.notes}>{intent.notes.map((note, index) => <li key={`${note.at}-${index}`}><small>{note.by} · <time dateTime={note.at}>{note.at}</time></small><MarkdownBody>{note.text}</MarkdownBody></li>)}</ol> : <p className={styles.muted}>暂无记录。</p>}</section>
     <section className={styles.section}><h3>重试链</h3>{chain.length > 1 ? <ol className={styles.chain}>{chain.map((item) => <li key={item.id}><button type="button" className={styles.objectLink} onClick={() => onSelect(item.id)}><strong>{item.id}{item.id === intent.id ? ' · 当前' : ''}</strong><span>{item.statement}</span></button><small>{item.retryOf ? `重试 ${item.retryOf}` : '初次尝试'} · {item.result ? resultLabels[item.result] : intentStatus[item.status]}</small></li>)}</ol> : <p className={styles.muted}>暂无重试。</p>}</section>
     <section className={styles.section}><h3>关联对象</h3><p className={styles.relationLabel}>依据事实</p><ObjectLinks ids={intent.basedOn} state={state} onSelect={onSelect} /><p className={styles.relationLabel}>相关对象</p><ObjectLinks ids={intent.relatesTo} state={state} onSelect={onSelect} /><p className={styles.relationLabel}>结论事实</p><ObjectLinks ids={intent.resultFacts} state={state} onSelect={onSelect} /></section>
   </>;
@@ -98,9 +110,9 @@ export default function DetailPanel({ taskId, state, selectedId, onSelect, histo
     <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}</div>
     {!selectedId ? <div className={styles.placeholder}><h2>选择图上的节点</h2><p>查看任务目标、事实、意图或 Agent 的详细信息。</p></div> :
       <div ref={body} className={styles.body}>{selectedId === 'goal' ? <>
-        <div className={styles.titleBlock}><span className={styles.type}>任务目标</span><h2 tabIndex={-1}>{state.task?.goal ?? '任务目标'}</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div>
+        <div className={styles.titleBlock}><h2 tabIndex={-1}>任务目标</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div><MarkdownBody>{state.task?.goal ?? ''}</MarkdownBody>
         <section className={styles.section}><h3>任务状态</h3><dl className={styles.metaList}><Meta label="结束原因" value={state.task?.fail_reason ?? state.task?.closingReason} /><Meta label="开始时间" value={state.task?.startedAt} /><Meta label="结束时间" value={state.task?.finishedAt} /><Meta label="版本" value={state.task?.version} /></dl></section>
-        {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><p className={styles.prose}>{state.task.domain_context}</p></section>}
+        {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><MarkdownBody>{state.task.domain_context}</MarkdownBody></section>}
         <section className={styles.section}><h3>验收条件</h3><ul className={styles.acceptance}>{(state.task?.acceptance ?? []).map(({ id, desc }) => { const item = state.acceptance[id]; return <li key={id}><strong>{id} · {desc}</strong><span className={`${controls.badge} ${item?.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item?.status === 'met' ? '已满足' : '未满足'}</span>{item?.reason && <small>裁定：{item.reason}</small>}{item?.missing && <small>缺口：{item.missing}</small>}{item?.evidence_facts.length ? <ObjectLinks ids={item.evidence_facts} state={state} onSelect={onSelect} /> : null}</li>; })}</ul></section>
       </> : fact ? <FactDetail fact={fact} state={state} onSelect={onSelect} /> : intent ? <IntentDetail intent={intent} state={state} onSelect={onSelect} /> : agent ? <AgentDetail agent={agent} state={state} onSelect={onSelect} /> : <div className={styles.message}><h2 tabIndex={-1}>节点已不在当前视图中</h2><p>选择其他节点继续查看。</p></div>}</div>}
   </aside></AgentNumbers.Provider>;

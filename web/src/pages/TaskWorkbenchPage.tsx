@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useBoard } from '../board/store';
 import { reduceBoard } from '../board/reducer';
-import { filterBoard, taskEndExplanation } from '../board/view';
+import { taskEndExplanation } from '../board/view';
 import { agentLabel, agentNumbers, agentRole, agentStatusLabel, orderedAgents, taskDuration } from '../board/agents';
 import AgentConversation from '../components/AgentConversation';
 import WorkbenchDrawer from '../components/WorkbenchDrawer';
@@ -39,20 +39,12 @@ export default function TaskWorkbenchPage() {
   const [action, setAction] = useState<'start' | 'stop' | null>(null);
   const [actionError, setActionError] = useState('');
   const [version, setVersion] = useState<number | null>(null);
-  const [kind, setKind] = useState('');
-  const [factStatus, setFactStatus] = useState('');
-  const [intentStatus, setIntentStatus] = useState('');
-  const [agentFilter, setAgentFilter] = useState('');
-  const [acceptanceFilter, setAcceptanceFilter] = useState('');
-  const [collapseClosed, setCollapseClosed] = useState<boolean | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const taskQuery = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId!), enabled: Boolean(taskId) });
   const board = useBoard(taskId);
   const viewEvents = useMemo(() => version === null ? board.events : board.events.filter((event) => event.version <= version), [board.events, version]);
   const viewState = useMemo(() => version === null ? board.state : reduceBoard(viewEvents), [version, board.state, viewEvents]);
   const totalObjects = Object.keys(viewState.facts).length + Object.keys(viewState.intents).length;
-  const compact = collapseClosed ?? totalObjects > 300;
-  const filtered = useMemo(() => filterBoard(viewState, { kind, factStatus, intentStatus, agent: agentFilter, acceptance: acceptanceFilter, collapseClosed: compact }), [viewState, kind, factStatus, intentStatus, agentFilter, acceptanceFilter, compact]);
   const unauthorized = (taskQuery.error instanceof ApiError && taskQuery.error.status === 401) || (board.error instanceof ApiError && board.error.status === 401);
   const numbers = useMemo(() => agentNumbers(viewEvents), [viewEvents]);
   const agents = useMemo(() => orderedAgents(viewState, numbers), [viewState, numbers]);
@@ -69,7 +61,7 @@ export default function TaskWorkbenchPage() {
     return () => window.clearInterval(timer);
   }, [version, board.state.task?.status]);
 
-  useEffect(() => { setSelectedId(null); setVersion(null); setKind(''); setFactStatus(''); setIntentStatus(''); setAgentFilter(''); setAcceptanceFilter(''); setCollapseClosed(null); }, [taskId]);
+  useEffect(() => { setSelectedId(null); setVersion(null); }, [taskId]);
   useEffect(() => {
     if (selectedId && board.state.agents[selectedId] && !viewState.agents[selectedId]) setSelectedId(null);
   }, [selectedId, board.state.agents, viewState.agents]);
@@ -138,16 +130,9 @@ export default function TaskWorkbenchPage() {
         {board.connection === 'reconnecting' && !board.error && <div className={styles.reconnect} role="status">实时连接暂时中断，正在自动重连；已提交的内容会在恢复后补齐。</div>}
       </header>
 
-      <div className={styles.filters} aria-label="验收与图谱过滤">
+      <div className={styles.summaryBar} aria-label="验收与运行统计">
         <details className={styles.acceptanceBlock}><summary>验收 {met}/{acceptance.length}</summary><div className={styles.acceptancePop}>{acceptance.length ? <ul className={styles.acceptance}>{acceptance.map((item) => <li key={item.id}><div><span className={`${controls.badge} ${item.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item.id} · {item.status === 'met' ? '已满足' : '未满足'}</span><strong>{item.desc}</strong></div>{item.reason && <p>裁定：{item.reason}</p>}{item.missing && <p>缺口：{item.missing}</p>}</li>)}</ul> : <p className={styles.summaryEmpty}>验收信息正在同步。</p>}</div></details>
-        <label>事实类别<select aria-label="事实类别" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">全部</option><option value="observation">观察</option><option value="inference">推断</option><option value="structure">结构</option></select></label>
-        <label>事实状态<select aria-label="事实状态" value={factStatus} onChange={(event) => setFactStatus(event.target.value)}><option value="">全部</option><option value="proposed">已提出</option><option value="disputed">有争议</option></select></label>
-        <label>意图状态<select aria-label="意图状态" value={intentStatus} onChange={(event) => setIntentStatus(event.target.value)}><option value="">全部</option><option value="open">待认领</option><option value="claimed">调查中</option><option value="closed">已关闭</option></select></label>
-        <label>Agent<select aria-label="按 Agent 过滤" value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)}><option value="">全部</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agentLabel(agent.id, numbers)}</option>)}</select></label>
-        <label>验收项<select aria-label="按验收项过滤" value={acceptanceFilter} onChange={(event) => setAcceptanceFilter(event.target.value)}><option value="">全部</option>{acceptance.map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label>
-        <label className={styles.checkbox}><input type="checkbox" checked={compact} onChange={(event) => setCollapseClosed(event.target.checked)} />折叠已关闭分支</label>
-        <span className={styles.filterCount}>对象 {totalObjects - filtered.hidden}/{totalObjects} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
-        {(kind || factStatus || intentStatus || agentFilter || acceptanceFilter || compact) && <button type="button" onClick={() => { setKind(''); setFactStatus(''); setIntentStatus(''); setAgentFilter(''); setAcceptanceFilter(''); setCollapseClosed(false); }}>显示全部</button>}
+        <span className={styles.runStats}>对象 {totalObjects} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span>
       </div>
 
       <div className={styles.agentBar} role="group" aria-label="全部 Agent">
@@ -157,7 +142,7 @@ export default function TaskWorkbenchPage() {
 
       <div className={`${styles.workspace} ${selectedId ? styles.withPanel : ''}`}>
         <section className={styles.canvasArea} aria-label="黑板关系图">
-          {board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} state={filtered.state} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}
+          {board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}
         </section>
         {selectedAgent ? <AgentConversation key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id, numbers)} events={viewEvents} state={viewState} historical={version !== null} onClose={() => closeAgent(selectedAgent.id)} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version !== null} agentNumbers={numbers} /> : null}
       </div>

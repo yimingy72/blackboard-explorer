@@ -306,6 +306,7 @@ function GraphCanvas({ state, agentNumbers = {}, selectedId, onSelect }: CanvasP
             pannable
             zoomable
             ariaLabel="黑板图谱缩略图"
+            style={{ width: 128, height: 84, margin: 10 }}
             className={styles.minimap}
             onPointerDown={markUserInteraction}
             onWheel={markUserInteraction}
