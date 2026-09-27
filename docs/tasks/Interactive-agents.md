@@ -18,7 +18,7 @@
 | GET `/tasks/{tid}/agents/{aid}/messages` | user/service；`{messages, session_available, session_origin, mode}`，mode active/review；可选 status=queued 用于 runtime |
 | POST 同路径 | user；`{id: UUID, content}`，最多20000字符；相同id/正文幂等，写 agent.message.posted 定向事件，返回消息 |
 | GET `/tasks/{tid}/agents/{aid}/session` | service；`{session, opening_instructions, origin, revision}`，不存在返回404 |
-| PUT 同路径 | service；`{session, opening_instructions, origin, expected_revision, deliveries?:[{id,claim_token}]}`；保存 checkpoint 并原子标记当前已消费消息 delivered；初次revision=0 |
+| PUT 同路径 | service；`{session, opening_instructions, origin, expected_revision, deliveries?:[{id,claim_token}], review_claim?:{id,claim_token}}`；保存 checkpoint 并原子标记当前已消费消息 delivered；review_claim 必须匹配当前有效processing租约（即使revision未变也拒绝旧worker）；初次revision=0 |
 | POST `/tasks/{tid}/agents/{aid}/messages/{mid}/claim` | service；`{mode:active/review}`，校验当前Agent活动状态，返回`{message,claim_token}`；固定300秒租约，冲突409 |
 | POST `/tasks/{tid}/agents/{aid}/messages/{mid}/complete` | service；`{claim_token, session, opening_instructions, origin, expected_revision, content, usage}`；原子保存session、用户消息completed及唯一助手reply_to记录 |
 | POST `/tasks/{tid}/agents/{aid}/messages/{mid}/fail` | service；`{claim_token, error}`，保留失败记录，错误不含密钥 |
@@ -32,6 +32,6 @@
 
 ## 分工与检查
 
-- storage 子代理：blackboard、contracts、objects、迁移、OpenAPI及测试。另为并行derive预留agent_runs `derive_from_version` nullable bigint / `derive_parallel` bool默认false；登记derive时记录当前最大Fact版本和是否已有活动Explore，无需新增register请求参数。
+- storage 子代理：blackboard、contracts、objects、迁移、OpenAPI及测试。并行derive使用agent_runs `derive_from_version` nullable bigint / `derive_parallel` bool默认false；登记请求新增可选derive_parallel，scheduler显式指定并在task锁内复核阶段、槽位、新事实与裁定前置条件。不符合返回stale_derive且不创建记录；None兼容手工登记。登记后记录实际最大Fact版本。
 - runtime 子代理：runner、middleware、session/chat worker、clients、server、supervisor（删除协调）及测试。不要改scheduler decision/executor或prompts。
 - 主代理：前端、并行derive策略/提示词/发布提醒整合、设计与文档、完整验证部署。不得读写`.env`；普通与集成测试不调用模型。真实闭环仅使用显式隔离命令及通用非危险任务。
