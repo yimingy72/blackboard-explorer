@@ -110,3 +110,13 @@ class ObjectStore:
                 if item.object_name is not None
             ]
         )
+
+    async def remove(self, uri: str) -> None:
+        def delete() -> None:
+            try:
+                self.client.remove_object(bucket_name=self.bucket, object_name=uri)
+            except S3Error as exc:
+                if exc.code not in {"NoSuchKey", "NoSuchObject"}:
+                    raise
+
+        await anyio.to_thread.run_sync(delete)

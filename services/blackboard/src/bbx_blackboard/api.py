@@ -40,6 +40,7 @@ from bbx_blackboard.auth import (
     require_task_reader,
     require_user_or_service,
 )
+from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
@@ -73,6 +74,7 @@ class TaskView(BaseModel):
     id: UUID
     goal: str
     status: str
+    deleting: bool
     acceptance_state: dict[str, Any]
     usage: dict[str, Any]
     agents: list[dict[str, Any]]
@@ -103,11 +105,46 @@ class AgentRegisterBody(BaseModel):
     task_type: Literal["explore", "derive", "close"]
     is_seed: bool = False
     close_mode: Literal["judge", "final"] | None = None
+    derive_parallel: bool | None = None
 
 
 class AgentRegistered(BaseModel):
     agent_id: str
     token: str
+
+
+class UserMessageBody(BaseModel):
+    id: UUID
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class DeliveryBody(BaseModel):
+    id: UUID
+    claim_token: UUID
+
+
+class SessionBody(BaseModel):
+    session: dict[str, Any]
+    opening_instructions: str
+    origin: Literal["native", "legacy"]
+    expected_revision: int = Field(ge=0)
+    deliveries: list[DeliveryBody] = Field(default_factory=list)
+    review_claim: DeliveryBody | None = None
+
+
+class ClaimBody(BaseModel):
+    mode: Literal["active", "review"]
+
+
+class CompleteBody(SessionBody):
+    claim_token: UUID
+    content: str = Field(min_length=1)
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class FailBody(BaseModel):
+    claim_token: UUID
+    error: str = Field(min_length=1, max_length=200)
 
 
 class HeartbeatBody(BaseModel):
@@ -226,6 +263,13 @@ def _service(request: Request) -> BoardService:
     return service
 
 
+def _conversations(request: Request) -> Conversations:
+    conversations: Conversations | None = request.app.state.conversations
+    if conversations is None:
+        raise HTTPException(503, "Blackboard is starting")
+    return conversations
+
+
 def _profiles(request: Request) -> ProfileStore:
     store: ProfileStore | None = request.app.state.profile_store
     if store is None:
@@ -324,6 +368,7 @@ def create_app(
                 secure=endpoint.scheme == "https",
             )
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
+        app.state.conversations = Conversations(app.state.engine)
         app.state.profile_store = ProfileStore(app.state.engine)
         await app.state.profile_store.ensure_bundled(settings.profiles_dir)
         if own_dispatcher:
@@ -347,6 +392,7 @@ def create_app(
     app.state.board_service = (
         BoardService(engine, objects) if engine is not None and objects is not None else None
     )
+    app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.profile_store = ProfileStore(engine) if engine is not None else None
     app.state.workspace_cache = WorkspaceArchiveCache()
 
@@ -395,6 +441,11 @@ def create_app(
             agent_profile_version=row["version"],
         )
 
+    @app.get("/api/tasks/deletions", tags=["tasks"])
+    async def pending_deletions(request: Request) -> list[UUID]:
+        require_service(request)
+        return await _conversations(request).deletions()
+
     @app.get("/api/tasks", response_model=list[TaskView], tags=["tasks"])
     async def list_tasks(
         request: Request,
@@ -427,6 +478,7 @@ def create_app(
             id=task_id,
             goal=task["goal"],
             status=task["status"],
+            deleting=task["deleting"],
             acceptance_state=task["acceptance_state"],
             usage=task["usage"],
             agents=[
@@ -481,6 +533,111 @@ def create_app(
                         if exc.code != "agent_inactive":
                             raise
         return StatusResult(status=status, events=events)
+
+    @app.delete("/api/tasks/{task_id}", status_code=202, tags=["tasks"])
+    async def delete_task(request: Request, task_id: UUID) -> dict[str, Any]:
+        identity = require_user_or_service(request)
+        if identity.kind != "user":
+            raise HTTPException(403, "User token required")
+        return await _conversations(request).request_delete(task_id)
+
+    @app.post("/api/tasks/{task_id}/purge", tags=["system"])
+    async def purge_task(request: Request, task_id: UUID) -> dict[str, bool]:
+        require_service(request)
+        result = await _conversations(request).purge(task_id, request.app.state.objects)
+        await request.app.state.workspace_cache.invalidate(f"workspace/{task_id}.tar.zst")
+        return result
+
+    @app.get("/api/conversations/pending", tags=["system"])
+    async def pending_conversations(request: Request) -> list[dict[str, Any]]:
+        require_service(request)
+        return await _conversations(request).pending()
+
+    @app.post("/api/conversations/recover", tags=["system"])
+    async def recover_conversations(request: Request) -> dict[str, int]:
+        require_service(request)
+        return await _conversations(request).recover()
+
+    @app.get("/api/tasks/{task_id}/agents/{agent_id}/messages", tags=["conversations"])
+    async def agent_messages(
+        request: Request,
+        task_id: UUID,
+        agent_id: str,
+        status: Literal["queued"] | None = None,
+    ) -> dict[str, Any]:
+        require_user_or_service(request)
+        return await _conversations(request).list_messages(task_id, agent_id, status)
+
+    @app.post("/api/tasks/{task_id}/agents/{agent_id}/messages", tags=["conversations"])
+    async def post_agent_message(
+        request: Request, task_id: UUID, agent_id: str, body: UserMessageBody
+    ) -> dict[str, Any]:
+        identity = require_user_or_service(request)
+        if identity.kind != "user":
+            raise HTTPException(403, "User token required")
+        return await _conversations(request).post_message(task_id, agent_id, body.id, body.content)
+
+    @app.get("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
+    async def get_agent_session(request: Request, task_id: UUID, agent_id: str) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).get_session(task_id, agent_id)
+
+    @app.put("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
+    async def put_agent_session(
+        request: Request, task_id: UUID, agent_id: str, body: SessionBody
+    ) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).put_session(
+            task_id,
+            agent_id,
+            body.session,
+            body.opening_instructions,
+            body.origin,
+            body.expected_revision,
+            [delivery.model_dump() for delivery in body.deliveries],
+            body.review_claim.model_dump() if body.review_claim else None,
+        )
+
+    @app.post(
+        "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/claim", tags=["conversations"]
+    )
+    async def claim_agent_message(
+        request: Request, task_id: UUID, agent_id: str, message_id: UUID, body: ClaimBody
+    ) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).claim(task_id, agent_id, message_id, body.mode)
+
+    @app.post(
+        "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/complete",
+        tags=["conversations"],
+    )
+    async def complete_agent_message(
+        request: Request, task_id: UUID, agent_id: str, message_id: UUID, body: CompleteBody
+    ) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).complete(
+            task_id,
+            agent_id,
+            message_id,
+            body.claim_token,
+            body.session,
+            body.opening_instructions,
+            body.origin,
+            body.expected_revision,
+            body.content,
+            body.usage,
+        )
+
+    @app.post(
+        "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/fail", tags=["conversations"]
+    )
+    async def fail_agent_message(
+        request: Request, task_id: UUID, agent_id: str, message_id: UUID, body: FailBody
+    ) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).fail(
+            task_id, agent_id, message_id, body.claim_token, body.error
+        )
 
     @app.get("/api/tasks/{task_id}/report", tags=["tasks"], response_class=PlainTextResponse)
     async def report(request: Request, task_id: UUID) -> PlainTextResponse:
@@ -732,7 +889,11 @@ def create_app(
         require_service(request)
         await _task(request, task_id)
         agent_id = await _service(request).register_agent(
-            task_id, body.task_type, is_seed=body.is_seed, close_mode=body.close_mode
+            task_id,
+            body.task_type,
+            is_seed=body.is_seed,
+            close_mode=body.close_mode,
+            derive_parallel=body.derive_parallel,
         )
         return AgentRegistered(
             agent_id=agent_id, token=issue_agent_token(settings, task_id, agent_id)
@@ -836,7 +997,17 @@ def create_app(
                     raise HTTPException(413, "Object exceeds upload limit")
                 await anyio.to_thread.run_sync(content.write, chunk)
             await anyio.to_thread.run_sync(content.seek, 0)
-            await request.app.state.objects.put(key, content, length=size)
+            async with request.app.state.engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(s.tasks.c.deleting).where(s.tasks.c.id == task_id).with_for_update()
+                    )
+                ).first()
+                if row is None:
+                    raise HTTPException(404, "Task not found")
+                if row[0]:
+                    raise HTTPException(409, "Task is being deleted")
+                await request.app.state.objects.put(key, content, length=size)
         return UploadResult(key=key, size=size)
 
     @app.get("/api/profiles", response_model=list[ProfileName], tags=["profiles"])

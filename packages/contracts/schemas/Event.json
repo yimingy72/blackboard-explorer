@@ -27,7 +27,11 @@
         "task.report",
         "budget.updated",
         "tool_call.recorded",
-        "agent.trace.recorded"
+        "agent.trace.recorded",
+        "agent.message.posted",
+        "agent.message.delivered",
+        "agent.message.replied",
+        "agent.message.failed"
       ],
       "title": "EventType",
       "type": "string"

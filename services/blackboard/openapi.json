@@ -139,6 +139,17 @@
             ],
             "title": "Close Mode"
           },
+          "derive_parallel": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derive Parallel"
+          },
           "is_seed": {
             "default": false,
             "title": "Is Seed",
@@ -281,6 +292,23 @@
         "title": "Budget",
         "type": "object"
       },
+      "ClaimBody": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "active",
+              "review"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ClaimBody",
+        "type": "object"
+      },
       "ClaimForBody": {
         "properties": {
           "agent_id": {
@@ -342,6 +370,74 @@
         "title": "CloseBody",
         "type": "object"
       },
+      "CompleteBody": {
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "deliveries": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveryBody"
+            },
+            "title": "Deliveries",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "opening_instructions": {
+            "title": "Opening Instructions",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "native",
+              "legacy"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "review_claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "additionalProperties": true,
+            "title": "Session",
+            "type": "object"
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "session",
+          "opening_instructions",
+          "origin",
+          "expected_revision",
+          "claim_token",
+          "content"
+        ],
+        "title": "CompleteBody",
+        "type": "object"
+      },
       "ConcludeBody": {
         "properties": {
           "reason": {
@@ -354,6 +450,26 @@
           "reason"
         ],
         "title": "ConcludeBody",
+        "type": "object"
+      },
+      "DeliveryBody": {
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "claim_token"
+        ],
+        "title": "DeliveryBody",
         "type": "object"
       },
       "Event": {
@@ -458,7 +574,11 @@
           "task.report",
           "budget.updated",
           "tool_call.recorded",
-          "agent.trace.recorded"
+          "agent.trace.recorded",
+          "agent.message.posted",
+          "agent.message.delivered",
+          "agent.message.replied",
+          "agent.message.failed"
         ],
         "title": "EventType",
         "type": "string"
@@ -593,6 +713,27 @@
         ],
         "title": "FactKind",
         "type": "string"
+      },
+      "FailBody": {
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "error": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_token",
+          "error"
+        ],
+        "title": "FailBody",
+        "type": "object"
       },
       "FinishBody": {
         "properties": {
@@ -1505,6 +1646,57 @@
         "title": "SearchHit",
         "type": "object"
       },
+      "SessionBody": {
+        "properties": {
+          "deliveries": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveryBody"
+            },
+            "title": "Deliveries",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "opening_instructions": {
+            "title": "Opening Instructions",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "native",
+              "legacy"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "review_claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "additionalProperties": true,
+            "title": "Session",
+            "type": "object"
+          }
+        },
+        "required": [
+          "session",
+          "opening_instructions",
+          "origin",
+          "expected_revision"
+        ],
+        "title": "SessionBody",
+        "type": "object"
+      },
       "StatusBody": {
         "properties": {
           "reason": {
@@ -1701,6 +1893,10 @@
             "title": "Created At",
             "type": "string"
           },
+          "deleting": {
+            "title": "Deleting",
+            "type": "boolean"
+          },
           "goal": {
             "title": "Goal",
             "type": "string"
@@ -1746,6 +1942,7 @@
           "id",
           "goal",
           "status",
+          "deleting",
           "acceptance_state",
           "usage",
           "agents",
@@ -1877,6 +2074,27 @@
           }
         },
         "title": "Usage",
+        "type": "object"
+      },
+      "UserMessageBody": {
+        "properties": {
+          "content": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "UserMessageBody",
         "type": "object"
       },
       "ValidationError": {
@@ -2060,6 +2278,57 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/conversations/pending": {
+      "get": {
+        "operationId": "pending_conversations_api_conversations_pending_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Pending Conversations Api Conversations Pending Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pending Conversations",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/conversations/recover": {
+      "post": {
+        "operationId": "recover_conversations_api_conversations_recover_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Recover Conversations Api Conversations Recover Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recover Conversations",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/evidence": {
       "get": {
         "operationId": "evidence_api_evidence_get",
@@ -2442,7 +2711,76 @@
         ]
       }
     },
+    "/api/tasks/deletions": {
+      "get": {
+        "operationId": "pending_deletions_api_tasks_deletions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "title": "Response Pending Deletions Api Tasks Deletions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pending Deletions",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
     "/api/tasks/{task_id}": {
+      "delete": {
+        "operationId": "delete_task_api_tasks__task_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Task Api Tasks  Task Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Task",
+        "tags": [
+          "tasks"
+        ]
+      },
       "get": {
         "operationId": "task_detail_api_tasks__task_id__get",
         "parameters": [
@@ -2789,6 +3127,477 @@
         "summary": "Grace",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/messages": {
+      "get": {
+        "operationId": "agent_messages_api_tasks__task_id__agents__agent_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "queued",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Agent Messages Api Tasks  Task Id  Agents  Agent Id  Messages Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Messages",
+        "tags": [
+          "conversations"
+        ]
+      },
+      "post": {
+        "operationId": "post_agent_message_api_tasks__task_id__agents__agent_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserMessageBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Agent Message Api Tasks  Task Id  Agents  Agent Id  Messages Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Agent Message",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/claim": {
+      "post": {
+        "operationId": "claim_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Claim Agent Message Api Tasks  Task Id  Agents  Agent Id  Messages  Message Id  Claim Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Agent Message",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/complete": {
+      "post": {
+        "operationId": "complete_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Complete Agent Message Api Tasks  Task Id  Agents  Agent Id  Messages  Message Id  Complete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Agent Message",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/messages/{message_id}/fail": {
+      "post": {
+        "operationId": "fail_agent_message_api_tasks__task_id__agents__agent_id__messages__message_id__fail_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Fail Agent Message Api Tasks  Task Id  Agents  Agent Id  Messages  Message Id  Fail Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fail Agent Message",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/session": {
+      "get": {
+        "operationId": "get_agent_session_api_tasks__task_id__agents__agent_id__session_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Agent Session Api Tasks  Task Id  Agents  Agent Id  Session Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Session",
+        "tags": [
+          "conversations"
+        ]
+      },
+      "put": {
+        "operationId": "put_agent_session_api_tasks__task_id__agents__agent_id__session_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Agent Session Api Tasks  Task Id  Agents  Agent Id  Session Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Agent Session",
+        "tags": [
+          "conversations"
         ]
       }
     },
@@ -3496,6 +4305,53 @@
         "summary": "Get Object",
         "tags": [
           "board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/purge": {
+      "post": {
+        "operationId": "purge_task_api_tasks__task_id__purge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Purge Task Api Tasks  Task Id  Purge Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Purge Task",
+        "tags": [
+          "system"
         ]
       }
     },

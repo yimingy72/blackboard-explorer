@@ -224,3 +224,9 @@ class WorkspaceArchiveCache:
             while self._entries:
                 _, index = self._entries.popitem(last=False)
                 await anyio.to_thread.run_sync(index.close)
+
+    async def invalidate(self, uri: str) -> None:
+        async with self._lock:
+            index = self._entries.pop(uri, None)
+            if index is not None:
+                await anyio.to_thread.run_sync(index.close)

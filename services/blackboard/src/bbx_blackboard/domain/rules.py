@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from bbx_contracts.models import Price, Usage
+from bbx_contracts.models import Params, Price, Usage
 
 
 class RuleViolation(ValueError):
@@ -355,6 +356,71 @@ def decide(
             fail("close_already_running", "已有收尾 Agent 在运行，不能重复登记。")
         if kind == "close" and data.get("close_mode") not in {"judge", "final"}:
             fail("close_mode_required", "close Agent 必须指定 judge 或 final 模式。")
+        derive_fields = {}
+        if kind == "derive":
+            expected = data.get("derive_parallel")
+            active = [
+                agent
+                for agent in state.agents.values()
+                if agent["status"] in {"running", "concluding"}
+            ]
+            workers = [agent for agent in active if agent["task_type"] in {"explore", "derive"}]
+            explore_active = any(agent["task_type"] == "explore" for agent in workers)
+            derive_active = any(agent["task_type"] == "derive" for agent in workers)
+            latest_fact = max((fact["version"] for fact in state.facts.values()), default=0)
+            if expected is not None:
+                params = Params.model_validate(task["params"])
+                budget = task["budget"]
+                spent = Decimal(str(task["usage"].get("cost", 0) or 0))
+                limit = Decimal(str(budget["max_cost"])) * (1 - params.close_reserve_ratio)
+                started = task.get("started_at")
+                budget_exhausted = spent >= limit or (
+                    started is not None
+                    and datetime.now(UTC) >= started + timedelta(minutes=int(budget["max_minutes"]))
+                )
+                closing_due = (
+                    task["status"] != "running"
+                    or budget_exhausted
+                    or task["derive_empty_streak"] >= params.derive_empty_limit
+                    or all(item["status"] == "met" for item in task["acceptance_state"].values())
+                )
+                open_intents = any(intent["status"] == "open" for intent in state.intents.values())
+                claimed_intents = any(
+                    intent["status"] == "claimed" for intent in state.intents.values()
+                )
+                judging = any(agent["task_type"] == "close" for agent in active)
+                if expected:
+                    latest_derive = max(
+                        (
+                            agent["derive_from_version"]
+                            for agent in state.agents.values()
+                            if agent["task_type"] == "derive"
+                            and agent.get("derive_from_version") is not None
+                        ),
+                        default=0,
+                    )
+                    valid_phase = (
+                        explore_active
+                        and not derive_active
+                        and not open_intents
+                        and not judging
+                        and len(workers) < int(budget["max_concurrent_agents"])
+                        and latest_fact > latest_derive
+                    )
+                else:
+                    valid_phase = (
+                        not workers
+                        and not open_intents
+                        and not claimed_intents
+                        and not judging
+                        and task["last_judgment_version"] >= task["last_change_version"]
+                    )
+                if not params.derive_enabled or closing_due or not valid_phase:
+                    fail("stale_derive", "推导派发条件已变化，请重新调度。")
+            derive_fields = {
+                "derive_from_version": latest_fact,
+                "derive_parallel": explore_active if expected is None else expected,
+            }
         return [
             event(
                 "agent.spawned",
@@ -362,6 +428,7 @@ def decide(
                 {
                     "id": aid,
                     **data,
+                    **derive_fields,
                     "judge_from_version": task.get("version", 0) if kind == "close" else None,
                 },
                 aid,
@@ -479,7 +546,11 @@ def decide(
                     event(
                         "derive.result",
                         aid,
-                        {"posted": detail["posted"], "excluded": detail.get("excluded", [])},
+                        {
+                            "posted": detail["posted"],
+                            "excluded": detail.get("excluded", []),
+                            "derive_parallel": agent.get("derive_parallel", False),
+                        },
                         aid,
                     )
                 )

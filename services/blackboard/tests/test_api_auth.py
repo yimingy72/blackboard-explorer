@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import bbx_blackboard.api as api
@@ -26,8 +28,21 @@ def settings() -> Settings:
     )
 
 
+async def test_lifespan_initializes_conversations_with_owned_engine(monkeypatch):
+    engine = SimpleNamespace(dispose=AsyncMock())
+    dispatcher = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+    monkeypatch.setattr(api, "create_async_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(api.ProfileStore, "ensure_bundled", AsyncMock())
+    app = api.create_app(settings(), objects=FakeObjects(), dispatcher=dispatcher)
+    assert app.state.conversations is None
+    async with app.router.lifespan_context(app):
+        assert isinstance(app.state.conversations, api.Conversations)
+        assert app.state.conversations.repo.engine is engine
+    engine.dispose.assert_awaited_once()
+
+
 class FakeObjects:
-    async def exists(self, _uri: str) -> bool:
+    async def exists(self, uri: str) -> bool:
         return True
 
     async def stream(self, _uri: str) -> AsyncIterator[bytes]:
@@ -159,6 +174,58 @@ async def test_invalid_audience_and_expired_token() -> None:
                 "/api/profiles", headers={"Authorization": f"Bearer {token}"}
             )
             assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> None:
+    config = settings()
+    app = api.create_app(config)
+    tid, mid = uuid4(), uuid4()
+
+    class FakeConversations:
+        async def post_message(self, task_id, aid, message_id, content):
+            assert (task_id, aid, message_id, content) == (tid, "agent-1", mid, "hello")
+            return {"id": message_id, "content": content}
+
+        async def get_session(self, task_id, aid):
+            assert (task_id, aid) == (tid, "agent-1")
+            return {
+                "session": {},
+                "opening_instructions": "saved",
+                "origin": "native",
+                "revision": 1,
+            }
+
+        async def request_delete(self, task_id):
+            assert task_id == tid
+            return {"task_id": tid, "deleting": True}
+
+    app.state.conversations = FakeConversations()
+    agent = {"Authorization": f"Bearer {issue_agent_token(config, tid, 'agent-1')}"}
+    service = {"Authorization": "Bearer service-test"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+    ) as client:
+        path = f"/api/tasks/{tid}/agents/agent-1"
+        assert (
+            await client.post(
+                f"{path}/messages", json={"id": str(mid), "content": "hello"}, headers=agent
+            )
+        ).status_code == 403
+        assert (await client.get(f"{path}/session", headers=agent)).status_code == 403
+        assert (
+            await client.post(
+                f"{path}/messages", json={"id": str(mid), "content": "hello"}, headers=service
+            )
+        ).status_code == 403
+        assert (await client.delete(f"/api/tasks/{tid}", headers=service)).status_code == 403
+        client.cookies.set("bbx_session", issue_user_token(config, "alice"), path="/api")
+        assert (await client.get(f"{path}/session")).status_code == 403
+        assert (
+            await client.post(f"{path}/messages", json={"id": str(mid), "content": "hello"})
+        ).status_code == 200
+        assert (await client.delete(f"/api/tasks/{tid}")).status_code == 202
+        assert (await client.get(f"{path}/session", headers=service)).json()["revision"] == 1
         response = await client.get("/api/profiles", headers=[(b"Authorization", b"Bearer \xff")])
         assert response.status_code == 401
         user = issue_user_token(config, "alice")

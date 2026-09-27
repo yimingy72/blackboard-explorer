@@ -40,3 +40,9 @@ curl -N -H "Authorization: Bearer $SERVICE_TOKEN" \
 profile 版本保存提示词正文快照，内容变化产生新版本；任务创建时固定版本，并把 profile 默认参数与任务覆写合并。运行中的任务不跟随文件变化。
 
 完整请求与响应定义见 `openapi.json`；接口、验证结果及迁移说明见 `docs/tasks/M1b-report.md`。
+
+## 会话与定向消息
+
+`agent_sessions` 保存原生 MAF Session、初始指令和revision；`agent_messages` 保存幂等用户消息、投递状态、复盘回复及用量。用户通过任务/Agent范围的messages接口发送和读取；session checkpoint、认领、完成与恢复接口只允许服务身份。checkpoint与消息确认同事务，复盘每次写入同时校验claim token与租约。黑板投影回放不会清除这些会话数据。
+
+删除终态任务采用deleting标记与runtime协调，执行环境销毁后再幂等清理对象和数据库；普通任务结束与归档保留会话。并行derive登记也在任务锁内核验期望阶段，过期派发返回stale_derive。完整合同见[Interactive-agents](../../docs/tasks/Interactive-agents.md)。

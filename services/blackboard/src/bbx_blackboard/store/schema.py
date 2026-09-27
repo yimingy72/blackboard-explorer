@@ -47,6 +47,7 @@ tasks = Table(
     col("agent_profile", Text, nullable=False),
     col("agent_profile_version", Integer, nullable=False),
     col("status", Text, nullable=False),
+    col("deleting", Boolean, nullable=False, server_default=text("false")),
     col("last_change_version", BigInteger, nullable=False, default=0),
     col("last_judgment_version", BigInteger, nullable=False, default=0),
     col("derive_empty_streak", Integer, nullable=False, default=0),
@@ -124,6 +125,8 @@ agent_runs = scoped(
     col("is_seed", Boolean, nullable=False),
     col("close_mode", Text),
     col("judge_from_version", BigInteger),
+    col("derive_from_version", BigInteger),
+    col("derive_parallel", Boolean, nullable=False, server_default=text("false")),
     col("intent_id", Text),
     col("status", Text, nullable=False),
     col("end_reason", Text),
@@ -150,6 +153,44 @@ tool_calls = scoped(
     col("result_uri", Text),
     col("created_at", DateTime(timezone=True), nullable=False),
 )
+
+agent_sessions = Table(
+    "agent_sessions",
+    metadata,
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), primary_key=True),
+    col("agent_id", Text, primary_key=True),
+    col("session", JSONB, nullable=False),
+    col("opening_instructions", Text, nullable=False),
+    col("origin", Text, nullable=False),
+    col("revision", BigInteger, nullable=False),
+    col("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+agent_messages = Table(
+    "agent_messages",
+    metadata,
+    col("id", UUID(as_uuid=True), primary_key=True),
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False),
+    col("agent_id", Text, nullable=False),
+    col("role", Text, nullable=False),
+    col("content", Text, nullable=False),
+    col("status", Text, nullable=False),
+    Column("reply_to", UUID(as_uuid=True), ForeignKey("agent_messages.id")),
+    col("claim_token", UUID(as_uuid=True)),
+    col("lease_until", DateTime(timezone=True)),
+    col("usage", JSONB),
+    col("error", Text),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    col("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index(
+    "ix_agent_messages_queue",
+    agent_messages.c.task_id,
+    agent_messages.c.agent_id,
+    agent_messages.c.status,
+    agent_messages.c.created_at,
+)
+Index("ux_agent_messages_reply_to", agent_messages.c.reply_to, unique=True)
 
 agent_profiles = Table(
     "agent_profiles",

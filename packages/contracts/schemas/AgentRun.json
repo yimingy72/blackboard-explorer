@@ -141,6 +141,26 @@
       "description": "裁定开始的版本",
       "title": "Judge From Version"
     },
+    "derive_from_version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "推导开始时的最大事实版本",
+      "title": "Derive From Version"
+    },
+    "derive_parallel": {
+      "default": false,
+      "description": "登记时有探索 Agent 并行运行",
+      "title": "Derive Parallel",
+      "type": "boolean"
+    },
     "intent_id": {
       "anyOf": [
         {

@@ -61,6 +61,10 @@ class FakeMinio:
             type("Item", (), {"object_name": uri}) for uri in self.objects if uri.startswith(prefix)
         ]
 
+    def remove_object(self, bucket_name, object_name):
+        assert threading.current_thread() is not threading.main_thread()
+        self.objects.pop(object_name, None)
+
 
 async def test_put_get_stream_and_cleanup(monkeypatch):
     monkeypatch.setattr("bbx_objects.store.Minio", FakeMinio)
@@ -72,6 +76,9 @@ async def test_put_get_stream_and_cleanup(monkeypatch):
     assert await store.get("a/one") == b"abcdef"
     assert [part async for part in store.stream("a/one", chunk_size=2)] == [b"ab", b"cd", b"ef"]
     assert await store.list("a/") == ["a/one", "a/two"]
+    await store.remove("a/one")
+    await store.remove("a/one")
+    assert await store.list("a/") == ["a/two"]
     client = store.client
     assert isinstance(client, FakeMinio)
     assert all(response.closed and response.released for response in client.responses)

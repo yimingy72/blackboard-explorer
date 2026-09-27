@@ -123,6 +123,10 @@ class EventType(StrEnum):
     BUDGET_UPDATED = "budget.updated"
     TOOL_CALL_RECORDED = "tool_call.recorded"
     AGENT_TRACE_RECORDED = "agent.trace.recorded"
+    AGENT_MESSAGE_POSTED = "agent.message.posted"
+    AGENT_MESSAGE_DELIVERED = "agent.message.delivered"
+    AGENT_MESSAGE_REPLIED = "agent.message.replied"
+    AGENT_MESSAGE_FAILED = "agent.message.failed"
 
 
 class Evidence(ContractModel):
@@ -278,6 +282,10 @@ class AgentRun(ContractModel):
     is_seed: bool = Field(default=False, description="是否种子探索")
     close_mode: CloseMode | None = Field(default=None, description="收尾的裁定或终结模式")
     judge_from_version: int | None = Field(default=None, ge=0, description="裁定开始的版本")
+    derive_from_version: int | None = Field(
+        default=None, ge=0, description="推导开始时的最大事实版本"
+    )
+    derive_parallel: bool = Field(default=False, description="登记时有探索 Agent 并行运行")
     intent_id: str | None = Field(default=None, description="持有的意图")
     status: AgentStatus = Field(description="运行状态")
     end_reason: EndReason | None = Field(default=None, description="结束原因")

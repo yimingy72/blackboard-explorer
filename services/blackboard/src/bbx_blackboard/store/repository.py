@@ -176,6 +176,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 is_seed=p.get("is_seed", False),
                 close_mode=p.get("close_mode"),
                 judge_from_version=p.get("judge_from_version"),
+                derive_from_version=p.get("derive_from_version"),
+                derive_parallel=p.get("derive_parallel", False),
                 intent_id=None,
                 status="running",
                 end_reason=None,
@@ -257,12 +259,13 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             await patch(conn, s.tasks, tid, changes)
     elif kind == "derive.result":
         task = await row(conn, s.tasks, tid)
-        await patch(
-            conn,
-            s.tasks,
-            tid,
-            {"derive_empty_streak": task["derive_empty_streak"] + 1 if not p["posted"] else 0},
-        )
+        if p["posted"] or not p.get("derive_parallel", False):
+            await patch(
+                conn,
+                s.tasks,
+                tid,
+                {"derive_empty_streak": task["derive_empty_streak"] + 1 if not p["posted"] else 0},
+            )
     elif kind == "budget.updated":
         await patch(conn, s.tasks, tid, {"usage": p["usage"]})
     elif kind == "acceptance.judged":
@@ -302,7 +305,15 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 created_at=stamp,
             )
         )
-    elif kind in {"fact.disputed", "fact.undisputed", "agent.trace.recorded"}:
+    elif kind in {
+        "fact.disputed",
+        "fact.undisputed",
+        "agent.trace.recorded",
+        "agent.message.posted",
+        "agent.message.delivered",
+        "agent.message.replied",
+        "agent.message.failed",
+    }:
         pass
     else:
         raise ValueError(f"unhandled event type: {kind}")

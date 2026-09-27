@@ -14,7 +14,7 @@ from bbx_contracts.models import (
     TaskSpec,
     Usage,
 )
-from sqlalchemy import insert, or_, select
+from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.domain import (
@@ -98,8 +98,23 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task["deleting"]:
+                raise RuleViolation("task_deleting", "任务正在删除。")
             events = decide(state, command, actor, data)
             written = await self.repo.append(conn, tid, events)
+            if command == "finish_agent":
+                await conn.execute(
+                    update(s.agent_messages)
+                    .where(
+                        s.agent_messages.c.task_id == tid,
+                        s.agent_messages.c.agent_id == data["agent_id"],
+                        s.agent_messages.c.role == "user",
+                        s.agent_messages.c.status == "processing",
+                    )
+                    .values(
+                        status="queued", claim_token=None, lease_until=None, updated_at=func.now()
+                    )
+                )
         if written:
             await self.repo.notify(tid, written[-1]["version"])
         return written
@@ -135,6 +150,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task["deleting"]:
+                raise RuleViolation("task_deleting", "任务正在删除。")
             for evidence in data["evidence"]:
                 uri = evidence.get("uri")
                 if not uri or not await self.objects.exists(uri):
@@ -160,6 +177,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task["deleting"]:
+                raise RuleViolation("task_deleting", "任务正在删除。")
             planned = decide(state, "post_intent", agent_id, data)
             if dry_run:
                 return {"valid": True}
@@ -184,13 +203,22 @@ class BoardService:
         return await self._write(tid, "system_close", "system", {"intent_id": intent_id})
 
     async def register_agent(
-        self, tid: UUID, task_type: str, *, is_seed: bool = False, close_mode: str | None = None
+        self,
+        tid: UUID,
+        task_type: str,
+        *,
+        is_seed: bool = False,
+        close_mode: str | None = None,
+        derive_parallel: bool | None = None,
     ) -> str:
+        data = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
+        if task_type == "derive" and derive_parallel is not None:
+            data["derive_parallel"] = derive_parallel
         events = await self._write(
             tid,
             "register_agent",
             "scheduler",
-            {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode},
+            data,
         )
         return events[0]["object_id"]
 
@@ -291,6 +319,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task["deleting"]:
+                raise RuleViolation("task_deleting", "任务正在删除。")
             agent = state.agents.get(agent_id)
             if agent is None or agent["status"] not in {"running", "concluding"}:
                 raise RuleViolation("agent_inactive", "Trace 必须属于当前任务的活动 Agent。")
