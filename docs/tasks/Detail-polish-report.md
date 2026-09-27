@@ -16,6 +16,7 @@
 - Playwright：10 项通过；覆盖 Markdown/代码块、原始 XML 文本、脚本不执行、图片不加载、128×84 缩略图、所有筛选移除、302 对象完整图谱、390px 无横向溢出，以及已有对话、回放、表单、报告与归档流程。
 - `make test-integration`：38 项 Docker 集成测试通过。blackboard 镜像已构建，`git diff --check` 和浏览器测试 TypeScript 检查通过。
 - 已人工查看桌面与移动截图，日志与截图保存在主仓库忽略目录 `.data/checkpoints/detail-polish/`。没有读取或修改 `.env`，没有调用 DeepSeek。
+- 本地 blackboard 前端服务已更新，HTTP 页面与最终构建一致；未重启 runtime，既有任务与数据保留。
 
 ## 偏差与待决
 
