@@ -30,6 +30,7 @@
 - Playwright：11项通过；包含作者颜色与数量、持有者变化不改归属、产出定位、阅读排版与原文一致、复盘对话框/历史隔离、完整画布与390px无横向溢出。已查看桌面/手机截图。
 - `make test-integration`：38项通过，blackboard镜像构建通过。浏览器测试TypeScript检查及`git diff --check`通过。
 - 未新增依赖，未读取或修改`.env`，未调用真实DeepSeek；检查截图、日志及计时采样保留于主仓库忽略目录`.data/checkpoints/contribution-view/`。
+- 已将新前端资源热更新到本地服务，页面与最终构建一致；blackboard/runtime均未重启，新镜像同时已构建供后续部署使用。
 
 ## 提交与后续
 
