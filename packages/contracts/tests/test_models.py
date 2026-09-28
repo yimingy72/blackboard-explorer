@@ -291,3 +291,33 @@ def test_profile_rejects_mixed_accounting_currencies():
     profile["models"]["close"]["price"]["currency"] = "USD"
     with pytest.raises(ValidationError, match="相同币种"):
         m.AgentProfile.model_validate(profile)
+
+
+@pytest.mark.parametrize(
+    "role,tools",
+    [
+        ("explore", {"builtin": ["get"], "mcp_servers": []}),
+        ("derive", {"builtin": ["post_intent", "execute_command"], "mcp_servers": []}),
+        (
+            "close",
+            {
+                "builtin": ["submit_close", "get", "read_evidence"],
+                "mcp_servers": [{"name": "external", "version": 1}],
+            },
+        ),
+    ],
+)
+def test_worker_tool_configuration_cannot_remove_required_tools_or_expand_roles(role, tools):
+    with pytest.raises(ValidationError):
+        m.AgentProfile.model_validate({**PROFILE, "worker_tools": {role: tools}})
+
+
+def test_platform_model_reference_requires_both_name_and_version():
+    with pytest.raises(ValidationError):
+        m.ModelConfig.model_validate({**MODEL, "platform_id": "example"})
+    assert (
+        m.ModelConfig.model_validate(
+            {**MODEL, "platform_id": "example", "platform_version": 2}
+        ).platform_version
+        == 2
+    )

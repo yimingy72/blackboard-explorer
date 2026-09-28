@@ -22,7 +22,8 @@ from bbx_contracts.models import (
     Usage,
 )
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -42,6 +43,8 @@ from bbx_blackboard.auth import (
 )
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.domain import RuleViolation
+from bbx_blackboard.platform import PlatformStore
+from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
@@ -371,7 +374,12 @@ def create_app(
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
         app.state.conversations = Conversations(app.state.engine)
         app.state.profile_store = ProfileStore(app.state.engine)
-        await app.state.profile_store.ensure_bundled(settings.profiles_dir)
+        app.state.platform_store = PlatformStore(
+            app.state.engine, settings.agent_token_secret.get_secret_value()
+        )
+        await app.state.profile_store.ensure_bundled(
+            settings.profiles_dir, app.state.platform_store
+        )
         if own_dispatcher:
             from bbx_blackboard.sse import SSEDispatcher
 
@@ -395,7 +403,24 @@ def create_app(
     )
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.profile_store = ProfileStore(engine) if engine is not None else None
+    app.state.platform_store = (
+        PlatformStore(engine, settings.agent_token_secret.get_secret_value())
+        if engine is not None
+        else None
+    )
     app.state.workspace_cache = WorkspaceArchiveCache()
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_request: Request, exc: RequestValidationError) -> Response:
+        # Never echo raw request input: platform forms may include credentials.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()
+                ]
+            },
+        )
 
     @app.exception_handler(RuleViolation)
     async def rule_error(_request: Request, exc: RuleViolation) -> Response:
@@ -1045,9 +1070,14 @@ def create_app(
         identity = require_user_or_service(request)
         if not name or "/" in name:
             raise HTTPException(422, "Invalid profile name")
+        try:
+            body = await request.app.state.platform_store.normalize_profile(body)
+        except ValueError:
+            raise HTTPException(422, "平台模型引用规范化后币种或工具配置不一致") from None
         row = await _profiles(request).create(name, body, identity.name)
         return _profile_document(row)
 
+    app.include_router(platform_router)
     web_dist = _web_dist()
     if web_dist.is_dir():
         app.mount("/", SPAStaticFiles(directory=web_dist, html=True), name="web")

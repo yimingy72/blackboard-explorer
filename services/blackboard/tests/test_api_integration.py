@@ -157,6 +157,8 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
             ]
             for model in legacy_profile["models"].values():
                 model["price"]["currency"] = "USD"
+                model["platform_id"] = None
+                model["platform_version"] = None
             legacy_version = (
                 await client.post("/api/profiles/legacy-usd/versions", json=legacy_profile)
             ).json()["version"]

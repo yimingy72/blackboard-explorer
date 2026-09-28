@@ -60,6 +60,20 @@
           "prompts": {
             "$ref": "#/components/schemas/PromptPaths",
             "description": "提示词模板文件路径"
+          },
+          "worker_tools": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/WorkerTools"
+            },
+            "propertyNames": {
+              "enum": [
+                "explore",
+                "derive",
+                "close"
+              ]
+            },
+            "title": "Worker Tools",
+            "type": "object"
           }
         },
         "required": [
@@ -109,6 +123,20 @@
           "prompts": {
             "$ref": "#/components/schemas/PromptPaths",
             "description": "提示词模板文件路径"
+          },
+          "worker_tools": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/WorkerTools"
+            },
+            "propertyNames": {
+              "enum": [
+                "explore",
+                "derive",
+                "close"
+              ]
+            },
+            "title": "Worker Tools",
+            "type": "object"
           }
         },
         "required": [
@@ -825,6 +853,97 @@
         "title": "LoginBody",
         "type": "object"
       },
+      "McpBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "McpBinding",
+        "type": "object"
+      },
+      "McpInput": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_header": {
+            "default": "Authorization",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Auth Header",
+            "type": "string"
+          },
+          "auth_scheme": {
+            "default": "Bearer",
+            "pattern": "^[A-Za-z0-9_-]*$",
+            "title": "Auth Scheme",
+            "type": "string"
+          },
+          "clear_secret": {
+            "default": false,
+            "title": "Clear Secret",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "url"
+        ],
+        "title": "McpInput",
+        "type": "object"
+      },
       "ModelConfig-Input": {
         "additionalProperties": false,
         "properties": {
@@ -839,6 +958,30 @@
             "minLength": 1,
             "title": "Model",
             "type": "string"
+          },
+          "platform_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Id"
+          },
+          "platform_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Version"
           },
           "price": {
             "$ref": "#/components/schemas/Price-Input",
@@ -882,6 +1025,30 @@
             "title": "Model",
             "type": "string"
           },
+          "platform_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Id"
+          },
+          "platform_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Version"
+          },
           "price": {
             "$ref": "#/components/schemas/Price-Output",
             "description": "模型价格表"
@@ -907,6 +1074,83 @@
           "price"
         ],
         "title": "ModelConfig",
+        "type": "object"
+      },
+      "ModelInput": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "credential_source": {
+            "default": "stored",
+            "enum": [
+              "environment",
+              "stored",
+              "none"
+            ],
+            "title": "Credential Source",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price-Input"
+          },
+          "provider": {
+            "enum": [
+              "deepseek",
+              "openai_chat",
+              "openai_responses",
+              "openai_compatible"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "reasoning_effort": {
+            "default": "none",
+            "minLength": 1,
+            "title": "Reasoning Effort",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "provider",
+          "model",
+          "base_url",
+          "price"
+        ],
+        "title": "ModelInput",
         "type": "object"
       },
       "ModelSet-Input": {
@@ -2204,6 +2448,30 @@
         "title": "VerdictItem",
         "type": "object"
       },
+      "WorkerTools": {
+        "additionalProperties": false,
+        "properties": {
+          "builtin": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Builtin",
+            "type": "array"
+          },
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpBinding"
+            },
+            "title": "Mcp Servers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "builtin"
+        ],
+        "title": "WorkerTools",
+        "type": "object"
+      },
       "WorkspaceEntryView": {
         "properties": {
           "kind": {
@@ -2448,6 +2716,351 @@
         "summary": "Logout",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/platform/mcp-servers": {
+      "get": {
+        "operationId": "mcp_servers_api_platform_mcp_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Mcp Servers Api Platform Mcp Servers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mcp Servers",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/mcp-servers/{name}": {
+      "post": {
+        "operationId": "save_mcp_api_platform_mcp_servers__name__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Save Mcp Api Platform Mcp Servers  Name  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Mcp",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
+      "get": {
+        "operationId": "list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Mcp Tools Api Platform Mcp Servers  Name  Versions  Version  Tools Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Mcp Tools",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/models": {
+      "get": {
+        "operationId": "models_api_platform_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Models Api Platform Models Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Models",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/models/{name}": {
+      "post": {
+        "operationId": "save_model_api_platform_models__name__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Save Model Api Platform Models  Name  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Model",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/{kind}/{name}/versions/{version}": {
+      "get": {
+        "operationId": "config_version_api_platform__kind___name__versions__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "models",
+                "mcp-servers"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Config Version Api Platform  Kind   Name  Versions  Version  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Config Version",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/{kind}/{name}/versions/{version}/credentials": {
+      "get": {
+        "operationId": "credentials_api_platform__kind___name__versions__version__credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "models",
+                "mcp-servers"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Credentials Api Platform  Kind   Name  Versions  Version  Credentials Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Credentials",
+        "tags": [
+          "platform"
         ]
       }
     },

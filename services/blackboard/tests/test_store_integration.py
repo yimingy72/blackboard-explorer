@@ -781,3 +781,81 @@ async def test_bundled_profile_restart_preserves_user_prompt_edits(board_service
     assert (await store.get("restart-config", user_version["version"]))["prompt_templates"][
         "explore"
     ] == "User-authored prompt {{ goal }}"
+
+
+async def test_platform_credentials_versions_and_profile_bindings(board_service):
+    from bbx_blackboard.platform import McpInput, ModelInput, PlatformStore
+    from bbx_blackboard.store.schema import platform_configs
+    from bbx_contracts.profile import load_profile
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    store = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
+    fields = dict(
+        label="Example model",
+        provider="openai_chat",
+        model="example-model",
+        base_url="https://example.invalid/v1",
+        reasoning_effort="none",
+        credential_source="stored",
+        price={
+            "currency": "CNY",
+            "cache_hit_per_m": 0,
+            "cache_miss_per_m": 1,
+            "output_per_m": 2,
+            "off_peak": False,
+        },
+    )
+    original = await store.save(
+        "models",
+        "example-model",
+        ModelInput.model_validate({**fields, "api_key": "fixture-secret"}),
+        "tester",
+    )
+    assert original["has_secret"] and "fixture-secret" not in str(original)
+    async with board_service.repo.engine.connect() as conn:
+        encrypted = (
+            await conn.execute(
+                select(platform_configs.c.secret_ciphertext).where(
+                    platform_configs.c.name == "example-model"
+                )
+            )
+        ).scalar_one()
+    assert encrypted and "fixture-secret" not in encrypted
+    second = await store.save(
+        "models",
+        "example-model",
+        ModelInput.model_validate({**fields, "model": "new-model"}),
+        "tester",
+    )
+    assert second["version"] == 2
+    assert (await store.credentials("models", "example-model", 2))["secret"] == "fixture-secret"
+    assert (await store.get("models", "example-model", 1))["config"]["model"] == "example-model"
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    for role in ("explore", "derive", "close"):
+        model = getattr(profile.models, role)
+        model.platform_id = "example-model"
+        model.platform_version = 1
+        model.model = "tampered-redundant-field"
+    fixed = await store.normalize_profile(profile)
+    assert fixed.models.explore.model == "example-model"
+    assert fixed.models.close.price.output_per_m == 2
+    mcp = await store.save(
+        "mcp-servers",
+        "tools",
+        McpInput.model_validate(
+            {"label": "Tools", "url": "http://localhost:9001/mcp", "secret": "mcp-fixture-secret"}
+        ),
+        "tester",
+    )
+    assert mcp["has_secret"] and "mcp-fixture-secret" not in str(mcp)
+    cleared = await store.save(
+        "mcp-servers",
+        "tools",
+        McpInput(label="Tools", url="http://localhost:9001/mcp", clear_secret=True),
+        "tester",
+    )
+    assert not cleared["has_secret"]
+    assert (await store.credentials("mcp-servers", "tools", 1))["secret"] == "mcp-fixture-secret"
+    with pytest.raises(HTTPException):
+        await store.save("models", "missing-key", ModelInput.model_validate(fields), "tester")

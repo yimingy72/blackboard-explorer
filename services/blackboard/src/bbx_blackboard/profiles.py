@@ -12,6 +12,7 @@ from bbx_contracts.profile import load_profile
 from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.store import schema as s
 
 
@@ -121,7 +122,13 @@ class ProfileStore:
         profile, _ = load_profile(directory)
         return await self._ensure_bundled_profile("default", profile)
 
-    async def ensure_bundled(self, directory: Path) -> None:
-        await self.ensure_default(directory)
+    async def ensure_bundled(self, directory: Path, platform: PlatformStore | None = None) -> None:
+        default, _ = load_profile(directory)
         single, _ = load_profile(directory.parent / "single")
+        if platform is not None:
+            model = await platform.ensure_default_model(default.models.explore)
+            for profile in (default, single):
+                for role in ("explore", "derive", "close"):
+                    setattr(profile.models, role, model.model_copy(deep=True))
+        await self._ensure_bundled_profile("default", default)
         await self._ensure_bundled_profile("single", single)

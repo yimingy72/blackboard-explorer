@@ -200,10 +200,27 @@ agent_profiles = Table(
     col("prompts", JSONB, nullable=False),
     col("prompt_templates", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     col("models", JSONB, nullable=False),
+    col("worker_tools", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     col("params", JSONB, nullable=False),
     col("exec_image", Text, nullable=False),
     col("exec_resources", JSONB, nullable=False),
     col("privileged_allowlist", ARRAY(Text), nullable=False),
     col("created_by", Text),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+
+platform_configs = Table(
+    "platform_configs",
+    metadata,
+    col("kind", Text, primary_key=True),
+    col("name", Text, primary_key=True),
+    col("version", Integer, primary_key=True),
+    col("label", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("credential_source", Text, nullable=False),
+    col("secret_ciphertext", Text),
+    col("enabled", Boolean, nullable=False, server_default=text("true")),
+    col("created_by", Text, nullable=False),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )

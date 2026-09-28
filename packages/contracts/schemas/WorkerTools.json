@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "McpBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Tools"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "McpBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "builtin": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Builtin",
+      "type": "array"
+    },
+    "mcp_servers": {
+      "items": {
+        "$ref": "#/$defs/McpBinding"
+      },
+      "title": "Mcp Servers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "builtin"
+  ],
+  "title": "WorkerTools",
+  "type": "object"
+}

@@ -412,11 +412,19 @@ class Price(ContractModel):
 
 
 class ModelConfig(ContractModel):
+    platform_id: str | None = Field(default=None, min_length=1)
+    platform_version: int | None = Field(default=None, ge=1)
     provider: str = Field(min_length=1, description="模型供应商")
     model: str = Field(min_length=1, description="模型名称")
     base_url: str = Field(min_length=1, description="模型接口地址")
     reasoning_effort: str = Field(min_length=1, description="推理强度")
     price: Price = Field(description="模型价格表")
+
+    @model_validator(mode="after")
+    def complete_platform_reference(self) -> ModelConfig:
+        if (self.platform_id is None) != (self.platform_version is None):
+            raise ValueError("平台模型名称和版本必须同时填写")
+        return self
 
 
 class ModelSet(ContractModel):
@@ -454,7 +462,43 @@ class ExecResources(ContractModel):
     pids: int = Field(gt=0, description="执行环境进程限额")
 
 
+class McpBinding(ContractModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    version: int = Field(ge=1)
+    allowed_tools: list[str] | None = None
+
+
+class WorkerTools(ContractModel):
+    builtin: list[str]
+    mcp_servers: list[McpBinding] = Field(default_factory=list)
+
+
+BUILTIN_TOOLS = {
+    "explore": {
+        "post_fact",
+        "post_intent",
+        "claim",
+        "release",
+        "get",
+        "search",
+        "read_evidence",
+        "execute_command",
+    },
+    "derive": {"post_intent", "get", "search", "read_evidence"},
+    "close": {"submit_close", "get", "search", "read_evidence"},
+}
+REQUIRED_TOOLS = {
+    "explore": {"post_fact", "release"},
+    "derive": {"post_intent"},
+    "close": {"submit_close", "get", "read_evidence"},
+}
+
+
 class AgentProfile(ContractModel):
+    worker_tools: dict[Literal["explore", "derive", "close"], WorkerTools] = Field(
+        default_factory=dict
+    )
+
     models: ModelSet = Field(description="各任务类型模型与价格")
     params: Params = Field(description="默认调度参数")
     prompts: PromptPaths = Field(description="提示词模板文件路径")
@@ -462,3 +506,17 @@ class AgentProfile(ContractModel):
     exec_image: str = Field(min_length=1, description="执行环境镜像")
     exec_resources: ExecResources = Field(description="执行环境资源限制")
     privileged_allowlist: list[str] = Field(default_factory=list, description="允许的提权命令前缀")
+
+    @model_validator(mode="after")
+    def validate_worker_tools(self) -> AgentProfile:
+        for role, tools in self.worker_tools.items():
+            selected = set(tools.builtin)
+            if not selected <= BUILTIN_TOOLS[role] or not REQUIRED_TOOLS[role] <= selected:
+                raise ValueError(f"{role} 工具配置超出角色权限或缺少必要工具")
+            if len(selected) != len(tools.builtin):
+                raise ValueError("内置工具不能重复")
+            if role != "explore" and tools.mcp_servers:
+                raise ValueError("外部 MCP 只能分配给 Explore；裁定与推导保留受限工具权限")
+            if len({item.name for item in tools.mcp_servers}) != len(tools.mcp_servers):
+                raise ValueError("同一 worker 不能重复挂载同名 MCP 服务")
+        return self

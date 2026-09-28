@@ -90,6 +90,32 @@
   },
   "additionalProperties": false,
   "properties": {
+    "platform_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform Id"
+    },
+    "platform_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform Version"
+    },
     "provider": {
       "description": "模型供应商",
       "minLength": 1,

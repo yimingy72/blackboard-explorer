@@ -30,9 +30,71 @@
       "title": "ExecResources",
       "type": "object"
     },
+    "McpBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Tools"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "McpBinding",
+      "type": "object"
+    },
     "ModelConfig": {
       "additionalProperties": false,
       "properties": {
+        "platform_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform Id"
+        },
+        "platform_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform Version"
+        },
         "provider": {
           "description": "模型供应商",
           "minLength": 1,
@@ -352,10 +414,48 @@
       ],
       "title": "PromptTemplates",
       "type": "object"
+    },
+    "WorkerTools": {
+      "additionalProperties": false,
+      "properties": {
+        "builtin": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Builtin",
+          "type": "array"
+        },
+        "mcp_servers": {
+          "items": {
+            "$ref": "#/$defs/McpBinding"
+          },
+          "title": "Mcp Servers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "builtin"
+      ],
+      "title": "WorkerTools",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
+    "worker_tools": {
+      "additionalProperties": {
+        "$ref": "#/$defs/WorkerTools"
+      },
+      "propertyNames": {
+        "enum": [
+          "explore",
+          "derive",
+          "close"
+        ]
+      },
+      "title": "Worker Tools",
+      "type": "object"
+    },
     "models": {
       "$ref": "#/$defs/ModelSet",
       "description": "各任务类型模型与价格"
