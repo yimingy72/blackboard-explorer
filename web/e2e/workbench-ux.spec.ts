@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { TASK_ID, installMockApi } from './fixtures';
-import { BOARD_UPDATE, INITIAL_CONTEXT, MODEL_OUTPUT, MODEL_REASONING, installConversationFixture } from './conversation-fixture';
+import { BOARD_UPDATE, INITIAL_CONTEXT, MODEL_ERROR, MODEL_OUTPUT, MODEL_REASONING, installConversationFixture } from './conversation-fixture';
 
 test('Agent 常驻列表打开上下文、同步、模型输出与工具记录，回放隔离未来内容', async ({ page }) => {
   const mock = await installConversationFixture(page);
@@ -10,13 +10,14 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   const conversation = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
   await expect(conversation).toBeVisible();
-  for (const kind of ['初始上下文', '黑板同步注入', '模型回复']) {
+  for (const kind of ['初始上下文', '黑板同步注入', '模型回复', '模型请求失败']) {
     const entry = conversation.getByRole('article').filter({ hasText: kind });
     await entry.getByRole('button', { name: '查看正文' }).click();
   }
   await expect(conversation.locator('pre').filter({ hasText: INITIAL_CONTEXT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: BOARD_UPDATE })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_OUTPUT })).toBeVisible();
+  await expect(conversation.locator('pre').filter({ hasText: MODEL_ERROR })).toBeVisible();
   await conversation.locator('summary').filter({ hasText: '实际返回的推理' }).click();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_REASONING })).toBeVisible();
   await expect(conversation).toContainText('工具调用');

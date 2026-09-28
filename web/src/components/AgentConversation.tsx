@@ -18,7 +18,7 @@ type Props = {
   onSelect: (id: string) => void;
 };
 
-const traceLabels = { initial_context: '初始上下文', board_update: '黑板同步注入', model_output: '模型回复' };
+const traceLabels = { initial_context: '初始上下文', board_update: '黑板同步注入', model_output: '模型回复', model_error: '模型请求失败' };
 const messageStatus = { queued: '等待送达', processing: '处理中', delivered: '已送达', completed: '已回复', failed: '发送或回复失败' };
 
 function ChatMessage({ message, onRetry }: { message: AgentMessage; onRetry: (text: string) => void }) {
@@ -136,7 +136,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
       {agent.endReason && <p className={styles.endReason}>结束原因：{agentEndReasonLabel[agent.endReason] ?? agent.endReason}</p>}
       {entries.length > 0 && <ol className={styles.entries}>{entries.map((entry) => <li key={entry.type === 'chat' ? entry.message.id : `${entry.type}-${entry.version}`}>{entry.type === 'chat' ? <ChatMessage message={entry.message} onRetry={(text) => { setDraft(text); setSendError(''); }} /> : entry.type === 'tool' ? <ToolCall call={entry.call} /> :
         <article className={styles.entry}>
-          <div className={styles.entryHead}><span className={styles.kind}>{traceLabels[entry.kind]}</span><span>v{entry.version} · <time dateTime={entry.at}>{formatTime(entry.at)}</time></span></div>
+          <div className={styles.entryHead}><span className={styles.kind}>{traceLabels[entry.kind]}{entry.kind === 'initial_context' && entry.deriveRound ? ` · 第 ${entry.deriveRound} 轮` : ''}</span><span>v{entry.version} · <time dateTime={entry.at}>{formatTime(entry.at)}</time></span></div>
           <p className={styles.entrySummary}>{entry.summary || `第 ${entry.step} 步`}</p>
           <TraceBody entry={entry} />
         </article>}</li>)}</ol>}

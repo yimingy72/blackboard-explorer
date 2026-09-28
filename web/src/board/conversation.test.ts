@@ -59,6 +59,29 @@ describe('Agent display and conversation history', () => {
     expect(conversationEntries('agent-1', events.slice(0, 2), reduce(events.slice(0, 2)))).toEqual([]);
   });
 
+  it('replays both derive openings and every model failure at their recorded versions', () => {
+    const events = [
+      event('one', 1, 'task.created', { goal: 'Test', acceptance: [], budget: {}, usage: {} }),
+      event('one', 2, 'agent.spawned', { id: 'agent-1', task_type: 'derive' }),
+      event('one', 3, 'agent.trace.recorded', { agent_id: 'agent-1', kind: 'initial_context', step: 0, uri: 'trace/first', summary: 'First' }),
+      event('one', 4, 'agent.trace.recorded', { agent_id: 'agent-1', kind: 'model_error', step: 1, uri: 'trace/error-1', summary: 'Failed' }),
+      event('one', 5, 'agent.trace.recorded', { agent_id: 'agent-1', kind: 'model_error', step: 1, uri: 'trace/error-2', summary: 'Failed again' }),
+      event('one', 6, 'agent.reactivated', { id: 'agent-1', derive_round: 2 }),
+      event('one', 7, 'agent.trace.recorded', { agent_id: 'agent-1', kind: 'initial_context', derive_round: 2, step: 0, uri: 'trace/second', summary: 'Second' }),
+      event('one', 8, 'agent.trace.recorded', { agent_id: 'agent-1', kind: 'model_error', derive_round: 2, step: 2, uri: 'trace/error-3', summary: 'Failed third time' }),
+    ];
+    const entries = conversationEntries('agent-1', events, reduce(events), [], true);
+    expect(entries.map((entry) => entry.version)).toEqual([3, 4, 5, 7, 8]);
+    expect(entries.map((entry) => entry.type === 'trace' && entry.kind)).toEqual([
+      'initial_context', 'model_error', 'model_error', 'initial_context', 'model_error',
+    ]);
+    expect(entries.filter((entry) => entry.type === 'trace' && entry.kind === 'initial_context')).toMatchObject([
+      { deriveRound: 1, uri: 'trace/first' },
+      { deriveRound: 2, uri: 'trace/second' },
+    ]);
+    expect(conversationEntries('agent-1', events.slice(0, 6), reduce(events.slice(0, 6)), [], true).map((entry) => entry.version)).toEqual([3, 4, 5]);
+  });
+
   it('uses live, frozen, and historical end times', () => {
     const start = '2026-01-01T00:00:00Z';
     expect(taskDuration(null, null, null, Date.parse(start))).toBe('待启动');

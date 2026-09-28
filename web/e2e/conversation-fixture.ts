@@ -5,6 +5,7 @@ export const INITIAL_CONTEXT = '目标：核对月度汇总。验收：差异必
 export const BOARD_UPDATE = '[黑板更新] F2 已提交：两份汇总的日期口径不同。';
 export const MODEL_OUTPUT = '已核对日期列，接下来检查原始行与汇总规则。';
 export const MODEL_REASONING = '先核对两份资料的日期范围，再检查差异是否来自统计口径。';
+export const MODEL_ERROR = '{"category":"rate_limit","http_status":429,"request_id":"req-fixture"}';
 
 /** Adds provider-style trace records without any external model request. */
 export async function installConversationFixture(page: Page, options: { running?: boolean } = {}) {
@@ -25,7 +26,10 @@ export async function installConversationFixture(page: Page, options: { running?
     raw.push(event);
     if (event.type === 'agent.spawned') raw.push(trace('initial_context', INITIAL_CONTEXT, 0));
     if (event.type === 'fact.posted') raw.push(trace('board_update', BOARD_UPDATE, 1));
-    if (event.type === 'tool_call.recorded') raw.push(trace('model_output', MODEL_OUTPUT, 2, MODEL_REASONING));
+    if (event.type === 'tool_call.recorded') {
+      raw.push(trace('model_output', MODEL_OUTPUT, 2, MODEL_REASONING));
+      raw.push(trace('model_error', MODEL_ERROR, 3));
+    }
   }
   const events = raw.map((event, index) => ({
     ...event, version: index + 1,

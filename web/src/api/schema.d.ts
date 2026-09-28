@@ -1193,7 +1193,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "initial_context" | "board_update" | "model_output";
+            kind: "initial_context" | "board_update" | "model_output" | "model_error";
             /** Step */
             step: number;
             /** Summary */

@@ -1,17 +1,17 @@
 import type { BoardEvent, BoardState, BoardToolCall } from './types';
 import type { AgentMessage } from '../api/client';
 
-export type TraceKind = 'initial_context' | 'board_update' | 'model_output';
+export type TraceKind = 'initial_context' | 'board_update' | 'model_output' | 'model_error';
 export type TraceEntry = {
   type: 'trace'; version: number; at: string; kind: TraceKind;
-  step: number; uri: string; summary: string;
+  step: number; uri: string; summary: string; deriveRound?: number;
 };
 export type ToolEntry = { type: 'tool'; version: number; at: string; call: BoardToolCall };
 export type ChatEntry = { type: 'chat'; version: number; at: string; message: AgentMessage };
 export type ConversationEntry = TraceEntry | ToolEntry | ChatEntry;
 
 function isTraceKind(value: unknown): value is TraceKind {
-  return value === 'initial_context' || value === 'board_update' || value === 'model_output';
+  return value === 'initial_context' || value === 'board_update' || value === 'model_output' || value === 'model_error';
 }
 
 export function conversationEntries(agentId: string, events: readonly BoardEvent[], state: BoardState, messages: readonly AgentMessage[] = [], historical = false): ConversationEntry[] {
@@ -25,6 +25,8 @@ export function conversationEntries(agentId: string, events: readonly BoardEvent
       type: 'trace', version: event.version, at: event.created_at,
       kind: payload.kind, step: typeof payload.step === 'number' ? payload.step : 0,
       uri: payload.uri, summary: typeof payload.summary === 'string' ? payload.summary : '',
+      deriveRound: typeof payload.derive_round === 'number' && Number.isInteger(payload.derive_round) && payload.derive_round >= 1
+        ? payload.derive_round : state.agents[agentId]?.taskType === 'derive' ? 1 : undefined,
     });
   }
   const tools: ToolEntry[] = Object.values(state.toolCalls ?? {})
