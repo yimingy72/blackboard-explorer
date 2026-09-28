@@ -126,3 +126,9 @@
   .priceFields { grid-template-columns: 1fr; }
 }
 @media (max-width: 500px) { .formGrid { grid-template-columns: 1fr; } .wideField { grid-column: auto; } }
+.directWorker { border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); }
+.directActions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding: 16px 24px 22px; }
+.runtimeDetails { margin-top: 16px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-bg); }
+.runtimeDetails > summary { cursor: pointer; padding: 18px 24px; font-weight: 650; }
+.runtimeDetails .formGrid { border-top: 1px solid var(--color-line); }
+@media (max-width: 760px) { .directActions { padding: 14px; flex-wrap: wrap; } .runtimeDetails > summary { padding: 14px; } }

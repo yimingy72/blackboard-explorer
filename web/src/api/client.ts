@@ -1,22 +1,31 @@
 import type { components } from './schema';
 
 export type TaskView = components['schemas']['TaskView'];
-export type TaskCreateInput = components['schemas']['TaskCreateBody'];
+export type TaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number };
 export type TaskCreated = components['schemas']['TaskCreated'];
 export type ProfileName = components['schemas']['ProfileName'];
 export type ProfileVersion = components['schemas']['ProfileVersion'];
 export type ProfileDocument = components['schemas']['ProfileDocument'];
 export type ProfileInput = components['schemas']['AgentProfile-Input'];
+export type WorkerRole = 'explore' | 'derive' | 'close';
+export type WorkerTools = components['schemas']['WorkerTools'];
+export type WorkerSettings = { revision: number; profile: ProfileInput };
+export type RuntimeInput = Pick<ProfileInput, 'params' | 'exec_image' | 'exec_resources' | 'privileged_allowlist'>;
+export type ProviderField = { name: string; label?: string; required: boolean };
+export type ProviderSpec = {
+  id: string; label: string; options_fields: ProviderField[]; credential_fields: ProviderField[];
+  allow_no_auth: boolean; default_base_url: string; base_url_required: boolean; supports_reasoning_effort: boolean;
+};
 export type PlatformModel = {
   name: string; version: number; label: string;
-  config: ProfileInput['models']['explore'] & { platform_id?: string; platform_version?: number };
+  config: ProfileInput['models']['explore'] & { provider_options?: Record<string, string>; platform_id?: string; platform_version?: number };
   credential_source: 'environment' | 'stored' | 'none'; has_secret: boolean; enabled: boolean;
+  configured_credentials: string[]; is_default: boolean;
 };
 export type PlatformModelInput = {
-  label: string; provider: 'deepseek' | 'openai_chat' | 'openai_responses' | 'openai_compatible';
-  model: string; base_url: string; reasoning_effort: string;
-  price: ProfileInput['models']['explore']['price'];
-  credential_source: PlatformModel['credential_source']; api_key?: string; enabled: boolean;
+  label: string; provider: string; model: string; base_url: string; reasoning_effort: string;
+  price: ProfileInput['models']['explore']['price']; provider_options?: Record<string, string>;
+  credentials?: Record<string, string>; api_key?: string; enabled: boolean;
 };
 export type McpServer = {
   name: string; version: number; label: string; url: string; auth_header: string;
@@ -160,10 +169,22 @@ export const api = {
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions/${version}`),
   createProfileVersion: (name: string, profile: ProfileInput) =>
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
+  getWorkerSettings: () => request<WorkerSettings>('/settings/workers'),
+  saveWorkerSettings: (role: WorkerRole, expected_revision: number, prompt: string, tools: WorkerTools) =>
+    request<WorkerSettings>(`/settings/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools }) }),
+  saveRuntimeSettings: (expected_revision: number, input: RuntimeInput) =>
+    request<WorkerSettings>('/settings/runtime', { method: 'PUT', body: JSON.stringify({ expected_revision, ...input }) }),
+  listProviders: () => request<ProviderSpec[]>('/platform/providers'),
   listPlatformModels: () => request<PlatformModel[]>('/platform/models'),
+  createPlatformModel: (input: PlatformModelInput) =>
+    request<PlatformModel>('/platform/models', { method: 'POST', body: JSON.stringify(input) }),
+  setDefaultPlatformModel: (name: string) =>
+    request<{ default_model_id: string }>(`/platform/models/${encodeURIComponent(name)}/default`, { method: 'POST' }),
   savePlatformModel: (name: string, input: PlatformModelInput) =>
     request<PlatformModel>(`/platform/models/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
   listMcpServers: () => request<McpServer[]>('/platform/mcp-servers'),
+  createMcpServer: (input: McpServerInput) =>
+    request<McpServer>('/platform/mcp-servers', { method: 'POST', body: JSON.stringify(input) }),
   saveMcpServer: (name: string, input: McpServerInput) =>
     request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
   listMcpTools: (name: string, version: number) =>

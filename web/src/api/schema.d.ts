@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/import-environment-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Key */
+        post: operations["import_key_api_platform_import_environment_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/mcp-servers": {
         parameters: {
             query?: never;
@@ -99,7 +116,8 @@ export interface paths {
         /** Mcp Servers */
         get: operations["mcp_servers_api_platform_mcp_servers_get"];
         put?: never;
-        post?: never;
+        /** New Mcp */
+        post: operations["new_mcp_api_platform_mcp_servers_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -150,7 +168,8 @@ export interface paths {
         /** Models */
         get: operations["models_api_platform_models_get"];
         put?: never;
-        post?: never;
+        /** New Model */
+        post: operations["new_model_api_platform_models_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -168,6 +187,40 @@ export interface paths {
         put?: never;
         /** Save Model */
         post: operations["save_model_api_platform_models__name__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/models/{name}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Default Model */
+        post: operations["default_model_api_platform_models__name__default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Providers */
+        get: operations["providers_api_platform_providers_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -253,6 +306,74 @@ export interface paths {
         /** Profile Version */
         get: operations["profile_version_api_profiles__name__versions__version__get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/prompts/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prompt */
+        get: operations["prompt_api_settings_prompts__role__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Runtime */
+        put: operations["update_runtime_api_settings_runtime_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/workers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workers */
+        get: operations["workers_api_settings_workers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/workers/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Worker */
+        put: operations["update_worker_api_settings_workers__role__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1269,6 +1390,14 @@ export interface components {
             steps: number;
             usage: components["schemas"]["Usage"];
         };
+        /** ImportKey */
+        ImportKey: {
+            /**
+             * Api Key
+             * Format: password
+             */
+            api_key: string;
+        };
         /**
          * IntentResult
          * @enum {string}
@@ -1342,6 +1471,10 @@ export interface components {
              * @description 模型供应商
              */
             provider: string;
+            /** Provider Options */
+            provider_options?: {
+                [key: string]: string;
+            };
             /**
              * Reasoning Effort
              * @description 推理强度
@@ -1371,6 +1504,10 @@ export interface components {
              * @description 模型供应商
              */
             provider: string;
+            /** Provider Options */
+            provider_options?: {
+                [key: string]: string;
+            };
             /**
              * Reasoning Effort
              * @description 推理强度
@@ -1381,14 +1518,21 @@ export interface components {
         ModelInput: {
             /** Api Key */
             api_key?: string | null;
-            /** Base Url */
+            /**
+             * Base Url
+             * @default
+             */
             base_url: string;
             /**
              * Credential Source
              * @default stored
              * @enum {string}
              */
-            credential_source: "environment" | "stored" | "none";
+            credential_source: "stored" | "none";
+            /** Credentials */
+            credentials?: {
+                [key: string]: string;
+            };
             /**
              * Enabled
              * @default true
@@ -1399,11 +1543,12 @@ export interface components {
             /** Model */
             model: string;
             price: components["schemas"]["Price-Input"];
-            /**
-             * Provider
-             * @enum {string}
-             */
-            provider: "deepseek" | "openai_chat" | "openai_responses" | "openai_compatible";
+            /** Provider */
+            provider: string;
+            /** Provider Options */
+            provider_options?: {
+                [key: string]: string;
+            };
             /**
              * Reasoning Effort
              * @default none
@@ -1766,6 +1911,17 @@ export interface components {
             /** Note */
             note: string;
         };
+        /** RuntimeUpdate */
+        RuntimeUpdate: {
+            /** Exec Image */
+            exec_image: string;
+            exec_resources: components["schemas"]["ExecResources"];
+            /** Expected Revision */
+            expected_revision: number;
+            params: components["schemas"]["Params-Input"];
+            /** Privileged Allowlist */
+            privileged_allowlist?: string[];
+        };
         /** SearchHit */
         SearchHit: {
             /** Id */
@@ -1845,6 +2001,10 @@ export interface components {
              * @description 任务目标
              */
             goal: string;
+            /** Model Id */
+            model_id?: string | null;
+            /** Model Version */
+            model_version?: number | null;
             /**
              * Params
              * @description Agent 配置参数覆盖
@@ -2025,6 +2185,14 @@ export interface components {
             /** Mcp Servers */
             mcp_servers?: components["schemas"]["McpBinding"][];
         };
+        /** WorkerUpdate */
+        WorkerUpdate: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Prompt */
+            prompt: string;
+            tools: components["schemas"]["WorkerTools"];
+        };
         /** WorkspaceEntryView */
         WorkspaceEntryView: {
             /**
@@ -2196,6 +2364,41 @@ export interface operations {
             };
         };
     };
+    import_key_api_platform_import_environment_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportKey"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     mcp_servers_api_platform_mcp_servers_get: {
         parameters: {
             query?: never;
@@ -2214,6 +2417,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
+                };
+            };
+        };
+    };
+    new_mcp_api_platform_mcp_servers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2311,6 +2549,41 @@ export interface operations {
             };
         };
     };
+    new_model_api_platform_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     save_model_api_platform_models__name__post: {
         parameters: {
             query?: never;
@@ -2344,6 +2617,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    default_model_api_platform_models__name__default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    providers_api_platform_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
                 };
             };
         };
@@ -2523,6 +2851,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prompt_api_settings_prompts__role__get: {
+        parameters: {
+            query?: {
+                since?: number | null;
+            };
+            header?: never;
+            path: {
+                role: "explore" | "derive" | "close";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_runtime_api_settings_runtime_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workers_api_settings_workers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    update_worker_api_settings_workers__role__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role: "explore" | "derive" | "close";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

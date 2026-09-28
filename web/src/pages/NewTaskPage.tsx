@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskCreateInput } from '../api/client';
-import { readDefaultProfile } from '../profiles/preferences';
 import controls from '../styles/controls.module.css';
 import styles from './NewTaskPage.module.css';
 
@@ -18,7 +17,6 @@ export default function NewTaskPage() {
   const location = useLocation();
   const nextKey = useRef(2);
   const formRef = useRef<HTMLFormElement>(null);
-  const browserDefault = useRef(readDefaultProfile());
   const [goal, setGoal] = useState('');
   const [context, setContext] = useState('');
   const [acceptance, setAcceptance] = useState<AcceptanceDraft[]>([{ key: 1, desc: '' }]);
@@ -26,30 +24,17 @@ export default function NewTaskPage() {
   const [maxMinutes, setMaxMinutes] = useState('60');
   const [maxAgents, setMaxAgents] = useState('5');
   const [allowlist, setAllowlist] = useState('');
-  const [profileName, setProfileName] = useState('');
-  const [profileVersion, setProfileVersion] = useState('');
+  const [modelId, setModelId] = useState('');
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState('');
 
-  const profiles = useQuery({ queryKey: ['profiles'], queryFn: api.listProfiles });
-  const versions = useQuery({ queryKey: ['profile-versions', profileName], queryFn: () => api.listProfileVersions(profileName), enabled: Boolean(profileName) });
-  const effectiveVersion = Number(profileVersion) || profiles.data?.find((item) => item.name === profileName)?.latest_version;
-  const profile = useQuery({ queryKey: ['profile', profileName, effectiveVersion], queryFn: () => api.getProfile(profileName, effectiveVersion!), enabled: Boolean(profileName && effectiveVersion) });
-  const currency = profile.data?.profile.models.explore.price.currency;
-  const currencyLabel = currency === 'CNY' ? '人民币元' : currency === 'USD' ? '美元 USD' : currency ?? '读取币种中';
-  const unauthorized = (profile.error instanceof ApiError && profile.error.status === 401) || (profiles.error instanceof ApiError && profiles.error.status === 401) || (versions.error instanceof ApiError && versions.error.status === 401);
-
+  const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels });
+  const selectedModel = models.data?.find((item) => item.name === modelId);
+  const currencyLabel = '人民币元';
+  const unauthorized = models.error instanceof ApiError && models.error.status === 401;
   useEffect(() => {
-    if (!profiles.data?.length || profiles.data.some((item) => item.name === profileName)) return;
-    const preferred = profiles.data.find((item) => item.name === browserDefault.current?.name);
-    setProfileName(preferred?.name ?? profiles.data.find((item) => item.name === 'default')?.name ?? profiles.data[0].name);
-    setProfileVersion(preferred ? String(browserDefault.current?.version ?? '') : '');
-  }, [profileName, profiles.data]);
-  useEffect(() => {
-    if (versions.data && profileVersion && !versions.data.some((item) => item.version === Number(profileVersion))) {
-      setProfileVersion('');
-    }
-  }, [profileVersion, versions.data]);
+    if (!modelId && models.data?.length) setModelId(models.data.find((item) => item.is_default && item.enabled)?.name ?? models.data.find((item) => item.enabled)?.name ?? '');
+  }, [modelId, models.data]);
   useEffect(() => {
     if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname } });
   }, [unauthorized, navigate, location.pathname]);
@@ -89,12 +74,8 @@ export default function NewTaskPage() {
       setFormError('预算金额必须大于 0，时长和并发数必须是正整数。');
       return;
     }
-    if (!profileName) {
-      setFormError('请选择 Agent 配置。');
-      return;
-    }
-    if (!profile.data || !currency) {
-      setFormError('模型计价币种尚未加载或未配置，请检查所选版本后重试。');
+    if (!selectedModel || !selectedModel.enabled) {
+      setFormError('请选择可用的平台模型。');
       return;
     }
     const input: TaskCreateInput = {
@@ -102,8 +83,9 @@ export default function NewTaskPage() {
       domain_context: context.trim() || null,
       acceptance: descriptions.map((desc, index) => ({ id: `A${index + 1}`, desc })),
       budget: { max_cost: maxCost, max_minutes: minutes, max_concurrent_agents: agents },
-      agent_profile: profileName,
-      profile_version: profile.data.version,
+      agent_profile: 'default',
+      model_id: selectedModel.name,
+      model_version: selectedModel.version,
       egress_allowlist: [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
     };
     setPending(true);
@@ -159,22 +141,20 @@ export default function NewTaskPage() {
             <section className={styles.settingsSection} aria-labelledby="budget-heading">
               <div className={styles.settingsHeading}><h2 id="budget-heading">预算</h2><p>达到额度时任务会收尾。</p></div>
               <div className={`${styles.settingsFields} ${styles.budgetFields}`}>
-                <div className={controls.field}><label className={controls.label} htmlFor="max-cost">金额上限（{currencyLabel}）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-cost" className={controls.input} type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required disabled={pending} /><span className={controls.hint}>{currency === 'CNY' ? '按固定人民币价格表估算；默认配置采用高峰价，不等同于账单实扣。' : `所选历史或自定义配置以 ${currencyLabel} 计价；使用人民币请选择最新 CNY 版本。`}</span></div>
+                <div className={controls.field}><label className={controls.label} htmlFor="max-cost">金额上限（{currencyLabel}）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-cost" className={controls.input} type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required disabled={pending} /><span className={controls.hint}>按所选模型的人民币价格表估算，不等同于账单实扣。</span></div>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-minutes">时长上限（分钟）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-minutes" className={controls.input} type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required disabled={pending} /></div>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-agents">并发 Agent 上限<span className={controls.required} aria-hidden="true">*</span></label><input id="max-agents" className={controls.input} type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required disabled={pending} /></div>
               </div>
             </section>
 
-            <section className={styles.settingsSection} aria-labelledby="profile-heading">
-              <div className={styles.settingsHeading}><h2 id="profile-heading">Agent 配置</h2><p>创建后使用选定的配置版本。</p></div>
+            <section className={styles.settingsSection} aria-labelledby="model-heading">
+              <div className={styles.settingsHeading}><h2 id="model-heading">模型</h2><p>三个 Worker 共同使用所选模型。</p></div>
               <div className={styles.settingsFields}>
-                <div className={controls.field}><label className={controls.label} htmlFor="profile">配置<span className={controls.required} aria-hidden="true">*</span></label><select id="profile" className={controls.select} value={profileName} onChange={(event) => { setProfileName(event.target.value); setProfileVersion(''); }} required disabled={pending || profiles.isLoading || !profiles.data?.length}><option value="">{profiles.isLoading ? '正在加载…' : '选择配置'}</option>{profiles.data?.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}</select></div>
-                <div className={controls.field}><label className={controls.label} htmlFor="profile-version">版本</label><select id="profile-version" className={controls.select} value={profileVersion} onChange={(event) => setProfileVersion(event.target.value)} disabled={pending || !profileName || versions.isLoading}><option value="">最新版本{profiles.data?.find((item) => item.name === profileName)?.latest_version ? ` · v${profiles.data.find((item) => item.name === profileName)?.latest_version}` : ''}</option>{versions.data?.map((version) => <option key={version.version} value={version.version}>v{version.version}</option>)}</select></div>
-                {(profiles.isError || versions.isError) && !unauthorized && <p className={controls.error} role="alert">配置加载失败。<button type="button" className={styles.textButton} onClick={() => void (profiles.isError ? profiles.refetch() : versions.refetch())} disabled={pending}>重试</button></p>}
-                {!profiles.isLoading && profiles.data?.length === 0 && <p className={controls.error} role="status">当前没有可用的 Agent 配置，暂时无法创建任务。</p>}
+                <div className={controls.field}><label className={controls.label} htmlFor="model">平台模型<span className={controls.required} aria-hidden="true">*</span></label><select id="model" className={controls.select} value={modelId} onChange={(event) => setModelId(event.target.value)} required disabled={pending || models.isLoading}><option value="">{models.isLoading ? '正在加载…' : '选择模型'}</option>{models.data?.filter((item) => item.enabled).map((item) => <option key={item.name} value={item.name}>{item.label}{item.is_default ? ' · 平台默认' : ''}</option>)}</select></div>
+                {models.isError && !unauthorized && <p className={controls.error} role="alert">模型加载失败。<button type="button" className={styles.textButton} onClick={() => void models.refetch()} disabled={pending}>重试</button></p>}
+                {!models.isLoading && !models.data?.some((item) => item.enabled) && <p className={controls.error} role="status">当前没有可用模型，请先在 Agent 配置中添加。</p>}
               </div>
             </section>
-
             <details className={`${styles.settingsSection} ${styles.networkSettings}`}>
               <summary>目标域名 <span>可选</span></summary>
               <div className={controls.field}><label className={controls.label} htmlFor="allowlist">任务所需域名（记录）</label><textarea id="allowlist" className={`${controls.textarea} ${styles.allowlistTextarea}`} rows={3} value={allowlist} onChange={(event) => { setAllowlist(event.target.value); fitTextarea(event.currentTarget); }} placeholder="每行一个域名，或用逗号分隔" disabled={pending} /><span className={controls.hint}>可选。执行容器默认直接出网；这里仅记录目标域名，不限制访问。显式代理隔离部署由全局白名单控制。</span></div>
@@ -184,7 +164,7 @@ export default function NewTaskPage() {
 
         <div className={styles.footer}>
           {formError && <p className={controls.error} role="alert">{formError}</p>}
-          <div className={styles.footerActions}><Link to="/tasks" className={controls.button}>取消</Link><button type="submit" className={`${controls.button} ${controls.primary}`} disabled={pending || !profiles.data?.length}>{pending ? '正在创建…' : '创建任务'}</button></div>
+          <div className={styles.footerActions}><Link to="/tasks" className={controls.button}>取消</Link><button type="submit" className={`${controls.button} ${controls.primary}`} disabled={pending || !models.data?.some((item) => item.enabled)}>{pending ? '正在创建…' : '创建任务'}</button></div>
         </div>
       </form>
     </div>

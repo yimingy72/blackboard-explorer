@@ -1,273 +1,123 @@
-import WorkerPrompts from '../components/WorkerPrompts';
-import PlatformCatalog from '../components/PlatformCatalog';
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, ApiError, type ProfileInput } from '../api/client';
-import { readDefaultProfile, saveDefaultProfile } from '../profiles/preferences';
-import { parseProfileYaml, stringifyProfileYaml } from '../profiles/yaml';
+import WorkerPrompts from '../components/WorkerPrompts';
+import { defaultTools, workers } from '../components/workerOptions';
+import PlatformCatalog from '../components/PlatformCatalog';
+import { api, ApiError, type ProfileInput, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
 import controls from '../styles/controls.module.css';
-import { formatDate } from './format';
 import styles from './ProfilesPage.module.css';
 
-type View = 'view' | 'edit' | 'new';
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试。';
-}
+type WorkerDraft = { prompt: string; tools: WorkerTools };
+type Drafts = Record<WorkerRole, WorkerDraft>;
+const roles: WorkerRole[] = ['explore', 'derive', 'close'];
+const paramLabels: Record<string, string> = {
+  close_reserve_ratio: '收尾预算预留比例', conclude_grace_calls: '结束后工具调用宽限次数',
+  context_threshold: '交接上下文 token 阈值', delta_max_lines: '增量推送最大行数',
+  derive_empty_limit: '连续空推导上限', dispute_notify_depth: '争议通知最大深度',
+  explore_max_steps: '单次探索最多模型调用', grace_timeout: '结束宽限（分钟）',
+  heartbeat_timeout: '心跳超时（分钟）', intent_max_attempts: '意图最大尝试次数',
+  max_consecutive_failures: '连续运行错误上限', seed_max_steps: '种子探索最大步数',
+  snapshot_max_lines: 'YAML 快照最大行数',
+};
+const workerDraft = (profile: ProfileInput, role: WorkerRole): WorkerDraft => ({
+  prompt: profile.prompt_templates[role], tools: profile.worker_tools?.[role] ?? defaultTools(role),
+});
+const runtimeDraft = (profile: ProfileInput): RuntimeInput => ({
+  params: profile.params, exec_image: profile.exec_image, exec_resources: profile.exec_resources,
+  privileged_allowlist: profile.privileged_allowlist ?? [],
+});
+const draftsFrom = (profile: ProfileInput): Drafts => ({ explore: workerDraft(profile, 'explore'), derive: workerDraft(profile, 'derive'), close: workerDraft(profile, 'close') });
+const message = (error: unknown) => error instanceof Error ? error.message : '操作失败，请稍后重试。';
 
 export default function ProfilesPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
-  const [selectedName, setSelectedName] = useState('');
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const settings = useQuery({ queryKey: ['worker-settings'], queryFn: api.getWorkerSettings, refetchOnWindowFocus: false });
+  const [snapshot, setSnapshot] = useState<WorkerSettings | null>(null);
+  const [drafts, setDrafts] = useState<Drafts | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeInput | null>(null);
+  const [role, setRole] = useState<WorkerRole>('explore');
   const [section, setSection] = useState<'worker' | 'models' | 'mcp'>('worker');
   const [catalogDirty, setCatalogDirty] = useState(false);
-  const [view, setView] = useState<View>('view');
-  const [newName, setNewName] = useState('');
-  const [draft, setDraft] = useState('');
-  const [originalDraft, setOriginalDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [browserDefault, setBrowserDefault] = useState(readDefaultProfile);
-
-  const profiles = useQuery({ queryKey: ['profiles'], queryFn: api.listProfiles });
-  const versions = useQuery({
-    queryKey: ['profile-versions', selectedName],
-    queryFn: () => api.listProfileVersions(selectedName),
-    enabled: Boolean(selectedName),
-  });
-  const document = useQuery({
-    queryKey: ['profile', selectedName, selectedVersion],
-    queryFn: () => api.getProfile(selectedName, selectedVersion!),
-    enabled: Boolean(selectedName && selectedVersion),
-  });
-  const latest = profiles.data?.find((item) => item.name === selectedName)?.latest_version;
-  const yaml = useMemo(
-    () => document.data ? stringifyProfileYaml(document.data.profile as ProfileInput) : '',
-    [document.data],
-  );
-  const dirty = (view === 'edit' || view === 'new') && draft !== originalDraft;
-  const authError = [profiles.error, versions.error, document.error]
-    .some((cause) => cause instanceof ApiError && cause.status === 401);
 
   useEffect(() => {
-    if (!profiles.data?.length) return;
-    if (!selectedName || !profiles.data.some((item) => item.name === selectedName)) {
-      const preferred = profiles.data.find((item) => item.name === browserDefault?.name);
-      setSelectedName(preferred?.name ?? profiles.data.find((item) => item.name === 'default')?.name ?? profiles.data[0].name);
-      setSelectedVersion(preferred ? browserDefault!.version : null);
+    if (settings.data && !snapshot) {
+      setSnapshot(settings.data); setDrafts(draftsFrom(settings.data.profile)); setRuntime(runtimeDraft(settings.data.profile));
     }
-  }, [profiles.data, selectedName, browserDefault]);
-
+  }, [settings.data, snapshot]);
   useEffect(() => {
-    if (!versions.data?.length) return;
-    if (!selectedVersion || !versions.data.some((item) => item.version === selectedVersion)) {
-      setSelectedVersion(versions.data[0].version);
-    }
-  }, [versions.data, selectedVersion]);
-
+    if (settings.error instanceof ApiError && settings.error.status === 401) navigate('/login', { replace: true, state: { from: location.pathname } });
+  }, [settings.error, navigate, location.pathname]);
+  const workerDirty = Boolean(snapshot && drafts && roles.some((item) => JSON.stringify(drafts[item]) !== JSON.stringify(workerDraft(snapshot.profile, item))));
+  const runtimeDirty = Boolean(snapshot && runtime && JSON.stringify(runtime) !== JSON.stringify(runtimeDraft(snapshot.profile)));
+  const dirty = workerDirty || runtimeDirty;
   useEffect(() => {
-    if (authError) navigate('/login', { replace: true, state: { from: location.pathname } });
-  }, [authError, location.pathname, navigate]);
-
-  function canLeaveDraft(): boolean {
-    return !dirty || window.confirm('当前配置尚未保存，确定放弃本次修改吗？');
+    if (!dirty && !catalogDirty) return;
+    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', prevent);
+    return () => window.removeEventListener('beforeunload', prevent);
+  }, [dirty, catalogDirty]);
+  function chooseSection(next: typeof section) {
+    if (next === section) return;
+    if ((dirty || catalogDirty) && !window.confirm('当前配置尚未保存，确定放弃本次修改吗？')) return;
+    if (dirty && snapshot) { setDrafts(draftsFrom(snapshot.profile)); setRuntime(runtimeDraft(snapshot.profile)); }
+    setCatalogDirty(false); setSection(next); setError(''); setNotice('');
   }
-
-  function chooseName(name: string) {
-    if (!canLeaveDraft()) return;
-    setSelectedName(name);
-    setSelectedVersion(null);
-    setView('view');
-    setError('');
-    setNotice('');
-  }
-
-  function chooseVersion(version: number) {
-    if (!canLeaveDraft()) return;
-    setSelectedVersion(version);
-    setView('view');
-    setError('');
-    setNotice('');
-  }
-
-  function edit(mode: 'edit' | 'new') {
-    if (!canLeaveDraft() || !document.data) return;
-    setOriginalDraft(yaml);
-    setDraft(yaml);
-    setNewName('');
-    setError('');
-    setNotice('');
-    setView(mode);
-  }
-
-  async function publish() {
-    const name = view === 'new' ? newName.trim() : selectedName;
-    if (!name || name.includes('/')) {
-      setError('请填写不含斜线的配置名称。');
-      return;
-    }
-    if (view === 'new' && profiles.data?.some((item) => item.name === name)) {
-      setError('这个配置名称已存在。请选择新名称，或在已有配置中发布新版本。');
-      return;
-    }
-    let profile: ProfileInput;
+  async function saveWorker() {
+    if (!snapshot || !drafts) return;
+    setSaving(true); setError(''); setNotice('');
     try {
-      profile = parseProfileYaml(draft);
-    } catch (cause) {
-      setError(message(cause));
-      return;
-    }
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      const result = await api.createProfileVersion(name, profile);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['profiles'] }),
-        queryClient.invalidateQueries({ queryKey: ['profile-versions', name] }),
-      ]);
-      setSelectedName(name);
-      setSelectedVersion(result.version);
-      setView('view');
-      setNotice(view === 'edit' && result.version === selectedVersion
-        ? `内容未变化，仍为 ${name} v${result.version}。`
-        : `已发布 ${name} v${result.version}。任务创建时可选择这个固定版本。`);
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setSaving(false);
-    }
+      const saved = await api.saveWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools);
+      setSnapshot(saved);
+      setDrafts((current) => current ? { ...current, [role]: workerDraft(saved.profile, role) } : null);
+      setNotice('已保存并应用。提示词将在运行中 Agent 的下一次模型调用生效；工具设置对新任务生效。');
+    } catch (cause) { setError(cause instanceof ApiError && cause.status === 409 ? '配置已在其他窗口更新。当前草稿已保留，请复制内容后重新读取。' : message(cause)); }
+    finally { setSaving(false); }
   }
-
-  async function rollback() {
-    if (!document.data || !selectedVersion) return;
-    setSaving(true);
-    setError('');
-    setNotice('');
+  async function saveRuntime() {
+    if (!snapshot || !runtime) return;
+    setSaving(true); setError(''); setNotice('');
     try {
-      const result = await api.createProfileVersion(selectedName, document.data.profile as ProfileInput);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['profiles'] }),
-        queryClient.invalidateQueries({ queryKey: ['profile-versions', selectedName] }),
-      ]);
-      setSelectedVersion(result.version);
-      setView('view');
-      setNotice(result.version === latest
-        ? '所选内容与当前最新版本一致，无需新增版本。'
-        : `已把 v${selectedVersion} 的完整内容发布为 v${result.version}，原版本保留。`);
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setSaving(false);
-    }
+      const saved = await api.saveRuntimeSettings(snapshot.revision, runtime);
+      setSnapshot(saved); setRuntime(runtimeDraft(saved.profile));
+      setNotice('全局调度与执行环境已保存，将对新任务生效。');
+    } catch (cause) { setError(cause instanceof ApiError && cause.status === 409 ? '配置已在其他窗口更新。当前草稿已保留，请复制内容后重新读取。' : message(cause)); }
+    finally { setSaving(false); }
   }
-
-  function saveBrowserDefault() {
-    if (!selectedName || !selectedVersion) return;
-    try {
-      saveDefaultProfile(selectedName, selectedVersion);
-      setBrowserDefault({ name: selectedName, version: selectedVersion });
-      setError('');
-      setNotice(`已设 ${selectedName} v${selectedVersion} 为本浏览器的新建任务默认。`);
-    } catch (cause) {
-      setError(message(cause));
-    }
+  async function reload() {
+    if ((dirty || catalogDirty) && !window.confirm('当前草稿尚未保存，确定放弃并重新读取吗？')) return;
+    const result = await settings.refetch();
+    if (result.data) { setSnapshot(result.data); setDrafts(draftsFrom(result.data.profile)); setRuntime(runtimeDraft(result.data.profile)); setError(''); setNotice('已重新读取。'); }
   }
-
-  const loading = profiles.isLoading || Boolean(selectedName && versions.isLoading)
-    || Boolean(selectedVersion && document.isLoading);
-  const queryError = profiles.error || versions.error || document.error;
-
-  return (
-    <div className={styles.page}>
-      <header className={styles.pageHeader}>
-        <div>
-          <h1>Agent 配置</h1>
-          <p>配置 Worker、复用平台模型并管理外部 MCP。已有任务固定使用创建时的版本。</p>
-        </div>
-      </header>
-      <nav className={styles.topNav} aria-label="配置中心">
-        {([['worker', 'Worker 配置'], ['models', '平台模型'], ['mcp', 'MCP 工具']] as const).map(([id, label]) => <button key={id} type="button" className={section === id ? styles.tabActive : styles.tab} aria-current={section === id ? 'page' : undefined} onClick={() => { if (id === section) return; if (canLeaveDraft() && (!catalogDirty || window.confirm('当前平台配置尚未保存，确定放弃本次修改吗？'))) { setCatalogDirty(false); setSection(id); } }}>{label}</button>)}
-      </nav>
-      {error && <p className={styles.errorBanner} role="alert">{error}</p>}
+  const current = drafts?.[role];
+  const currentDirty = Boolean(snapshot && current && JSON.stringify(current) !== JSON.stringify(workerDraft(snapshot.profile, role)));
+  return <div className={styles.page}>
+    <header className={styles.pageHeader}><h1>Agent 配置</h1><p>直接调整 Worker 提示词与工具，或管理任务可用的模型和 MCP 服务。</p></header>
+    <nav className={styles.topNav} aria-label="配置中心">{([['worker', 'Worker 配置'], ['models', '平台模型'], ['mcp', 'MCP 工具']] as const).map(([id, label]) => <button key={id} type="button" className={section === id ? styles.tabActive : styles.tab} aria-current={section === id ? 'page' : undefined} onClick={() => chooseSection(id)}>{label}</button>)}</nav>
+    {section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} /> : <>
+      {error && <p className={styles.errorBanner} role="alert">{error} <button type="button" onClick={() => void reload()}>重新读取</button></p>}
       {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
-      {queryError && !authError && <div className={styles.errorBanner} role="alert">配置加载失败：{message(queryError)} <button type="button" onClick={() => {
-        if (profiles.isError) void profiles.refetch();
-        if (versions.isError) void versions.refetch();
-        if (document.isError) void document.refetch();
-      }}>重试</button></div>}
-
-      {section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} /> : <div className={styles.layout}>
-        <section className={styles.names} aria-labelledby="profiles-heading">
-          <div className={styles.columnHeading}><h2 id="profiles-heading">配置</h2><span>{profiles.data?.length ?? 0}</span></div>
-          {profiles.isLoading ? <div className={styles.skeletonList} role="status" aria-label="正在加载配置"><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : profiles.data?.length ? (
-            <ul className={styles.list}>{profiles.data.map((item) => <li key={item.name}>
-              <button type="button" className={`${styles.listButton} ${item.name === selectedName ? styles.selected : ''}`} onClick={() => chooseName(item.name)} aria-current={item.name === selectedName ? 'true' : undefined}>
-                <strong>{item.name}</strong><span>最新 v{item.latest_version}</span>
-                {browserDefault?.name === item.name && <small>本浏览器默认 v{browserDefault.version}</small>}
-              </button>
-            </li>)}</ul>
-          ) : <p className={styles.emptyColumn}>暂无配置。检查黑板服务的默认配置加载状态。</p>}
-          <button type="button" className={`${controls.button} ${styles.newProfile}`} onClick={() => edit('new')} disabled={!document.data || saving}>＋ 新建配置名称</button>
+      {settings.isLoading && !snapshot && <p role="status">正在读取 Worker 配置…</p>}
+      {settings.isError && !snapshot && <p className={styles.errorBanner} role="alert">配置读取失败：{message(settings.error)} <button type="button" onClick={() => void reload()}>重试</button></p>}
+      {snapshot && drafts && runtime && current && <>
+        <div className={styles.workerTabs} role="tablist" aria-label="Worker">{workers.map((item) => <button key={item.id} type="button" role="tab" aria-selected={role === item.id} className={role === item.id ? styles.workerActive : styles.workerTab} onClick={() => { setRole(item.id); setError(''); setNotice(''); }}>{item.title}{JSON.stringify(drafts[item.id]) !== JSON.stringify(workerDraft(snapshot.profile, item.id)) ? ' · 未保存' : ''}</button>)}</div>
+        <section className={styles.directWorker} role="tabpanel" aria-label={`${role} 配置`}><WorkerPrompts role={role} prompt={current.prompt} tools={current.tools} disabled={saving} onPromptChange={(prompt) => setDrafts({ ...drafts, [role]: { ...current, prompt } })} onToolsChange={(tools) => setDrafts({ ...drafts, [role]: { ...current, tools } })} />
+          <div className={styles.directActions}><span className={controls.hint}>{currentDirty ? '当前 Worker 有未保存修改' : '当前 Worker 已保存'}</span><button type="button" className={`${controls.button} ${controls.primary}`} disabled={saving || !currentDirty} onClick={() => void saveWorker()}>{saving ? '正在保存…' : '保存并应用'}</button></div>
         </section>
-
-        <section className={styles.versions} aria-labelledby="versions-heading">
-          <div className={styles.columnHeading}><h2 id="versions-heading">版本</h2><span>{versions.data?.length ?? 0}</span></div>
-          {versions.isLoading ? <div className={styles.skeletonList} role="status" aria-label="正在加载版本"><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : versions.data?.length ? (
-            <ul className={styles.list}>{versions.data.map((item) => <li key={item.version}>
-              <button type="button" className={`${styles.listButton} ${item.version === selectedVersion ? styles.selected : ''}`} onClick={() => chooseVersion(item.version)} aria-current={item.version === selectedVersion ? 'true' : undefined}>
-                <strong>v{item.version}{item.version === latest ? ' · 最新' : ''}</strong>
-                <span>{formatDate(item.created_at)}</span>
-                {item.created_by && <small>{item.created_by}</small>}
-              </button>
-            </li>)}</ul>
-          ) : <p className={styles.emptyColumn}>选择配置后查看版本。</p>}
-        </section>
-
-        <section className={styles.content} aria-labelledby="profile-detail-heading">
-          <div className={styles.contentHeader}>
-            <div>
-              <h2 id="profile-detail-heading">{view === 'new' ? '新建配置' : selectedName && selectedVersion ? `${selectedName} · v${selectedVersion}` : '配置内容'}</h2>
-              <p>{view === 'new' ? '从当前版本复制完整内容，并使用新的配置名称发布。' : '提示词正文、模型价格、参数与执行环境都保存在这个版本中。'}</p>
-            </div>
-            {view === 'view' && document.data && <span className={`${controls.badge} ${selectedVersion === latest ? controls.badgeInfo : ''}`}>{selectedVersion === latest ? '最新版本' : '历史版本'}</span>}
-          </div>
-
-          {loading ? <div className={styles.contentLoading} role="status" aria-label="正在加载配置正文"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : !document.data ? (
-            <div className={styles.emptyDetail}>选择一个配置版本查看完整内容。</div>
-          ) : (
-            <>
-              <div className={styles.toolbar}>
-                <div className={styles.tabs} role="group" aria-label="内容视图">
-                  <button type="button" className={view === 'view' ? styles.tabActive : styles.tab} onClick={() => { if (canLeaveDraft()) setView('view'); }}>查看</button>
-                </div>
-                {view === 'view' && <div className={styles.actions}>
-                  <button type="button" className={controls.button} onClick={saveBrowserDefault} disabled={saving || (browserDefault?.name === selectedName && browserDefault.version === selectedVersion)}>{browserDefault?.name === selectedName && browserDefault.version === selectedVersion ? '本浏览器默认' : '设为本浏览器默认'}</button>
-                  {selectedVersion !== latest && <button type="button" className={controls.button} onClick={() => void rollback()} disabled={saving}>发布此旧版为新版本</button>}
-                  <button type="button" className={`${controls.button} ${controls.primary}`} onClick={() => edit('edit')} disabled={saving}>编辑并发布新版本</button>
-                </div>}
-              </div>
-
-              {view === 'new' || view === 'edit' ? (
-                <div className={styles.editor}>
-                  {view === 'new' && <div className={controls.field}><label className={controls.label} htmlFor="new-profile-name">新配置名称</label><input id="new-profile-name" className={controls.input} value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：review-specialist" autoFocus disabled={saving} /></div>}
-                  <WorkerPrompts source={draft} onChange={(value) => { setDraft(value); setNotice(''); }} disabled={saving} />
-                  <p id="yaml-help" className={controls.hint}>保存会创建新版本；已有任务固定原配置，新任务可选择更新后的版本。</p>
-                  <div className={styles.editorActions}>
-                    <button type="button" className={controls.button} onClick={() => { try { parseProfileYaml(draft); setError(''); setNotice('YAML 格式和基本结构检查通过，仍需服务端校验。'); } catch (cause) { setError(message(cause)); } }} disabled={saving}>检查格式</button>
-                    <button type="button" className={controls.button} onClick={() => { if (canLeaveDraft()) setView('view'); }} disabled={saving}>取消</button>
-                    <button type="button" className={`${controls.button} ${controls.primary}`} onClick={() => void publish()} disabled={saving || !draft.trim()}>{saving ? '正在发布…' : '发布新版本'}</button>
-                  </div>
-                </div>
-              ) : <WorkerPrompts source={yaml} />}
-            </>
-          )}
-        </section>
-      </div>}
-    </div>
-  );
+        <details className={styles.runtimeDetails}><summary>全局调度与执行环境{runtimeDirty ? ' · 未保存' : ''}</summary><div className={styles.formGrid}>
+          {Object.entries(runtime.params).map(([key, value]) => key === 'derive_enabled' ? <label key={key} className={styles.checkRow}><input type="checkbox" checked={Boolean(value)} onChange={(event) => setRuntime({ ...runtime, params: { ...runtime.params, derive_enabled: event.target.checked } })} />启用推导（含并行）</label> : typeof value === 'number' || key === 'close_reserve_ratio' ? <label className={controls.field} key={key}><span className={controls.label}>{paramLabels[key] ?? key}</span><input className={controls.input} type="number" min="0" step={key === 'close_reserve_ratio' ? 'any' : '1'} value={String(value)} onChange={(event) => setRuntime({ ...runtime, params: { ...runtime.params, [key]: Number(event.target.value) } })} /></label> : null)}
+          <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>执行镜像</span><input className={controls.input} value={runtime.exec_image} onChange={(event) => setRuntime({ ...runtime, exec_image: event.target.value })} /></label>
+          <label className={controls.field}><span className={controls.label}>CPU</span><input className={controls.input} type="number" min="0.1" step="any" value={runtime.exec_resources.cpus} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, cpus: Number(event.target.value) } })} /></label>
+          <label className={controls.field}><span className={controls.label}>内存</span><input className={controls.input} value={runtime.exec_resources.mem} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, mem: event.target.value } })} /></label>
+          <label className={controls.field}><span className={controls.label}>进程上限</span><input className={controls.input} type="number" min="1" step="1" value={runtime.exec_resources.pids} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, pids: Number(event.target.value) } })} /></label>
+          <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>提权命令前缀（每行一个）</span><textarea className={controls.textarea} value={runtime.privileged_allowlist?.join('\n') ?? ''} onChange={(event) => setRuntime({ ...runtime, privileged_allowlist: event.target.value.split('\n').map((line) => line.trim()).filter(Boolean) })} /></label>
+          <div className={`${styles.directActions} ${styles.wideField}`}><span className={controls.hint}>仅对新任务生效</span><button type="button" className={`${controls.button} ${controls.primary}`} disabled={saving || !runtimeDirty} onClick={() => void saveRuntime()}>{saving ? '正在保存…' : '保存全局设置'}</button></div>
+        </div></details>
+      </>}
+    </>}
+  </div>;
 }

@@ -120,10 +120,14 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   const events = options.largeGraph ? largeGraphEvents() : ordinaryEvents();
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
   const modelSaves: Record<string, unknown>[] = [];
+  const workerSaves: Record<string, unknown>[] = [];
+  const runtimeSaves: Record<string, unknown>[] = [];
+  let revision = 2;
+  let settingsProfile = profile('新版探索模板');
   const mcpSaves: Record<string, unknown>[] = [];
   const platformModels = [{ name: 'review-model', version: 1, label: '审查模型',
     config: { ...profile('x').models.explore, platform_id: 'review-model', platform_version: 1 },
-    credential_source: 'stored', has_secret: true, enabled: true }];
+    credential_source: 'stored', has_secret: true, configured_credentials: ['api_key'], enabled: true, is_default: true }];
   const mcpServers = [
     { name: 'reference', version: 1, label: '资料检索', url: 'https://mcp.example.invalid/mcp',
       auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true },
@@ -210,29 +214,68 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       profiles.set(version, body);
       return json(route, profileDocument(version, body));
     }
+    if (path === '/api/settings/workers' && method === 'GET') return json(route, { revision, profile: settingsProfile });
+    const workerMatch = /^\/api\/settings\/workers\/(explore|derive|close)$/.exec(path);
+    if (workerMatch && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      workerSaves.push({ role: workerMatch[1], ...body });
+      if (body.expected_revision !== revision) return json(route, { detail: 'Revision conflict' }, 409);
+      const prompts = settingsProfile.prompt_templates as Record<string, string>;
+      const tools = (settingsProfile.worker_tools ?? {}) as Record<string, unknown>;
+      settingsProfile = { ...settingsProfile, prompt_templates: { ...prompts, [workerMatch[1]]: body.prompt }, worker_tools: { ...tools, [workerMatch[1]]: body.tools } };
+      revision += 1;
+      return json(route, { revision, profile: settingsProfile });
+    }
+    if (path === '/api/settings/runtime' && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      runtimeSaves.push(body);
+      if (body.expected_revision !== revision) return json(route, { detail: 'Revision conflict' }, 409);
+      settingsProfile = { ...settingsProfile, params: body.params, exec_image: body.exec_image, exec_resources: body.exec_resources, privileged_allowlist: body.privileged_allowlist };
+      revision += 1;
+      return json(route, { revision, profile: settingsProfile });
+    }
+    if (path === '/api/platform/providers' && method === 'GET') return json(route, [
+      { id: 'deepseek', supports_reasoning_effort: true, label: 'DeepSeek', options_fields: [], credential_fields: [{ name: 'api_key', label: 'API 密钥', required: true }], allow_no_auth: false, default_base_url: 'provider-default', base_url_required: false },
+      { id: 'openai_compatible', supports_reasoning_effort: true, label: 'OpenAI 兼容', options_fields: [], credential_fields: [{ name: 'api_key', label: 'API 密钥', required: false }], allow_no_auth: true, default_base_url: '', base_url_required: true },
+      { id: 'azure_openai_chat', supports_reasoning_effort: true, label: 'Azure OpenAI', options_fields: [{ name: 'api_version', label: 'API 版本', required: true }], credential_fields: [{ name: 'api_key', label: 'API 密钥', required: true }], allow_no_auth: false, default_base_url: '', base_url_required: true },
+      { id: 'foundry', supports_reasoning_effort: false, label: 'Microsoft Foundry', options_fields: [], credential_fields: [{ name: 'tenant_id', label: '租户 ID', required: true }, { name: 'client_id', label: '客户端 ID', required: true }, { name: 'client_secret', label: '客户端密钥', required: true }], allow_no_auth: false, default_base_url: '', base_url_required: true },
+      { id: 'bedrock', supports_reasoning_effort: false, label: 'AWS Bedrock', options_fields: [{ name: 'region', label: '区域', required: true }], credential_fields: [{ name: 'access_key_id', label: 'Access Key ID', required: true }, { name: 'secret_access_key', label: 'Secret Access Key', required: true }, { name: 'session_token', label: 'Session Token', required: false }], allow_no_auth: false, default_base_url: 'provider-default', base_url_required: false },
+      { id: 'gemini_vertex', supports_reasoning_effort: false, label: 'Google Gemini', options_fields: [], credential_fields: [{ name: 'service_account_json', label: '服务账号 JSON', required: true }], allow_no_auth: false, default_base_url: 'provider-default', base_url_required: false },
+      { id: 'foundry_local', supports_reasoning_effort: false, label: 'Local', options_fields: [], credential_fields: [], allow_no_auth: true, default_base_url: 'http://host.docker.internal:8000/v1', base_url_required: true },
+    ]);
     if (path === '/api/platform/models' && method === 'GET') return json(route, platformModels);
     if (path === '/api/platform/mcp-servers' && method === 'GET') return json(route, mcpServers);
     const modelMatch = /^\/api\/platform\/models\/([^/]+)$/.exec(path);
-    if (modelMatch && method === 'POST') {
+    const isModelCreate = path === '/api/platform/models' && method === 'POST';
+    if (modelMatch && method === 'POST' || isModelCreate) {
       const body = request.postDataJSON() as Record<string, unknown>;
       modelSaves.push(body);
-      const index = platformModels.findIndex((item) => item.name === modelMatch[1]);
+      const name = modelMatch?.[1] ?? `model-${platformModels.length + 1}`;
+      const index = platformModels.findIndex((item) => item.name === name);
       const version = index < 0 ? 1 : platformModels[index].version + 1;
-      const saved = { name: modelMatch[1], version, label: String(body.label),
+      const credentials = body.credentials as Record<string, string> | undefined;
+      const saved = { name, version, label: String(body.label),
         config: { provider: body.provider, model: body.model, base_url: body.base_url,
-          reasoning_effort: body.reasoning_effort, price: body.price, platform_id: modelMatch[1], platform_version: version },
-        credential_source: body.credential_source as 'stored', has_secret: Boolean(body.api_key) || index >= 0 && platformModels[index].has_secret,
-        enabled: Boolean(body.enabled) };
+          reasoning_effort: body.reasoning_effort, price: body.price, provider_options: body.provider_options, platform_id: name, platform_version: version },
+        credential_source: 'stored', has_secret: Boolean(credentials && Object.keys(credentials).length) || index >= 0 && platformModels[index].has_secret,
+        configured_credentials: credentials && Object.keys(credentials).length ? Object.keys(credentials) : index >= 0 ? platformModels[index].configured_credentials : [],
+        enabled: Boolean(body.enabled), is_default: index >= 0 && platformModels[index].is_default };
       if (index < 0) platformModels.push(saved); else platformModels[index] = saved;
       return json(route, saved);
     }
+    if (/^\/api\/platform\/models\/[^/]+\/default$/.test(path) && method === 'POST') {
+      const name = path.split('/').at(-2)!;
+      for (const item of platformModels) item.is_default = item.name === name;
+      return json(route, { default_model_id: name });
+    }
     const mcpMatch = /^\/api\/platform\/mcp-servers\/([^/]+)$/.exec(path);
-    if (mcpMatch && method === 'POST') {
+    if (mcpMatch && method === 'POST' || path === '/api/platform/mcp-servers' && method === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
       mcpSaves.push(body);
-      const index = mcpServers.findIndex((item) => item.name === mcpMatch[1]);
+      const name = mcpMatch?.[1] ?? `mcp-${mcpServers.length + 1}`;
+      const index = mcpServers.findIndex((item) => item.name === name);
       const version = index < 0 ? 1 : mcpServers[index].version + 1;
-      const saved = { name: mcpMatch[1], version, label: String(body.label), url: String(body.url),
+      const saved = { name, version, label: String(body.label), url: String(body.url),
         auth_header: String(body.auth_header), auth_scheme: String(body.auth_scheme),
         has_secret: Boolean(body.secret) || index >= 0 && mcpServers[index].has_secret && !body.clear_secret,
         enabled: Boolean(body.enabled) };
@@ -245,5 +288,5 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
-  return { unexpected, events, profiles, modelSaves, mcpSaves };
+  return { unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
 }
