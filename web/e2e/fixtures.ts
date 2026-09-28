@@ -136,10 +136,14 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   ];
   const task = {
     id: TASK_ID, goal: GOAL, status: 'finished', acceptance_state: { A1: { status: 'met' } },
-    cost_currency: 'CNY', usage: { cost: 0.02 }, agents: [], report_uri: `reports/${TASK_ID}/final.md`,
-    workspace_uri: `archives/${TASK_ID}/workspace.tar.zst`, agent_profile: 'default',
+    cost_currency: 'CNY', usage: { cost: 0.02 }, agents: [], report_uri: `reports/${TASK_ID}/final.md` as string | null,
+    workspace_uri: `archives/${TASK_ID}/workspace.tar.zst` as string | null, agent_profile: 'default',
     agent_profile_version: 2, created_at: AT,
+    budget: { max_cost: 10, max_minutes: 60, max_concurrent_agents: 3 },
+    run_number: 1, active_seconds: 600, active_since: null, cleanup_ready: true,
+    runs: [{ run_number: 1, report_uri: `reports/${TASK_ID}/final.md`, workspace_uri: `archives/${TASK_ID}/workspace.tar.zst` }],
   };
+  const resumeSaves: Record<string, unknown>[] = [];
 
   await page.addInitScript(() => {
     class MockEventSource extends EventTarget {
@@ -165,6 +169,21 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
     if (path === '/api/tasks' && method === 'GET') return json(route, [task]);
     if (path === `/api/tasks/${TASK_ID}` && method === 'GET') return json(route, task);
+    if (path === `/api/tasks/${TASK_ID}/resume` && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      resumeSaves.push(body);
+      if (task.status === 'finished') {
+        task.status = 'provisioning';
+        task.run_number = 2;
+        task.budget.max_cost += Number(body.additional_cost);
+        task.budget.max_minutes += Number(body.additional_minutes);
+        task.report_uri = null;
+        task.workspace_uri = null;
+        task.cleanup_ready = false;
+        events.push(event(events.length + 1, 'task.resumed', { run_number: 2, budget: task.budget }));
+      }
+      return json(route, task);
+    }
     if (/\/api\/tasks\/[^/]+\/agents\/[^/]+\/messages$/.test(path) && method === 'GET') return json(route, { messages: [], session_available: false, session_origin: null, mode: 'review' });
     if (path === `/api/tasks/${TASK_ID}/events` && method === 'GET') return json(route, events);
     if (path === `/api/tasks/${TASK_ID}/stream` && method === 'GET') {
@@ -288,5 +307,5 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
-  return { unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
+  return { unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
 }

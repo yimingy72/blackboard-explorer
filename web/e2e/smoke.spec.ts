@@ -46,7 +46,7 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
   await slider.press('Home');
-  await expect(page.getByText('花费 ¥0.000 / ¥10.00', { exact: true })).toBeVisible();
+  await expect(page.getByText('估算费用 ¥0.000 / ¥10.00', { exact: true })).toBeVisible();
   for (let index = 0; index < 4; index += 1) await slider.press('ArrowRight');
   await expect(page.getByText('历史回放 · v5').first()).toBeVisible();
 
@@ -148,14 +148,20 @@ test('Provider 目录驱动模型字段、密钥只写、平台默认与 MCP 自
   await expect(editor.getByLabel('API 密钥')).toHaveValue('');
   await expect(editor.getByText('凭据来源')).toHaveCount(0);
   await editor.getByLabel('显示名称').fill('审查模型新版');
+  await editor.getByLabel('图片输入').selectOption('true');
+  await editor.getByLabel('费用估算方式').selectOption('fixed');
+  await page.screenshot({ path: test.info().outputPath('model-settings.png'), fullPage: true });
   await editor.getByRole('button', { name: '保存', exact: true }).click();
   expect(mock.modelSaves[0]).not.toHaveProperty('credentials.api_key');
+  expect(mock.modelSaves[0]).toMatchObject({ supports_vision: true, price: { billing_mode: 'fixed' } });
   await page.getByRole('button', { name: '＋ 新增模型' }).click();
   await editor.getByLabel('显示名称').fill('Azure 模型');
   await editor.getByLabel('Provider').selectOption('deepseek');
+  await expect(editor.getByLabel('费用估算方式')).toHaveValue('deepseek_schedule');
   await expect(editor.getByLabel('Base URL')).toHaveCount(0);
   await expect(editor.getByLabel('推理强度')).toHaveValue('none');
   await editor.getByLabel('Provider').selectOption('azure_openai_chat');
+  await expect(editor.getByLabel('费用估算方式')).toHaveValue('fixed');
   await expect(editor.getByLabel('推理强度')).toBeVisible();
   await editor.getByLabel('Provider').selectOption('foundry');
   await expect(editor.getByLabel('推理强度')).toHaveCount(0);

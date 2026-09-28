@@ -27,15 +27,17 @@ export default function ReportPage() {
   const { taskId = '' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const run = Number(new URLSearchParams(location.search).get('run')) || undefined;
+  const runQuery = run ? `?run=${run}` : '';
   const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId), enabled: Boolean(taskId) });
-  const report = useQuery({ queryKey: ['report', taskId], queryFn: ({ signal }) => api.getReport(taskId, signal), enabled: Boolean(taskId) });
+  const report = useQuery({ queryKey: ['report', taskId, run], queryFn: ({ signal }) => api.getReport(taskId, signal, run), enabled: Boolean(taskId) });
   const unauthorized = [task.error, report.error].some((error) => error instanceof ApiError && error.status === 401);
   useEffect(() => { if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname } }); }, [unauthorized, navigate, location.pathname]);
   return <div className={styles.page}>
     <header className={styles.header}>
       <Link to={`/tasks/${encodeURIComponent(taskId)}`}>← 返回工作台</Link>
-      <div className={styles.title}><div><h1>最终报告</h1><p>{task.data?.goal ?? '正在读取任务…'}</p></div><div className={styles.actions}><a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/report`} download>下载原文</a>{task.data?.workspace_uri && <a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`}>下载工作区</a>}</div></div>
-      {task.data && <p className={styles.meta}>{taskId.slice(0, 8)} · {`创建于 ${formatDate(task.data.created_at)}`} · 账本费用 {formatMoney(task.data.usage?.cost, task.data.cost_currency)}</p>}
+      <div className={styles.title}><div><h1>{run ? `第 ${run} 轮报告` : '最终报告'}</h1><p>{task.data?.goal ?? '正在读取任务…'}</p></div><div className={styles.actions}><a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/report${runQuery}`} download>下载原文</a>{(run ? task.data?.runs?.find((item) => item.run_number === run)?.workspace_uri : task.data?.workspace_uri) && <a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/workspace${runQuery}`}>下载工作区</a>}</div></div>
+      {task.data && <p className={styles.meta}>{taskId.slice(0, 8)} · {`创建于 ${formatDate(task.data.created_at)}`} · 估算费用 {formatMoney(task.data.usage?.cost, task.data.cost_currency)}</p>}
     </header>
     {report.isLoading ? <p className={styles.message} role="status">正在读取报告…</p> : report.error ? <div className={styles.message} role="alert"><h2>报告尚不可用</h2><p>{report.error.message}</p><button className={controls.button} type="button" onClick={() => void report.refetch()}>重试</button></div> : <article className={styles.markdown} aria-label="最终报告正文"><ReactMarkdown skipHtml remarkPlugins={[linkReferences(taskId)]} components={{
       a: ({ href, children }) => href?.startsWith(`/tasks/${taskId}`) ? <Link to={href}>{children}</Link> : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,

@@ -76,6 +76,9 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           closingReason: null,
           startedAt: null,
           finishedAt: null,
+          runNumber: 1,
+          activeSeconds: 0,
+          activeSince: null,
         };
         for (const item of acceptance) {
           const saved = initial[item.id];
@@ -102,9 +105,31 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         if (state.task) {
           state.task.status = event.type.split('.')[1] as BoardTask['status'];
           if (event.type === 'task.failed') state.task.fail_reason = nullableText(p.reason);
-          if (event.type === 'task.running') state.task.startedAt = event.created_at;
+          if (event.type === 'task.running') {
+            state.task.startedAt ??= event.created_at;
+            state.task.activeSince = event.created_at;
+          }
           if (event.type === 'task.closing' || event.type === 'task.stopped') state.task.closingReason = nullableText(p.reason);
-          if (['task.finished', 'task.failed', 'task.stopped'].includes(event.type)) state.task.finishedAt = event.created_at;
+          if (['task.finished', 'task.failed', 'task.stopped'].includes(event.type)) {
+            state.task.finishedAt = event.created_at;
+            if (state.task.activeSince) {
+              state.task.activeSeconds = (state.task.activeSeconds ?? 0) + Math.max(0,
+                Math.floor((Date.parse(event.created_at) - Date.parse(state.task.activeSince)) / 1000));
+              state.task.activeSince = null;
+            }
+          }
+        }
+        break;
+      case 'task.resumed':
+        if (state.task) {
+          state.task.status = 'provisioning';
+          state.task.runNumber = Number(p.run_number) || 1;
+          state.task.budget = (p.budget ?? state.task.budget) as Record<string, unknown>;
+          state.task.report_uri = null;
+          state.task.workspace_uri = null;
+          state.task.finishedAt = null;
+          state.task.fail_reason = null;
+          state.task.closingReason = null;
         }
         break;
       case 'task.report':
@@ -115,6 +140,14 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         break;
       case 'budget.updated':
         if (state.task) state.task.usage = numbers(p.usage);
+        break;
+      case 'cost.reconciled':
+        if (state.task) state.task.usage.cost = Number(p.cost) || 0;
+        if (p.agent_costs && typeof p.agent_costs === 'object') {
+          for (const [id, cost] of Object.entries(p.agent_costs)) {
+            if (state.agents[id]) state.agents[id].usage.cost = Number(cost) || 0;
+          }
+        }
         break;
       case 'fact.posted': {
         const id = text(p.id);

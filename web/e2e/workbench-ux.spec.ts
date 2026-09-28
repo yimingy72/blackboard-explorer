@@ -59,7 +59,7 @@ test('创建表单支持长验收条件，桌面与窄屏不横向溢出', async
 });
 
 test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对话独立', async ({ page }) => {
-  await page.clock.install({ time: new Date('2026-09-24T08:10:00Z') });
+  await page.clock.setFixedTime(new Date('2026-09-24T08:10:00Z'));
   const mock = await installConversationFixture(page, { running: true });
   const secondId = '22222222-2222-4222-8222-222222222222';
   const secondTask = {
@@ -76,9 +76,9 @@ test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对�
   await page.route(`**/api/tasks/${secondId}`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondTask) }));
   await page.route(`**/api/tasks/${secondId}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondEvents) }));
   await page.goto(`/tasks/${TASK_ID}`);
-  await expect(page.getByText('运行 9 分 50 秒', { exact: true })).toBeVisible();
-  await page.clock.fastForward(2_000);
-  await expect(page.getByText('运行 9 分 52 秒', { exact: true })).toBeVisible();
+  await expect(page.getByText('累计运行 9 分 50 秒', { exact: true })).toBeVisible();
+  await page.clock.setFixedTime(new Date('2026-09-24T08:10:02Z'));
+  await expect(page.getByText('累计运行 9 分 52 秒', { exact: true })).toBeVisible();
   await page.getByRole('region', { name: '黑板关系图' }).first().getByRole('button', { name: /^Agent 1，运行中/ }).click();
   await expect(page.getByRole('complementary', { name: 'Agent 1 对话记录' })).toBeVisible();
   await page.getByRole('button', { name: '关闭对话' }).click();

@@ -6,12 +6,14 @@ export const workers: { id: WorkerRole; title: string; description: string }[] =
   { id: 'close', title: 'Close · 裁定与终结', description: '核对证据、裁定验收并生成报告。' },
 ];
 export const builtin: Record<WorkerRole, string[]> = {
-  explore: ['post_fact', 'post_intent', 'claim', 'release', 'get', 'search', 'read_evidence', 'execute_command'],
-  derive: ['post_intent', 'get', 'search', 'read_evidence'],
-  close: ['submit_close', 'get', 'search', 'read_evidence'],
+  explore: ['post_fact', 'post_intent', 'claim', 'release', 'get', 'search', 'read_evidence', 'view_image', 'execute_command'],
+  derive: ['post_intent', 'get', 'search', 'read_evidence', 'view_image'],
+  close: ['submit_close', 'get', 'search', 'read_evidence', 'view_image'],
 };
 export const required: Record<WorkerRole, string[]> = {
   explore: ['post_fact', 'release'], derive: ['post_intent'], close: ['submit_close', 'get', 'read_evidence'],
 };
-export const defaultTools = (role: WorkerRole): WorkerTools => ({ builtin: builtin[role], mcp_servers: [] });
-
+export const defaultTools = (role: WorkerRole): WorkerTools => ({
+  builtin: builtin[role],
+  mcp_servers: [],
+});

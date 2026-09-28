@@ -1,6 +1,13 @@
 import type { components } from './schema';
 
-export type TaskView = components['schemas']['TaskView'];
+export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'> & {
+  budget: { max_cost: string | number; max_minutes: number; max_concurrent_agents: number };
+  run_number: number;
+  active_seconds: number;
+  active_since: string | null;
+  cleanup_ready: boolean;
+  runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
+};
 export type TaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number };
 export type TaskCreated = components['schemas']['TaskCreated'];
 export type ProfileName = components['schemas']['ProfileName'];
@@ -24,6 +31,7 @@ export type PlatformModel = {
 };
 export type PlatformModelInput = {
   label: string; provider: string; model: string; base_url: string; reasoning_effort: string;
+  supports_vision?: boolean | null;
   price: ProfileInput['models']['explore']['price']; provider_options?: Record<string, string>;
   credentials?: Record<string, string>; api_key?: string; enabled: boolean;
 };
@@ -149,6 +157,8 @@ export const api = {
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string) => request<TaskView>(taskPath(id)),
+  resumeTask: (id: string, input: { request_id: string; additional_cost: string; additional_minutes: number; refresh_tools: boolean }) =>
+    request<TaskView>(`${taskPath(id)}/resume`, { method: 'POST', body: JSON.stringify(input) }),
   deleteTask: (id: string) => request<{ deleting: boolean }>(taskPath(id), { method: 'DELETE' }),
   getAgentMessages: (id: string, agent: string) => request<AgentMessages>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`),
   sendAgentMessage: (id: string, agent: string, message: { id: string; content: string }) =>
@@ -189,7 +199,7 @@ export const api = {
     request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
   listMcpTools: (name: string, version: number) =>
     request<{ tools: McpTool[] }>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
-  getReport: async (id: string, signal?: AbortSignal) => (await textResponse(`${taskPath(id)}/report`, signal)).text(),
+  getReport: async (id: string, signal?: AbortSignal, run?: number) => (await textResponse(`${taskPath(id)}/report${run ? `?run=${run}` : ''}`, signal)).text(),
   getWorkspaceTree: (id: string) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree`),
   getWorkspaceFile: (id: string, path: string) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}`),
   evidenceUrl: (uri: string) => `/api/evidence?uri=${encodeURIComponent(uri)}`,

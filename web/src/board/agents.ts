@@ -73,3 +73,11 @@ export function taskDuration(startedAt: string | null | undefined, finishedAt: s
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${hours > 0 ? `${hours} 小时 ` : ''}${minutes} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
 }
+
+export function activeDuration(completedSeconds: number, activeSince: string | null | undefined, now: number): string {
+  const elapsed = activeSince ? Math.max(0, Math.floor((now - Date.parse(activeSince)) / 1000)) : 0;
+  const seconds = Math.max(0, completedSeconds + elapsed);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours > 0 ? `${hours} 小时 ` : ''}${minutes} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
+}

@@ -98,7 +98,7 @@
 .catalog { display: grid; grid-template-columns: minmax(220px, 0.9fr) minmax(0, 3fr); border: 1px solid var(--color-line); border-radius: var(--radius-md); min-height: 560px; overflow: hidden; }
 .catalogList { display: flex; flex-direction: column; border-right: 1px solid var(--color-line); background: var(--color-bg); }
 .catalogEditor { min-width: 0; background: var(--color-bg); }
-.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 22px 24px; }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; padding: 22px 24px; }
 .wideField { grid-column: 1 / -1; }
 .priceFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
 .checkRow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--color-ink); font-size: .85rem; line-height: 1.5; }

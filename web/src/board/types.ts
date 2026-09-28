@@ -39,6 +39,9 @@ export interface BoardTask {
   closingReason?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  runNumber?: number;
+  activeSeconds?: number;
+  activeSince?: string | null;
 }
 
 export interface BoardFact {
