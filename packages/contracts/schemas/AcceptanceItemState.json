@@ -11,6 +11,27 @@
   },
   "additionalProperties": false,
   "properties": {
+    "completion_basis": {
+      "default": "inferred",
+      "enum": [
+        "explicit",
+        "inferred"
+      ],
+      "title": "Completion Basis",
+      "type": "string"
+    },
+    "completion_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completion Reason"
+    },
     "status": {
       "$ref": "#/$defs/AcceptanceStatus",
       "default": "unmet",

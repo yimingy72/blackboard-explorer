@@ -127,6 +127,8 @@ agent_runs = scoped(
     col("judge_from_version", BigInteger),
     col("derive_from_version", BigInteger),
     col("derive_parallel", Boolean, nullable=False, server_default=text("false")),
+    col("derive_review", Boolean, nullable=False, server_default=text("false")),
+    col("finished_version", BigInteger),
     col("intent_id", Text),
     col("status", Text, nullable=False),
     col("end_reason", Text),

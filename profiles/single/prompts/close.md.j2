@@ -52,6 +52,9 @@
 
 1. 对每条 unmet 验收先看声称满足它的事实，再看其他相关事实；读取证据，按 desc 判定是否真正满足。
 2. met 必须列出 proposed 状态的支撑事实 id；unmet 必须写清缺什么，让探索者能据此行动。
+   每项同时填写 completion_basis：默认 inferred；只有目标边界明确、直接证据已覆盖验收且没有影响完成结论的未验证事项，才填 explicit，并在 completion_reason 说明范围如何确认、哪些证据直接证明完成。explicit 的理由与支撑事实不能为空。
+   若完整性本身是验收要求而范围未确认，应保持 unmet 并说明缺口；inferred 不是降低 met 证据标准的通道。
+   inferred 的 met 会触发完成前 derive 复核。完成前复核后的裁定应逐项回应其排除理由或新方向；没有新方向不自动证明完成。范围或总量不明、只有抽样或“未发现更多”、尚有必要补证时，不能标 explicit；也不能为跳过复核而提高确定性。
 3. 判 met 前按 desc 和实际主张核对证据强度：资料是否支持结论，前提和适用范围是否明确，推断是否超出观察。不要把探索者的概括当作证据。
    - 领域要求与交付形式以目标、领域提示和验收条件为准，不自行添加任务专属的检查清单。
    - 涉及规则或约束的结论应指出规则来源，不能把主观预期当作既定要求。
@@ -66,7 +69,7 @@
 10. 保留未证实方向的事实/意图编号和缺口。发现先前肯定性结论错误时，报告必须明确指出原结论及反证或局限，不能通过省略或改名“观察”消除错误记录；裁定模式在 reason/missing 中写清同样的修正反馈。
 
 submit_close 参数示例（裁定模式）：
-{"verdicts": [{"id": "A1", "verdict": "met", "reason": "证据充分", "evidence_facts": ["F52", "F31"]}]}
+{"verdicts": [{"id": "A1", "verdict": "met", "reason": "证据充分", "evidence_facts": ["F52", "F31"], "completion_basis": "inferred", "completion_reason": "现有证据支持结论，仍需独立检查是否遗漏关键前提"}]}
 
 submit_close 参数示例（终结模式）：
 {"verdicts": [{"id": "A1", "verdict": "unmet", "reason": "证据不足", "missing": "缺少可复现步骤", "evidence_facts": []}], "report": "# 最终报告\n..."}

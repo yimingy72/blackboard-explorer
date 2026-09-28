@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from bbx_contracts.completion import all_met, current_review, explicit_completion, quiescent
 from bbx_contracts.models import Params
 
 from .actions import (
@@ -122,24 +123,41 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
         # Closing an intent changes the board version. Re-read before deciding judge or derive.
         return actions
 
+    # The state endpoint keeps these versions on task. Accept the older test fixture
+    # shape as well, without mutating the supplied state.
+    completion_task = {
+        **task,
+        "last_change_version": task.get("last_change_version", state.get("last_change_version", 0)),
+        "last_judgment_version": task.get(
+            "last_judgment_version", state.get("last_judgment_version", 0)
+        ),
+    }
+    change_version = int(completion_task["last_change_version"] or 0)
+    judgment_version = int(completion_task["last_judgment_version"] or 0)
     acceptance = task["acceptance_state"]
-    if acceptance and all(item["status"] == "met" for item in acceptance.values()):
+    if explicit_completion(completion_task):
         return [EnterClosing("accepted")]
-    if (
-        _explore_budget_exhausted(task, params, now)
-        or int(task.get("derive_empty_streak") or 0) >= params.derive_empty_limit
-    ):
+    if _explore_budget_exhausted(task, params, now):
         return [EnterClosing("terminated")]
 
-    quiescent = not workers and not any(
-        intent["status"] in {"open", "claimed"} for intent in intents
-    )
+    quiet = quiescent(state["agents"], state["intents"])
+    review = current_review(completion_task, state["agents"])
+    review_version = int(review["finished_version"]) if review else 0
     if not judging and (
         state.get("pending_claims")
-        or (quiescent and state["last_change_version"] > state["last_judgment_version"])
+        or (quiet and max(change_version, review_version) > judgment_version)
     ):
         actions.append(SpawnClose("judge"))
         judging = True
+
+    if quiet and not judging and judgment_version >= change_version and review:
+        if all_met(completion_task):
+            return [EnterClosing("accepted")]
+        if (
+            not params.derive_enabled
+            or int(task.get("derive_empty_streak") or 0) >= params.derive_empty_limit
+        ):
+            return [EnterClosing("terminated")]
 
     slots = int(task["budget"]["max_concurrent_agents"]) - len(workers)
     if slots <= 0:
@@ -147,8 +165,8 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
     if state["board_empty"] and not workers:
         actions.append(SpawnExplore(seed=True))
         return actions
-    if quiescent and not judging and state["last_judgment_version"] >= state["last_change_version"]:
-        return [SpawnDerive()] if params.derive_enabled else [EnterClosing("terminated")]
+    if quiet and not judging and judgment_version >= change_version:
+        return [SpawnDerive(review=True)]
 
     unmet = {key for key, item in acceptance.items() if item["status"] != "met"}
     open_intents = sorted(

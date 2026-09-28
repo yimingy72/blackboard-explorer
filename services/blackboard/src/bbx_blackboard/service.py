@@ -51,6 +51,8 @@ class BoardService:
                 "reason": None,
                 "missing": None,
                 "evidence_facts": [],
+                "completion_basis": "inferred",
+                "completion_reason": None,
                 "judged_version": None,
             }
             for x in spec.acceptance
@@ -210,8 +212,14 @@ class BoardService:
         is_seed: bool = False,
         close_mode: str | None = None,
         derive_parallel: bool | None = None,
+        derive_review: bool = False,
     ) -> str:
-        data = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
+        data = {
+            "task_type": task_type,
+            "is_seed": is_seed,
+            "close_mode": close_mode,
+            "derive_review": derive_review,
+        }
         if task_type == "derive" and derive_parallel is not None:
             data["derive_parallel"] = derive_parallel
         events = await self._write(

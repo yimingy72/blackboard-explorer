@@ -37,6 +37,8 @@ async def test_blackboard_client_identity_and_error() -> None:
         assert "derive_parallel" not in json.loads(seen[-1].content)
         await client.register_agent(task_id, "derive", derive_parallel=True)
         assert json.loads(seen[-1].content)["derive_parallel"] is True
+        await client.register_agent(task_id, "derive", derive_review=True)
+        assert json.loads(seen[-1].content)["derive_review"] is True
         agent = client.with_token(registered["token"])
         with pytest.raises(RemoteError) as caught:
             await agent.post_fact(task_id, {"statement": "x"}, dry_run=True)

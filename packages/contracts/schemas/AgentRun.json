@@ -161,6 +161,25 @@
       "title": "Derive Parallel",
       "type": "boolean"
     },
+    "derive_review": {
+      "default": false,
+      "description": "结束前必要推导复核",
+      "title": "Derive Review",
+      "type": "boolean"
+    },
+    "finished_version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished Version"
+    },
     "intent_id": {
       "anyOf": [
         {

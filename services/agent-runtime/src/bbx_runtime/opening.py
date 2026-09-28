@@ -26,6 +26,8 @@ def _acceptance(task: dict[str, Any]) -> str:
             f"- {item['id']} {item['desc']}｜状态：{result.get('status', 'unmet')}"
             f"｜最近裁定理由：{result.get('reason') or '无'}"
             f"｜缺口：{result.get('missing') or '无'}"
+            f"｜完成依据：{result.get('completion_basis') or 'inferred'} "
+            f"{result.get('completion_reason') or ''}"
             f"｜支撑事实：{', '.join(result.get('evidence_facts') or []) or '无'}"
         )
     return "\n".join(lines)
@@ -151,7 +153,50 @@ class OpeningContextProvider(ContextProvider):
         if source is None:
             source = getattr(run.profile.prompt_templates, run.task_type)
         assert isinstance(source, str)
-        return self.environment.from_string(source).render(**data)
+        rendered = self.environment.from_string(source).render(**data)
+        if run.task_type == "derive" and board.get("agents", {}).get(run.agent_id, {}).get(
+            "derive_review"
+        ):
+            rendered += (
+                "\n\n# 本次运行：完成前必要复核\n"
+                "即使现有验收已标 met，仍检查目标范围、完成证据和未验证事项。"
+                "找到有事实依据且值得继续的缺口，就用 post_intent 提交；"
+                "不要机械重复或扩展无关范围。"
+                "没有必要方向时，回执 posted 留空，excluded 至少说明一项具体复核与排除理由。"
+                "只有实际提交到黑板的意图才算产出；没有新方向不自动证明目标已经完成。"
+            )
+        if run.task_type == "close":
+            reviews = [
+                agent for agent in board.get("agents", {}).values() if agent.get("derive_review")
+            ]
+            latest = max(
+                reviews, key=lambda agent: int(agent.get("finished_version") or 0), default=None
+            )
+            summary = (
+                {
+                    key: latest.get(key)
+                    for key in (
+                        "id",
+                        "status",
+                        "end_reason",
+                        "derive_from_version",
+                        "finished_version",
+                        "receipt",
+                    )
+                }
+                if latest
+                else "尚未进行完成前必要复核"
+            )
+            rendered += (
+                "\n\n# 完成依据协议与最近复核\n"
+                "只有范围明确、直接证据覆盖验收、没有影响完成结论的未验证事项时，"
+                "可将该项 met 的 completion_basis 标为 explicit，"
+                "并写 completion_reason 和支撑事实。"
+                "其他情况用 inferred；不能用未发现更多推断已完整完成。"
+                "若完整性是验收要求但范围未确认，保持 unmet；inferred 不降低 met 的证据要求。"
+                "请结合下面的复核记录重新裁定，复核空产本身不是完成证明。\n" + _json(summary)
+            )
+        return rendered
 
     async def refresh(self, board: dict[str, Any] | None = None, *, step: int = 0) -> str:
         """Read the live template and keep exactly one rendered system instruction."""

@@ -178,6 +178,11 @@
             ],
             "title": "Derive Parallel"
           },
+          "derive_review": {
+            "default": false,
+            "title": "Derive Review",
+            "type": "boolean"
+          },
           "is_seed": {
             "default": false,
             "title": "Is Seed",
@@ -1282,7 +1287,7 @@
           },
           "derive_enabled": {
             "default": true,
-            "description": "探索静止且裁定后是否继续推导",
+            "description": "启用主动并行推导及额外空复核；必要完成复核始终保留",
             "title": "Derive Enabled",
             "type": "boolean"
           },
@@ -1386,7 +1391,7 @@
           },
           "derive_enabled": {
             "default": true,
-            "description": "探索静止且裁定后是否继续推导",
+            "description": "启用主动并行推导及额外空复核；必要完成复核始终保留",
             "title": "Derive Enabled",
             "type": "boolean"
           },
@@ -2501,6 +2506,26 @@
       "VerdictItem": {
         "additionalProperties": false,
         "properties": {
+          "completion_basis": {
+            "default": "inferred",
+            "enum": [
+              "explicit",
+              "inferred"
+            ],
+            "title": "Completion Basis",
+            "type": "string"
+          },
+          "completion_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Reason"
+          },
           "evidence_facts": {
             "description": "支撑事实",
             "items": {

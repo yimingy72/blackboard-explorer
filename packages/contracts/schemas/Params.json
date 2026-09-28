@@ -66,7 +66,7 @@
     },
     "derive_enabled": {
       "default": true,
-      "description": "探索静止且裁定后是否继续推导",
+      "description": "启用主动并行推导及额外空复核；必要完成复核始终保留",
       "title": "Derive Enabled",
       "type": "boolean"
     },

@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_single_profile_explores_open_intent_then_closes_without_derive(
+async def test_single_profile_explores_open_intent_then_reviews_before_closing(
     runtime_infrastructure, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("bbx_runtime.scheduler.loop.FALLBACK_SECONDS", 0.25)
@@ -63,6 +63,11 @@ async def test_single_profile_explores_open_intent_then_closes_without_derive(
                     ),
                     receipt_step("close"),
                 ]
+            )
+        if task_type == "derive":
+            assert state["agents"][aid]["derive_review"] is True
+            return ScriptedChatClient(
+                [receipt_step("derive", excluded=["Independent confirmation is unavailable"])]
             )
         if task_type == "close" and mode == "final":
             return ScriptedChatClient(
@@ -112,8 +117,9 @@ async def test_single_profile_explores_open_intent_then_closes_without_derive(
             for agent in finished["agents"].values()
             if agent["task_type"] == "close"
         ]
-        assert modes == ["judge", "final"]
-        assert all(agent["task_type"] != "derive" for agent in finished["agents"].values())
+        assert modes == ["judge", "judge", "final"]
+        reviews = [agent for agent in finished["agents"].values() if agent["task_type"] == "derive"]
+        assert len(reviews) == 1 and reviews[0]["derive_review"] is True
         events = await run.events()
         kinds = [event["type"] for event in events]
         assert kinds.index("intent.closed") < kinds.index("acceptance.judged")

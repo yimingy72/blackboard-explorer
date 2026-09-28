@@ -519,6 +519,177 @@ def test_derive_failure_is_not_an_empty_result(end_reason, receipt):
     assert "derive.result" not in [event["type"] for event in result]
 
 
+def test_review_registration_and_accepted_transition_guards():
+    state = board()
+    state.task.update(
+        last_change_version=3,
+        last_judgment_version=3,
+        derive_empty_streak=0,
+        budget={"max_cost": "10", "max_minutes": 60, "max_concurrent_agents": 4},
+    )
+    state.agents.clear()
+    state.intents.clear()
+    state.task["acceptance_state"]["A1"].update(
+        status="met", evidence_facts=["F1"], completion_basis="inferred"
+    )
+    spawned = decide(
+        state, "register_agent", "scheduler", {"task_type": "derive", "derive_review": True}
+    )[0]["payload"]
+    assert spawned["derive_from_version"] == 3
+    assert spawned["derive_parallel"] is False
+    with pytest.raises(RuleViolation) as stale:
+        decide(state, "transition", "scheduler", {"status": "closing", "reason": "accepted"})
+    assert stale.value.code == "stale_acceptance"
+    with pytest.raises(RuleViolation) as invalid:
+        decide(
+            state,
+            "register_agent",
+            "scheduler",
+            {"task_type": "derive", "derive_review": True, "derive_parallel": True},
+        )
+    assert invalid.value.code == "invalid_derive_mode"
+    state.agents["agent-1"] = {
+        "task_type": "derive",
+        "derive_review": True,
+        "status": "finished",
+        "end_reason": "normal",
+        "derive_from_version": 3,
+        "finished_version": 8,
+        "receipt": {"accepted": True, "data": {"posted": [], "excluded": ["checked"]}},
+    }
+    state.task["last_judgment_version"] = 8
+    assert (
+        decide(state, "transition", "scheduler", {"status": "closing", "reason": "accepted"})[0][
+            "type"
+        ]
+        == "task.closing"
+    )
+    state.task["last_change_version"] = 9
+    with pytest.raises(RuleViolation, match="验收完成条件"):
+        decide(state, "transition", "scheduler", {"status": "closing", "reason": "accepted"})
+    state.task["last_change_version"] = 3
+    state.task["acceptance_state"]["A1"].update(
+        completion_basis="explicit", completion_reason="The evidence directly covers the full scope"
+    )
+    state.agents.clear()
+    assert (
+        decide(state, "transition", "scheduler", {"status": "closing", "reason": "accepted"})[0][
+            "type"
+        ]
+        == "task.closing"
+    )
+    with pytest.raises(RuleViolation) as unnecessary:
+        decide(state, "register_agent", "scheduler", {"task_type": "derive", "derive_review": True})
+    assert unnecessary.value.code == "stale_derive"
+
+
+def test_review_receipt_must_match_authored_intents_and_explain_empty_result():
+    state = board()
+    state.agents["agent-1"].update(task_type="derive", derive_review=True, derive_from_version=4)
+    state.task["last_change_version"] = 4
+    state.intents.clear()
+    for receipt in (
+        {"accepted": True, "data": {"posted": [], "excluded": []}},
+        {"accepted": True, "data": {"posted": [], "excluded": [" "]}},
+        {"accepted": True, "data": {}},
+        {"accepted": False, "reason": "refused"},
+    ):
+        result = decide(
+            state,
+            "finish_agent",
+            "agent-1",
+            {"agent_id": "agent-1", "end_reason": "normal", "receipt": receipt},
+        )
+        assert [item["type"] for item in result] == ["agent.finished"]
+        assert result[0]["payload"]["end_reason"] == "runtime_error"
+    refused = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {"agent_id": "agent-1", "end_reason": "refused", "receipt": {"accepted": False}},
+    )
+    assert refused[0]["payload"]["end_reason"] == "runtime_error"
+    state.intents["I3"] = {"status": "closed", "holder": None, "author": "agent-1"}
+    mismatched = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "normal",
+            "receipt": {"accepted": True, "data": {"posted": [], "excluded": ["checked"]}},
+        },
+    )
+    assert mismatched[-1]["payload"]["end_reason"] == "runtime_error"
+    valid = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "normal",
+            "receipt": {"accepted": True, "data": {"posted": ["I3"], "excluded": []}},
+        },
+    )
+    assert valid[0]["payload"]["posted"] == ["I3"]
+
+
+def test_legacy_empty_streak_does_not_block_first_completion_review():
+    state = board()
+    state.task.update(
+        last_change_version=3,
+        last_judgment_version=3,
+        derive_empty_streak=2,
+        budget={"max_cost": "10", "max_minutes": 60, "max_concurrent_agents": 4},
+        params={**state.task["params"], "derive_enabled": False},
+    )
+    state.agents.clear()
+    state.intents.clear()
+    spawned = decide(
+        state, "register_agent", "scheduler", {"task_type": "derive", "derive_review": True}
+    )[0]["payload"]
+    assert spawned["derive_review"] is True
+    assert spawned["derive_from_version"] == 3
+
+
+def test_ordinary_derive_failure_preserves_existing_end_reason():
+    state = board()
+    state.agents["agent-1"]["task_type"] = "derive"
+    for end_reason, receipt in (
+        ("refused", {"accepted": False, "reason": "cannot start"}),
+        ("normal", {"accepted": True, "data": {"note": "invalid"}}),
+    ):
+        result = decide(
+            state,
+            "finish_agent",
+            "agent-1",
+            {"agent_id": "agent-1", "end_reason": end_reason, "receipt": receipt},
+        )
+        assert result[-1]["payload"]["end_reason"] == end_reason
+
+
+def test_explicit_verdict_requires_direct_evidence_and_reason():
+    state = board()
+    verdict = {
+        "id": "A1",
+        "verdict": "met",
+        "reason": "proved",
+        "evidence_facts": ["F1"],
+        "completion_basis": "explicit",
+        "completion_reason": " ",
+    }
+    with pytest.raises(RuleViolation) as invalid:
+        decide(state, "submit_close", "agent-3", {"verdicts": [verdict]})
+    assert invalid.value.code == "invalid_explicit_completion"
+    verdict["completion_reason"] = "Evidence directly covers the full scope"
+    assert (
+        decide(state, "submit_close", "agent-3", {"verdicts": [verdict]})[0]["payload"]["verdicts"][
+            0
+        ]["completion_basis"]
+        == "explicit"
+    )
+
+
 def test_dispute_depth_and_relied_by():
     state = board()
     for number in range(2, 5):

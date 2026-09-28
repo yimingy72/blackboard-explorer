@@ -200,6 +200,8 @@ class AcceptanceItem(ContractModel):
 
 
 class AcceptanceItemState(ContractModel):
+    completion_basis: Literal["explicit", "inferred"] = "inferred"
+    completion_reason: str | None = None
     status: AcceptanceStatus = Field(default=AcceptanceStatus.UNMET, description="当前满足状态")
     reason: str | None = Field(default=None, description="裁定理由")
     missing: str | None = Field(default=None, description="未满足时缺少什么")
@@ -208,6 +210,8 @@ class AcceptanceItemState(ContractModel):
 
 
 class VerdictItem(ContractModel):
+    completion_basis: Literal["explicit", "inferred"] = "inferred"
+    completion_reason: str | None = None
     id: str = Field(min_length=1, description="验收条件编号")
     verdict: Verdict = Field(description="满足或未满足")
     reason: str = Field(min_length=1, description="裁定理由")
@@ -216,6 +220,14 @@ class VerdictItem(ContractModel):
 
     @model_validator(mode="after")
     def check_verdict(self) -> VerdictItem:
+        if self.completion_basis == "explicit" and (
+            self.verdict != Verdict.MET
+            or not (self.completion_reason or "").strip()
+            or not self.evidence_facts
+        ):
+            raise ValueError(
+                "explicit completion requires met, completion_reason and evidence_facts"
+            )
         if self.verdict == Verdict.UNMET and not self.missing:
             raise ValueError("unmet verdict requires missing")
         return self
@@ -247,7 +259,9 @@ class Params(ContractModel):
     intent_max_attempts: int = Field(default=3, ge=1, description="意图未关闭时可被尝试的次数")
     max_consecutive_failures: int = Field(default=3, ge=1, description="连续运行错误上限")
     derive_empty_limit: int = Field(default=2, ge=1, description="连续空推导次数上限")
-    derive_enabled: bool = Field(default=True, description="探索静止且裁定后是否继续推导")
+    derive_enabled: bool = Field(
+        default=True, description="启用主动并行推导及额外空复核；必要完成复核始终保留"
+    )
     close_reserve_ratio: Decimal = Field(
         default=Decimal("0.05"), ge=0, lt=1, description="总预算中为收尾预留的比例"
     )
@@ -286,6 +300,8 @@ class AgentRun(ContractModel):
         default=None, ge=0, description="推导开始时的最大事实版本"
     )
     derive_parallel: bool = Field(default=False, description="登记时有探索 Agent 并行运行")
+    derive_review: bool = Field(default=False, description="结束前必要推导复核")
+    finished_version: int | None = Field(default=None, ge=0)
     intent_id: str | None = Field(default=None, description="持有的意图")
     status: AgentStatus = Field(description="运行状态")
     end_reason: EndReason | None = Field(default=None, description="结束原因")

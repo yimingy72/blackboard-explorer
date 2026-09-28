@@ -338,10 +338,13 @@ class BlackboardClient:
         is_seed: bool = False,
         close_mode: Literal["judge", "final"] | None = None,
         derive_parallel: bool | None = None,
+        derive_review: bool | None = None,
     ) -> dict[str, str]:
         body = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
         if derive_parallel is not None:
             body["derive_parallel"] = derive_parallel
+        if derive_review is not None:
+            body["derive_review"] = derive_review
         return await self._json(
             "POST",
             f"{self._task(task_id)}/agents",

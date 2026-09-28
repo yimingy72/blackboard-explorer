@@ -233,4 +233,40 @@ async def test_budget_does_not_change_context_or_break_legacy_templates(
     del task["usage"]
     assert await provider.render() == original
     setattr(run.profile.prompt_templates, task_type, "{{ goal }}｜{{ budget_left }}")
-    assert await provider.render() == f"{task['goal']}｜由系统管理"
+    legacy = await provider.render()
+    assert legacy.split("\n\n", 1)[0] == f"{task['goal']}｜由系统管理"
+    if task_type == "close":
+        assert "完成依据协议与最近复核" in legacy
+        assert "completion_basis" in legacy
+
+
+async def test_completion_review_mode_and_followup_judge_receive_execution_context():
+    run, _ = run_context("derive")
+    run.state["agents"][run.agent_id] = {
+        "id": run.agent_id,
+        "task_type": "derive",
+        "derive_review": True,
+        "status": "running",
+        "derive_from_version": 10,
+    }
+    run.profile.prompt_templates.derive = "Custom derive {{ goal }}"
+    rendered = await OpeningContextProvider(run).render()
+    assert "完成前必要复核" in rendered
+    assert "excluded" in rendered
+    close, _ = run_context("close", mode="judge")
+    close.state["agents"]["reviewer"] = {
+        "id": "reviewer",
+        "derive_review": True,
+        "finished_version": 15,
+        "derive_from_version": 10,
+        "status": "finished",
+        "end_reason": "normal",
+        "receipt": {
+            "accepted": True,
+            "data": {"posted": [], "excluded": ["Scope independently checked"]},
+        },
+    }
+    close.profile.prompt_templates.close = "Custom close {{ goal }}"
+    context = await OpeningContextProvider(close).render()
+    assert "Scope independently checked" in context
+    assert "completion_basis" in context

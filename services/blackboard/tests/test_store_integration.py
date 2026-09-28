@@ -325,6 +325,129 @@ async def test_parallel_derive_registration_and_empty_result(board_service):
     assert (await board_service.state(tid))["task"]["derive_empty_streak"] == 2
 
 
+async def test_completion_review_requires_valid_receipt_and_second_judgment(board_service):
+    service = board_service
+    tid = await task(service)
+    explore = await service.register_agent(tid, "explore")
+    await service.post_fact(tid, explore, fact(satisfies=["A1"]))
+    await service.finish_agent(tid, explore, {"accepted": True}, "normal")
+    close = await service.register_agent(tid, "close", close_mode="judge")
+    verdict = {"id": "A1", "verdict": "met", "reason": "observed", "evidence_facts": ["F1"]}
+    await service.submit_close(tid, close, {"verdicts": [verdict]})
+    await service.finish_agent(tid, close, {"accepted": True}, "normal")
+    review = await service.register_agent(tid, "derive", derive_review=True)
+    before = await service.state(tid)
+    assert before["agents"][review]["derive_from_version"] == before["last_change_version"]
+    with pytest.raises(RuleViolation) as stale:
+        await service.transition(tid, "closing", reason="accepted")
+    assert stale.value.code == "stale_acceptance"
+    invalid = await service.finish_agent(
+        tid, review, {"accepted": True, "data": {"posted": [], "excluded": []}}, "normal"
+    )
+    assert [event["type"] for event in invalid] == ["agent.finished"]
+    assert invalid[0]["payload"]["end_reason"] == "runtime_error"
+    assert (await service.state(tid))["task"]["derive_empty_streak"] == 0
+    review = await service.register_agent(tid, "derive", derive_review=True)
+    finished = await service.finish_agent(
+        tid,
+        review,
+        {"accepted": True, "data": {"posted": [], "excluded": ["No unverified direction remains"]}},
+        "normal",
+    )
+    state = await service.state(tid)
+    assert state["agents"][review]["finished_version"] == finished[-1]["version"]
+    assert state["task"]["derive_empty_streak"] == 1
+    with pytest.raises(RuleViolation):
+        await service.transition(tid, "closing", reason="accepted")
+    close = await service.register_agent(tid, "close", close_mode="judge")
+    await service.submit_close(tid, close, {"verdicts": [verdict]})
+    await service.finish_agent(tid, close, {"accepted": True}, "normal")
+    state = await service.state(tid)
+    assert state["task"]["last_judgment_version"] >= state["agents"][review]["finished_version"]
+    await service.transition(tid, "closing", reason="accepted")
+    await service.replay(tid)
+    replayed = await service.state(tid)
+    assert replayed["agents"][review]["finished_version"] == finished[-1]["version"]
+    assert replayed["task"]["acceptance_state"]["A1"]["completion_basis"] == "inferred"
+
+
+async def test_new_fact_expires_completion_review_without_empty_streak(board_service):
+    service = board_service
+    tid = await task(service)
+    explore = await service.register_agent(tid, "explore")
+    await service.post_fact(tid, explore, fact(satisfies=["A1"]))
+    await service.finish_agent(tid, explore, {"accepted": True}, "normal")
+    close = await service.register_agent(tid, "close", close_mode="judge")
+    await service.submit_close(
+        tid,
+        close,
+        {
+            "verdicts": [
+                {"id": "A1", "verdict": "met", "reason": "observed", "evidence_facts": ["F1"]}
+            ]
+        },
+    )
+    await service.finish_agent(tid, close, {"accepted": True}, "normal")
+    review = await service.register_agent(tid, "derive", derive_review=True)
+    another = await service.register_agent(tid, "explore")
+    await service.post_fact(tid, another, fact(statement="A later observation"))
+    await service.finish_agent(tid, another, {"accepted": True}, "normal")
+    await service.finish_agent(
+        tid,
+        review,
+        {"accepted": True, "data": {"posted": [], "excluded": ["No additional direction"]}},
+        "normal",
+    )
+    state = await service.state(tid)
+    assert state["agents"][review]["derive_from_version"] < state["last_change_version"]
+    assert state["task"]["derive_empty_streak"] == 0
+    with pytest.raises(RuleViolation) as stale:
+        await service.transition(tid, "closing", reason="accepted")
+    assert stale.value.code == "stale_acceptance"
+    with pytest.raises(RuleViolation) as unjustified:
+        await service.register_agent(tid, "derive", derive_review=True)
+    assert unjustified.value.code == "stale_derive"
+
+
+async def test_explicit_completion_can_close_with_active_direction(board_service):
+    service = board_service
+    tid = await task(service)
+    explore = await service.register_agent(tid, "explore")
+    await service.post_fact(tid, explore, fact(satisfies=["A1"]))
+    await service.post_intent(tid, explore, intent(statement="Optional follow-up"))
+    close = await service.register_agent(tid, "close", close_mode="judge")
+    await service.submit_close(
+        tid,
+        close,
+        {
+            "verdicts": [
+                {
+                    "id": "A1",
+                    "verdict": "met",
+                    "reason": "direct evidence",
+                    "evidence_facts": ["F1"],
+                    "completion_basis": "explicit",
+                    "completion_reason": "The direct result fully covers the requested outcome",
+                }
+            ]
+        },
+    )
+    await service.finish_agent(tid, close, {"accepted": True}, "normal")
+    state = await service.state(tid)
+    assert state["task"]["acceptance_state"]["A1"]["completion_basis"] == "explicit"
+    await service.transition(tid, "closing", reason="accepted")
+
+
+async def test_legacy_empty_streak_can_start_required_review(board_service):
+    tid = await task(board_service)
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(derive_empty_streak=2))
+    review = await board_service.register_agent(tid, "derive", derive_review=True)
+    state = await board_service.state(tid)
+    assert state["agents"][review]["derive_review"] is True
+    assert state["task"]["derive_empty_streak"] == 2
+
+
 async def test_expired_claim_replaces_token_and_recover_requeues(board_service):
     tid = await task(board_service)
     aid = await board_service.register_agent(tid, "explore")

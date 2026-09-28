@@ -178,6 +178,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 judge_from_version=p.get("judge_from_version"),
                 derive_from_version=p.get("derive_from_version"),
                 derive_parallel=p.get("derive_parallel", False),
+                derive_review=p.get("derive_review", False),
+                finished_version=None,
                 intent_id=None,
                 status="running",
                 end_reason=None,
@@ -240,6 +242,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "end_reason": reason,
                 "receipt": p.get("receipt"),
                 "finished_at": stamp,
+                "finished_version": version,
             },
             p["agent_id"],
         )
@@ -259,7 +262,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             await patch(conn, s.tasks, tid, changes)
     elif kind == "derive.result":
         task = await row(conn, s.tasks, tid)
-        if p["posted"] or not p.get("derive_parallel", False):
+        if (p["posted"] or not p.get("derive_parallel", False)) and not p.get("stale", False):
             await patch(
                 conn,
                 s.tasks,
@@ -277,6 +280,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "reason": item["reason"],
                 "missing": item.get("missing"),
                 "evidence_facts": item.get("evidence_facts", []),
+                "completion_basis": item.get("completion_basis", "inferred"),
+                "completion_reason": item.get("completion_reason"),
                 "judged_version": p["judge_from_version"],
             }
         await patch(
@@ -289,7 +294,13 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         task = await row(conn, s.tasks, tid)
         state = dict(task["acceptance_state"])
         item = dict(state[p["id"]])
-        item.update(status="unmet", missing=f"支撑事实 {p['fact_id']} 被争议", evidence_facts=[])
+        item.update(
+            status="unmet",
+            missing=f"支撑事实 {p['fact_id']} 被争议",
+            evidence_facts=[],
+            completion_basis="inferred",
+            completion_reason=None,
+        )
         state[p["id"]] = item
         await patch(conn, s.tasks, tid, {"acceptance_state": state})
     elif kind == "tool_call.recorded":

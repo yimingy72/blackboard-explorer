@@ -37,6 +37,8 @@ def verdict(item_id: str, met: bool, evidence: list[str] | None = None) -> dict[
             "verdict": "met",
             "reason": "Scripted evidence supports this acceptance item",
             "evidence_facts": evidence or [],
+            "completion_basis": "explicit",
+            "completion_reason": "The cited direct evidence fully establishes this acceptance item",
         }
     return {
         "id": item_id,
@@ -90,7 +92,9 @@ async def test_s10_disputed_support_reverts_met_and_is_judged_again(
                 ]
             )
         if task_type == "derive":
-            return ScriptedChatClient([receipt_step("derive")])
+            return ScriptedChatClient(
+                [receipt_step("derive", excluded=["No supported new direction"])]
+            )
         if task_type == "close" and mode == "final":
             return ScriptedChatClient(
                 [
@@ -210,7 +214,9 @@ async def test_s11_new_satisfies_during_judge_waits_for_next_single_judge(
                 ]
             )
         if task_type == "derive":
-            return ScriptedChatClient([receipt_step("derive")])
+            return ScriptedChatClient(
+                [receipt_step("derive", excluded=["No supported new direction"])]
+            )
         raise AssertionError(f"Unexpected run: {task_type}/{mode}")
 
     async with scenario(

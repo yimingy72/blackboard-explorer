@@ -7,7 +7,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from bbx_contracts.models import Params, Price, Usage
+from bbx_contracts.completion import (
+    all_met,
+    can_accept,
+    current_review,
+    explicit_completion,
+    quiescent,
+)
+from bbx_contracts.models import DeriveReceipt, Params, Price, Usage
+from pydantic import ValidationError
 
 
 class RuleViolation(ValueError):
@@ -203,6 +211,12 @@ def decide(
         }
         if status not in next_statuses.get(old, set()) and status not in {"failed", "stopped"}:
             fail("invalid_transition", f"任务不能从 {old} 进入 {status}，请按生命周期迁移。")
+        if (
+            status == "closing"
+            and data.get("reason") == "accepted"
+            and not can_accept(task, state.agents, state.intents)
+        ):
+            fail("stale_acceptance", "验收完成条件已变化，请重新裁定或复核。")
         return [event(f"task.{status}", actor, {"status": status, "reason": data.get("reason")})]
     if command == "post_fact":
         _active_agent(state, actor)
@@ -349,6 +363,8 @@ def decide(
         kind = data["task_type"]
         if kind not in {"explore", "derive", "close"}:
             fail("invalid_agent_type", "Agent 类型必须是 explore、derive 或 close。")
+        if data.get("derive_review") and kind != "derive":
+            fail("invalid_derive_mode", "只有推导 Agent 可以执行完成复核。")
         if kind == "close" and any(
             agent["task_type"] == "close" and agent["status"] in {"running", "concluding"}
             for agent in state.agents.values()
@@ -359,6 +375,9 @@ def decide(
         derive_fields = {}
         if kind == "derive":
             expected = data.get("derive_parallel")
+            review = data.get("derive_review", False)
+            if review and expected is True:
+                fail("invalid_derive_mode", "完成复核不能与并行推导同时启用。")
             active = [
                 agent
                 for agent in state.agents.values()
@@ -368,7 +387,7 @@ def decide(
             explore_active = any(agent["task_type"] == "explore" for agent in workers)
             derive_active = any(agent["task_type"] == "derive" for agent in workers)
             latest_fact = max((fact["version"] for fact in state.facts.values()), default=0)
-            if expected is not None:
+            if expected is not None or review:
                 params = Params.model_validate(task["params"])
                 budget = task["budget"]
                 spent = Decimal(str(task["usage"].get("cost", 0) or 0))
@@ -381,15 +400,35 @@ def decide(
                 closing_due = (
                     task["status"] != "running"
                     or budget_exhausted
-                    or task["derive_empty_streak"] >= params.derive_empty_limit
-                    or all(item["status"] == "met" for item in task["acceptance_state"].values())
+                    or (
+                        not review
+                        and task["derive_empty_streak"] >= params.derive_empty_limit
+                        and not all_met(task)
+                    )
+                    or explicit_completion(task)
                 )
                 open_intents = any(intent["status"] == "open" for intent in state.intents.values())
                 claimed_intents = any(
                     intent["status"] == "claimed" for intent in state.intents.values()
                 )
                 judging = any(agent["task_type"] == "close" for agent in active)
-                if expected:
+                if review:
+                    previous = current_review(task, state.agents)
+                    valid_phase = (
+                        quiescent(state.agents, state.intents)
+                        and not judging
+                        and task["last_judgment_version"] >= task["last_change_version"]
+                        and (
+                            previous is None
+                            or (
+                                not all_met(task)
+                                and params.derive_enabled
+                                and task["derive_empty_streak"] < params.derive_empty_limit
+                                and task["last_judgment_version"] >= previous["finished_version"]
+                            )
+                        )
+                    )
+                elif expected:
                     latest_derive = max(
                         (
                             agent["derive_from_version"]
@@ -415,11 +454,14 @@ def decide(
                         and not judging
                         and task["last_judgment_version"] >= task["last_change_version"]
                     )
-                if not params.derive_enabled or closing_due or not valid_phase:
+                if (not review and not params.derive_enabled) or closing_due or not valid_phase:
                     fail("stale_derive", "推导派发条件已变化，请重新调度。")
             derive_fields = {
-                "derive_from_version": latest_fact,
-                "derive_parallel": explore_active if expected is None else expected,
+                "derive_from_version": task["last_change_version"] if review else latest_fact,
+                "derive_parallel": (
+                    False if review else explore_active if expected is None else expected
+                ),
+                "derive_review": review,
             }
         return [
             event(
@@ -490,6 +532,13 @@ def decide(
                 )
             if item["verdict"] == "unmet" and not item.get("missing"):
                 fail("missing_required", "unmet 裁定必须说明缺什么，请填写 missing。")
+            if item.get("completion_basis", "inferred") == "explicit" and (
+                item["verdict"] != "met"
+                or not isinstance(item.get("completion_reason"), str)
+                or not item["completion_reason"].strip()
+                or not item.get("evidence_facts")
+            ):
+                fail("invalid_explicit_completion", "明确完成须有满足裁定、理由和支撑事实。")
         result = [
             event(
                 "acceptance.judged",
@@ -517,6 +566,47 @@ def decide(
         if agent["status"] not in {"running", "concluding"}:
             fail("agent_inactive", "Agent 已结束，不能重复 finish。")
         reason = data["end_reason"]
+        if agent.get("derive_review") and agent["status"] == "running" and reason == "refused":
+            reason = "runtime_error"
+            data = {**data, "end_reason": reason}
+        receipt = data.get("receipt") or {}
+        derive_result = None
+        if agent["task_type"] == "derive" and reason == "normal":
+            try:
+                parsed = DeriveReceipt.model_validate(receipt)
+            except ValidationError:
+                parsed = None
+            posted = [iid for iid, intent in state.intents.items() if intent["author"] == aid]
+            detail = receipt.get("data") if isinstance(receipt, dict) else None
+            valid = (
+                parsed is not None
+                and isinstance(detail, dict)
+                and "posted" in detail
+                and (
+                    not agent.get("derive_review")
+                    or (
+                        len(parsed.data.posted) == len(posted)
+                        and set(parsed.data.posted) == set(posted)
+                        and (posted or any(item.strip() for item in parsed.data.excluded))
+                    )
+                )
+            )
+            if valid and parsed is not None:
+                derive_result = event(
+                    "derive.result",
+                    aid,
+                    {
+                        "posted": posted if agent.get("derive_review") else parsed.data.posted,
+                        "excluded": parsed.data.excluded,
+                        "derive_parallel": agent.get("derive_parallel", False),
+                        "stale": bool(agent.get("derive_review"))
+                        and agent.get("derive_from_version") != task["last_change_version"],
+                    },
+                    aid,
+                )
+            elif agent.get("derive_review") and agent["status"] == "running":
+                reason = "runtime_error"
+                data = {**data, "end_reason": reason}
         concluding_for_limit = (
             agent["status"] == "concluding" and agent.get("conclude_reason") == "limit"
         )
@@ -538,22 +628,8 @@ def decide(
         for iid, intent in state.intents.items():
             if intent["holder"] == aid:
                 result += _release(state, iid, aid, "由系统强制释放，持有者未完成交接", counted)
-        if agent["task_type"] == "derive" and reason == "normal":
-            receipt = data.get("receipt") or {}
-            detail = receipt.get("data")
-            if receipt.get("accepted") is True and isinstance(detail, dict) and "posted" in detail:
-                result.append(
-                    event(
-                        "derive.result",
-                        aid,
-                        {
-                            "posted": detail["posted"],
-                            "excluded": detail.get("excluded", []),
-                            "derive_parallel": agent.get("derive_parallel", False),
-                        },
-                        aid,
-                    )
-                )
+        if derive_result is not None:
+            result.append(derive_result)
         result.append(event("agent.finished", aid, data, aid))
         if (
             task["status"] not in {"finished", "failed", "stopped"}

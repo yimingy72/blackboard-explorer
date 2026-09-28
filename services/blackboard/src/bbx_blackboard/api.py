@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -114,6 +114,13 @@ class AgentRegisterBody(BaseModel):
     is_seed: bool = False
     close_mode: Literal["judge", "final"] | None = None
     derive_parallel: bool | None = None
+    derive_review: bool = False
+
+    @model_validator(mode="after")
+    def check_derive_mode(self) -> AgentRegisterBody:
+        if self.derive_review and (self.task_type != "derive" or self.derive_parallel is True):
+            raise ValueError("derive_review requires a nonparallel derive agent")
+        return self
 
 
 class AgentRegistered(BaseModel):
@@ -942,6 +949,7 @@ def create_app(
             is_seed=body.is_seed,
             close_mode=body.close_mode,
             derive_parallel=body.derive_parallel,
+            derive_review=body.derive_review,
         )
         return AgentRegistered(
             agent_id=agent_id, token=issue_agent_token(settings, task_id, agent_id)

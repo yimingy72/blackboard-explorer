@@ -33,6 +33,8 @@ def board() -> dict[str, Any]:
             "failure_streak": 0,
             "seed_empty_count": 0,
             "derive_empty_streak": 0,
+            "last_change_version": 0,
+            "last_judgment_version": 0,
         },
         "facts": {},
         "intents": {},
@@ -56,6 +58,9 @@ def agent(
     close_mode: str | None = None,
     end_reason: str | None = None,
     derive_from_version: int | None = None,
+    derive_review: bool = False,
+    finished_version: int | None = None,
+    receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "id": aid,
@@ -68,6 +73,9 @@ def agent(
         "close_mode": close_mode,
         "end_reason": end_reason,
         "derive_from_version": derive_from_version,
+        "derive_review": derive_review,
+        "finished_version": finished_version,
+        "receipt": receipt,
     }
 
 
@@ -230,7 +238,20 @@ def test_system_close_over_attempt_limit_preempts_stale_dispatch() -> None:
     [
         (
             lambda s: s["task"]["acceptance_state"].update(
-                {"A1": {"status": "met"}, "A2": {"status": "met"}}
+                {
+                    "A1": {
+                        "status": "met",
+                        "completion_basis": "explicit",
+                        "completion_reason": "Direct proof",
+                        "evidence_facts": ["F1"],
+                    },
+                    "A2": {
+                        "status": "met",
+                        "completion_basis": "explicit",
+                        "completion_reason": "Direct proof",
+                        "evidence_facts": ["F1"],
+                    },
+                }
             ),
             EnterClosing("accepted"),
         ),
@@ -239,7 +260,6 @@ def test_system_close_over_attempt_limit_preempts_stale_dispatch() -> None:
             lambda s: s["task"].update(started_at=NOW - timedelta(minutes=60)),
             EnterClosing("terminated"),
         ),
-        (lambda s: s["task"].update(derive_empty_streak=2), EnterClosing("terminated")),
     ],
 )
 def test_closing_triggers(change, expected: EnterClosing) -> None:
@@ -274,21 +294,100 @@ def test_close_judgment_runs_without_worker_slot() -> None:
 def test_quiescent_new_board_change_triggers_judgment() -> None:
     state = board()
     state["board_empty"] = False
-    state["last_change_version"] = 6
-    state["last_judgment_version"] = 2
+    state["task"]["last_change_version"] = 6
+    state["task"]["last_judgment_version"] = 2
     assert decide(state, Params(), NOW) == [SpawnClose("judge")]
 
 
 def test_derive_requires_quiescence_and_latest_judgment() -> None:
     state = board()
     state["board_empty"] = False
-    state["last_change_version"] = 6
-    state["last_judgment_version"] = 6
-    assert decide(state, Params(), NOW) == [SpawnDerive()]
+    state["task"]["last_change_version"] = 6
+    state["task"]["last_judgment_version"] = 6
+    assert decide(state, Params(), NOW) == [SpawnDerive(review=True)]
     state["agents"] = {"agent-1": agent("agent-1")}
     assert decide(state, Params(), NOW) == []
     state["agents"] = {"agent-1": agent("agent-1", task_type="close", close_mode="judge")}
     assert decide(state, Params(), NOW) == []
+
+
+def reviewed(state: dict[str, Any], *, version: int = 7) -> None:
+    state["agents"]["review"] = agent(
+        "review",
+        task_type="derive",
+        status="finished",
+        end_reason="normal",
+        derive_from_version=state["task"]["last_change_version"],
+        derive_review=True,
+        finished_version=version,
+        receipt={"accepted": True, "data": {"posted": [], "excluded": ["No supported direction"]}},
+    )
+
+
+def test_inferred_met_requires_review_then_covered_judgment() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["task"]["last_change_version"] = 5
+    state["task"]["last_judgment_version"] = 5
+    state["task"]["acceptance_state"] = {
+        "A1": {"status": "met", "completion_basis": "inferred", "evidence_facts": ["F1"]}
+    }
+    assert decide(state, Params(), NOW) == [SpawnDerive(review=True)]
+    assert decide(state, Params(derive_enabled=False), NOW) == [SpawnDerive(review=True)]
+    state["intents"] = {"I1": intent("I1")}
+    assert decide(state, Params(), NOW) == [SpawnExplore("I1")]
+    state["intents"] = {}
+    reviewed(state)
+    assert decide(state, Params(), NOW) == [SpawnClose("judge")]
+    state["task"]["last_judgment_version"] = 8
+    assert decide(state, Params(), NOW) == [EnterClosing("accepted")]
+
+
+def test_review_with_new_intent_explores_then_requires_fresh_review() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["task"]["last_change_version"] = 5
+    state["task"]["last_judgment_version"] = 5
+    reviewed(state)
+    state["task"]["last_change_version"] = 9
+    state["intents"] = {"I1": intent("I1", version=9)}
+    assert decide(state, Params(), NOW) == [SpawnExplore("I1")]
+    state["intents"]["I1"]["status"] = "closed"
+    assert decide(state, Params(), NOW) == [SpawnClose("judge")]
+    state["task"]["last_judgment_version"] = 10
+    assert decide(state, Params(), NOW) == [SpawnDerive(review=True)]
+
+
+@pytest.mark.parametrize(
+    "invalid", ["excluded", "failed", "refused", "raw", "old", "parallel", "rejected"]
+)
+def test_invalid_review_cannot_accept_or_terminate(invalid: str) -> None:
+    state = board()
+    state["board_empty"] = False
+    state["task"]["last_change_version"] = 5
+    state["task"]["last_judgment_version"] = 5
+    state["task"]["derive_empty_streak"] = 2
+    reviewed(state)
+    review = state["agents"]["review"]
+    if invalid == "excluded":
+        review["receipt"]["data"]["excluded"] = []
+    elif invalid == "failed":
+        review["status"] = "failed"
+    elif invalid == "refused":
+        review["end_reason"] = "refused"
+    elif invalid == "raw":
+        review["receipt"]["raw_text"] = "unparsed"
+    elif invalid == "old":
+        review["derive_from_version"] -= 1
+    elif invalid == "rejected":
+        review["receipt"]["accepted"] = False
+    else:
+        review["derive_review"] = False
+    assert decide(state, Params(derive_enabled=False), NOW) == [SpawnDerive(review=True)]
+    reviewed(state)
+    assert decide(state, Params(derive_enabled=False), NOW) == [SpawnClose("judge")]
+    state["task"]["last_judgment_version"] = 8
+    assert decide(state, Params(derive_enabled=False), NOW) == [EnterClosing("terminated")]
 
 
 def test_fact_during_explore_starts_one_derive_then_dispatches_its_intents() -> None:
@@ -355,22 +454,22 @@ def test_disabled_derive_waits_for_seed_intents_and_latest_judgment() -> None:
     assert decide(state, params, NOW) == [SpawnExplore(seed=True)]
 
     state["board_empty"] = False
-    state["last_change_version"] = 4
+    state["task"]["last_change_version"] = 4
     assert decide(state, params, NOW) == [SpawnClose("judge")]
     state["agents"] = {"agent-1": agent("agent-1", task_type="close", close_mode="judge")}
     assert decide(state, params, NOW) == []
 
     state["agents"] = {}
-    state["last_judgment_version"] = 4
+    state["task"]["last_judgment_version"] = 4
     state["intents"] = {"I1": intent("I1")}
     assert decide(state, params, NOW) == [SpawnExplore("I1")]
     state["intents"]["I1"]["status"] = "claimed"
     assert decide(state, params, NOW) == []
     state["intents"]["I1"]["status"] = "closed"
-    state["last_change_version"] = 5
+    state["task"]["last_change_version"] = 5
     assert decide(state, params, NOW) == [SpawnClose("judge")]
-    state["last_judgment_version"] = 5
-    assert decide(state, params, NOW) == [EnterClosing("terminated")]
+    state["task"]["last_judgment_version"] = 5
+    assert decide(state, params, NOW) == [SpawnDerive(review=True)]
 
 
 def test_open_intents_prioritize_unmet_then_oldest_and_respect_slots() -> None:

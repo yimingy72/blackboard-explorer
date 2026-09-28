@@ -64,7 +64,9 @@ class ActionExecutor:
                 case SpawnExplore():
                     await self._spawn("explore", intent_id=action.intent_id, seed=action.seed)
                 case SpawnDerive():
-                    await self._spawn("derive", derive_parallel=action.parallel)
+                    await self._spawn(
+                        "derive", derive_parallel=action.parallel, derive_review=action.review
+                    )
                 case SpawnClose():
                     await self._spawn("close", mode=action.mode)
                 case Conclude():
@@ -72,7 +74,16 @@ class ActionExecutor:
                 case SystemClose():
                     await self.service.system_close(self.task_id, action.intent_id)
                 case EnterClosing():
-                    await self.service.transition(self.task_id, "closing", action.reason)
+                    try:
+                        await self.service.transition(self.task_id, "closing", action.reason)
+                    except RemoteError as error:
+                        if not (
+                            action.reason == "accepted"
+                            and error.status == 422
+                            and error.code == "stale_acceptance"
+                        ):
+                            raise
+                        return
                     if not self._stopping:
                         await self._conclude_running("closing")
                 case Fail():
@@ -88,6 +99,7 @@ class ActionExecutor:
         seed: bool = False,
         mode: CloseMode | None = None,
         derive_parallel: bool | None = None,
+        derive_review: bool | None = None,
     ) -> None:
         try:
             registration = await self.service.register_agent(
@@ -96,6 +108,7 @@ class ActionExecutor:
                 is_seed=seed,
                 close_mode=mode,
                 **({"derive_parallel": derive_parallel} if derive_parallel is not None else {}),
+                **({"derive_review": derive_review} if derive_review is not None else {}),
             )
         except RemoteError as error:
             if task_type == "derive" and error.status == 422 and error.code == "stale_derive":

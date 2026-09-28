@@ -103,7 +103,7 @@ async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
     service.register_agent.side_effect = RemoteError(422, "Derive phase changed", "stale_derive")
     await executor.execute([SpawnDerive(parallel=True)])
     service.register_agent.assert_awaited_once_with(
-        "task", "derive", is_seed=False, close_mode=None, derive_parallel=True
+        "task", "derive", is_seed=False, close_mode=None, derive_parallel=True, derive_review=False
     )
     assert not runner.started.is_set() and executor.tasks == {}
 
@@ -112,8 +112,18 @@ async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
     with pytest.raises(RemoteError):
         await executor.execute([SpawnDerive()])
     service.register_agent.assert_awaited_once_with(
-        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False
+        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False, derive_review=False
     )
+
+
+async def test_review_registration_carries_required_review_flag():
+    executor, service, _manager, runner, _ = setup_executor()
+    service.register_agent.side_effect = RemoteError(422, "Review phase changed", "stale_derive")
+    await executor.execute([SpawnDerive(review=True)])
+    service.register_agent.assert_awaited_once_with(
+        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False, derive_review=True
+    )
+    assert not runner.started.is_set()
 
 
 async def test_closing_transitions_then_concludes_and_failure_concludes_then_transitions():
@@ -129,6 +139,31 @@ async def test_closing_transitions_then_concludes_and_failure_concludes_then_tra
         ("conclude", "agent-1:failed"),
         ("transition", "failed:failed reason"),
     ]
+
+
+async def test_stale_acceptance_skips_conclude_and_retries_on_next_decision():
+    executor, service, _manager, _runner, history = setup_executor()
+    service.transition.side_effect = RemoteError(422, "Board changed", "stale_acceptance")
+    await executor.execute([EnterClosing("accepted"), SpawnExplore(seed=True)])
+    service.transition.assert_awaited_once_with("task", "closing", "accepted")
+    service.conclude.assert_not_awaited()
+    service.register_agent.assert_not_awaited()
+    assert history == []
+
+    service.transition.side_effect = None
+    await executor.execute([EnterClosing("accepted")])
+    service.conclude.assert_awaited_once_with("task", "agent-1", "closing")
+
+
+@pytest.mark.parametrize(
+    ("reason", "code"), [("accepted", "invalid"), ("terminated", "stale_acceptance")]
+)
+async def test_other_transition_errors_still_propagate(reason: str, code: str):
+    executor, service, _manager, _runner, _history = setup_executor()
+    service.transition.side_effect = RemoteError(422, "Other validation error", code)
+    with pytest.raises(RemoteError):
+        await executor.execute([EnterClosing(reason)])
+    service.conclude.assert_not_awaited()
 
 
 async def test_request_stop_finishes_registered_agent_before_launch():
