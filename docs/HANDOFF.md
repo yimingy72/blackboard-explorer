@@ -36,11 +36,13 @@
   | Header-polish | ✅ 顶部验收入口及工具栏移除，状态行下方加分割线，结束原因与运行统计同排；380普通、38集成、31前端、10浏览器测试通过（2026-09-27） |
   | Contribution-view | ✅ 作者颜色与Fact/Intent关联、真实产出数量、长正文阅读排版/原文、底部抽屉改顶部按需复盘；380普通、38集成、35前端、11浏览器通过，已热更新（2026-09-27） |
   | Interactive-agents | ✅ 及时发布/并行derive、运行中定向消息、持久Session/只读续聊、确认删除与重试清理；412普通、45集成、36前端、14浏览器及真实隔离闭环通过，已部署v2配置（2026-09-27） |
+  | Platform-config / CNY | ✅ 平台多模型与加密凭据、Explore外部MCP/工具白名单、worker完整提示词/参数表单、移除版本对比、人民币账本展示；435普通、47集成、37前端、18浏览器通过，schema0005/default与single v3已部署（2026-09-28） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。主代理直接开发，不再调用子代理；已有开发、设计同步、构建和Git授权继续有效。
-- **最新验证**：Interactive-agents 的412普通、45集成、36前端和14浏览器检查通过；真实CSV闭环2/2验收满足，首Fact约31秒、种子58秒，峰值2个Explore/3工作槽位，1次并行derive。运行中消息送达、结束后两轮复盘与重启Session保持、删除测试任务清理均通过，估算总费用USD0.165891。
-- **最新工作台**：Agent右侧支持输入消息与持久续聊；运行中下一轮模型调用送达，结束后只读复盘，删除任务才清会话。旧任务使用明确标记的legacy上下文。已部署schema0004，default/single最新v2，原3个任务与3份归档保留；新任务应选最新Profile。见 [Interactive-agents报告](tasks/Interactive-agents-report.md)。
+- **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；用户已允许按需使用GPT-6 Sol high协作开发。
+- **最新工作台与验证**：Agent配置页有Worker配置、平台模型、MCP工具三个入口，移除版本对比。支持DeepSeek/OpenAI Chat Completions/Responses/OpenAI兼容接口；Explore可挂载Streamable HTTP MCP并选工具。平台密钥加密且只写，已有DeepSeek复用环境密钥。default/single v3以人民币计价，旧3个任务保持USD；schema0005，服务运行正常。435普通、47集成、37前端、18浏览器通过，本轮未调用真实模型。见[Platform-config报告](tasks/Platform-config-report.md)。
+- **上一轮真实闭环及验证**：Interactive-agents 的412普通、45集成、36前端和14浏览器检查通过；真实CSV闭环2/2验收满足，首Fact约31秒、种子58秒，峰值2个Explore/3工作槽位，1次并行derive。运行中消息送达、结束后两轮复盘与重启Session保持、删除测试任务清理均通过，估算总费用USD0.165891。
+- **Interactive-agents 工作台记录**：Agent右侧支持输入消息与持久续聊；运行中下一轮模型调用送达，结束后只读复盘，删除任务才清会话。旧任务使用明确标记的legacy上下文。已部署schema0004，default/single最新v2，原3个任务与3份归档保留；新任务应选最新Profile。见 [Interactive-agents报告](tasks/Interactive-agents-report.md)。
 - **最新界面修订**：Detail-polish（`a12275c`）将事实/意图/目标正文改为 Markdown，图谱筛选和自动折叠已移除，全部对象可见；保留验收摘要与运行统计，缩略图128×84。本地前端与最终构建一致。验证为380普通、38集成、31前端、10浏览器通过；见 [Detail-polish 报告](tasks/Detail-polish-report.md)。
 
 ---
@@ -353,6 +355,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
+Platform-config/CNY已按用户最新要求同步实现架构及任务合同（c82599a、97e044c、ea2f841）：人民币估算、完整worker表单、平台模型/MCP固定版本与加密凭据、受限工具配置；无待同步项。
+
 Interactive-agents已同步概念5.4与实现9.1及API合同（246c5b3、44893b8）：早发布、有界并行derive与原子phase复核、用户干预、原生Session持久化、只读续聊与两阶段删除；当前没有未同步的已采纳设计事项。
 
 Contribution-view 已同步 8.2/8.3/8.5：作者颜色、产出统计、顶部复盘对话框、阅读排版与原文。实测新意图约1秒认领；任务b8b7727f的首个非种子Explore在349秒开始，最终279轮/38分15秒。耗时估算方法与完整结论见 `docs/tasks/Contribution-view-report.md`，本轮未改提示词/推理强度或宣称推理提速。没有待同步的已采纳设计项。
@@ -383,7 +387,7 @@ token 归属、tool_call.recorded、任务创建引导例外已同步并合并�
 - 预算按金额（`max_cost`、`close_reserve_ratio`），并发上限只在任务 `budget` 中；`context_threshold` 128K。
 - 调度器自建 asyncio 循环，**不用 MAF Workflow**（超步屏障与连续调度冲突）；MAF 只用于 Agent 本体。
 - MAF 核对结论：`max_iterations` 默认 40 需调大；函数中间件"替换结果"而不是 terminate；M2a 实测原 enqueue 注入不能跨轮保留，改用公开 Content.text/result 追加增量；MCP 工具经过函数中间件，参数为 `static_headers`。
-- 模型统一 DeepSeek `deepseek-flash`；重复判断由 Agent 根据同步的黑板完成，不再部署本地 embedding 或生成向量；v1 不部署模型网关。
+- 默认模型为 DeepSeek `deepseek-flash`，平台配置支持多模型及MAF Chat Completions/Responses连接器；重复判断由 Agent 根据同步的黑板完成，不再部署本地 embedding 或生成向量；v1 不部署模型网关。
 - 部署：本机 Docker；同一时间一个任务；每任务一个 ubuntu 执行环境（每个 Agent 一个 Linux 用户），证据"引用时持久化 + 结束时归档"到 MinIO。
 
 ---
