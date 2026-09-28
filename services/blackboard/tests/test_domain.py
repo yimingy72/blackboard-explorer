@@ -1,5 +1,6 @@
 """Rule and calculated-state checks without database or network."""
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -409,6 +410,143 @@ def test_restart_does_not_count_second_empty_seed_or_fail_task() -> None:
         {"agent_id": "agent-1", "end_reason": "runtime_restart", "receipt": {}},
     )
     assert [event["type"] for event in events] == ["agent.finished"]
+
+
+def test_transient_model_errors_share_one_anchored_window() -> None:
+    state = board()
+    receipt = {"accepted": False, "error": {"transient": True, "category": "connection"}}
+    starts = []
+    for aid in ("agent-1", "agent-2", "agent-3", "agent-4"):
+        events = decide(
+            state,
+            "finish_agent",
+            aid,
+            {"agent_id": aid, "end_reason": "runtime_error", "receipt": receipt},
+        )
+        assert [item["type"] for item in events] == ["agent.finished"]
+        payload = events[0]["payload"]
+        assert payload["transient_model_error"] is True
+        assert payload["failure_window_kind"] == "model_transient"
+        starts.append(payload["failure_window_started_at"])
+        state.task["failure_streak"] += payload["failure_increment"]
+        state.task["failure_window_kind"] = payload["failure_window_kind"]
+        state.task["failure_window_started_at"] = payload["failure_window_started_at"]
+    assert state.task["failure_streak"] == 1
+    assert starts == [starts[0]] * 4
+
+
+@pytest.mark.parametrize("as_string", [False, True])
+def test_transient_model_error_accepts_datetime_or_iso_window(as_string: bool) -> None:
+    state = board()
+    started = datetime.now(UTC) - timedelta(seconds=10)
+    state.task.update(
+        failure_streak=2,
+        failure_window_kind="model_transient",
+        failure_window_started_at=started.isoformat().replace("+00:00", "Z")
+        if as_string
+        else started,
+    )
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": {"transient": True}},
+        },
+    )
+    assert [item["type"] for item in events] == ["agent.finished"]
+    assert events[0]["payload"]["failure_increment"] == 0
+    assert events[0]["payload"]["failure_window_started_at"] == started.isoformat()
+
+
+def test_transient_model_error_starts_new_window_after_120_seconds() -> None:
+    state = board()
+    state.task.update(
+        failure_streak=1,
+        failure_window_kind="model_transient",
+        failure_window_started_at=(datetime.now(UTC) - timedelta(seconds=121)).isoformat(),
+    )
+    receipt = {"error": {"transient": True}}
+    second = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {"agent_id": "agent-1", "end_reason": "runtime_error", "receipt": receipt},
+    )
+    payload = second[0]["payload"]
+    assert payload["failure_increment"] == 1
+    assert payload["failure_window_started_at"] != state.task["failure_window_started_at"]
+    state.task.update(
+        failure_streak=2,
+        failure_window_started_at=datetime.now(UTC) - timedelta(seconds=121),
+    )
+    third = decide(
+        state,
+        "finish_agent",
+        "agent-2",
+        {"agent_id": "agent-2", "end_reason": "runtime_error", "receipt": receipt},
+    )
+    assert [item["type"] for item in third] == ["agent.finished", "task.failed"]
+    assert third[0]["payload"]["failure_increment"] == 1
+    assert third[1]["payload"]["reason"] == "模型服务连续不可用"
+
+
+def test_transient_model_error_preserves_intent_and_seed_retries() -> None:
+    state = board()
+    state.intents["I1"].update(status="claimed", holder="agent-1", attempts=1)
+    state.agents["agent-1"]["is_seed"] = True
+    state.task["seed_empty_count"] = 1
+    state.facts.clear()
+    state.intents.pop("I2")
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": {"transient": True}},
+        },
+    )
+    assert [item["type"] for item in events] == ["intent.released", "agent.finished"]
+    assert events[0]["payload"]["counted"] is False
+
+    state.intents.clear()
+    seed = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": {"transient": True}},
+        },
+    )
+    assert [item["type"] for item in seed] == ["agent.finished"]
+
+
+@pytest.mark.parametrize("receipt", [{}, {"error": {"transient": False}}, {"error": "old"}])
+def test_legacy_and_permanent_runtime_errors_still_count(receipt) -> None:
+    state = board()
+    state.task.update(
+        failure_streak=2,
+        failure_window_kind="model_transient",
+        failure_window_started_at=datetime.now(UTC),
+    )
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {"agent_id": "agent-1", "end_reason": "runtime_error", "receipt": receipt},
+    )
+    assert [item["type"] for item in events] == ["agent.finished", "task.failed"]
+    assert events[0]["payload"]["failure_increment"] == 1
+    assert events[0]["payload"]["failure_window_kind"] is None
+    assert events[0]["payload"]["failure_window_started_at"] is None
+    assert events[0]["payload"]["transient_model_error"] is False
+    assert events[1]["payload"]["reason"] == "Agent 连续运行失败"
 
 
 @pytest.mark.parametrize("terminal", ["finished", "failed", "stopped"])

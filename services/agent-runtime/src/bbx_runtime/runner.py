@@ -374,6 +374,8 @@ class AgentRunner:
                 )
                 reason = f"运行失败：{type(error).__name__}"
             receipt = {"accepted": False, "reason": reason}
+            if isinstance(metadata, dict):
+                receipt["error"] = metadata
             end_reason = "runtime_error"
 
         async def finalize() -> None:

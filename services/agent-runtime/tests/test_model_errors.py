@@ -23,20 +23,20 @@ def status_error(status: int, code: str = "safe_code", **headers: str) -> APISta
 
 
 @pytest.mark.parametrize(
-    ("status", "code", "category"),
+    ("status", "code", "category", "transient"),
     [
-        (429, "rate_limit", "rate_limit"),
-        (503, "server_error", "server_error"),
-        (400, "bad_request", "invalid_request"),
-        (401, "bad_auth", "authentication"),
-        (403, "forbidden", "authentication"),
-        (402, "insufficient_balance", "payment_required"),
-        (400, "content_filter", "content_filter"),
-        (408, "timeout", "timeout"),
-        (409, "conflict", "conflict"),
+        (429, "rate_limit", "rate_limit", True),
+        (503, "server_error", "server_error", True),
+        (400, "bad_request", "invalid_request", False),
+        (401, "bad_auth", "authentication", False),
+        (403, "forbidden", "authentication", False),
+        (402, "insufficient_balance", "payment_required", False),
+        (400, "content_filter", "content_filter", False),
+        (408, "timeout", "timeout", True),
+        (409, "conflict", "conflict", True),
     ],
 )
-def test_status_error_category_and_safe_metadata(status, code, category):
+def test_status_error_category_and_safe_metadata(status, code, category, transient):
     error = status_error(status, code, **{"x-request-id": "req-123", "retry-after": "2"})
     wrapped = ChatClientException("secret wrapper", inner_exception=error)
     metadata = model_error_metadata(
@@ -47,6 +47,7 @@ def test_status_error_category_and_safe_metadata(status, code, category):
     )
     assert metadata == {
         "category": category,
+        "transient": transient,
         "http_status": status,
         "provider_code": code,
         "request_id": "req-123",
@@ -60,15 +61,21 @@ def test_status_error_category_and_safe_metadata(status, code, category):
 
 
 @pytest.mark.parametrize(
-    ("error", "category"),
+    ("error", "category", "transient"),
     [
-        (APIConnectionError(request=httpx2.Request("POST", "https://model.invalid")), "connection"),
-        (APITimeoutError(request=httpx2.Request("POST", "https://model.invalid")), "timeout"),
-        (RuntimeError("secret unknown error"), "unknown"),
+        (
+            APIConnectionError(request=httpx2.Request("POST", "https://model.invalid")),
+            "connection",
+            True,
+        ),
+        (APITimeoutError(request=httpx2.Request("POST", "https://model.invalid")), "timeout", True),
+        (RuntimeError("secret unknown error"), "unknown", False),
     ],
 )
-def test_non_http_categories(error, category):
-    assert model_error_metadata(error)["category"] == category
+def test_non_http_categories(error, category, transient):
+    metadata = model_error_metadata(error)
+    assert metadata["category"] == category
+    assert metadata["transient"] is transient
 
 
 def test_nested_causes_and_untrusted_headers_are_bounded():

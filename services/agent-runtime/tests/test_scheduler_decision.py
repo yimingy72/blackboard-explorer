@@ -155,6 +155,7 @@ def test_closing_waits_then_spawns_final(
 def test_final_retries_are_bounded_and_restart_does_not_count() -> None:
     state = board()
     state["task"]["status"] = "closing"
+    state["task"]["failure_streak"] = 1
     state["agents"] = {
         "agent-1": agent(
             "agent-1", task_type="close", close_mode="final", status="finished", end_reason="normal"
@@ -185,6 +186,23 @@ def test_final_retries_are_bounded_and_restart_does_not_count() -> None:
         ),
     }
     assert decide(state, Params(), NOW) == [Fail("终结报告连续未完成")]
+
+
+def test_parallel_transient_final_failures_use_coalesced_task_streak() -> None:
+    state = board()
+    state["task"].update(status="closing", failure_streak=1)
+    state["agents"] = {
+        f"agent-{index}": agent(
+            f"agent-{index}",
+            task_type="close",
+            close_mode="final",
+            status="failed",
+            end_reason="runtime_error",
+            receipt={"error": {"transient": True}},
+        )
+        for index in range(1, 4)
+    }
+    assert decide(state, Params(), NOW) == [SpawnClose("final")]
 
 
 @pytest.mark.parametrize(

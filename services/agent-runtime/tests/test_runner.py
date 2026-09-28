@@ -1,8 +1,10 @@
 """Runner completion, failure, and cancellation all reach the durable finish API."""
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -17,7 +19,7 @@ from bbx_runtime.middleware import GraceGateMiddleware, ToolLogMiddleware
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient
-from openai import APIStatusError
+from openai import APIConnectionError, APIStatusError
 
 
 @pytest.mark.parametrize(
@@ -105,9 +107,67 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
             assert "provider request details" not in str(result.receipt)
         if outcome == "model_error":
             assert result.receipt["reason"] == "模型请求失败：rate_limit"
+            assert result.receipt["error"]["category"] == "rate_limit"
+            assert result.receipt["error"]["transient"] is True
             assert "secret" not in str(result.receipt)
+        elif expected == "runtime_error":
+            assert "error" not in result.receipt
     service.finish_agent.assert_awaited_once()
     assert service.finish_agent.call_args.args[-1] == expected
+
+
+async def test_real_agent_fake_client_persists_safe_model_failure_receipt():
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    state = {
+        "task": {
+            "goal": "secret prompt",
+            "acceptance": [{"id": "A1", "desc": "Check the result"}],
+            "agent_profile": "default",
+            "agent_profile_version": 1,
+            "params": Params().model_dump(),
+            "budget": {"max_minutes": 1},
+        },
+        "agents": {
+            "agent-1": {
+                "task_type": "derive",
+                "status": "running",
+                "last_seen_version": 0,
+                "steps": 0,
+            }
+        },
+        "facts": {},
+        "intents": {},
+    }
+    board = SimpleNamespace(events=AsyncMock(return_value=[]))
+    service = SimpleNamespace(
+        state=AsyncMock(return_value=state),
+        get_profile=AsyncMock(return_value=profile.model_dump()),
+        finish_agent=AsyncMock(),
+        with_token=Mock(return_value=board),
+    )
+
+    class FailingClient(ScriptedChatClient):
+        def _inner_get_response(self, **_kwargs: Any):
+            raise APIConnectionError(
+                message="secret provider body and test-key",
+                request=httpx2.Request("POST", "https://model.invalid"),
+            )
+
+    runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
+    result = await runner.run_agent(
+        "task", "agent-1", "derive", agent_token="issued", client=FailingClient([])
+    )
+    assert result.end_reason == "runtime_error"
+    assert result.receipt["accepted"] is False
+    assert result.receipt["reason"] == "模型请求失败：connection"
+    assert result.receipt["error"]["category"] == "connection"
+    assert result.receipt["error"]["transient"] is True
+    assert result.receipt["error"]["attempt_limit"] == 5
+    assert "secret" not in json.dumps(result.receipt)
+    assert "test-key" not in json.dumps(result.receipt)
+    service.finish_agent.assert_awaited_once_with(
+        "task", "agent-1", result.receipt, "runtime_error", expected_derive_round=1
+    )
 
 
 async def test_explore_selection_excludes_exec_and_keeps_external_tool_in_guarded_agent(

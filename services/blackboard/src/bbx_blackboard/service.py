@@ -81,6 +81,8 @@ class BoardService:
             "last_judgment_version": 0,
             "derive_empty_streak": 0,
             "failure_streak": 0,
+            "failure_window_kind": None,
+            "failure_window_started_at": None,
             "seed_empty_count": 0,
         }
         async with self.repo.engine.begin() as conn:

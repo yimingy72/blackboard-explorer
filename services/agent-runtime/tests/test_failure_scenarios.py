@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,
@@ -14,6 +15,7 @@ from bbx_runtime.testing.scripted_client import (
     ScriptToolCall,
     ScriptUsage,
 )
+from openai import APIConnectionError
 from scenario_support import (
     Gate,
     GateClient,
@@ -139,6 +141,71 @@ async def test_05_three_model_failures_fail_and_archive_without_close(
         assert not [agent for agent in failed["agents"].values() if agent["task_type"] == "close"]
         assert s.manager.archives and s.manager.destroyed == [s.task_id]
         assert any(event["type"] == "task.archived" for event in await s.events())
+
+
+async def test_parallel_transient_model_failures_count_as_one_window(
+    runtime_infrastructure, tmp_path: Path
+) -> None:
+    failures = Gate(4)
+    idle = Gate(1000)
+    assigned: list[str] = []
+
+    class ConnectionFailureClient(ScriptedChatClient):
+        def __init__(self, aid: str) -> None:
+            super().__init__([])
+            self.aid = aid
+
+        def _inner_get_response(self, **_kwargs):
+            failures.enter(self.aid)
+
+            async def fail_after_parallel_start():
+                await failures.release.wait()
+                raise APIConnectionError(request=httpx2.Request("POST", "https://model.invalid"))
+
+            return fail_after_parallel_start()
+
+    def factory(task_type, intent_id, mode, aid, state) -> ScriptedChatClient:
+        if task_type != "explore":
+            return idle_client(aid, task_type, idle)
+        if state["agents"][aid]["is_seed"]:
+            return ScriptedChatClient(
+                [
+                    fact_step(aid, "Seed observation before a transient provider outage"),
+                    *(intent_step(f"Independent direction {index}") for index in range(1, 5)),
+                    receipt_step("explore", posted=["F1", "I1", "I2", "I3", "I4"]),
+                ]
+            )
+        if len(assigned) < 4:
+            assigned.append(aid)
+            return ConnectionFailureClient(aid)
+        return idle_client(aid, task_type, idle)
+
+    async with scenario(
+        runtime_infrastructure,
+        tmp_path,
+        factory,
+        spec_overrides={"budget": {"max_concurrent_agents": 5}},
+    ) as s:
+        await s.start()
+        await asyncio.wait_for(failures.ready.wait(), 20)
+        failures.release.set()
+        settled = await s.wait(
+            lambda st: (
+                len(assigned) == 4
+                and all(st["agents"].get(aid, {}).get("status") == "failed" for aid in assigned)
+            ),
+            seconds=20,
+        )
+        assert settled["task"]["status"] == "running"
+        assert settled["task"]["failure_streak"] == 1
+        assert settled["task"]["failure_window_kind"] == "model_transient"
+        assert all(intent["attempts"] == 0 for intent in settled["intents"].values())
+        error_traces = [
+            event
+            for event in await s.events()
+            if event["type"] == "agent.trace.recorded" and event["payload"]["kind"] == "model_error"
+        ]
+        assert len(error_traces) == 4
 
 
 async def test_07_atomic_claim_race_finishes_losing_scheduler_agent(

@@ -78,14 +78,17 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
         ]
         if active:
             return []
-        failed_finals = sum(
+        failed_final_non_runtime = sum(
             agent["task_type"] == "close"
             and agent.get("close_mode") == "final"
             and agent["status"] in {"finished", "failed"}
-            and agent.get("end_reason") != "runtime_restart"
+            and agent.get("end_reason") not in {"runtime_error", "runtime_restart"}
             for agent in state["agents"].values()
         )
-        if failed_finals >= params.max_consecutive_failures:
+        if (
+            failed_final_non_runtime + int(task.get("failure_streak") or 0)
+            >= params.max_consecutive_failures
+        ):
             return [Fail("终结报告连续未完成")]
         return [SpawnClose("final")]
     if status != "running":

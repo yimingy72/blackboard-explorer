@@ -35,6 +35,15 @@ class FakeObjects:
 
 async def test_resume_keeps_history_and_counts_only_active_time(board_service):
     tid = await task(board_service)
+    failing_agent = await board_service.register_agent(tid, "explore")
+    await append_agent_finished(
+        board_service,
+        tid,
+        failing_agent,
+        failure_increment=1,
+        failure_window_kind="model_transient",
+        failure_window_started_at="2026-09-28T00:00:00+00:00",
+    )
     await board_service.transition(tid, "failed", reason="first run")
     async with board_service.repo.engine.begin() as conn:
         await board_service.repo.lock(conn, tid)
@@ -66,6 +75,9 @@ async def test_resume_keeps_history_and_counts_only_active_time(board_service):
     assert state["task"]["status"] == "provisioning"
     assert state["task"]["active_seconds"] == 30
     assert state["task"]["active_since"] is None
+    assert state["task"]["failure_streak"] == 0
+    assert state["task"]["failure_window_kind"] is None
+    assert state["task"]["failure_window_started_at"] is None
     assert Decimal(state["task"]["budget"]["max_cost"]) == 11
     assert state["task"]["budget"]["max_minutes"] == 70
     async with board_service.repo.engine.connect() as conn:
@@ -289,6 +301,24 @@ async def task(service):
     await service.transition(tid, "provisioning")
     await service.transition(tid, "running")
     return tid
+
+
+async def append_agent_finished(service, tid, aid, end_reason="runtime_error", **payload):
+    async with service.repo.engine.begin() as conn:
+        await service.repo.lock(conn, tid)
+        await service.repo.append(
+            conn,
+            tid,
+            [
+                {
+                    "type": "agent.finished",
+                    "actor": aid,
+                    "object_id": aid,
+                    "payload": {"agent_id": aid, "end_reason": end_reason, **payload},
+                    "addressed_to": None,
+                }
+            ],
+        )
 
 
 def fact(**changes):
@@ -1109,6 +1139,95 @@ async def test_runtime_restart_preserves_counters_and_attempts_on_replay(board_s
     before = await projections(service, with_intent)
     await service.replay(with_intent)
     assert await projections(service, with_intent) == before
+
+
+async def test_failure_window_projection_and_legacy_replay(board_service):
+    service = board_service
+    tid = await task(service)
+    start = "2026-09-28T00:00:00+00:00"
+    first = await service.register_agent(tid, "explore", is_seed=True)
+    second = await service.register_agent(tid, "explore", is_seed=True)
+    third = await service.register_agent(tid, "explore")
+    await append_agent_finished(
+        service,
+        tid,
+        first,
+        failure_increment=1,
+        transient_model_error=True,
+        failure_window_kind="model_transient",
+        failure_window_started_at=start,
+    )
+    await append_agent_finished(
+        service,
+        tid,
+        second,
+        failure_increment=0,
+        transient_model_error=True,
+        failure_window_kind="model_transient",
+        failure_window_started_at=start,
+    )
+    task_state = (await service.state(tid))["task"]
+    assert task_state["failure_streak"] == 1
+    assert task_state["seed_empty_count"] == 0
+    assert task_state["failure_window_kind"] == "model_transient"
+    assert task_state["failure_window_started_at"] == datetime.fromisoformat(start)
+
+    await append_agent_finished(service, tid, third)
+    task_state = (await service.state(tid))["task"]
+    assert task_state["failure_streak"] == 2
+    assert task_state["failure_window_kind"] is None
+    assert task_state["failure_window_started_at"] is None
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
+async def test_normal_finish_clears_window_and_terminal_late_finish_freezes_it(board_service):
+    service = board_service
+    tid = await task(service)
+    first = await service.register_agent(tid, "explore")
+    normal = await service.register_agent(tid, "explore")
+    trigger = await service.register_agent(tid, "explore", is_seed=True)
+    late_error = await service.register_agent(tid, "explore", is_seed=True)
+    late_normal = await service.register_agent(tid, "explore", is_seed=True)
+    await append_agent_finished(
+        service,
+        tid,
+        first,
+        failure_increment=1,
+        failure_window_kind="model_transient",
+        failure_window_started_at="2026-09-28T00:00:00+00:00",
+    )
+    await service.finish_agent(tid, normal, {"accepted": True}, "normal")
+    task_state = (await service.state(tid))["task"]
+    assert task_state["failure_streak"] == 0
+    assert task_state["failure_window_kind"] is None
+    assert task_state["failure_window_started_at"] is None
+    await append_agent_finished(
+        service,
+        tid,
+        trigger,
+        failure_increment=1,
+        failure_window_kind="model_transient",
+        failure_window_started_at="2026-09-28T00:03:00+00:00",
+    )
+    await service.transition(tid, "failed", reason="failure limit")
+    frozen = (await service.state(tid))["task"]
+    assert frozen["failure_streak"] == 1
+    assert frozen["seed_empty_count"] == 1
+    # A late result for a registered agent still updates its run after terminal status.
+    await append_agent_finished(service, tid, late_error, failure_increment=1)
+    await append_agent_finished(service, tid, late_normal, end_reason="normal")
+    after = await service.state(tid)
+    assert after["task"]["failure_streak"] == frozen["failure_streak"]
+    assert after["task"]["seed_empty_count"] == frozen["seed_empty_count"]
+    assert after["task"]["failure_window_kind"] == frozen["failure_window_kind"]
+    assert after["task"]["failure_window_started_at"] == frozen["failure_window_started_at"]
+    assert after["agents"][late_error]["status"] == "failed"
+    assert after["agents"][late_normal]["status"] == "finished"
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
 
 
 async def test_dry_run_objects_and_event_filter(board_service):

@@ -655,14 +655,42 @@ def decide(
         concluding_for_closing = (
             agent["status"] == "concluding" and agent.get("conclude_reason") == "closing"
         )
-        counted = reason != "runtime_restart" and (
-            reason in {"heartbeat", "runtime_error"}
-            or (
-                not concluding_for_closing
-                and (
-                    reason in {"refused", "grace_timeout"}
-                    or (reason == "limit" and agent["status"] == "concluding")
-                    or concluding_for_limit
+        error = receipt.get("error") if isinstance(receipt, dict) else None
+        transient_model_error = (
+            reason == "runtime_error" and isinstance(error, dict) and error.get("transient") is True
+        )
+        failure_increment = int(reason == "runtime_error")
+        failure_window_kind = None
+        failure_window_started_at = None
+        if transient_model_error:
+            now = datetime.now(UTC)
+            started = task.get("failure_window_started_at")
+            if isinstance(started, str):
+                started = datetime.fromisoformat(started)
+            if isinstance(started, datetime) and started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            if (
+                task.get("failure_window_kind") == "model_transient"
+                and isinstance(started, datetime)
+                and 0 <= (now - started).total_seconds() < 120
+            ):
+                failure_increment = 0
+            else:
+                started = now
+            failure_window_kind = "model_transient"
+            failure_window_started_at = started.isoformat()
+        counted = (
+            not transient_model_error
+            and reason != "runtime_restart"
+            and (
+                reason in {"heartbeat", "runtime_error"}
+                or (
+                    not concluding_for_closing
+                    and (
+                        reason in {"refused", "grace_timeout"}
+                        or (reason == "limit" and agent["status"] == "concluding")
+                        or concluding_for_limit
+                    )
                 )
             )
         )
@@ -672,18 +700,42 @@ def decide(
                 result += _release(state, iid, aid, "由系统强制释放，持有者未完成交接", counted)
         if derive_result is not None:
             result.append(derive_result)
-        result.append(event("agent.finished", aid, data, aid))
+        result.append(
+            event(
+                "agent.finished",
+                aid,
+                {
+                    **data,
+                    "failure_increment": failure_increment,
+                    "failure_window_kind": failure_window_kind,
+                    "failure_window_started_at": failure_window_started_at,
+                    "transient_model_error": transient_model_error,
+                },
+                aid,
+            )
+        )
         if (
             task["status"] not in {"finished", "failed", "stopped"}
             and reason == "runtime_error"
-            and task["failure_streak"] + 1 >= int(task["params"].get("max_consecutive_failures", 3))
+            and task["failure_streak"] + failure_increment
+            >= int(task["params"].get("max_consecutive_failures", 3))
         ):
             result.append(
-                event("task.failed", "system", {"status": "failed", "reason": "Agent 连续运行失败"})
+                event(
+                    "task.failed",
+                    "system",
+                    {
+                        "status": "failed",
+                        "reason": "模型服务连续不可用"
+                        if transient_model_error
+                        else "Agent 连续运行失败",
+                    },
+                )
             )
         elif (
             task["status"] not in {"finished", "failed", "stopped"}
             and reason != "runtime_restart"
+            and not transient_model_error
             and agent.get("is_seed", False)
             and not (state.facts or state.intents)
             and task["seed_empty_count"] + 1 >= 2

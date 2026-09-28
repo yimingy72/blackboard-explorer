@@ -75,7 +75,7 @@ def model_error_metadata(
     elapsed_ms: int = 0,
     messages: Sequence[Message] = (),
     attempt_limit: int = 1,
-) -> dict[str, str | int | None]:
+) -> dict[str, str | int | bool | None]:
     """Return only fixed categories, validated provider IDs, and bounded counts."""
     chain = _exceptions(error)
     status_error = next((item for item in chain if isinstance(item, APIStatusError)), None)
@@ -132,6 +132,8 @@ def model_error_metadata(
     )
     return {
         "category": category,
+        "transient": category
+        in {"connection", "timeout", "rate_limit", "conflict", "server_error"},
         "http_status": status,
         "provider_code": code,
         "request_id": request_id,

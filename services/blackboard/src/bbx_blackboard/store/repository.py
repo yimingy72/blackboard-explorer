@@ -99,6 +99,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "last_judgment_version": 0,
                 "derive_empty_streak": 0,
                 "failure_streak": 0,
+                "failure_window_kind": None,
+                "failure_window_started_at": None,
                 "seed_empty_count": 0,
             },
         )
@@ -366,16 +368,27 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         )
         task = await row(conn, s.tasks, tid)
         changes: dict[str, Any] = {}
-        if reason == "runtime_error":
-            changes["failure_streak"] = task["failure_streak"] + 1
-        elif reason != "runtime_restart":
-            changes["failure_streak"] = 0
-        if (
-            reason != "runtime_restart"
-            and agent["is_seed"]
-            and not await board_has_content(conn, tid)
-        ):
-            changes["seed_empty_count"] = task["seed_empty_count"] + 1
+        if task["status"] not in {"finished", "failed", "stopped"}:
+            if reason == "runtime_error":
+                changes["failure_streak"] = task["failure_streak"] + p.get("failure_increment", 1)
+                started_at = p.get("failure_window_started_at")
+                changes["failure_window_kind"] = p.get("failure_window_kind")
+                changes["failure_window_started_at"] = (
+                    datetime.fromisoformat(started_at)
+                    if isinstance(started_at, str)
+                    else started_at
+                )
+            elif reason != "runtime_restart":
+                changes["failure_streak"] = 0
+                changes["failure_window_kind"] = None
+                changes["failure_window_started_at"] = None
+            if (
+                reason != "runtime_restart"
+                and not p.get("transient_model_error", False)
+                and agent["is_seed"]
+                and not await board_has_content(conn, tid)
+            ):
+                changes["seed_empty_count"] = task["seed_empty_count"] + 1
         if changes:
             await patch(conn, s.tasks, tid, changes)
     elif kind == "derive.result":
@@ -570,6 +583,8 @@ class Repository:
                     "last_judgment_version": 0,
                     "derive_empty_streak": 0,
                     "failure_streak": 0,
+                    "failure_window_kind": None,
+                    "failure_window_started_at": None,
                     "seed_empty_count": 0,
                     "usage": {},
                     "billing_mode": None,

@@ -52,6 +52,8 @@ tasks = Table(
     col("last_judgment_version", BigInteger, nullable=False, default=0),
     col("derive_empty_streak", Integer, nullable=False, default=0),
     col("failure_streak", Integer, nullable=False, default=0),
+    col("failure_window_kind", Text),
+    col("failure_window_started_at", DateTime(timezone=True)),
     col("seed_empty_count", Integer, nullable=False, default=0),
     col("fail_reason", Text),
     col("usage", JSONB, nullable=False),
