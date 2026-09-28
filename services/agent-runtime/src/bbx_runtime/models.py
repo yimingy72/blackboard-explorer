@@ -247,12 +247,14 @@ def make_client(
             azure_endpoint=model.base_url,
             api_version=options["api_version"],
             timeout=min(120, max_duration_seconds),
+            max_retries=4,
         )
     else:
         openai_client = AsyncOpenAI(
             api_key=key,
             base_url=model.base_url,
             timeout=min(120, max_duration_seconds),
+            max_retries=4,
         )
     client_type: Any = (
         DeepSeekChatClient

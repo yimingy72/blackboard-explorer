@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -105,6 +106,8 @@ class Conversations:
         revision = existing["revision"] if existing else 0
         if revision != expected_revision:
             raise HTTPException(409, "Session revision conflict")
+        session = storage_safe(session)
+        opening_instructions = storage_safe(opening_instructions)
         if existing:
             await conn.execute(
                 update(s.agent_sessions)
@@ -215,6 +218,7 @@ class Conversations:
         }
 
     async def post_message(self, tid: UUID, aid: str, mid: UUID, content: str) -> dict[str, Any]:
+        content = storage_safe(content)
         written = []
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
@@ -344,6 +348,8 @@ class Conversations:
         content: str,
         usage: dict[str, Any],
     ) -> dict[str, Any]:
+        content = storage_safe(content)
+        usage = storage_safe(usage)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             await self._task_agent(conn, tid, aid, writable=True)
@@ -409,6 +415,7 @@ class Conversations:
         return _public(reply)
 
     async def fail(self, tid: UUID, aid: str, mid: UUID, token: UUID, error: str) -> dict[str, Any]:
+        error = storage_safe(error)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             await self._task_agent(conn, tid, aid, writable=True)

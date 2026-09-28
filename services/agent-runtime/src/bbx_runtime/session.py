@@ -16,6 +16,7 @@ from agent_framework import (
     Message,
 )
 from bbx_contracts.billing import add_usage
+from bbx_contracts.storage import storage_safe
 
 from bbx_runtime.billing import _usage
 from bbx_runtime.clients import BlackboardClient, RemoteError
@@ -144,7 +145,7 @@ class SessionCheckpoint:
             deliveries = [item for item in self.deliveries if item["id"] in persisted_ids]
             self.session.state["bbx_checkpoint_id"] = str(uuid4())
             strip_image_history(self.session)
-            payload = self.session.to_dict()
+            payload = storage_safe(self.session.to_dict())
             try:
                 saved = await self.service.put_agent_session(
                     self.task_id,

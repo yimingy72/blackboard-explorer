@@ -121,6 +121,24 @@ async def test_trace_events_are_isolated_and_do_not_change_board_projection(boar
     assert after["facts"] == before["facts"] == {}
     assert after["intents"] == before["intents"] == {}
     assert not any(e["type"] == "agent.trace.recorded" for e in await board_service.events(second))
+    other_initial = {**body, "uri": f"traces/{first}/agent-1/other.json"}
+    with pytest.raises(RuleViolation) as repeated_initial:
+        await board_service.record_agent_trace(first, "agent-1", other_initial)
+    assert repeated_initial.value.code == "duplicate_trace"
+    for index in (1, 2):
+        summary = "request" + chr(0) + "failed" if index == 2 else "request failed"
+        recorded = await board_service.record_agent_trace(
+            first,
+            "agent-1",
+            {
+                "kind": "model_error",
+                "step": index,
+                "uri": f"traces/{first}/agent-1/error-{index}.json",
+                "summary": summary,
+            },
+        )
+        assert recorded[0]["payload"]["kind"] == "model_error"
+        assert recorded[0]["payload"]["summary"] == summary.replace(chr(0), r"\u0000")
     for invalid in (
         body,
         {**body, "uri": f"traces/{second}/agent-1/other.json"},
@@ -137,6 +155,97 @@ async def test_trace_events_are_isolated_and_do_not_change_board_projection(boar
     assert (await board_service.state(first))["last_change_version"] == before[
         "last_change_version"
     ]
+
+
+async def test_derive_initial_trace_is_unique_per_round(board_service):
+    tid = await task(board_service)
+    derive = await board_service.register_agent(tid, "derive")
+
+    async def trace(kind, round_number, suffix, step=0):
+        return await board_service.record_agent_trace(
+            tid,
+            derive,
+            {
+                "kind": kind,
+                "step": step,
+                "uri": f"traces/{tid}/{derive}/{suffix}.json",
+                "summary": suffix,
+            },
+            expected_derive_round=round_number,
+        )
+
+    first = await trace("initial_context", 1, "first")
+    assert first[0]["payload"]["derive_round"] == 1
+    with pytest.raises(RuleViolation) as duplicate_first:
+        await trace("initial_context", 1, "first-again")
+    assert duplicate_first.value.code == "duplicate_trace"
+    await trace("model_error", 1, "failure-one", step=1)
+    await trace("model_error", 1, "failure-two", step=1)
+    await board_service.finish_agent(
+        tid,
+        derive,
+        {"accepted": True, "data": {"posted": [], "excluded": []}},
+        "normal",
+        expected_derive_round=1,
+    )
+    assert await board_service.register_agent(tid, "derive") == derive
+    second = await trace("initial_context", 2, "second")
+    assert second[0]["payload"]["derive_round"] == 2
+    with pytest.raises(RuleViolation) as duplicate_second:
+        await trace("initial_context", 2, "second-again")
+    assert duplicate_second.value.code == "duplicate_trace"
+    await trace("model_error", 2, "failure-three", step=2)
+    traces = [
+        item["payload"]
+        for item in await board_service.events(tid)
+        if item["type"] == "agent.trace.recorded"
+    ]
+    assert [(item["kind"], item["derive_round"]) for item in traces] == [
+        ("initial_context", 1),
+        ("model_error", 1),
+        ("model_error", 1),
+        ("initial_context", 2),
+        ("model_error", 2),
+    ]
+
+
+async def test_old_initial_trace_without_round_counts_as_first_derive_round(board_service):
+    tid = await task(board_service)
+    derive = await board_service.register_agent(tid, "derive")
+    async with board_service.repo.engine.begin() as conn:
+        await board_service.repo.lock(conn, tid)
+        await board_service.repo.append(
+            conn,
+            tid,
+            [
+                {
+                    "type": "agent.trace.recorded",
+                    "actor": derive,
+                    "object_id": None,
+                    "payload": {
+                        "agent_id": derive,
+                        "kind": "initial_context",
+                        "step": 0,
+                        "uri": f"traces/{tid}/{derive}/legacy.json",
+                        "summary": "legacy",
+                    },
+                    "addressed_to": None,
+                }
+            ],
+        )
+    with pytest.raises(RuleViolation) as duplicate:
+        await board_service.record_agent_trace(
+            tid,
+            derive,
+            {
+                "kind": "initial_context",
+                "step": 0,
+                "uri": f"traces/{tid}/{derive}/new.json",
+                "summary": "new",
+            },
+            expected_derive_round=1,
+        )
+    assert duplicate.value.code == "duplicate_trace"
 
 
 @pytest.fixture(scope="module")
@@ -293,6 +402,69 @@ async def test_conversation_cas_claim_and_reply_are_atomic(board_service):
     await board_service.replay(first)
     assert (await store.get_session(first, aid))["revision"] == 2
     assert len((await store.list_messages(first, aid))["messages"]) == 2
+
+
+async def test_session_storage_escapes_nested_nul_and_returns_stored_snapshot(board_service):
+    tid = await task(board_service)
+    aid = await board_service.register_agent(tid, "explore")
+    store = Conversations(board_service.repo.engine)
+    session = {
+        "type": "session",
+        "state": {
+            "in_memory": {
+                "messages": [
+                    {"contents": [{"type": "function_result", "result": "before\x00after 🙂"}]}
+                ]
+            }
+        },
+        "history": ("正常", {"text": "x\x00y"}),
+    }
+    expected = {
+        "type": "session",
+        "state": {
+            "in_memory": {
+                "messages": [
+                    {"contents": [{"type": "function_result", "result": "before\\u0000after 🙂"}]}
+                ]
+            }
+        },
+        "history": ["正常", {"text": "x\\u0000y"}],
+    }
+
+    saved = await store.put_session(tid, aid, session, "start\x00now", "native", 0, [])
+    assert saved == {
+        "session": expected,
+        "opening_instructions": "start\\u0000now",
+        "origin": "native",
+        "revision": 1,
+    }
+    assert await store.get_session(tid, aid) == saved
+    async with board_service.repo.engine.connect() as conn:
+        row = (
+            (
+                await conn.execute(
+                    select(s.agent_sessions).where(
+                        s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["session"] == saved["session"]
+    assert row["opening_instructions"] == saved["opening_instructions"]
+    assert session["state"]["in_memory"]["messages"][0]["contents"][0]["result"] == (
+        "before\x00after 🙂"
+    )
+    assert session["history"] == ("正常", {"text": "x\x00y"})
+
+    updated = await store.put_session(tid, aid, session, "start\x00now", "native", 1, [])
+    assert updated["revision"] == 2
+    assert await store.get_session(tid, aid) == updated
+    with pytest.raises(HTTPException) as stale:
+        await store.put_session(tid, aid, session, "start\x00now", "native", 1, [])
+    assert stale.value.status_code == 409
+    assert await store.get_session(tid, aid) == updated
 
 
 async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
@@ -726,8 +898,29 @@ async def test_replay_and_lifecycle(board_service):
     tid = await task(service)
     aid = await service.register_agent(tid, "explore", is_seed=True)
     await service.record_tool_call(
-        tid, aid, {"id": "c1", "tool": "execute", "args": {}, "result_head": "ok"}
+        tid,
+        aid,
+        {
+            "id": "c1",
+            "tool": "execute",
+            "args": {"nested": ["a" + chr(0) + "b"]},
+            "result_head": "ok" + chr(0) + "tail",
+        },
     )
+    async with service.repo.engine.connect() as conn:
+        tool = dict(
+            (
+                await conn.execute(
+                    select(s.tool_calls).where(
+                        s.tool_calls.c.task_id == tid, s.tool_calls.c.id == "c1"
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert tool["args"] == {"nested": ["a\\u0000b"]}
+    assert tool["result_head"] == "ok\\u0000tail"
     first = await service.post_fact(tid, aid, fact())
     assert first["id"] == "F1"
     assert (await service.state(tid))["facts"]["F1"]["provenance"] == "self_reported"

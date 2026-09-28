@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from bbx_contracts.billing import add_usage
+from bbx_contracts.storage import storage_safe
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -529,6 +530,7 @@ class Repository:
     ) -> list[dict[str, Any]]:
         written = []
         for item in items:
+            item = storage_safe(item)
             result = await conn.execute(
                 insert(s.events).values(task_id=tid, **item).returning(s.events)
             )

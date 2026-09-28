@@ -67,6 +67,28 @@ class MemorySessionService:
         return self.saved
 
 
+async def test_checkpoint_sends_storage_safe_snapshot_without_mutating_live_history() -> None:
+    service = MemorySessionService()
+    raw_result = "before" + chr(0) + "after"
+    session = AgentSession()
+    session.state["in_memory"] = {
+        "messages": [
+            Message(
+                role="tool",
+                contents=[Content.from_function_result("call-1", result=raw_result)],
+            )
+        ]
+    }
+    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", session)
+    await checkpoint.save()
+    assert service.saved is not None
+    stored = service.saved["session"]["state"]["in_memory"]["messages"][0]["contents"][0]
+    assert stored["result"] == r"before\u0000after"
+    assert stored["items"][0]["text"] == r"before\u0000after"
+    live = session.state["in_memory"]["messages"][0].contents[0].result
+    assert live == raw_result
+
+
 async def test_tool_history_and_duplicate_text_survive_cold_restore():
     service = MemorySessionService()
     checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", AgentSession())

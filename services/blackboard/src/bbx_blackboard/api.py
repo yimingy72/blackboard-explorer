@@ -229,7 +229,7 @@ class ToolCallBody(BaseModel):
 
 class AgentTraceBody(BaseModel):
     expected_derive_round: int | None = Field(default=None, ge=1)
-    kind: Literal["initial_context", "board_update", "model_output"]
+    kind: Literal["initial_context", "board_update", "model_output", "model_error"]
     step: int = Field(ge=0)
     uri: str = Field(min_length=1)
     summary: str = Field(max_length=240)

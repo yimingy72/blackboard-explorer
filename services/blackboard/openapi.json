@@ -251,7 +251,8 @@
             "enum": [
               "initial_context",
               "board_update",
-              "model_output"
+              "model_output",
+              "model_error"
             ],
             "title": "Kind",
             "type": "string"

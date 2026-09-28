@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +26,7 @@ from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
+from bbx_runtime.model_errors import model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
@@ -43,6 +45,8 @@ from bbx_runtime.session import (
 from bbx_runtime.settings import Settings
 from bbx_runtime.tools import make_board_tools
 from bbx_runtime.trace import record_trace
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -347,8 +351,29 @@ class AgentRunner:
                 else "grace_timeout"
             )
         except Exception as error:
-            # SDK error strings can contain request details; record only the exception type.
-            receipt = {"accepted": False, "reason": f"运行失败：{type(error).__name__}"}
+            metadata = getattr(error, "bbx_model_error", None)
+            if not isinstance(metadata, dict):
+                classified = model_error_metadata(error)
+                metadata = classified if classified["category"] != "unknown" else None
+            if isinstance(metadata, dict):
+                logger.warning(
+                    "Model request failed after retries",
+                    extra={"fields": {"task_id": task_id, "agent_id": agent_id, **metadata}},
+                )
+                reason = f"模型请求失败：{metadata['category']}"
+            else:
+                logger.warning(
+                    "Agent run failed",
+                    extra={
+                        "fields": {
+                            "task_id": task_id,
+                            "agent_id": agent_id,
+                            "category": type(error).__name__,
+                        }
+                    },
+                )
+                reason = f"运行失败：{type(error).__name__}"
+            receipt = {"accepted": False, "reason": reason}
             end_reason = "runtime_error"
 
         async def finalize() -> None:

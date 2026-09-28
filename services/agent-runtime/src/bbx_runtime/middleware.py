@@ -8,6 +8,7 @@ import logging
 import secrets
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, cast
 
 from agent_framework import (
@@ -20,12 +21,14 @@ from agent_framework import (
     Message,
 )
 from bbx_contracts.billing import effective_price
+from bbx_contracts.storage import storage_safe
 from pydantic import BaseModel, ValidationError
 
 from bbx_runtime.billing import _input_tokens, _usage
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.image_view import append_pending_images, finish_pending_images
+from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.trace import model_content, record_trace
 
@@ -54,8 +57,13 @@ def _result_text(value: Any) -> str:
 def _append_call_id(value: Any, call_id: str) -> Any:
     label = f"[call_id: {call_id}]"
     if isinstance(value, list) and all(isinstance(item, Content) for item in value):
-        return [*value, Content.from_text(label)]
-    return f"{_result_text(value)}\n{label}"
+        safe_items = []
+        for item in value:
+            serialized = item.to_dict()
+            safe = storage_safe(serialized)
+            safe_items.append(item if safe == serialized else Content.from_dict(safe))
+        return [*safe_items, Content.from_text(label)]
+    return f"{storage_safe(_result_text(value))}\n{label}"
 
 
 class ToolLogMiddleware(FunctionMiddleware):
@@ -338,10 +346,25 @@ class BoardSyncMiddleware(ChatMiddleware):
         messages = context.messages
         injection = await append_pending_images(self.ctx, messages)
         requested_at = datetime.now(UTC)
+        started_at = monotonic()
+        model = getattr(self.ctx.profile.models, self.ctx.task_type)
         sent = False
         try:
             await call_next()
             sent = True
+        except Exception as error:
+            metadata = model_error_metadata(
+                error,
+                elapsed_ms=int((monotonic() - started_at) * 1000),
+                messages=messages,
+                attempt_limit=model_attempt_limit(model.provider),
+            )
+            try:
+                vars(error)["bbx_model_error"] = metadata
+            except Exception:
+                pass
+            await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
+            raise
         finally:
             finish_pending_images(messages, injection, sent=sent)
         response = context.result
@@ -349,7 +372,6 @@ class BoardSyncMiddleware(ChatMiddleware):
             output, reasoning = model_content(response)
             await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
         details = response.usage_details if isinstance(response, ChatResponse) else None
-        model = getattr(self.ctx.profile.models, self.ctx.task_type)
         price, _ = effective_price(
             model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
         )

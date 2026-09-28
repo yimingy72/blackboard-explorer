@@ -51,13 +51,13 @@ class FakeObjects:
 
 class FakeService:
     def __init__(self) -> None:
-        self.trace_calls: list[tuple[Any, str, dict[str, Any]]] = []
+        self.trace_calls: list[tuple[Any, str, dict[str, Any], int | None]] = []
 
     async def post_fact(self, _tid, _aid, _body, *, dry_run=False, expected_derive_round=None):
         return {"valid": True} if dry_run else {"id": "F1"}
 
-    async def record_agent_trace(self, tid, aid, body):
-        self.trace_calls.append((tid, aid, body))
+    async def record_agent_trace(self, tid, aid, body, *, expected_derive_round=None):
+        self.trace_calls.append((tid, aid, body, expected_derive_round))
         return []
 
     async def get_object(self, _tid, _oid, _depth):
@@ -127,7 +127,20 @@ async def test_auth_and_task_scoped_evidence(monkeypatch: pytest.MonkeyPatch) ->
             headers={"Authorization": "Bearer service-test"},
         )
         assert response.status_code == 200
-        assert service.trace_calls == [(task_id, "agent-1", trace_body)]
+        assert service.trace_calls == [(task_id, "agent-1", trace_body, None)]
+        model_error = {**trace_body, "kind": "model_error", "expected_derive_round": 2}
+        response = await client.post(
+            trace_path,
+            json=model_error,
+            headers={"Authorization": "Bearer service-test"},
+        )
+        assert response.status_code == 200
+        assert service.trace_calls[-1] == (
+            task_id,
+            "agent-1",
+            trace_body | {"kind": "model_error"},
+            2,
+        )
         response = await client.post(
             trace_path,
             json={**trace_body, "kind": "fabricated"},

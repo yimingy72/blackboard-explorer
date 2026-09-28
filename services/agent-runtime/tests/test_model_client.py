@@ -300,8 +300,13 @@ async def test_compatible_client_runs_local_tool_over_mock_http(monkeypatch):
     from openai import AsyncOpenAI
 
     requests: list[dict[str, Any]] = []
+    transport_calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal transport_calls
+        transport_calls += 1
+        if transport_calls <= 4:
+            return httpx.Response(503, headers={"retry-after-ms": "1"})
         body = json.loads(request.content)
         requests.append(body)
         message = (
@@ -356,13 +361,19 @@ async def test_compatible_client_runs_local_tool_over_mock_http(monkeypatch):
         max_duration_seconds=10,
     )
 
+    lookup_calls = 0
+
     def lookup(name: str) -> str:
+        nonlocal lookup_calls
+        lookup_calls += 1
         return f"found {name}"
 
     async with Agent(client=client, tools=[lookup]) as agent:
         result = await agent.run("Find a")
     await close_model_client(client)
     assert result.text == "found a"
+    assert transport_calls == 6
+    assert lookup_calls == 1
     assert len(requests) == 2
     assert requests[0]["tools"][0]["function"]["name"] == "lookup"
     assert requests[1]["messages"][-1]["content"] == "found a"

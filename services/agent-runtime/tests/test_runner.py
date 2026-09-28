@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import httpx
+import httpx2
 import pytest
+from agent_framework.exceptions import ChatClientException
 from bbx_contracts.models import McpBinding, Params, WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_runtime.execenv import ExecEnvHandle
@@ -15,10 +17,12 @@ from bbx_runtime.middleware import GraceGateMiddleware, ToolLogMiddleware
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient
+from openai import APIStatusError
 
 
 @pytest.mark.parametrize(
-    "outcome", ["normal", "refused", "runtime_error", "cancelled", "setup_error", "timeout"]
+    "outcome",
+    ["normal", "refused", "runtime_error", "model_error", "cancelled", "setup_error", "timeout"],
 )
 async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
@@ -69,6 +73,12 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
                 raise asyncio.CancelledError
             if outcome == "runtime_error":
                 raise RuntimeError("Never publish provider request details")
+            if outcome == "model_error":
+                response = httpx2.Response(
+                    429, request=httpx2.Request("POST", "https://model.invalid")
+                )
+                error = APIStatusError("secret provider body", response=response, body=None)
+                raise ChatClientException("secret wrapper", inner_exception=error)
             text = (
                 '{"accepted":false,"reason":"前提不可用"}'
                 if outcome == "refused"
@@ -87,10 +97,15 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
         expected = "grace_timeout"
     else:
         result = await call
-        expected = "runtime_error" if outcome in {"setup_error", "timeout"} else outcome
+        expected = (
+            "runtime_error" if outcome in {"setup_error", "timeout", "model_error"} else outcome
+        )
         assert result.end_reason == expected
         if expected == "runtime_error":
             assert "provider request details" not in str(result.receipt)
+        if outcome == "model_error":
+            assert result.receipt["reason"] == "模型请求失败：rate_limit"
+            assert "secret" not in str(result.receipt)
     service.finish_agent.assert_awaited_once()
     assert service.finish_agent.call_args.args[-1] == expected
 

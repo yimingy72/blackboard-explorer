@@ -1,10 +1,13 @@
 """M2b middleware through actual MAF tool and chat loops, without network calls."""
 
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx2
 import pytest
 from agent_framework import Agent, AgentSession, ChatResponse, Content, Message, tool
 from bbx_contracts.models import Price, Usage
@@ -30,6 +33,7 @@ from bbx_runtime.testing.scripted_client import (
     ScriptToolCall,
     ScriptUsage,
 )
+from openai import APIStatusError
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles" / "default"
 
@@ -93,6 +97,49 @@ class FakeObjects:
 
     async def put(self, uri: str, data: bytes, **_kwargs: Any) -> None:
         self.files[uri] = data
+
+
+async def test_final_model_failure_records_safe_trace_without_replaying_tool():
+    service, objects = FakeService(), FakeObjects()
+    service.record_agent_trace = AsyncMock()  # type: ignore[attr-defined]
+    calls = 0
+
+    @tool
+    async def step() -> str:
+        nonlocal calls
+        calls += 1
+        return "done"
+
+    response = httpx2.Response(
+        429,
+        request=httpx2.Request("POST", "https://model.invalid"),
+        headers={"x-request-id": "req-safe"},
+    )
+    error = APIStatusError("secret provider body", response=response, body=None)
+
+    class FailingClient(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs: Any):
+            if self._index == 1:
+                raise error
+            return super()._inner_get_response(**kwargs)
+
+    client = FailingClient([ScriptStep(calls=(ScriptToolCall("step"),))])
+    with pytest.raises(APIStatusError):
+        await Agent(
+            client=client,
+            tools=[step],
+            middleware=[BoardSyncMiddleware(run_context(service, objects=objects))],
+        ).run("secret prompt")
+    assert calls == 1
+    traces = [
+        call.args[2]
+        for call in service.record_agent_trace.await_args_list  # type: ignore[attr-defined]
+        if call.args[2]["kind"] == "model_error"
+    ]
+    assert len(traces) == 1
+    payload = objects.files[traces[0]["uri"]].decode()
+    assert json.loads(json.loads(payload)["text"])["category"] == "rate_limit"
+    assert "secret" not in payload
 
 
 def run_context(
@@ -183,6 +230,19 @@ def test_mcp_content_list_keeps_original_items_when_call_id_is_appended():
     assert updated[0] is original
     assert updated[0].text == "<command_output>full MCP output</command_output>"
     assert updated[1].text == "[call_id: c_abcdefghijkl]"
+
+
+def test_call_id_append_renders_nul_visible_in_live_model_history():
+    raw = "before" + chr(0) + "after"
+    original = Content.from_text(raw)
+    updated = _append_call_id([original], "c_abcdefghijkl")
+    assert isinstance(updated, list)
+    assert updated[0] is not original
+    assert updated[0].text == r"before\u0000after"
+    assert original.text == raw
+
+    text_result = _append_call_id(raw, "c_abcdefghijkl")
+    assert text_result == "before\\u0000after\n[call_id: c_abcdefghijkl]"
 
 
 def test_board_update_serializes_mcp_content_and_has_explicit_boundary():

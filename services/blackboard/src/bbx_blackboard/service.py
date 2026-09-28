@@ -566,7 +566,7 @@ class BoardService:
         uri = trace.get("uri")
         summary = trace.get("summary")
         if (
-            kind not in {"initial_context", "board_update", "model_output"}
+            kind not in {"initial_context", "board_update", "model_output", "model_error"}
             or not isinstance(step, int)
             or isinstance(step, bool)
             or step < 0
@@ -593,10 +593,15 @@ class BoardService:
                 raise RuleViolation("agent_inactive", "Trace 必须属于当前任务的活动 Agent。")
             duplicates = [s.events.c.payload["uri"].astext == uri]
             if kind == "initial_context":
-                duplicates.append(
-                    (s.events.c.payload["agent_id"].astext == agent_id)
-                    & (s.events.c.payload["kind"].astext == kind)
+                same_agent_and_kind = (s.events.c.payload["agent_id"].astext == agent_id) & (
+                    s.events.c.payload["kind"].astext == kind
                 )
+                if agent["task_type"] == "derive":
+                    derive_round = expected_derive_round or 1
+                    same_agent_and_kind &= func.coalesce(
+                        s.events.c.payload["derive_round"].astext, "1"
+                    ) == str(derive_round)
+                duplicates.append(same_agent_and_kind)
             previous = await conn.execute(
                 select(s.events.c.version)
                 .where(
@@ -615,6 +620,8 @@ class BoardService:
                 "uri": uri,
                 "summary": summary,
             }
+            if agent["task_type"] == "derive":
+                payload["derive_round"] = expected_derive_round or 1
             written = await self.repo.append(
                 conn, tid, [event("agent.trace.recorded", agent_id, payload)]
             )

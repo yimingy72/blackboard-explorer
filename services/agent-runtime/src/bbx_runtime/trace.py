@@ -11,7 +11,7 @@ from agent_framework import ChatResponse
 
 from bbx_runtime.context import RunContext
 
-TraceKind = Literal["initial_context", "board_update", "model_output"]
+TraceKind = Literal["initial_context", "board_update", "model_output", "model_error"]
 logger = logging.getLogger(__name__)
 
 
