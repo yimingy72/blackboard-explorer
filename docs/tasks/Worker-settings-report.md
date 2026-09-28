@@ -31,3 +31,9 @@
 ## 提交划分
 
 设计合同先提交；平台设置/凭据/任务选模型；原生Provider与提示词热更新；简化配置前端；部署报告和交接记录。无用户手动构建要求，完成本地部署后直接刷新页面使用。
+
+## 本地部署确认
+
+已部署blackboard/runtime，迁移0006，两个容器运行且重启计数0，runtime持有唯一数据库锁。服务实际返回17种Provider，worker角色为explore/derive/close；DeepSeek默认连接已从environment迁移为stored，has_secret=true，仅公开已配置字段名api_key。runtime在给凭据解析函数传空环境key的情况下仍能从平台读取并构造客户端，随后正常关闭，没有模型调用。
+
+三个原finished任务保留，币种仍USD。当前worker内部revision为4（界面不展示），任务页/配置页HTTP200。备份`.data/backups/pre-worker-settings.dump`；最终日志与截图在`.data/checkpoints/worker-settings/`。无需手动部署或重新填写已有DeepSeek密钥，刷新浏览器即可使用。
