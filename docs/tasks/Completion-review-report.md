@@ -23,3 +23,9 @@
 explicit仍是Close的语义判断，系统强制证据引用、理由、版本与独立复核门控，不能自动证明任意开放目标的完整性。默认使用inferred，避免仅凭met自动跳过。
 
 提交划分：设计合同；共享完成谓词/裁定字段；后端迁移与事务守护；调度/上下文/提示词及场景；前端标识与文档。普通检查要求在提交前已满足，部署后更新HANDOFF。历史已完成任务不重写、不自动重新执行。
+
+## 本地部署确认
+
+已合并部署blackboard/runtime，schema0007、内部worker配置revision5。服务实际模板包含完成依据协议与复核说明；运行中代码验证普通met不能直接accepted、具备完整explicit依据可以直接accepted。两容器运行且重启计数0，唯一runtime锁，原3个finished任务保留；无真实模型调用。
+
+备份`.data/backups/pre-completion-review.dump`；检查日志在`.data/checkpoints/completion-review/`。新任务无需另开开关即可使用，历史已完成任务不自动重跑。
