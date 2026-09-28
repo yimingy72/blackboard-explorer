@@ -260,7 +260,7 @@ def test_default_profile() -> None:
     )
     assert not notices
     assert profile.models.explore.price.is_complete()
-    assert profile.models.explore.price.currency == "USD"
+    assert profile.models.explore.price.currency == "CNY"
     assert profile.params.derive_enabled is True
 
 
@@ -281,3 +281,13 @@ def test_json_log_format() -> None:
     record.fields = {"task_id": "task-1"}
     payload = json.loads(JsonFormatter("blackboard").format(record))
     assert {"time", "level", "service", "message", "task_id"} <= payload.keys()
+
+
+def test_profile_rejects_mixed_accounting_currencies():
+    profile = m.AgentProfile.model_validate(PROFILE).model_dump(mode="json")
+    for model in profile["models"].values():
+        model["price"]["currency"] = "CNY"
+    assert m.AgentProfile.model_validate(profile).models.close.price.currency == "CNY"
+    profile["models"]["close"]["price"]["currency"] = "USD"
+    with pytest.raises(ValidationError, match="相同币种"):
+        m.AgentProfile.model_validate(profile)

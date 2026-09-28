@@ -1,3 +1,5 @@
+import { formatMoney } from '../pages/format';
+import { TaskCurrency } from '../pages/currency';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { BoardAgent, BoardFact, BoardIntent, BoardState } from '../board/types';
@@ -95,13 +97,14 @@ function IntentDetail({ intent, state, onSelect }: { intent: BoardIntent; state:
 }
 
 function AgentDetail({ agent, state, onSelect }: { agent: BoardAgent; state: BoardState; onSelect: Props['onSelect'] }) {
+  const currency = useContext(TaskCurrency);
   const numbers = useContext(AgentNumbers);
   const calls = Object.values(state.toolCalls ?? {}).filter((call) => call.agentId === agent.id).sort((a, b) => a.version - b.version);
   return <>
     <div className={styles.titleBlock}><span className={styles.type}>Agent · {agent.taskType}{agent.isSeed ? ' · 种子' : ''}{agent.closeMode ? ` · ${agent.closeMode}` : ''}</span><h2 tabIndex={-1}>{agentLabel(agent.id, numbers)}</h2><span className={`${controls.badge} ${agent.status === 'failed' ? controls.badgeDanger : agent.status === 'running' ? controls.badgeInfo : ''}`}>{agentStatus[agent.status] ?? agent.status}</span></div>
     <section className={styles.section}><h3>运行情况</h3><dl className={styles.metaList}><Meta label="模型调用" value={agent.steps} /><Meta label="上下文 token" value={agent.contextTokens} /><Meta label="最后版本" value={agent.lastSeenVersion} /><Meta label="结束原因" value={agent.endReason} /><Meta label="收尾原因" value={agent.concludeReason} /><Meta label="开始时间" value={agent.startedAt} /><Meta label="结束时间" value={agent.finishedAt} /></dl></section>
     {agent.intentId && <section className={styles.section}><h3>当前意图</h3><ObjectLinks ids={[agent.intentId]} state={state} onSelect={onSelect} /></section>}
-    <section className={styles.section}><h3>用量与花费</h3>{Object.keys(agent.usage).length ? <dl className={styles.metaList}>{Object.entries(agent.usage).map(([key, value]) => <Meta key={key} label={key === 'cost' ? '估算花费' : key.replaceAll('_', ' ')} value={key === 'cost' ? Number(value).toFixed(6) : value} />)}</dl> : <p className={styles.muted}>暂无用量记录。</p>}</section>
+    <section className={styles.section}><h3>用量与花费</h3>{Object.keys(agent.usage).length ? <dl className={styles.metaList}>{Object.entries(agent.usage).map(([key, value]) => <Meta key={key} label={key === 'cost' ? '估算花费' : key.replaceAll('_', ' ')} value={key === 'cost' ? formatMoney(value, currency) : value} />)}</dl> : <p className={styles.muted}>暂无用量记录。</p>}</section>
     <section className={styles.section}><h3>结束回执</h3>{agent.receipt ? <pre className={styles.receipt}>{printable(agent.receipt)}</pre> : <p className={styles.muted}>暂无回执。</p>}</section>
     <section className={styles.section}><h3>工具调用 · {calls.length}</h3>{calls.length ? <ol className={styles.calls}>{calls.map((call) => <li key={call.id}><div className={styles.callHeading}><strong>{call.tool}</strong><span>{call.id} · v{call.version}</span></div><small><time dateTime={call.createdAt}>{call.createdAt}</time></small><details className={styles.callDetails}><summary>查看参数和结果摘要</summary><pre>{printable(call.args)}</pre><pre>{call.resultHead}</pre></details>{call.resultUri && <EvidenceViewer evidence={{ type: 'command_output', summary: `${call.tool} 的完整结果`, uri: call.resultUri, call_id: call.id }} />}</li>)}</ol> : <p className={styles.muted}>暂无工具调用。</p>}</section>
   </>;

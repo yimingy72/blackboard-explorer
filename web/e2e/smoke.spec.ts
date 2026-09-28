@@ -46,7 +46,7 @@ test('历史时间轴不泄漏后续交接笔记和 Agent 回执，记录可回�
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
   await slider.press('Home');
-  await expect(page.getByText('花费 0.000 / 10.00', { exact: true })).toBeVisible();
+  await expect(page.getByText('花费 ¥0.000 / ¥10.00', { exact: true })).toBeVisible();
   for (let index = 0; index < 4; index += 1) await slider.press('ArrowRight');
   await expect(page.getByText('历史回放 · v5').first()).toBeVisible();
 
@@ -100,6 +100,7 @@ test('Profile YAML 校验、版本比较、发布与本浏览器默认', async (
   await expect(diff).toContainText('新版探索模板');
   await page.getByRole('button', { name: '查看', exact: true }).click();
   await page.getByRole('button', { name: '编辑并发布新版本' }).click();
+  await page.getByRole('button', { name: '高级 YAML', exact: true }).click();
   const editor = page.getByLabel('完整 AgentProfile YAML');
   const source = await editor.inputValue();
   await editor.fill('models: [');
@@ -127,5 +128,62 @@ test('完整展示超过 300 个对象且无筛选，手机视口无页面横向
   await expect(page.getByText(/对象 302/)).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
     .toBeLessThanOrEqual(1);
+  expect(mock.unexpected).toEqual([]);
+});
+
+
+test('worker 提示词完整编辑、跨模式保留、发布并重新读取', async ({ page }) => {
+  const mock = await installMockApi(page);
+  await page.goto('/profiles');
+  await expect(page.locator('#prompt-explore')).toHaveText('新版探索模板');
+  await page.getByRole('button', { name: '编辑并发布新版本' }).click();
+  const explore = '完整探索规则\n{{ goal }}\n{% if current_intent %}继续{% else %}种子{% endif %}';
+  await page.getByLabel('完整系统提示词 · explore').fill(explore);
+  await page.getByRole('button', { name: 'derive · 推导', exact: true }).click();
+  await page.getByLabel('完整系统提示词 · derive').fill('新的推导规则\n{{ facts_text }}');
+  await page.getByRole('button', { name: 'Close · 裁定与终结', exact: true }).click();
+  await page.getByLabel('完整系统提示词 · close').fill('新的裁定规则\n{{ mode }}');
+  await page.getByRole('button', { name: '高级 YAML', exact: true }).click();
+  const yaml = page.getByLabel('完整 AgentProfile YAML');
+  const source = await yaml.inputValue();
+  expect(source).toContain('新的推导规则');
+  await yaml.fill('models: [');
+  await page.getByRole('button', { name: 'Worker 提示词', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('草稿已保留');
+  await yaml.fill(source);
+  await page.getByRole('button', { name: 'Worker 提示词', exact: true }).click();
+  await page.getByRole('button', { name: 'Explore · 探索', exact: true }).click();
+  await expect(page.getByLabel('完整系统提示词 · explore')).toHaveValue(explore);
+  await page.getByRole('button', { name: '发布新版本', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'default · v3' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('#prompt-explore')).toHaveText(explore);
+  expect((mock.profiles.get(2)?.prompt_templates as Record<string, string>).explore).toBe('新版探索模板');
+  expect((mock.profiles.get(3)?.prompt_templates as Record<string, string>).close).toContain('{{ mode }}');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: '../.data/checkpoints/cny-worker-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: '../.data/checkpoints/cny-worker-desktop.png', fullPage: true });
+  expect(mock.unexpected).toEqual([]);
+});
+
+test('人民币预算按页面已展示的固定版本提交，避免最新版本变化改变币种', async ({ page }) => {
+  const mock = await installMockApi(page);
+  let submitted: Record<string, unknown> | undefined;
+  await page.route('**/api/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ json: { id: TASK_ID, agent_profile: 'default', agent_profile_version: 2 } });
+  });
+  await page.goto('/tasks/new');
+  await expect(page.getByLabel('金额上限（人民币元）')).toBeVisible();
+  await page.getByLabel('任务目标', { exact: false }).fill('核对报表');
+  await page.getByLabel('验收条件 1', { exact: true }).fill('列出差异');
+  mock.profiles.set(3, structuredClone(mock.profiles.get(2)!));
+  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
+  expect(submitted?.profile_version).toBe(2);
+  expect(submitted?.budget).toMatchObject({ max_cost: '10' });
   expect(mock.unexpected).toEqual([]);
 });

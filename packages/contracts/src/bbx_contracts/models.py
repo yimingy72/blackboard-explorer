@@ -424,6 +424,17 @@ class ModelSet(ContractModel):
     derive: ModelConfig
     close: ModelConfig
 
+    @model_validator(mode="after")
+    def same_currency(self) -> ModelSet:
+        currencies = {
+            self.explore.price.currency,
+            self.derive.price.currency,
+            self.close.price.currency,
+        }
+        if len(currencies) != 1:
+            raise ValueError("三个 worker 的模型价格必须使用相同币种，不能混合累计费用")
+        return self
+
 
 class PromptPaths(ContractModel):
     explore: str = Field(min_length=1, description="探索提示词模板路径")

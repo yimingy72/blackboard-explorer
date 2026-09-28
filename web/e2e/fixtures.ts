@@ -121,7 +121,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
   const task = {
     id: TASK_ID, goal: GOAL, status: 'finished', acceptance_state: { A1: { status: 'met' } },
-    usage: { cost: 0.02 }, agents: [], report_uri: `reports/${TASK_ID}/final.md`,
+    cost_currency: 'CNY', usage: { cost: 0.02 }, agents: [], report_uri: `reports/${TASK_ID}/final.md`,
     workspace_uri: `archives/${TASK_ID}/workspace.tar.zst`, agent_profile: 'default',
     agent_profile_version: 2, created_at: AT,
   };

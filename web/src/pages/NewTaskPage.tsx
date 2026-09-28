@@ -33,7 +33,11 @@ export default function NewTaskPage() {
 
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: api.listProfiles });
   const versions = useQuery({ queryKey: ['profile-versions', profileName], queryFn: () => api.listProfileVersions(profileName), enabled: Boolean(profileName) });
-  const unauthorized = (profiles.error instanceof ApiError && profiles.error.status === 401) || (versions.error instanceof ApiError && versions.error.status === 401);
+  const effectiveVersion = Number(profileVersion) || profiles.data?.find((item) => item.name === profileName)?.latest_version;
+  const profile = useQuery({ queryKey: ['profile', profileName, effectiveVersion], queryFn: () => api.getProfile(profileName, effectiveVersion!), enabled: Boolean(profileName && effectiveVersion) });
+  const currency = profile.data?.profile.models.explore.price.currency;
+  const currencyLabel = currency === 'CNY' ? '人民币元' : currency === 'USD' ? '美元 USD' : currency ?? '读取币种中';
+  const unauthorized = (profile.error instanceof ApiError && profile.error.status === 401) || (profiles.error instanceof ApiError && profiles.error.status === 401) || (versions.error instanceof ApiError && versions.error.status === 401);
 
   useEffect(() => {
     if (!profiles.data?.length || profiles.data.some((item) => item.name === profileName)) return;
@@ -89,13 +93,17 @@ export default function NewTaskPage() {
       setFormError('请选择 Agent 配置。');
       return;
     }
+    if (!profile.data || !currency) {
+      setFormError('模型计价币种尚未加载或未配置，请检查所选版本后重试。');
+      return;
+    }
     const input: TaskCreateInput = {
       goal: goal.trim(),
       domain_context: context.trim() || null,
       acceptance: descriptions.map((desc, index) => ({ id: `A${index + 1}`, desc })),
       budget: { max_cost: maxCost, max_minutes: minutes, max_concurrent_agents: agents },
       agent_profile: profileName,
-      ...(profileVersion ? { profile_version: Number(profileVersion) } : {}),
+      profile_version: profile.data.version,
       egress_allowlist: [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
     };
     setPending(true);
@@ -151,7 +159,7 @@ export default function NewTaskPage() {
             <section className={styles.settingsSection} aria-labelledby="budget-heading">
               <div className={styles.settingsHeading}><h2 id="budget-heading">预算</h2><p>达到额度时任务会收尾。</p></div>
               <div className={`${styles.settingsFields} ${styles.budgetFields}`}>
-                <div className={controls.field}><label className={controls.label} htmlFor="max-cost">金额上限<span className={controls.required} aria-hidden="true">*</span></label><input id="max-cost" className={controls.input} type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required disabled={pending} /><span className={controls.hint}>按所选配置的模型价格币种计算</span></div>
+                <div className={controls.field}><label className={controls.label} htmlFor="max-cost">金额上限（{currencyLabel}）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-cost" className={controls.input} type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required disabled={pending} /><span className={controls.hint}>{currency === 'CNY' ? '按固定人民币价格表估算；默认配置采用高峰价，不等同于账单实扣。' : `所选历史或自定义配置以 ${currencyLabel} 计价；使用人民币请选择最新 CNY 版本。`}</span></div>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-minutes">时长上限（分钟）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-minutes" className={controls.input} type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required disabled={pending} /></div>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-agents">并发 Agent 上限<span className={controls.required} aria-hidden="true">*</span></label><input id="max-agents" className={controls.input} type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required disabled={pending} /></div>
               </div>

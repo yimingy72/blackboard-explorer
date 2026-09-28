@@ -1675,6 +1675,8 @@ export interface components {
             agents: {
                 [key: string]: unknown;
             }[];
+            /** Cost Currency */
+            cost_currency?: string | null;
             /**
              * Created At
              * Format: date-time

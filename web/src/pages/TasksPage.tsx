@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskView } from '../api/client';
 import controls from '../styles/controls.module.css';
-import { formatCost, formatDate, taskStatusLabel } from './format';
+import { formatMoney, formatDate, taskStatusLabel } from './format';
 import styles from './TasksPage.module.css';
 
 function statusClass(status: string) {
@@ -98,7 +98,7 @@ export default function TasksPage() {
                     <td className={styles.goal}><Link to={`/tasks/${task.id}`}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
                     <td><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
                     <td>{metCount(task)}</td>
-                    <td>{formatCost(task.usage?.cost)}</td>
+                    <td>{formatMoney(task.usage?.cost, task.cost_currency)}</td>
                     <td>{formatDate(task.created_at)}</td>
                     <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${task.goal}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
                   </tr>

@@ -1888,6 +1888,17 @@
             "title": "Agents",
             "type": "array"
           },
+          "cost_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Currency"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

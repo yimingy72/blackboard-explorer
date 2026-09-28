@@ -1,3 +1,4 @@
+import WorkerPrompts from '../components/WorkerPrompts';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -82,7 +83,7 @@ export default function ProfilesPage() {
   }, [authError, location.pathname, navigate]);
 
   function canLeaveDraft(): boolean {
-    return !dirty || window.confirm('当前 YAML 尚未保存，确定放弃本次修改吗？');
+    return !dirty || window.confirm('当前配置尚未保存，确定放弃本次修改吗？');
   }
 
   function chooseName(name: string) {
@@ -205,7 +206,7 @@ export default function ProfilesPage() {
       <header className={styles.pageHeader}>
         <div>
           <h1>Agent 配置</h1>
-          <p>查看固定版本、编辑完整 YAML，或把历史内容发布为新版本。已有任务不会随配置更新。</p>
+          <p>按 worker 查看和编辑完整系统提示词；模型与参数可在高级 YAML 中调整。已有任务固定使用原版本。</p>
         </div>
       </header>
       {error && <p className={styles.errorBanner} role="alert">{error}</p>}
@@ -271,9 +272,7 @@ export default function ProfilesPage() {
               {view === 'new' || view === 'edit' ? (
                 <div className={styles.editor}>
                   {view === 'new' && <div className={controls.field}><label className={controls.label} htmlFor="new-profile-name">新配置名称</label><input id="new-profile-name" className={controls.input} value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：review-specialist" autoFocus disabled={saving} /></div>}
-                  <label className={controls.label} htmlFor="profile-yaml">完整 AgentProfile YAML</label>
-                  <p className={controls.hint}>包含三个 prompt_templates 正文。前端只做 YAML 与基本结构检查，保存时由黑板严格校验。</p>
-                  <textarea id="profile-yaml" className={`${controls.textarea} ${styles.yamlEditor}`} value={draft} onChange={(event) => { setDraft(event.target.value); setNotice(''); }} spellCheck={false} disabled={saving} aria-describedby="yaml-help" />
+                  <WorkerPrompts source={draft} onChange={(value) => { setDraft(value); setNotice(''); }} disabled={saving} />
                   <p id="yaml-help" className={controls.hint}>保存会创建新版本；当前版本及已创建任务保持不变。</p>
                   <div className={styles.editorActions}>
                     <button type="button" className={controls.button} onClick={() => { try { parseProfileYaml(draft); setError(''); setNotice('YAML 格式和基本结构检查通过，仍需服务端校验。'); } catch (cause) { setError(message(cause)); } }} disabled={saving}>检查格式</button>
@@ -286,7 +285,7 @@ export default function ProfilesPage() {
                   <div className={styles.compareControls}><label className={controls.label} htmlFor="compare-version">对比起点</label><select id="compare-version" className={controls.select} value={compareVersion ?? ''} onChange={(event) => setCompareVersion(Number(event.target.value))}>{versions.data?.filter((item) => item.version !== selectedVersion).map((item) => <option key={item.version} value={item.version}>v{item.version}</option>)}</select><span>→ 当前 v{selectedVersion}</span></div>
                   {compared.isLoading ? <p className={styles.emptyDetail}>正在计算版本差异…</p> : compared.isError ? <p className={controls.error} role="alert">对比版本加载失败：{message(compared.error)}</p> : <div className={styles.diff} role="region" aria-label="YAML 版本差异" tabIndex={0}>{diff.map((line, index) => <div key={index} className={styles.diffLine} data-kind={line.kind}><span aria-label={line.kind === 'added' ? '新增' : line.kind === 'removed' ? '删除' : '未改'}>{line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' '}</span><code>{line.text || ' '}</code></div>)}</div>}
                 </div>
-              ) : <pre className={styles.yamlView} tabIndex={0} aria-label="完整 AgentProfile YAML">{yaml}</pre>}
+              ) : <WorkerPrompts source={yaml} />}
             </>
           )}
         </section>

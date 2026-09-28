@@ -71,6 +71,7 @@ class TaskCreated(BaseModel):
 
 
 class TaskView(BaseModel):
+    cost_currency: str | None = None
     id: UUID
     goal: str
     status: str
@@ -474,7 +475,15 @@ def create_app(
         await _task(request, task_id)
         board = await _service(request).state(task_id)
         task = board["task"]
+        profile = await request.app.state.profile_store.get(
+            task["agent_profile"], task["agent_profile_version"]
+        )
+        currencies = {
+            model.get("price", {}).get("currency") for model in profile["models"].values()
+        }
+        currency = currencies.pop() if len(currencies) == 1 else None
         return TaskView(
+            cost_currency=currency,
             id=task_id,
             goal=task["goal"],
             status=task["status"],

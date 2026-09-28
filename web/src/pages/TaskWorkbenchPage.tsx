@@ -1,3 +1,4 @@
+import { TaskCurrency } from './currency';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -11,7 +12,7 @@ import WorkbenchDrawer from '../components/WorkbenchDrawer';
 import DetailPanel from '../components/DetailPanel';
 import TopologyFlowCanvas from '../components/TopologyFlowCanvas';
 import controls from '../styles/controls.module.css';
-import { formatCost, taskStatusLabel } from './format';
+import { formatMoney, taskStatusLabel } from './format';
 import styles from './TaskWorkbenchPage.module.css';
 
 const connectionText = {
@@ -114,11 +115,11 @@ export default function TaskWorkbenchPage() {
   const duration = taskDuration(boardTask?.startedAt, boardTask?.finishedAt, cutoffAt, now);
 
   return (
-    <div className={styles.page}>
+    <TaskCurrency.Provider value={task?.cost_currency ?? null}><div className={styles.page}>
       <header className={styles.header}>
         <div className={styles.topline}><Link to="/tasks" className={styles.back}>← 返回任务</Link><span className={styles.taskId}>{taskId.slice(0, 8)}</span></div>
         <div className={styles.titleRow}>
-          <div className={styles.titleGroup}><h1>{boardTask?.goal ?? task?.goal ?? '探索任务'}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>运行 {duration}</span><span>花费 {formatCost(usedCost)}{maxCost === undefined ? '' : ` / ${formatCost(maxCost)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
+          <div className={styles.titleGroup}><h1>{boardTask?.goal ?? task?.goal ?? '探索任务'}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>运行 {duration}</span><span>花费 {formatMoney(usedCost, task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost, task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
           <div className={styles.actions}><button type="button" className={controls.button} onClick={() => setRecordsOpen(true)}>复盘记录</button>
             {reportUri && <Link to={`/tasks/${encodeURIComponent(taskId)}/report`} className={controls.button}>查看报告</Link>}
             {(boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) && <a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`} className={controls.button}>下载归档</a>}
@@ -148,6 +149,6 @@ export default function TaskWorkbenchPage() {
         {selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id, numbers)} events={viewEvents} state={viewState} historical={version !== null} onClose={() => closeAgent(selectedAgent.id)} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version !== null} agentNumbers={numbers} /> : null}
       </div>
       <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers} />
-    </div>
+    </div></TaskCurrency.Provider>
   );
 }

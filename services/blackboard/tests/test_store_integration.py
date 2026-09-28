@@ -755,3 +755,29 @@ async def test_terminal_replay(board_service):
     before_fail = await projections(service, failed)
     await service.replay(failed)
     assert await projections(service, failed) == before_fail
+
+
+async def test_bundled_profile_restart_preserves_user_prompt_edits(board_service):
+    from bbx_blackboard.profiles import ProfileStore
+    from bbx_contracts.models import AgentProfile
+    from bbx_contracts.profile import load_profile
+
+    store = ProfileStore(board_service.repo.engine)
+    root = Path(__file__).resolve().parents[3] / "profiles/default"
+    profile, _ = load_profile(root)
+    original = await store._ensure_bundled_profile("restart-config", profile)
+    edited = profile.model_dump(mode="json")
+    edited["prompt_templates"]["explore"] = "User-authored prompt {{ goal }}"
+    user_version = await store.create("restart-config", AgentProfile.model_validate(edited), "user")
+    await store._ensure_bundled_profile("restart-config", profile)
+    assert (await store.get("restart-config"))["version"] == user_version["version"]
+    assert user_version["version"] == original["version"] + 1
+    upgraded = profile.model_dump(mode="json")
+    upgraded["prompt_templates"]["derive"] += "\nUpdated bundled rule"
+    new_system = await store._ensure_bundled_profile(
+        "restart-config", AgentProfile.model_validate(upgraded)
+    )
+    assert new_system["version"] == user_version["version"] + 1
+    assert (await store.get("restart-config", user_version["version"]))["prompt_templates"][
+        "explore"
+    ] == "User-authored prompt {{ goal }}"

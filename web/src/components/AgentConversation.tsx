@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { TaskCurrency } from '../pages/currency';
+import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { api, type AgentMessage, type PreviewData } from '../api/client';
 import { agentEndReasonLabel, agentRole, agentStatusLabel, taskDuration } from '../board/agents';
-import { formatCost } from '../pages/format';
+import { formatMoney } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
 import type { BoardAgent, BoardEvent, BoardState, BoardToolCall } from '../board/types';
 import EvidenceViewer from './EvidenceViewer';
@@ -21,11 +22,12 @@ const traceLabels = { initial_context: '初始上下文', board_update: '黑板�
 const messageStatus = { queued: '等待送达', processing: '处理中', delivered: '已送达', completed: '已回复', failed: '发送或回复失败' };
 
 function ChatMessage({ message, onRetry }: { message: AgentMessage; onRetry: (text: string) => void }) {
+  const currency = useContext(TaskCurrency);
   return <article className={`${styles.entry} ${message.role === 'user' ? styles.userMessage : styles.assistantMessage}`}>
     <div className={styles.entryHead}><strong>{message.role === 'user' ? '你' : 'Agent 回复'}</strong><time dateTime={message.created_at}>{formatTime(message.created_at)}</time></div>
     <div className={styles.chatText}><ReactMarkdown components={{ img: ({ alt }) => <span>{alt || '图片未加载'}</span>, a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> }}>{message.content}</ReactMarkdown></div>
     {message.role === 'user' && <p className={styles.recordNote}>{messageStatus[message.status]}{message.status === 'failed' && <> · {message.error || '请稍后重试'} <button type="button" onClick={() => onRetry(message.content)}>重新编辑</button></>}</p>}
-    {message.role === 'assistant' && message.usage?.cost != null && <p className={styles.recordNote}>本次复盘费用 {formatCost(message.usage.cost)}</p>}
+    {message.role === 'assistant' && message.usage?.cost != null && <p className={styles.recordNote}>本次复盘费用 {formatMoney(message.usage.cost, currency)}</p>}
     {message.role === 'assistant' && message.usage?.unavailable === true && <p className={styles.recordNote}>回复已恢复，但本轮用量未能恢复。</p>}
   </article>;
 }
@@ -91,6 +93,7 @@ function ToolCall({ call }: { call: BoardToolCall }) {
 }
 
 export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, contribution, color, onSelect }: Props) {
+  const currency = useContext(TaskCurrency);
   const heading = useRef<HTMLHeadingElement>(null);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
@@ -126,7 +129,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
       <button type="button" className={styles.close} onClick={onClose} aria-label="关闭对话">×</button>
     </header>
     <div className={styles.scroll} ref={scroll} onScroll={() => { const node = scroll.current; if (node) following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
-      <details className={styles.metrics}><summary>运行概况 · {elapsed}</summary><dl><dt>模型调用</dt><dd>{agent.steps} 次</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens ?? 0).toLocaleString()} / {(agent.usage.reasoning_tokens ?? 0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatCost(agent.usage.cost)}</dd></dl></details>
+      <details className={styles.metrics}><summary>运行概况 · {elapsed}</summary><dl><dt>模型调用</dt><dd>{agent.steps} 次</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens ?? 0).toLocaleString()} / {(agent.usage.reasoning_tokens ?? 0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatMoney(agent.usage.cost, currency)}</dd></dl></details>
       {contribution && <details className={styles.contribution}><summary>产出 · {contribution.facts.length} Fact · {contribution.intents.length} Intent{contribution.judgments ? ` · ${contribution.judgments} 次裁定` : ''}</summary><div>{[...contribution.facts, ...contribution.intents].map((id) => <button key={id} type="button" onClick={() => onSelect(id)}>{id}</button>)}{!contribution.facts.length && !contribution.intents.length && <p>此 Agent 暂无创建的事实或意图。</p>}</div></details>}
       {!hasTrace && <p className={styles.empty}>{agent.status === 'running' || agent.status === 'concluding' ? '对话记录尚未到达；工具调用会在此显示。' : '此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
       {agent.receipt != null && <details className={styles.receipt}><summary>探索结束回执</summary><pre>{typeof agent.receipt === 'string' ? agent.receipt : JSON.stringify(agent.receipt, null, 2)}</pre></details>}

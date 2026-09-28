@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { api, ApiError } from '../api/client';
-import { formatCost, formatDate } from './format';
+import { formatMoney, formatDate } from './format';
 import controls from '../styles/controls.module.css';
 import styles from './ReportPage.module.css';
 
@@ -35,7 +35,7 @@ export default function ReportPage() {
     <header className={styles.header}>
       <Link to={`/tasks/${encodeURIComponent(taskId)}`}>← 返回工作台</Link>
       <div className={styles.title}><div><h1>最终报告</h1><p>{task.data?.goal ?? '正在读取任务…'}</p></div><div className={styles.actions}><a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/report`} download>下载原文</a>{task.data?.workspace_uri && <a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`}>下载工作区</a>}</div></div>
-      {task.data && <p className={styles.meta}>{taskId.slice(0, 8)} · {`创建于 ${formatDate(task.data.created_at)}`} · 账本费用 {formatCost(task.data.usage?.cost)}</p>}
+      {task.data && <p className={styles.meta}>{taskId.slice(0, 8)} · {`创建于 ${formatDate(task.data.created_at)}`} · 账本费用 {formatMoney(task.data.usage?.cost, task.data.cost_currency)}</p>}
     </header>
     {report.isLoading ? <p className={styles.message} role="status">正在读取报告…</p> : report.error ? <div className={styles.message} role="alert"><h2>报告尚不可用</h2><p>{report.error.message}</p><button className={controls.button} type="button" onClick={() => void report.refetch()}>重试</button></div> : <article className={styles.markdown} aria-label="最终报告正文"><ReactMarkdown skipHtml remarkPlugins={[linkReferences(taskId)]} components={{
       a: ({ href, children }) => href?.startsWith(`/tasks/${taskId}`) ? <Link to={href}>{children}</Link> : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,

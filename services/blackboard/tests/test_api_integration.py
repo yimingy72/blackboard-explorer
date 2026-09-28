@@ -151,6 +151,34 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
                 },
             )
             assert single_task.status_code == 200
+            assert (await client.get(f"/api/tasks/{tid}")).json()["cost_currency"] == "CNY"
+            legacy_profile = (await client.get("/api/profiles/default/versions/1")).json()[
+                "profile"
+            ]
+            for model in legacy_profile["models"].values():
+                model["price"]["currency"] = "USD"
+            legacy_version = (
+                await client.post("/api/profiles/legacy-usd/versions", json=legacy_profile)
+            ).json()["version"]
+            legacy_task = (
+                await client.post(
+                    "/api/tasks",
+                    json={
+                        "goal": "Historical accounting",
+                        "acceptance": [{"id": "A1", "desc": "Proof"}],
+                        "budget": {"max_cost": "10", "max_minutes": 10},
+                        "agent_profile": "legacy-usd",
+                        "profile_version": legacy_version,
+                    },
+                )
+            ).json()["id"]
+            for model in legacy_profile["models"].values():
+                model["price"]["currency"] = "CNY"
+            await client.post("/api/profiles/legacy-usd/versions", json=legacy_profile)
+            assert (await client.get(f"/api/tasks/{legacy_task}")).json()["cost_currency"] == "USD"
+            assert (await client.get(f"/api/tasks/{legacy_task}/state")).json()["task"]["budget"][
+                "max_cost"
+            ] == "10"
             single_state = (await client.get(f"/api/tasks/{single_task.json()['id']}/state")).json()
             assert single_state["task"]["params"]["derive_enabled"] is False
 

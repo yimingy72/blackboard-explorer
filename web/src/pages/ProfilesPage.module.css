@@ -77,3 +77,24 @@
   .contentHeader, .toolbar, .editor, .compareControls { padding-left: 14px; padding-right: 14px; }
   .yamlView { padding: 16px 14px; }
 }
+
+.workerContent { display: grid; gap: 16px; min-width: 0; padding: 22px 24px; }
+.editor .workerContent { padding: 0; }
+.workerTabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--color-line); }
+.workerTab, .workerActive { padding: 12px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-muted); font-weight: 600; }
+.workerActive { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+.workerTab:hover { color: var(--color-ink); background: var(--color-surface); }
+.workerHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.workerHeading h3 { margin: 0 0 6px; font-size: 1rem; }
+.workerHeading p, .modelSummary { margin: 0; color: var(--color-muted); font-size: .84rem; line-height: 1.65; }
+.workerHeading button { flex-shrink: 0; }
+.promptView, .promptEditor { margin: 0; min-height: 480px; max-height: 65vh; overflow: auto; padding: 20px; font: .88rem/1.85 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; color: var(--color-ink); background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-sm); }
+.promptEditor { width: 100%; resize: vertical; }
+.variableHelp { color: var(--color-muted); font-size: .8rem; line-height: 1.7; overflow-wrap: anywhere; }
+.variableHelp summary { cursor: pointer; color: var(--color-ink); }
+.variableHelp p { margin: 8px 0; }
+@media (max-width: 760px) {
+  .workerContent { padding: 16px 14px; }
+  .workerHeading { flex-wrap: wrap; }
+  .promptView, .promptEditor { padding: 14px; min-height: 360px; }
+}

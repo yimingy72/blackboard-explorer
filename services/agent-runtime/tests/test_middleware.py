@@ -594,3 +594,23 @@ async def test_message_arriving_after_final_model_call_remains_for_review():
     assert service.saved is not None
     history = AgentSession.from_dict(service.saved).state["in_memory"]["messages"]
     assert all(message.message_id != message_id for message in history)
+
+
+def test_default_cny_token_accounting_uses_yuan_without_currency_conversion():
+    from pathlib import Path
+
+    from bbx_contracts.profile import load_profile
+    from bbx_runtime.middleware import _usage
+
+    root = Path(__file__).resolve().parents[3]
+    profile, _ = load_profile(root / "profiles/default")
+    usage, warning = _usage(
+        {
+            "input_token_count": 2000000,
+            "prompt_cache_hit_tokens": 1000000,
+            "output_token_count": 1000000,
+        },
+        profile.models.explore.price,
+    )
+    assert warning is None
+    assert usage.cost == Decimal("10.04")

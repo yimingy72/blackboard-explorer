@@ -24,3 +24,7 @@ export function formatCost(value: unknown): string {
   if (amount > 0 && amount < 0.001) return '<0.001';
   return Number.isFinite(amount) ? amount.toFixed(amount < 1 ? 3 : 2) : '—';
 }
+
+export function formatMoney(value: unknown, currency?: string | null): string {
+  return `${currency === 'CNY' ? '¥' : currency === 'USD' ? 'US$' : currency ? `${currency} ` : '币种未配置 '}${formatCost(value)}`;
+}

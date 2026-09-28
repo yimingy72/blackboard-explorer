@@ -94,11 +94,34 @@ class ProfileStore:
             )
             return dict(result.mappings().one())
 
+    async def _ensure_bundled_profile(self, name: str, profile: AgentProfile) -> dict[str, Any]:
+        async with self.engine.connect() as conn:
+            previous = (
+                (
+                    await conn.execute(
+                        select(s.agent_profiles)
+                        .where(
+                            s.agent_profiles.c.name == name,
+                            s.agent_profiles.c.created_by == "system",
+                        )
+                        .order_by(s.agent_profiles.c.version.desc())
+                        .limit(1)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        if previous is not None and _digest(_row_content(dict(previous))) == _digest(
+            _content(profile)
+        ):
+            return dict(previous)
+        return await self.create(name, profile, "system")
+
     async def ensure_default(self, directory: Path) -> dict[str, Any]:
         profile, _ = load_profile(directory)
-        return await self.create("default", profile, "system")
+        return await self._ensure_bundled_profile("default", profile)
 
     async def ensure_bundled(self, directory: Path) -> None:
         await self.ensure_default(directory)
         single, _ = load_profile(directory.parent / "single")
-        await self.create("single", single, "system")
+        await self._ensure_bundled_profile("single", single)
