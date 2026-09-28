@@ -131,7 +131,9 @@ async def test_scenario_1_successful_parallel_closure(
         others.release.set()
         finished = await s.wait(
             lambda st: (
-                st["task"]["status"] == "finished" and st["task"].get("workspace_uri") is not None
+                st["task"]["status"] == "finished"
+                and st["task"].get("workspace_uri") is not None
+                and st["task"].get("cleanup_ready")
             ),
             seconds=30,
         )
@@ -157,7 +159,8 @@ async def test_scenario_1_successful_parallel_closure(
         assert all(event["payload"]["note"] == "Closing handoff" for event in releases)
         types = [event["type"] for event in all_events]
         assert "acceptance.judged" in types
-        assert types[-1] == "task.archived"
+        assert types[-1] == "task.cleanup_ready"
+        assert types.index("task.archived") < types.index("task.cleanup_ready")
 
 
 async def test_scenario_2_failed_judgments_feed_explore_and_derive(

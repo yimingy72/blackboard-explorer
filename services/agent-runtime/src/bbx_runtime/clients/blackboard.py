@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import quote
 from uuid import UUID
@@ -269,6 +270,7 @@ class BlackboardClient:
         expected_revision: int,
         deliveries: list[dict[str, str]] | None = None,
         review_claim: dict[str, str] | None = None,
+        expected_derive_round: int | None = None,
     ) -> dict[str, Any]:
         return await self._json(
             "PUT",
@@ -280,6 +282,11 @@ class BlackboardClient:
                 "expected_revision": expected_revision,
                 "deliveries": deliveries or [],
                 **({"review_claim": review_claim} if review_claim is not None else {}),
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
             },
         )
 
@@ -339,7 +346,7 @@ class BlackboardClient:
         close_mode: Literal["judge", "final"] | None = None,
         derive_parallel: bool | None = None,
         derive_review: bool | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         body = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
         if derive_parallel is not None:
             body["derive_parallel"] = derive_parallel
@@ -360,6 +367,8 @@ class BlackboardClient:
         context_tokens: int,
         usage: BaseModel | dict[str, Any],
         last_seen_version: int,
+        requested_at: datetime | None = None,
+        expected_derive_round: int | None = None,
     ) -> dict[str, Any]:
         return await self._json(
             "PATCH",
@@ -369,21 +378,51 @@ class BlackboardClient:
                 "context_tokens": context_tokens,
                 "usage": _body(usage),
                 "last_seen_version": last_seen_version,
+                **({"requested_at": requested_at.isoformat()} if requested_at else {}),
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
             },
         )
 
     async def conclude(
-        self, task_id: UUID | str, agent_id: str, reason: str
+        self,
+        task_id: UUID | str,
+        agent_id: str,
+        reason: str,
+        *,
+        expected_derive_round: int | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
             f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/conclude",
-            json={"reason": reason},
+            json={
+                "reason": reason,
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
+            },
         )
 
-    async def take_grace(self, task_id: UUID | str, agent_id: str) -> int:
+    async def take_grace(
+        self,
+        task_id: UUID | str,
+        agent_id: str,
+        *,
+        expected_derive_round: int | None = None,
+    ) -> int:
         result = await self._json(
-            "POST", f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/grace"
+            "POST",
+            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/grace",
+            **(
+                {"json": {"expected_derive_round": expected_derive_round}}
+                if expected_derive_round is not None
+                else {}
+            ),
         )
         return int(result["remaining"])
 
@@ -393,11 +432,21 @@ class BlackboardClient:
         agent_id: str,
         receipt: dict[str, Any],
         end_reason: str,
+        *,
+        expected_derive_round: int | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
             f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/finish",
-            json={"receipt": receipt, "end_reason": end_reason},
+            json={
+                "receipt": receipt,
+                "end_reason": end_reason,
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
+            },
         )
 
     async def transition(
@@ -416,6 +465,9 @@ class BlackboardClient:
             json={"uri": uri, "size": size, "fallback": fallback},
         )
 
+    async def record_cleanup(self, task_id: UUID | str) -> list[dict[str, Any]]:
+        return await self._json("POST", f"{self._task(task_id)}/cleanup-ready")
+
     async def claim_for(
         self, task_id: UUID | str, intent_id: str, agent_id: str
     ) -> list[dict[str, Any]]:
@@ -431,15 +483,42 @@ class BlackboardClient:
         )
 
     async def record_tool_call(
-        self, task_id: UUID | str, call: dict[str, Any]
+        self,
+        task_id: UUID | str,
+        call: dict[str, Any],
+        *,
+        expected_derive_round: int | None = None,
     ) -> list[dict[str, Any]]:
-        return await self._json("POST", f"{self._task(task_id)}/tool_calls", json=call)
+        return await self._json(
+            "POST",
+            f"{self._task(task_id)}/tool_calls",
+            json={
+                **call,
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
+            },
+        )
 
     async def record_agent_trace(
-        self, task_id: UUID | str, agent_id: str, trace: dict[str, Any]
+        self,
+        task_id: UUID | str,
+        agent_id: str,
+        trace: dict[str, Any],
+        *,
+        expected_derive_round: int | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
             f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/traces",
-            json=trace,
+            json={
+                **trace,
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
+            },
         )

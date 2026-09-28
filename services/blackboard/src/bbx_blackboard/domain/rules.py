@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, NoReturn
 
+from bbx_contracts.billing import add_usage
 from bbx_contracts.completion import (
     all_met,
     can_accept,
@@ -182,12 +183,24 @@ def decide(
 ) -> list[dict[str, Any]]:
     """Validate a command and return ordered events without modifying state."""
     task = state.task
+    if command == "record_cleanup":
+        if task["status"] not in {"finished", "failed", "stopped"} or not (
+            task.get("workspace_uri") or task.get("resume_workspace_uri")
+        ):
+            fail("cleanup_not_ready", "任务尚未完成归档。")
+        return [] if task.get("cleanup_ready") else [event("task.cleanup_ready", actor, {})]
     if command == "record_archive":
         if task["status"] not in {"finished", "failed", "stopped"}:
             fail("archive_not_terminal", "任务尚未结束，不能登记工作区归档。")
         if any(agent["status"] in {"running", "concluding"} for agent in state.agents.values()):
             fail("archive_agents_active", "仍有运行中的 Agent，不能登记工作区归档。")
-        if data["uri"] != f"workspace/{state.task['id']}.tar.zst":
+        run = int(task.get("run_number", 1))
+        expected = (
+            f"workspace/{task['id']}.tar.zst"
+            if run == 1
+            else f"workspace/{task['id']}/run-{run}.tar.zst"
+        )
+        if data["uri"] != expected:
             fail("archive_invalid_uri", "工作区归档 key 与任务不匹配。")
         if data["size"] < 0 or data["fallback"] not in {"none", "agents-only"}:
             fail("archive_invalid_metadata", "工作区归档大小或退化标记无效。")
@@ -359,7 +372,6 @@ def decide(
     if command == "register_agent":
         if task["status"] in {"finished", "failed", "stopped"}:
             fail("task_terminal", "任务已结束，不能再登记 Agent。")
-        aid = _id(state, "agent")
         kind = data["task_type"]
         if kind not in {"explore", "derive", "close"}:
             fail("invalid_agent_type", "Agent 类型必须是 explore、derive 或 close。")
@@ -373,6 +385,16 @@ def decide(
         if kind == "close" and data.get("close_mode") not in {"judge", "final"}:
             fail("close_mode_required", "close Agent 必须指定 judge 或 final 模式。")
         derive_fields = {}
+        previous_derive = (
+            max(
+                (item for item in state.agents.values() if item["task_type"] == "derive"),
+                key=lambda item: int(item.get("finished_version") or 0),
+                default=None,
+            )
+            if kind == "derive"
+            else None
+        )
+        aid = previous_derive["id"] if previous_derive else _id(state, "agent")
         if kind == "derive":
             expected = data.get("derive_parallel")
             review = data.get("derive_review", False)
@@ -386,16 +408,23 @@ def decide(
             workers = [agent for agent in active if agent["task_type"] in {"explore", "derive"}]
             explore_active = any(agent["task_type"] == "explore" for agent in workers)
             derive_active = any(agent["task_type"] == "derive" for agent in workers)
+            if derive_active:
+                fail("stale_derive", "已有推导轮次在运行，请重新调度。")
             latest_fact = max((fact["version"] for fact in state.facts.values()), default=0)
             if expected is not None or review:
                 params = Params.model_validate(task["params"])
                 budget = task["budget"]
                 spent = Decimal(str(task["usage"].get("cost", 0) or 0))
                 limit = Decimal(str(budget["max_cost"])) * (1 - params.close_reserve_ratio)
-                started = task.get("started_at")
+                started = task.get("active_since") or task.get("started_at")
                 budget_exhausted = spent >= limit or (
                     started is not None
-                    and datetime.now(UTC) >= started + timedelta(minutes=int(budget["max_minutes"]))
+                    and datetime.now(UTC)
+                    >= started
+                    + timedelta(
+                        seconds=int(budget["max_minutes"]) * 60
+                        - int(task.get("active_seconds") or 0)
+                    )
                 )
                 closing_due = (
                     task["status"] != "running"
@@ -431,7 +460,13 @@ def decide(
                 elif expected:
                     latest_derive = max(
                         (
-                            agent["derive_from_version"]
+                            max(
+                                int(agent["derive_from_version"]),
+                                int(agent.get("last_seen_version") or 0)
+                                if agent.get("status") == "finished"
+                                and agent.get("end_reason") == "normal"
+                                else 0,
+                            )
                             for agent in state.agents.values()
                             if agent["task_type"] == "derive"
                             and agent.get("derive_from_version") is not None
@@ -462,10 +497,14 @@ def decide(
                     False if review else explore_active if expected is None else expected
                 ),
                 "derive_review": review,
+                "derive_round": int(previous_derive.get("derive_round") or 1) + 1
+                if previous_derive
+                else 1,
+                "round_start_version": int(task.get("version") or 0),
             }
         return [
             event(
-                "agent.spawned",
+                "agent.reactivated" if previous_derive else "agent.spawned",
                 actor,
                 {
                     "id": aid,
@@ -484,9 +523,7 @@ def decide(
             fail("invalid_progress", "心跳计数不能为负，请提交非负步数、上下文长度与版本。")
         delta = data["usage"]
         previous = task["usage"]
-        usage = {
-            key: previous.get(key, 0) + delta.get(key, 0) for key in previous.keys() | delta.keys()
-        }
+        usage = add_usage(previous, delta)
         exhausted = Decimal(str(usage.get("cost", 0))) >= Decimal(str(task["budget"]["max_cost"]))
         return [
             event("agent.progress", actor, data, data["agent_id"]),
@@ -576,7 +613,12 @@ def decide(
                 parsed = DeriveReceipt.model_validate(receipt)
             except ValidationError:
                 parsed = None
-            posted = [iid for iid, intent in state.intents.items() if intent["author"] == aid]
+            posted = [
+                iid
+                for iid, intent in state.intents.items()
+                if intent["author"] == aid
+                and int(intent.get("version") or 0) > int(agent.get("round_start_version") or 0)
+            ]
             detail = receipt.get("data") if isinstance(receipt, dict) else None
             valid = (
                 parsed is not None

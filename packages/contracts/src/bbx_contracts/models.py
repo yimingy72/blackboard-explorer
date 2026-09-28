@@ -97,6 +97,7 @@ class EndReason(StrEnum):
 
 
 class EventType(StrEnum):
+    COST_RECONCILED = "cost.reconciled"
     TASK_CREATED = "task.created"
     TASK_PROVISIONING = "task.provisioning"
     TASK_RUNNING = "task.running"
@@ -105,6 +106,8 @@ class EventType(StrEnum):
     TASK_FAILED = "task.failed"
     TASK_STOPPED = "task.stopped"
     TASK_ARCHIVED = "task.archived"
+    TASK_RESUMED = "task.resumed"
+    TASK_CLEANUP_READY = "task.cleanup_ready"
     FACT_POSTED = "fact.posted"
     FACT_DISPUTED = "fact.disputed"
     FACT_UNDISPUTED = "fact.undisputed"
@@ -113,6 +116,7 @@ class EventType(StrEnum):
     INTENT_RELEASED = "intent.released"
     INTENT_CLOSED = "intent.closed"
     AGENT_SPAWNED = "agent.spawned"
+    AGENT_REACTIVATED = "agent.reactivated"
     AGENT_PROGRESS = "agent.progress"
     AGENT_FINISHED = "agent.finished"
     AGENT_CONCLUDE_REQUESTED = "agent.conclude_requested"
@@ -301,6 +305,9 @@ class AgentRun(ContractModel):
     )
     derive_parallel: bool = Field(default=False, description="登记时有探索 Agent 并行运行")
     derive_review: bool = Field(default=False, description="结束前必要推导复核")
+    derive_round: int = Field(default=1, ge=1, description="推导轮次")
+    round_start_version: int = Field(default=0, ge=0, description="本轮开始前的黑板版本")
+    previous_receipt: dict[str, object] | None = Field(default=None, description="上一轮推导回执")
     finished_version: int | None = Field(default=None, ge=0)
     intent_id: str | None = Field(default=None, description="持有的意图")
     status: AgentStatus = Field(description="运行状态")
@@ -413,6 +420,9 @@ class SubmitCloseRequest(ContractModel):
 
 
 class Price(ContractModel):
+    billing_mode: Literal["fixed", "deepseek_schedule"] = Field(
+        default="fixed", description="固定费率或官方 DeepSeek 峰谷时段估算"
+    )
     currency: str | None = Field(default=None, description="计价币种")
     cache_hit_per_m: Decimal | None = Field(
         default=None, ge=0, description="每百万缓存命中输入 token 单价"
@@ -428,6 +438,7 @@ class Price(ContractModel):
 
 
 class ModelConfig(ContractModel):
+    supports_vision: bool | None = Field(default=None, description="模型是否支持图片输入")
     provider_options: dict[str, str] = Field(default_factory=dict)
     platform_id: str | None = Field(default=None, min_length=1)
     platform_version: int | None = Field(default=None, ge=1)
@@ -441,6 +452,11 @@ class ModelConfig(ContractModel):
     def complete_platform_reference(self) -> ModelConfig:
         if (self.platform_id is None) != (self.platform_version is None):
             raise ValueError("平台模型名称和版本必须同时填写")
+        if self.price.billing_mode == "deepseek_schedule":
+            from .billing import supports_deepseek_schedule
+
+            if not supports_deepseek_schedule(self.base_url, self.model):
+                raise ValueError("峰谷计费仅支持官方 DeepSeek 端点和已知模型")
         return self
 
 
@@ -499,10 +515,11 @@ BUILTIN_TOOLS = {
         "get",
         "search",
         "read_evidence",
+        "view_image",
         "execute_command",
     },
-    "derive": {"post_intent", "get", "search", "read_evidence"},
-    "close": {"submit_close", "get", "search", "read_evidence"},
+    "derive": {"post_intent", "get", "search", "read_evidence", "view_image"},
+    "close": {"submit_close", "get", "search", "read_evidence", "view_image"},
 }
 REQUIRED_TOOLS = {
     "explore": {"post_fact", "release"},

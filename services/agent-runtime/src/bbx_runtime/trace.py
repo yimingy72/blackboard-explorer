@@ -65,6 +65,11 @@ async def record_trace(
             ctx.task_id,
             ctx.agent_id,
             {"kind": kind, "step": step, "uri": uri, "summary": text[:240]},
+            **(
+                {"expected_derive_round": ctx.expected_derive_round}
+                if ctx.expected_derive_round is not None
+                else {}
+            ),
         )
     except Exception as exc:
         # Observability must not prevent model usage accounting or an Agent's handoff.

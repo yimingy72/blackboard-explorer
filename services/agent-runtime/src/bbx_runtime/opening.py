@@ -64,7 +64,12 @@ def _intent_summary(intent: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def _previous_excluded(agents: dict[str, dict[str, Any]]) -> str:
+def _previous_excluded(agents: dict[str, dict[str, Any]], agent_id: str) -> str:
+    reused = agents.get(agent_id)
+    if reused and reused.get("previous_receipt"):
+        detail = reused["previous_receipt"].get("data") or {}
+        excluded = detail.get("excluded", []) if isinstance(detail, dict) else []
+        return _json(excluded) if excluded else "上次未列出排除理由"
     previous = [
         agent
         for agent in agents.values()
@@ -127,7 +132,7 @@ class OpeningContextProvider(ContextProvider):
         elif run.task_type == "derive":
             data["facts_text"] = _json([_fact_summary(fact) for fact in facts.values()])
             data["intents_text"] = _json([_intent_summary(intent) for intent in intents.values()])
-            data["previous_excluded"] = _previous_excluded(board.get("agents", {}))
+            data["previous_excluded"] = _previous_excluded(board.get("agents", {}), run.agent_id)
         elif run.task_type == "close":
             claimed = {
                 item["id"]: [
@@ -154,16 +159,14 @@ class OpeningContextProvider(ContextProvider):
             source = getattr(run.profile.prompt_templates, run.task_type)
         assert isinstance(source, str)
         rendered = self.environment.from_string(source).render(**data)
-        if run.task_type == "derive" and board.get("agents", {}).get(run.agent_id, {}).get(
-            "derive_review"
-        ):
+        if run.task_type == "derive":
             rendered += (
-                "\n\n# 本次运行：完成前必要复核\n"
-                "即使现有验收已标 met，仍检查目标范围、完成证据和未验证事项。"
-                "找到有事实依据且值得继续的缺口，就用 post_intent 提交；"
-                "不要机械重复或扩展无关范围。"
-                "没有必要方向时，回执 posted 留空，excluded 至少说明一项具体复核与排除理由。"
-                "只有实际提交到黑板的意图才算产出；没有新方向不自动证明目标已经完成。"
+                "\n\n# 推导轮次协议\n"
+                "本轮模式由最新用户控制消息指定。完成前必要复核时，即使现有验收已标 met，"
+                "仍检查目标范围、完成证据和未验证事项；找到有事实依据且值得继续的缺口，"
+                "就用 post_intent 提交，不机械重复或扩展无关范围。"
+                "无方向时回执 posted 留空，excluded 写具体排除理由。"
+                "每轮 posted 只列本轮实际提交到黑板的意图；旧轮次回执不代表本轮已完成。"
             )
         if run.task_type == "close":
             reviews = [

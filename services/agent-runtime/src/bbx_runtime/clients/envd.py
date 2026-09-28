@@ -62,6 +62,13 @@ class EnvdClient:
     async def create_user(self, agent_id: str) -> dict[str, str]:
         return (await self._response("POST", "/users", json={"agent_id": agent_id})).json()
 
+    async def restore_status(self) -> dict[str, Any]:
+        return (await self._response("GET", "/restore/status")).json()
+
+    async def restore(self, content: AsyncIterator[bytes]) -> dict[str, Any]:
+        timeout = httpx.Timeout(connect=10, read=None, write=None, pool=10)
+        return (await self._response("POST", "/restore", content=content, timeout=timeout)).json()
+
     async def stat(self, path: str) -> dict[str, Any]:
         return (await self._response("GET", "/stat", params={"path": path})).json()
 

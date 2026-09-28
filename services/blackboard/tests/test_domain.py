@@ -609,7 +609,7 @@ def test_review_receipt_must_match_authored_intents_and_explain_empty_result():
         {"agent_id": "agent-1", "end_reason": "refused", "receipt": {"accepted": False}},
     )
     assert refused[0]["payload"]["end_reason"] == "runtime_error"
-    state.intents["I3"] = {"status": "closed", "holder": None, "author": "agent-1"}
+    state.intents["I3"] = {"status": "closed", "holder": None, "author": "agent-1", "version": 5}
     mismatched = decide(
         state,
         "finish_agent",
@@ -632,6 +632,129 @@ def test_review_receipt_must_match_authored_intents_and_explain_empty_result():
         },
     )
     assert valid[0]["payload"]["posted"] == ["I3"]
+
+
+def test_derive_reactivation_reuses_id_and_checks_only_current_round_intents():
+    state = board()
+    state.task.update(
+        version=12,
+        last_change_version=10,
+        last_judgment_version=10,
+        derive_empty_streak=0,
+        budget={"max_cost": "10", "max_minutes": 60, "max_concurrent_agents": 4},
+    )
+    state.agents.clear()
+    state.intents.clear()
+    state.agents["agent-5"] = {
+        "id": "agent-5",
+        "task_type": "derive",
+        "status": "finished",
+        "derive_round": 2,
+        "finished_version": 9,
+        "steps": 7,
+        "usage": {"output_tokens": 500},
+        "receipt": {"accepted": True},
+    }
+    state.intents["I3"] = {
+        "id": "I3",
+        "status": "closed",
+        "holder": None,
+        "author": "agent-5",
+        "version": 8,
+    }
+    reactivated = decide(
+        state,
+        "register_agent",
+        "scheduler",
+        {"task_type": "derive", "derive_review": True},
+    )[0]
+    assert reactivated["type"] == "agent.reactivated"
+    assert reactivated["payload"]["id"] == "agent-5"
+    assert reactivated["payload"]["derive_round"] == 3
+    assert reactivated["payload"]["round_start_version"] == 12
+
+    state.agents["agent-5"].update(
+        status="running",
+        derive_review=True,
+        derive_from_version=10,
+        round_start_version=12,
+    )
+    valid = decide(
+        state,
+        "finish_agent",
+        "agent-5",
+        {
+            "agent_id": "agent-5",
+            "end_reason": "normal",
+            "receipt": {"accepted": True, "data": {"posted": [], "excluded": ["旧方向已复核"]}},
+        },
+    )
+    assert [item["type"] for item in valid] == ["derive.result", "agent.finished"]
+    state.intents["I4"] = {
+        "id": "I4",
+        "status": "open",
+        "holder": None,
+        "author": "agent-5",
+        "version": 13,
+    }
+    invalid = decide(
+        state,
+        "finish_agent",
+        "agent-5",
+        {
+            "agent_id": "agent-5",
+            "end_reason": "normal",
+            "receipt": {"accepted": True, "data": {"posted": [], "excluded": ["旧方向已复核"]}},
+        },
+    )
+    assert invalid[0]["type"] == "agent.finished"
+    assert invalid[0]["payload"]["end_reason"] == "runtime_error"
+
+
+def test_parallel_derive_registration_skips_facts_seen_by_previous_round():
+    state = board()
+    state.agents = {
+        "agent-1": {"id": "agent-1", "task_type": "explore", "status": "running"},
+        "agent-5": {
+            "id": "agent-5",
+            "task_type": "derive",
+            "status": "finished",
+            "end_reason": "normal",
+            "derive_from_version": 4,
+            "last_seen_version": 9,
+            "finished_version": 10,
+        },
+    }
+    state.intents.clear()
+    state.facts["F1"]["version"] = 9
+    state.task["budget"] = {
+        "max_cost": "10",
+        "max_minutes": 60,
+        "max_concurrent_agents": 3,
+    }
+    state.task["derive_empty_streak"] = 0
+    with pytest.raises(RuleViolation) as stale:
+        decide(
+            state,
+            "register_agent",
+            "scheduler",
+            {
+                "task_type": "derive",
+                "derive_parallel": True,
+            },
+        )
+    assert stale.value.code == "stale_derive"
+    state.facts["F2"] = {"version": 11}
+    event = decide(
+        state,
+        "register_agent",
+        "scheduler",
+        {
+            "task_type": "derive",
+            "derive_parallel": True,
+        },
+    )[0]
+    assert event["type"] == "agent.reactivated"
 
 
 def test_legacy_empty_streak_does_not_block_first_completion_review():

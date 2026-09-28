@@ -6,6 +6,7 @@ explore: &default_model
   price:
     # 2026-09-28 https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
     # 固定高峰价用于保守预算估算；错峰账单按实际时段核对。
+    billing_mode: deepseek_schedule
     currency: CNY
     cache_hit_per_m: 0.04
     cache_miss_per_m: 2.00

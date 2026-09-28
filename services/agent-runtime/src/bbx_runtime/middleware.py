@@ -7,7 +7,7 @@ import json
 import logging
 import secrets
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from agent_framework import (
@@ -19,11 +19,13 @@ from agent_framework import (
     FunctionMiddleware,
     Message,
 )
-from bbx_contracts.models import Price, Usage
+from bbx_contracts.billing import effective_price
 from pydantic import BaseModel, ValidationError
 
+from bbx_runtime.billing import _input_tokens, _usage
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
+from bbx_runtime.image_view import append_pending_images, finish_pending_images
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.trace import model_content, record_trace
 
@@ -101,6 +103,11 @@ class ToolLogMiddleware(FunctionMiddleware):
                 "result_head": result.encode("utf-8")[:4096].decode("utf-8", errors="ignore"),
                 "result_uri": uri,
             },
+            **(
+                {"expected_derive_round": self.ctx.expected_derive_round}
+                if self.ctx.expected_derive_round is not None
+                else {}
+            ),
         )
         context.result = _append_call_id(context.result, call_id)
         checkpoint = self.ctx.checkpoint
@@ -134,7 +141,15 @@ class GraceGateMiddleware(FunctionMiddleware):
                 )
                 return
             try:
-                await self.ctx.service.take_grace(self.ctx.task_id, self.ctx.agent_id)
+                await self.ctx.service.take_grace(
+                    self.ctx.task_id,
+                    self.ctx.agent_id,
+                    **(
+                        {"expected_derive_round": self.ctx.expected_derive_round}
+                        if self.ctx.expected_derive_round is not None
+                        else {}
+                    ),
+                )
             except RemoteError as exc:
                 if exc.status != 409:
                     raise
@@ -144,20 +159,22 @@ class GraceGateMiddleware(FunctionMiddleware):
 
 
 def append_board_update(messages: Sequence[Message], update: str) -> None:
-    """Persist one update in public MAF Content that later tool turns retain."""
+    """Extend only the newly appended prompt or tool result before its first send."""
+    if not messages:
+        raise RuntimeError("No new message is available for a board update")
+    message = messages[-1]
     framed = f"{update}\n[黑板更新结束]"
-    for message in reversed(messages):
+    if message.role == "tool":
         for content in reversed(message.contents):
             if content.type == "function_result":
                 content.result = f"{_result_text(content.result)}\n{framed}"
                 return
-    for message in messages:
-        if message.role == "user":
-            for content in message.contents:
-                if content.type == "text":
-                    content.text = f"{content.text}\n{framed}"
-                    return
-    raise RuntimeError("No user text or function result is available for board updates")
+    if message.role == "user":
+        for content in reversed(message.contents):
+            if content.type == "text":
+                content.text = f"{content.text}\n{framed}"
+                return
+    raise RuntimeError("Latest message is not a new user prompt or tool result")
 
 
 def _full_event(event: Mapping[str, Any]) -> str:
@@ -207,58 +224,6 @@ def _render_events(events: Sequence[Mapping[str, Any]], aid: str, max_lines: int
     else:
         lines.extend(_digest(event) for event in digest)
     return lines
-
-
-def _separate_cache_input(provider: str | None) -> bool:
-    return bool(provider and (provider.startswith("anthropic") or provider == "bedrock"))
-
-
-def _input_tokens(details: Mapping[str, Any] | None, provider: str | None = None) -> int:
-    details = details or {}
-    total = int(details.get("input_token_count") or 0)
-    if _separate_cache_input(provider):
-        total += int(details.get("cache_creation_input_token_count") or 0)
-        total += int(details.get("cache_read_input_token_count") or 0)
-    return total
-
-
-def _usage(
-    details: Mapping[str, Any] | None, price: Price, provider: str | None = None
-) -> tuple[Usage, str | None]:
-    details = details or {}
-    total_input = int(details.get("input_token_count") or 0)
-    if _separate_cache_input(provider):
-        hit = int(details.get("cache_read_input_token_count") or 0)
-        miss = total_input + int(details.get("cache_creation_input_token_count") or 0)
-    else:
-        raw_hit = details.get("prompt_cache_hit_tokens")
-        hit = int(
-            raw_hit if raw_hit is not None else details.get("cache_read_input_token_count") or 0
-        )
-        raw_miss = details.get("prompt_cache_miss_tokens")
-        miss = int(raw_miss if raw_miss is not None else max(0, total_input - hit))
-    output = int(details.get("output_token_count") or 0)
-    reasoning = int(details.get("reasoning_output_token_count") or 0)
-    rates = (price.cache_hit_per_m, price.cache_miss_per_m, price.output_per_m)
-    if any(rate is None for rate in rates):
-        cost, warning = Decimal(0), "价格未配置"
-    else:
-        assert price.cache_hit_per_m is not None
-        assert price.cache_miss_per_m is not None
-        assert price.output_per_m is not None
-        cost = (
-            Decimal(hit) * price.cache_hit_per_m
-            + Decimal(miss) * price.cache_miss_per_m
-            + Decimal(output) * price.output_per_m
-        ) / Decimal(1_000_000)
-        warning = None
-    return Usage(
-        cache_hit_tokens=hit,
-        cache_miss_tokens=miss,
-        output_tokens=output,
-        reasoning_tokens=reasoning,
-        cost=cost,
-    ), warning
 
 
 class BoardSyncMiddleware(ChatMiddleware):
@@ -339,13 +304,17 @@ class BoardSyncMiddleware(ChatMiddleware):
             )
             # The opening provider's instructions are already in these options.
             cast(dict[str, Any], context.options)["instructions"] = instructions
-        if self.ctx.task_type == "explore":
+        if self.ctx.task_type in {"explore", "derive"}:
             last_seen = max(last_seen, self.last_appended_version)
             events = await self.ctx.board.events(
                 self.ctx.task_id, since=last_seen, for_agent=self.ctx.agent_id
             )
             lines = _render_events(events, self.ctx.agent_id, self.ctx.params.delta_max_lines)
-            if agent.get("conclude_requested_at") and not self.conclude_injected:
+            if (
+                self.ctx.task_type == "explore"
+                and agent.get("conclude_requested_at")
+                and not self.conclude_injected
+            ):
                 reason = agent.get("conclude_reason") or "closing"
                 lines.insert(
                     0,
@@ -354,7 +323,7 @@ class BoardSyncMiddleware(ChatMiddleware):
                     "完成交接，然后返回回执 JSON。",
                 )
                 self.conclude_injected = True
-            if not agent.get("conclude_requested_at"):
+            if self.ctx.task_type == "explore" and not agent.get("conclude_requested_at"):
                 reminder = await self._publication_reminder(step, last_seen)
                 if reminder:
                     lines.append(reminder)
@@ -365,14 +334,26 @@ class BoardSyncMiddleware(ChatMiddleware):
                 await record_trace(self.ctx, "board_update", step, update + "\n[黑板更新结束]")
                 self.last_appended_version = last_seen
         await self._inject_user_messages(context)
-        await call_next()
+        context.messages = list(context.messages)
+        messages = context.messages
+        injection = await append_pending_images(self.ctx, messages)
+        requested_at = datetime.now(UTC)
+        sent = False
+        try:
+            await call_next()
+            sent = True
+        finally:
+            finish_pending_images(messages, injection, sent=sent)
         response = context.result
         if isinstance(response, ChatResponse):
             output, reasoning = model_content(response)
             await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
         details = response.usage_details if isinstance(response, ChatResponse) else None
         model = getattr(self.ctx.profile.models, self.ctx.task_type)
-        usage, self.price_warning = _usage(details, model.price, model.provider)
+        price, _ = effective_price(
+            model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
+        )
+        usage, self.price_warning = _usage(details, price, model.provider)
         if self.price_warning and not self._warned_missing_price:
             logger.warning("Model price is not configured; cost is recorded as zero")
             self._warned_missing_price = True
@@ -383,4 +364,10 @@ class BoardSyncMiddleware(ChatMiddleware):
             context_tokens=_input_tokens(details, model.provider),
             usage=usage,
             last_seen_version=last_seen,
+            requested_at=requested_at,
+            **(
+                {"expected_derive_round": self.ctx.expected_derive_round}
+                if self.ctx.expected_derive_round is not None
+                else {}
+            ),
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ MANAGED = "bbx.managed"
 TASK_ID = "bbx.task-id"
 ROLE = "bbx.role"
 CAPABILITIES = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"]
+LOGGER = logging.getLogger(__name__)
 
 # One fixed destination per relay, supplied when the container starts.
 RELAY = """
@@ -242,7 +244,9 @@ class ExecEnvManager:
                     raise TimeoutError(f"envd did not become healthy for task {handle.task_id}")
                 await asyncio.sleep(0.25)
 
-    async def provision(self, task_id: UUID | str, profile: AgentProfile) -> ExecEnvHandle:
+    async def provision(
+        self, task_id: UUID | str, profile: AgentProfile, restore_uri: str | None = None
+    ) -> ExecEnvHandle:
         task = self._task(task_id)
         await self._execution_network()
         created: list[Any] = []
@@ -263,6 +267,19 @@ class ExecEnvManager:
                     await self._running(relay)
             handle = await self._handle(task, envd, relay)
             await self.wait_healthy(handle)
+            if restore_uri:
+                async with EnvdClient(handle.base_url, handle.token) as client:
+                    status = await client.restore_status()
+                    if not status["restored"]:
+                        result = await client.restore(self.objects.stream(restore_uri))
+                    else:
+                        result = status
+                    if result.get("skipped_links"):
+                        LOGGER.warning(
+                            "Task %s restored without %s archive links",
+                            task,
+                            result["skipped_links"],
+                        )
             return handle
         except BaseException:
             for container in reversed(created):
@@ -289,8 +306,12 @@ class ExecEnvManager:
         async with EnvdClient(handle.base_url, handle.token) as envd:
             return await envd.create_user(agent_id)
 
-    async def archive_to_store(self, handle: ExecEnvHandle) -> ArchiveResult:
-        uri = f"workspace/{handle.task_id}.tar.zst"
+    async def archive_to_store(self, handle: ExecEnvHandle, run_number: int = 1) -> ArchiveResult:
+        uri = (
+            f"workspace/{handle.task_id}.tar.zst"
+            if run_number == 1
+            else f"workspace/{handle.task_id}/run-{run_number}.tar.zst"
+        )
         async with EnvdClient(handle.base_url, handle.token) as envd:
             async with envd.archive_stream() as response:
                 with tempfile.TemporaryFile() as output:

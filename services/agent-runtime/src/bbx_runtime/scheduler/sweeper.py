@@ -57,14 +57,19 @@ class Sweeper:
                 and concluded is not None
                 and instant >= concluded + timedelta(minutes=self.params.grace_timeout)
             ):
-                await self._finish_stale(aid, "grace_timeout")
+                await self._finish_stale(aid, "grace_timeout", agent)
             elif heartbeat is not None and instant >= heartbeat + timedelta(
                 minutes=self.params.heartbeat_timeout
             ):
-                await self._finish_stale(aid, "heartbeat")
+                await self._finish_stale(aid, "heartbeat", agent)
 
-    async def _finish_stale(self, aid: str, reason: str) -> None:
-        if await self.executor.cancel(aid, reason):
+    async def _finish_stale(self, aid: str, reason: str, agent: dict) -> None:
+        expected_round = (
+            int(agent.get("derive_round") or 1) if agent.get("task_type") == "derive" else None
+        )
+        if await self.executor.cancel(
+            aid, reason, *([expected_round] if expected_round is not None else [])
+        ):
             return
         try:
             await self.service.finish_agent(
@@ -72,6 +77,7 @@ class Sweeper:
                 aid,
                 {"accepted": False, "reason": f"Agent {reason} timeout"},
                 reason,
+                **({"expected_derive_round": expected_round} if expected_round is not None else {}),
             )
         except RemoteError as error:
             if error.status != 422:

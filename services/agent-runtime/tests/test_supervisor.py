@@ -82,6 +82,10 @@ class Service:
         self.states[tid]["task"]["workspace_uri"] = uri
         return []
 
+    async def record_cleanup(self, tid: str) -> list:
+        self.states[tid]["task"]["cleanup_ready"] = True
+        return []
+
 
 class Manager:
     def __init__(self) -> None:
@@ -269,6 +273,17 @@ async def test_stop_does_not_destroy_running_task() -> None:
     loop.stop.assert_awaited_once_with(reason="runtime_restart")
     assert "active" in manager.handles
     assert not any(call[0] in {"archive", "destroy"} for call in manager.calls)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_does_not_mark_intentionally_stopped_scheduler_as_failed() -> None:
+    service = Service([task("active", "running")])
+    owner = supervisor(service, Manager())
+    owner.loop_tasks["active"] = asyncio.create_task(asyncio.sleep(0))
+    await owner.loop_tasks["active"]
+    owner.stopping.set()
+    await owner._tick()
+    assert service.states["active"]["task"]["status"] == "running"
 
 
 @pytest.mark.asyncio

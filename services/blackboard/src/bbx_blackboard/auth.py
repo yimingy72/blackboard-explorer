@@ -29,14 +29,18 @@ class Principal:
     name: str
     task_id: UUID | None = None
     agent_id: str | None = None
+    derive_round: int | None = None
 
 
-def issue_agent_token(settings: Settings, task_id: UUID, agent_id: str) -> str:
+def issue_agent_token(
+    settings: Settings, task_id: UUID, agent_id: str, derive_round: int | None = None
+) -> str:
     return jwt.encode(
         {
             "aud": "agent",
             "tid": str(task_id),
             "aid": agent_id,
+            **({"derive_round": derive_round} if derive_round is not None else {}),
             "exp": datetime.now(UTC) + timedelta(days=7),
         },
         settings.agent_token_secret.get_secret_value(),
@@ -91,6 +95,7 @@ def principal(request: Request) -> Principal:
                 claims["aid"],
                 task_id=UUID(claims["tid"]),
                 agent_id=claims["aid"],
+                derive_round=int(claims["derive_round"]) if "derive_round" in claims else None,
             )
         if claims["aud"] == "user":
             return Principal("user", claims["sub"])

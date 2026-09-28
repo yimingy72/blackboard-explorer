@@ -133,6 +133,7 @@ def test_worker_tool_selection_preserves_legacy_and_filters_builtin():
         "get",
         "search",
         "read_evidence",
+        "view_image",
     }
     ctx.profile.worker_tools["explore"] = WorkerTools(
         builtin=["post_fact", "release", "get"], mcp_servers=[]
@@ -340,9 +341,10 @@ async def test_tool_sets_and_read_boundaries() -> None:
         "get",
         "search",
         "read_evidence",
+        "view_image",
     }
-    assert set(derive) == {"post_intent", "get", "search", "read_evidence"}
-    assert set(close) == {"submit_close", "get", "search", "read_evidence"}
+    assert set(derive) == {"post_intent", "get", "search", "read_evidence", "view_image"}
+    assert set(close) == {"submit_close", "get", "search", "read_evidence", "view_image"}
     assert await call(explore["claim"], intent_id="I1") == "已认领意图 I1。"
     assert (
         await call(explore["release"], intent_id="I1", note="交接")

@@ -181,7 +181,7 @@ async def test_runner_waits_for_finish_after_repeated_cancellation(monkeypatch):
     finish_started = asyncio.Event()
     finish_allowed = asyncio.Event()
 
-    async def finish(*_args):
+    async def finish(*_args, **_kwargs):
         finish_started.set()
         await finish_allowed.wait()
 

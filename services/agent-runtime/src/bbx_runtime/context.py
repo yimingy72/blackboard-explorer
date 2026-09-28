@@ -31,6 +31,7 @@ class RunContext:
     intent_id: str | None = None
     mode: CloseMode | None = None
     checkpoint: SessionCheckpoint | None = None
+    expected_derive_round: int | None = None
 
     @property
     def params(self) -> Params:

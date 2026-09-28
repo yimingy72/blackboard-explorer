@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Any, Literal, cast
@@ -15,6 +16,7 @@ import anyio
 from bbx_contracts.models import (
     AgentProfile,
     Event,
+    ModelConfig,
     PostFactRequest,
     PostIntentRequest,
     SubmitCloseRequest,
@@ -25,7 +27,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -41,6 +43,7 @@ from bbx_blackboard.auth import (
     require_task_reader,
     require_user_or_service,
 )
+from bbx_blackboard.billing import router as billing_router
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.platform import PlatformStore
@@ -91,6 +94,19 @@ class TaskView(BaseModel):
     agent_profile: str
     agent_profile_version: int
     created_at: datetime
+    budget: dict[str, Any] = Field(default_factory=dict)
+    run_number: int = 1
+    active_seconds: int = 0
+    active_since: datetime | None = None
+    cleanup_ready: bool = False
+    runs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ResumeBody(BaseModel):
+    request_id: UUID
+    additional_cost: Decimal = Field(ge=0)
+    additional_minutes: int = Field(ge=0)
+    refresh_tools: bool = False
 
 
 class StatusBody(BaseModel):
@@ -126,6 +142,7 @@ class AgentRegisterBody(BaseModel):
 class AgentRegistered(BaseModel):
     agent_id: str
     token: str
+    derive_round: int | None = None
 
 
 class UserMessageBody(BaseModel):
@@ -143,6 +160,7 @@ class SessionBody(BaseModel):
     opening_instructions: str
     origin: Literal["native", "legacy"]
     expected_revision: int = Field(ge=0)
+    expected_derive_round: int | None = Field(default=None, ge=1)
     deliveries: list[DeliveryBody] = Field(default_factory=list)
     review_claim: DeliveryBody | None = None
 
@@ -163,6 +181,8 @@ class FailBody(BaseModel):
 
 
 class HeartbeatBody(BaseModel):
+    requested_at: AwareDatetime | None = None
+    expected_derive_round: int | None = Field(default=None, ge=1)
     steps: int = Field(ge=0)
     context_tokens: int = Field(ge=0)
     usage: Usage
@@ -171,11 +191,17 @@ class HeartbeatBody(BaseModel):
 
 class ConcludeBody(BaseModel):
     reason: str = Field(min_length=1)
+    expected_derive_round: int | None = Field(default=None, ge=1)
+
+
+class GraceBody(BaseModel):
+    expected_derive_round: int | None = Field(default=None, ge=1)
 
 
 class FinishBody(BaseModel):
     receipt: dict[str, Any]
     end_reason: str = Field(min_length=1)
+    expected_derive_round: int | None = Field(default=None, ge=1)
 
 
 class ClaimForBody(BaseModel):
@@ -193,6 +219,7 @@ class CloseBody(SubmitCloseRequest):
 
 class ToolCallBody(BaseModel):
     agent_id: str = Field(min_length=1)
+    expected_derive_round: int | None = Field(default=None, ge=1)
     id: str = Field(min_length=1)
     tool: str = Field(min_length=1)
     args: dict[str, Any] = Field(default_factory=dict)
@@ -201,6 +228,7 @@ class ToolCallBody(BaseModel):
 
 
 class AgentTraceBody(BaseModel):
+    expected_derive_round: int | None = Field(default=None, ge=1)
     kind: Literal["initial_context", "board_update", "model_output"]
     step: int = Field(ge=0)
     uri: str = Field(min_length=1)
@@ -303,10 +331,52 @@ async def _task(request: Request, task_id: UUID) -> dict[str, Any]:
     return dict(row)
 
 
-async def _workspace_uri(request: Request, task_id: UUID) -> str:
+def _run_uri(kind: str, task_id: UUID, run: int) -> str:
+    suffix = "md" if kind == "reports" else "tar.zst"
+    return f"{kind}/{task_id}.{suffix}" if run == 1 else f"{kind}/{task_id}/run-{run}.{suffix}"
+
+
+async def _run_record(request: Request, task_id: UUID, run: int) -> dict[str, Any]:
+    async with request.app.state.engine.connect() as conn:
+        found = (
+            (
+                await conn.execute(
+                    select(s.task_runs).where(
+                        s.task_runs.c.task_id == task_id, s.task_runs.c.run_number == run
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+    return dict(found) if found else {}
+
+
+async def _task_runs(request: Request, task_id: UUID) -> list[dict[str, Any]]:
+    async with request.app.state.engine.connect() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    select(s.task_runs)
+                    .where(s.task_runs.c.task_id == task_id)
+                    .order_by(s.task_runs.c.run_number)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return [dict(item) for item in rows]
+
+
+async def _workspace_uri(request: Request, task_id: UUID, run: int | None = None) -> str:
     task = await _task(request, task_id)
-    uri = task.get("workspace_uri")
-    if not uri or uri != f"workspace/{task_id}.tar.zst":
+    number = run or task.get("run_number", 1)
+    uri = (
+        (await _run_record(request, task_id, number)).get("workspace_uri")
+        if run
+        else task.get("workspace_uri")
+    )
+    if not uri or uri != _run_uri("workspace", task_id, number):
         raise HTTPException(404, "Workspace archive not found")
     if not await request.app.state.objects.exists(uri):
         raise HTTPException(404, "Workspace archive not found")
@@ -405,6 +475,7 @@ def create_app(
                 await app.state.engine.dispose()
 
     app = FastAPI(title="Blackboard API", version="1.0.0", lifespan=lifespan)
+    app.include_router(billing_router)
     app.state.settings = settings
     app.state.engine = engine
     app.state.objects = objects
@@ -546,7 +617,29 @@ def create_app(
             agent_profile=task["agent_profile"],
             agent_profile_version=task["agent_profile_version"],
             created_at=task["created_at"],
+            budget=task["budget"],
+            run_number=task["run_number"],
+            active_seconds=task["active_seconds"],
+            active_since=task["active_since"],
+            cleanup_ready=task["cleanup_ready"],
+            runs=await _task_runs(request, task_id),
         )
+
+    @app.post("/api/tasks/{task_id}/resume", response_model=TaskView, tags=["tasks"])
+    async def resume_task(request: Request, task_id: UUID, body: ResumeBody) -> TaskView:
+        identity = require_user_or_service(request)
+        if identity.kind != "user":
+            raise HTTPException(403, "User token required")
+        await _task(request, task_id)
+        await _service(request).resume(
+            task_id,
+            body.request_id,
+            body.additional_cost,
+            body.additional_minutes,
+            body.refresh_tools,
+            identity.name,
+        )
+        return await task_detail(request, task_id)
 
     @app.post("/api/tasks/{task_id}/start", response_model=StatusResult, tags=["tasks"])
     async def start_task(request: Request, task_id: UUID) -> StatusResult:
@@ -651,6 +744,11 @@ def create_app(
             body.expected_revision,
             [delivery.model_dump() for delivery in body.deliveries],
             body.review_claim.model_dump() if body.review_claim else None,
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
         )
 
     @app.post(
@@ -695,11 +793,18 @@ def create_app(
         )
 
     @app.get("/api/tasks/{task_id}/report", tags=["tasks"], response_class=PlainTextResponse)
-    async def report(request: Request, task_id: UUID) -> PlainTextResponse:
+    async def report(
+        request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
+    ) -> PlainTextResponse:
         require_task_reader(request, task_id)
         task = await _task(request, task_id)
-        uri = task.get("report_uri")
-        if not uri or uri != f"reports/{task_id}.md":
+        number = run or task.get("run_number", 1)
+        uri = (
+            (await _run_record(request, task_id, number)).get("report_uri")
+            if run
+            else task.get("report_uri")
+        )
+        if not uri or uri != _run_uri("reports", task_id, number):
             raise HTTPException(404, "Report not found")
         if not await request.app.state.objects.exists(uri):
             raise HTTPException(404, "Report not found")
@@ -707,9 +812,11 @@ def create_app(
         return PlainTextResponse(data.decode("utf-8"), media_type="text/markdown; charset=utf-8")
 
     @app.get("/api/tasks/{task_id}/workspace", tags=["tasks"])
-    async def workspace(request: Request, task_id: UUID) -> StreamingResponse:
+    async def workspace(
+        request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
+    ) -> StreamingResponse:
         require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id)
+        uri = await _workspace_uri(request, task_id, run)
         return StreamingResponse(
             request.app.state.objects.stream(uri),
             media_type="application/zstd",
@@ -719,9 +826,11 @@ def create_app(
     @app.get(
         "/api/tasks/{task_id}/workspace/tree", response_model=WorkspaceTreeView, tags=["tasks"]
     )
-    async def workspace_tree(request: Request, task_id: UUID) -> WorkspaceTreeView:
+    async def workspace_tree(
+        request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
+    ) -> WorkspaceTreeView:
         require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id)
+        uri = await _workspace_uri(request, task_id, run)
         try:
             entries = await request.app.state.workspace_cache.tree(request.app.state.objects, uri)
         except ArchiveTooLarge as exc:
@@ -736,10 +845,13 @@ def create_app(
         "/api/tasks/{task_id}/workspace/file", response_model=WorkspaceFileView, tags=["tasks"]
     )
     async def workspace_file(
-        request: Request, task_id: UUID, path: str = Query(min_length=1)
+        request: Request,
+        task_id: UUID,
+        path: str = Query(min_length=1),
+        run: int | None = Query(default=None, ge=1),
     ) -> WorkspaceFileView:
         require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id)
+        uri = await _workspace_uri(request, task_id, run)
         try:
             preview = await request.app.state.workspace_cache.file(
                 request.app.state.objects, uri, path
@@ -874,7 +986,11 @@ def create_app(
             if not item.uri or _key_task(item.uri) != task_id:
                 raise HTTPException(403, "Evidence URI belongs to another task")
         return await _service(request).post_fact(
-            task_id, identity.agent_id or "", body, dry_run=dry_run
+            task_id,
+            identity.agent_id or "",
+            body,
+            dry_run=dry_run,
+            expected_derive_round=identity.derive_round or 1,
         )
 
     @app.post("/api/tasks/{task_id}/intents", tags=["agent"])
@@ -891,14 +1007,23 @@ def create_app(
         if claim is not None:
             data["claim"] = claim
         return await _service(request).post_intent(
-            task_id, identity.agent_id or "", data, dry_run=dry_run
+            task_id,
+            identity.agent_id or "",
+            data,
+            dry_run=dry_run,
+            expected_derive_round=identity.derive_round or 1,
         )
 
     @app.post("/api/tasks/{task_id}/intents/{intent_id}/claim", tags=["agent"])
     async def claim(request: Request, task_id: UUID, intent_id: str) -> list[dict[str, Any]]:
         identity = require_agent_writer(request, task_id)
         await _task(request, task_id)
-        return await _service(request).claim(task_id, identity.agent_id or "", intent_id)
+        return await _service(request).claim(
+            task_id,
+            identity.agent_id or "",
+            intent_id,
+            expected_derive_round=identity.derive_round or 1,
+        )
 
     @app.post("/api/tasks/{task_id}/intents/{intent_id}/release", tags=["agent"])
     async def release(
@@ -907,20 +1032,26 @@ def create_app(
         identity = require_agent_writer(request, task_id)
         await _task(request, task_id)
         return await _service(request).release(
-            task_id, identity.agent_id or "", intent_id, body.note
+            task_id,
+            identity.agent_id or "",
+            intent_id,
+            body.note,
+            expected_derive_round=identity.derive_round or 1,
         )
 
     @app.post("/api/tasks/{task_id}/close", tags=["agent"])
     async def close(request: Request, task_id: UUID, body: CloseBody) -> list[dict[str, Any]]:
         identity = require_agent_writer(request, task_id)
         await _task(request, task_id)
-        if body.report_uri and body.report_uri != f"reports/{task_id}.md":
+        task = await _task(request, task_id)
+        if body.report_uri and body.report_uri != _run_uri("reports", task_id, task["run_number"]):
             raise HTTPException(403, "Report URI belongs to another task")
         return await _service(request).submit_close(
             task_id,
             identity.agent_id or "",
             body.model_dump(exclude={"report_uri"}),
             report_uri=body.report_uri,
+            expected_derive_round=identity.derive_round or 1,
         )
 
     @app.post("/api/tasks/{task_id}/status", tags=["system"])
@@ -937,6 +1068,12 @@ def create_app(
         await _task(request, task_id)
         return await _service(request).record_archive(task_id, body.uri, body.size, body.fallback)
 
+    @app.post("/api/tasks/{task_id}/cleanup-ready", response_model=list[Event], tags=["system"])
+    async def record_cleanup(request: Request, task_id: UUID) -> list[dict[str, Any]]:
+        require_service(request)
+        await _task(request, task_id)
+        return await _service(request).record_cleanup(task_id)
+
     @app.post("/api/tasks/{task_id}/agents", response_model=AgentRegistered, tags=["system"])
     async def register_agent(
         request: Request, task_id: UUID, body: AgentRegisterBody
@@ -951,8 +1088,12 @@ def create_app(
             derive_parallel=body.derive_parallel,
             derive_review=body.derive_review,
         )
+        agent = (await _service(request).state(task_id))["agents"][agent_id]
+        derive_round = int(agent.get("derive_round") or 1) if body.task_type == "derive" else None
         return AgentRegistered(
-            agent_id=agent_id, token=issue_agent_token(settings, task_id, agent_id)
+            agent_id=agent_id,
+            token=issue_agent_token(settings, task_id, agent_id, derive_round),
+            derive_round=derive_round,
         )
 
     @app.patch("/api/tasks/{task_id}/agents/{agent_id}", tags=["system"])
@@ -966,7 +1107,7 @@ def create_app(
             raise HTTPException(404, "Agent not found")
         task = board["task"]
         profile = await _profiles(request).get(task["agent_profile"], task["agent_profile_version"])
-        price = profile["models"][agent["task_type"]]["price"]
+        model = ModelConfig.model_validate(profile["models"][agent["task_type"]])
         return await _service(request).heartbeat(
             task_id,
             agent_id,
@@ -974,7 +1115,15 @@ def create_app(
             context_tokens=body.context_tokens,
             usage=body.usage,
             last_seen_version=body.last_seen_version,
-            price=price,
+            price=model.price,
+            model=model,
+            requested_at=body.requested_at,
+            billing_mode=task.get("billing_mode"),
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
         )
 
     @app.post("/api/tasks/{task_id}/agents/{agent_id}/conclude", tags=["system"])
@@ -983,14 +1132,33 @@ def create_app(
     ) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        return await _service(request).conclude(task_id, agent_id, body.reason)
+        return await _service(request).conclude(
+            task_id,
+            agent_id,
+            body.reason,
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
+        )
 
     @app.post("/api/tasks/{task_id}/agents/{agent_id}/grace", tags=["system"])
-    async def grace(request: Request, task_id: UUID, agent_id: str) -> dict[str, int]:
+    async def grace(
+        request: Request, task_id: UUID, agent_id: str, body: GraceBody | None = None
+    ) -> dict[str, int]:
         require_service(request)
         await _task(request, task_id)
         try:
-            remaining = await _service(request).take_grace(task_id, agent_id)
+            remaining = await _service(request).take_grace(
+                task_id,
+                agent_id,
+                **(
+                    {"expected_derive_round": body.expected_derive_round}
+                    if body and body.expected_derive_round is not None
+                    else {}
+                ),
+            )
         except RuleViolation as exc:
             if exc.code == "grace_exhausted":
                 raise HTTPException(409, str(exc)) from exc
@@ -1004,7 +1172,15 @@ def create_app(
         require_service(request)
         await _task(request, task_id)
         return await _service(request).finish_agent(
-            task_id, agent_id, body.receipt, body.end_reason
+            task_id,
+            agent_id,
+            body.receipt,
+            body.end_reason,
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
         )
 
     @app.post("/api/tasks/{task_id}/intents/{intent_id}/system_close", tags=["system"])
@@ -1027,8 +1203,17 @@ def create_app(
     ) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        data = body.model_dump(exclude={"agent_id"})
-        return await _service(request).record_tool_call(task_id, body.agent_id, data)
+        data = body.model_dump(exclude={"agent_id", "expected_derive_round"})
+        return await _service(request).record_tool_call(
+            task_id,
+            body.agent_id,
+            data,
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
+        )
 
     @app.post("/api/tasks/{task_id}/agents/{agent_id}/traces", tags=["system"])
     async def agent_trace(
@@ -1036,7 +1221,16 @@ def create_app(
     ) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        return await _service(request).record_agent_trace(task_id, agent_id, body.model_dump())
+        return await _service(request).record_agent_trace(
+            task_id,
+            agent_id,
+            body.model_dump(exclude={"expected_derive_round"}),
+            **(
+                {"expected_derive_round": body.expected_derive_round}
+                if body.expected_derive_round is not None
+                else {}
+            ),
+        )
 
     @app.post("/api/tasks/{task_id}/uploads", response_model=UploadResult, tags=["system"])
     async def upload(

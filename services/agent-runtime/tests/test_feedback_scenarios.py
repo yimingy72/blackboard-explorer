@@ -147,7 +147,7 @@ async def test_s10_disputed_support_reverts_met_and_is_judged_again(
         quiescent_derives = [
             event
             for event in events
-            if event["type"] == "agent.spawned"
+            if event["type"] in {"agent.spawned", "agent.reactivated"}
             and event["payload"]["task_type"] == "derive"
             and not event["payload"].get("derive_parallel")
         ]

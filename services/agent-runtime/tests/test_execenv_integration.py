@@ -136,6 +136,15 @@ async def test_execenv_lifecycle_with_archive(
                     name.endswith("agents/agent-1/evidence.txt") for name in content.getnames()
                 )
             assert (await manager.find(task_id)) == handle
+            await manager.destroy(task_id)
+            restored = await manager.provision(task_id, profile, archive.uri)
+            async with EnvdClient(restored.base_url, restored.token) as envd:
+                restored_file = await envd.read_file("/workspace/agents/agent-1/evidence.txt")
+                assert restored_file == b"m2a-proof\n"
+                assert (await envd.restore_status())["restored"]
+            second = await manager.archive_to_store(restored, 2)
+            assert second.uri == f"workspace/{task_id}/run-2.tar.zst"
+            assert await objects.exists(second.uri)
     finally:
         if manager is not None:
             await manager.destroy(task_id)

@@ -124,13 +124,11 @@ async def test_review_direction_returns_to_exploration_then_reviews_again(
         finished = await run.wait(lambda st: st["task"]["status"] == "finished", seconds=35)
         assert reviews == 2 and judges >= 3
         assert finished["intents"]["I1"]["status"] == "closed"
-        review_runs = sorted(
-            (agent for agent in finished["agents"].values() if agent.get("derive_review")),
-            key=lambda item: item["finished_version"],
-        )
-        assert len(review_runs) == 2
-        assert review_runs[0]["derive_from_version"] < review_runs[1]["derive_from_version"]
-        assert finished["task"]["last_judgment_version"] >= review_runs[1]["finished_version"]
+        review_runs = [agent for agent in finished["agents"].values() if agent.get("derive_review")]
+        assert len(review_runs) == 1 and review_runs[0]["derive_round"] == 2
+        assert finished["task"]["last_judgment_version"] >= review_runs[0]["finished_version"]
+        events = await run.events()
+        assert sum(event["type"] == "derive.result" for event in events) == 2
 
 
 async def test_invalid_empty_review_never_counts_as_acceptance(

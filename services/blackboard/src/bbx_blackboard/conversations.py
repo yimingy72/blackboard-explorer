@@ -145,11 +145,18 @@ class Conversations:
         expected_revision: int,
         deliveries: list[dict[str, UUID]],
         review_claim: dict[str, UUID] | None = None,
+        expected_derive_round: int | None = None,
     ) -> dict[str, Any]:
         written = []
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task_agent(conn, tid, aid, writable=True)
+            _, agent = await self._task_agent(conn, tid, aid, writable=True)
+            if (
+                agent["task_type"] == "derive"
+                and agent["status"] in ACTIVE
+                and (int(agent.get("derive_round") or 1) != (expected_derive_round or 1))
+            ):
+                raise HTTPException(409, "Derive round changed")
             if review_claim is not None:
                 message = await self._message(conn, tid, aid, review_claim["id"])
                 self._check_claim(message, review_claim["claim_token"])
@@ -294,10 +301,16 @@ class Conversations:
     async def claim(self, tid: UUID, aid: str, mid: UUID, mode: str) -> dict[str, Any]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            _, agent = await self._task_agent(conn, tid, aid, writable=True)
+            task, agent = await self._task_agent(conn, tid, aid, writable=True)
             active = agent["status"] in ACTIVE
             if (mode == "active") != active:
                 raise HTTPException(409, "Agent mode changed")
+            if (
+                mode == "review"
+                and agent["task_type"] == "derive"
+                and task["status"] not in {"finished", "failed", "stopped"}
+            ):
+                raise HTTPException(409, "Derive session is reserved for the task")
             message = await self._message(conn, tid, aid, mid)
             if message["status"] != "queued" and not (
                 message["status"] == "processing" and message["lease_until"] <= _now()
@@ -450,6 +463,10 @@ class Conversations:
                             s.tasks.c.deleting.is_(False),
                             s.agent_runs.c.status.not_in(ACTIVE),
                             or_(
+                                s.agent_runs.c.task_type != "derive",
+                                s.tasks.c.status.in_(("finished", "failed", "stopped")),
+                            ),
+                            or_(
                                 s.agent_messages.c.status == "queued",
                                 and_(
                                     s.agent_messages.c.status == "processing",
@@ -582,8 +599,11 @@ class Conversations:
         for prefix in (f"evidence/{tid}/", f"toolcalls/{tid}/", f"traces/{tid}/"):
             for key in await objects.list(prefix):
                 await objects.remove(key)
-        await objects.remove(f"reports/{tid}.md")
-        await objects.remove(f"workspace/{tid}.tar.zst")
+        for key in [f"reports/{tid}.md", f"workspace/{tid}.tar.zst"]:
+            await objects.remove(key)
+        for prefix in (f"reports/{tid}/", f"workspace/{tid}/"):
+            for key in await objects.list(prefix):
+                await objects.remove(key)
         async with self.repo.engine.begin() as conn:
             try:
                 await self.repo.lock(conn, tid)
@@ -597,6 +617,8 @@ class Conversations:
                 s.intents,
                 s.agent_runs,
                 s.task_counters,
+                s.resume_requests,
+                s.task_runs,
                 s.events,
             ):
                 await conn.execute(delete(table).where(table.c.task_id == tid))

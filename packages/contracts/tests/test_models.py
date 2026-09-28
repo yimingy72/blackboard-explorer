@@ -312,6 +312,13 @@ def test_worker_tool_configuration_cannot_remove_required_tools_or_expand_roles(
         m.AgentProfile.model_validate({**PROFILE, "worker_tools": {role: tools}})
 
 
+@pytest.mark.parametrize("role", ["explore", "derive", "close"])
+def test_view_image_is_selectable_for_each_worker(role):
+    tools = sorted(m.REQUIRED_TOOLS[role] | {"view_image"})
+    profile = m.AgentProfile.model_validate({**PROFILE, "worker_tools": {role: {"builtin": tools}}})
+    assert "view_image" in profile.worker_tools[role].builtin
+
+
 def test_platform_model_reference_requires_both_name_and_version():
     with pytest.raises(ValidationError):
         m.ModelConfig.model_validate({**MODEL, "platform_id": "example"})

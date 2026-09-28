@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+from bbx_contracts.billing import supports_deepseek_schedule
 from bbx_contracts.models import AgentProfile, ModelConfig, Price
 from bbx_contracts.providers import PROVIDERS
 from cryptography.fernet import Fernet
@@ -45,6 +46,7 @@ class ModelInput(BaseModel):
     model: str = Field(min_length=1, max_length=200)
     base_url: str = ""
     reasoning_effort: str = Field(default="none", min_length=1)
+    supports_vision: bool | None = None
     price: Price
     provider_options: dict[str, str] = Field(default_factory=dict)
     credentials: dict[str, SecretStr] = Field(default_factory=dict)
@@ -66,6 +68,10 @@ class ModelInput(BaseModel):
             self.base_url = "provider-default"
         else:
             self.base_url = check_url(self.base_url or default_url)
+        if self.price.billing_mode == "deepseek_schedule" and not supports_deepseek_schedule(
+            self.base_url, self.model
+        ):
+            raise ValueError("峰谷计费仅支持官方 DeepSeek 端点和已知模型")
         allowed = {item["name"] for item in spec["options_fields"]}
         if not set(self.provider_options) <= allowed:
             raise ValueError("存在当前 Provider 不支持的连接选项")

@@ -43,6 +43,19 @@ def test_archive_rule_and_idempotency() -> None:
     assert exc.value.code == "archive_invalid_uri"
 
 
+def test_tenth_run_archive_key_is_valid() -> None:
+    task_id = uuid4()
+    state = archive_state(task_id)
+    state.task["run_number"] = 10
+    uri = f"workspace/{task_id}/run-10.tar.zst"
+    assert (
+        decide(state, "record_archive", "scheduler", {"uri": uri, "size": 1, "fallback": "none"})[
+            0
+        ]["type"]
+        == "task.archived"
+    )
+
+
 @pytest.mark.parametrize(
     "status, agent_status, code",
     [

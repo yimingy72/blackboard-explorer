@@ -22,6 +22,7 @@ from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient
 from bbx_runtime.context import CloseMode, RunContext, TaskType
+from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
 from bbx_runtime.models import (
@@ -112,6 +113,7 @@ class AgentRunner:
         client: BaseChatClient | None = None,
         handle: ExecEnvHandle | None = None,
         envd_http_client: httpx.AsyncClient | None = None,
+        expected_derive_round: int | None = None,
     ) -> RunResult:
         owned_client = None
         envd = None
@@ -119,11 +121,20 @@ class AgentRunner:
         external_mcp_http: httpx.AsyncClient | None = None
         cancelled = False
         checkpoint: SessionCheckpoint | None = None
+        round_fence = expected_derive_round
         try:
             state = await self.service.state(task_id)
             run = state["agents"][agent_id]
             if run["task_type"] != task_type or run["status"] not in {"running", "concluding"}:
                 raise ValueError("Agent registration does not match a runnable agent")
+            if (
+                task_type == "derive"
+                and expected_derive_round is not None
+                and (int(run.get("derive_round") or 1) != expected_derive_round)
+            ):
+                raise ValueError("Derive registration round changed before launch")
+            if task_type == "derive" and round_fence is None:
+                round_fence = int(run.get("derive_round") or 1)
             task = state["task"]
             profile = load_runtime_profile(
                 await self.service.get_profile(task["agent_profile"], task["agent_profile_version"])
@@ -145,12 +156,37 @@ class AgentRunner:
                 envd=envd,
                 intent_id=intent_id or run.get("intent_id"),
                 mode=mode or run.get("close_mode"),
+                expected_derive_round=round_fence,
             )
             if hasattr(self.service, "get_agent_session"):
                 checkpoint = await SessionCheckpoint.load(self.service, task_id, agent_id)
                 if checkpoint is None:
                     checkpoint = SessionCheckpoint(self.service, task_id, agent_id, AgentSession())
                 ctx.checkpoint = checkpoint
+                checkpoint.expected_derive_round = ctx.expected_derive_round
+            if (
+                task_type == "derive"
+                and checkpoint is not None
+                and int(run.get("derive_round") or 1) > 1
+                and int(run.get("context_tokens") or 0) >= ctx.params.context_threshold
+                and int(checkpoint.session.state.get("bbx_derive_segment_round") or 0)
+                != int(run["derive_round"])
+            ):
+                start = start_derive_segment(checkpoint, int(run["derive_round"]))
+                source = checkpoint.session.state.get(
+                    "bbx_prompt_source", profile.prompt_templates.derive
+                )
+                checkpoint.opening_instructions = await OpeningContextProvider(
+                    ctx, checkpoint
+                ).render(source, state)
+                await checkpoint.save()
+                await record_trace(
+                    ctx,
+                    "board_update",
+                    int(run.get("steps") or 0) + 1,
+                    f"[推导会话分段] 第 {run['derive_round']} 轮从消息 {start} 开始读取。"
+                    "完整历史仍保存在同一 Agent Session；本段使用更新的黑板上下文。",
+                )
             model = getattr(profile.models, task_type)
             # The scheduler stops exploration at the budget deadline; this is only a hard guard.
             run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
@@ -194,7 +230,13 @@ class AgentRunner:
                 tools=tools,
                 context_providers=[
                     OpeningContextProvider(ctx, checkpoint),
-                    *([CheckpointHistoryProvider(checkpoint)] if checkpoint else []),
+                    *(
+                        [DeriveHistoryProvider(checkpoint)]
+                        if checkpoint and task_type == "derive"
+                        else [CheckpointHistoryProvider(checkpoint)]
+                        if checkpoint
+                        else []
+                    ),
                 ],
                 middleware=[
                     ToolLogMiddleware(ctx),
@@ -206,6 +248,41 @@ class AgentRunner:
                 async with asyncio.timeout(run_limit):
                     session = checkpoint.session if checkpoint else agent.create_session()
                     prompt: str | Message = "开始。"
+                    if task_type == "derive":
+                        round_number = int(run.get("derive_round") or 1)
+                        mode_name = (
+                            "完成复核"
+                            if run.get("derive_review")
+                            else "并行推导"
+                            if run.get("derive_parallel")
+                            else "静止推导"
+                        )
+                        previous = run.get("previous_receipt") or {}
+                        detail = previous.get("data") if isinstance(previous, dict) else None
+                        excluded = detail.get("excluded") if isinstance(detail, dict) else None
+                        note = (
+                            f"开始第 {round_number} 轮推导。本轮模式：{mode_name}。"
+                            f"当前黑板版本：{task.get('version', 0)}；"
+                            f"本轮起点版本：{run.get('round_start_version', 0)}。\n"
+                            f"最新验收状态：{task.get('acceptance_state', {})}。\n"
+                            "沿用当前会话已知的目标、证据和先前分析。"
+                            "黑板变化将附加到本次未发送的消息。"
+                            "旧轮次回执和结束指令仅属历史，不代表本轮已完成。"
+                            "请针对新变化与上轮排除方向分析，"
+                            "仅将本轮实际提交的意图写入本轮回执。"
+                        )
+                        if run.get("derive_review"):
+                            note += (
+                                "\n请复核目标范围、完成证据和未验证事项。"
+                                "若无必要方向，posted 留空且 excluded 写具体排除理由。"
+                            )
+                        if excluded:
+                            note += f"\n上轮排除理由：{excluded}"
+                        prompt = Message(
+                            role="user",
+                            message_id=f"bbx-derive-round-{round_number}",
+                            contents=[Content.from_text(note)],
+                        )
                     while True:
                         confirmed_before = (
                             set(checkpoint.delivered_message_ids) if checkpoint else set()
@@ -296,6 +373,7 @@ class AgentRunner:
                     agent_id,
                     {"accepted": False, "reason": "会话持久化失败"} if save_error else receipt,
                     "runtime_error" if save_error else end_reason,
+                    **({"expected_derive_round": round_fence} if round_fence is not None else {}),
                 )
                 if save_error is not None:
                     raise save_error

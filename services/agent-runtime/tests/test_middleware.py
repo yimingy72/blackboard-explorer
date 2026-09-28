@@ -352,7 +352,7 @@ async def test_board_sync_updates_persist_conclude_once_and_heartbeat_usage():
     assert third.count("other fact") == 1
 
 
-async def test_board_sync_missing_price_costs_zero_and_derive_skips_events(caplog):
+async def test_board_sync_missing_price_costs_zero_and_derive_reads_deltas(caplog):
     service, board = FakeService(), FakeBoard()
     ctx = run_context(service, board=board)
     ctx.task_type = "derive"
@@ -374,7 +374,7 @@ async def test_board_sync_missing_price_costs_zero_and_derive_skips_events(caplo
     middleware = BoardSyncMiddleware(ctx)
     agent = Agent(client=client, tools=[step], middleware=[middleware])
     assert (await agent.run("start")).text == "done"
-    assert board.requests == []
+    assert board.requests == [(0, "agent-1"), (0, "agent-1")]
     assert middleware.price_warning == "价格未配置"
     assert service.beats[0]["usage"].cost == 0
     assert (

@@ -657,6 +657,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/cleanup-ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Cleanup */
+        post: operations["record_cleanup_api_tasks__task_id__cleanup_ready_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/close": {
         parameters: {
             query?: never;
@@ -668,6 +685,24 @@ export interface paths {
         put?: never;
         /** Close */
         post: operations["close_api_tasks__task_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/cost-reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview */
+        get: operations["preview_api_tasks__task_id__cost_reconciliation_get"];
+        put?: never;
+        /** Reconcile */
+        post: operations["reconcile_api_tasks__task_id__cost_reconciliation_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -821,6 +856,23 @@ export interface paths {
         get: operations["report_api_tasks__task_id__report_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Task */
+        post: operations["resume_task_api_tasks__task_id__resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1128,11 +1180,15 @@ export interface components {
         AgentRegistered: {
             /** Agent Id */
             agent_id: string;
+            /** Derive Round */
+            derive_round?: number | null;
             /** Token */
             token: string;
         };
         /** AgentTraceBody */
         AgentTraceBody: {
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /**
              * Kind
              * @enum {string}
@@ -1211,6 +1267,8 @@ export interface components {
             content: string;
             /** Deliveries */
             deliveries?: components["schemas"]["DeliveryBody"][];
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Expected Revision */
             expected_revision: number;
             /** Opening Instructions */
@@ -1232,6 +1290,8 @@ export interface components {
         };
         /** ConcludeBody */
         ConcludeBody: {
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Reason */
             reason: string;
         };
@@ -1296,7 +1356,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
+        EventType: "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
         /** Evidence */
         Evidence: {
             /**
@@ -1375,10 +1435,17 @@ export interface components {
         FinishBody: {
             /** End Reason */
             end_reason: string;
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Receipt */
             receipt: {
                 [key: string]: unknown;
             };
+        };
+        /** GraceBody */
+        GraceBody: {
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1389,8 +1456,12 @@ export interface components {
         HeartbeatBody: {
             /** Context Tokens */
             context_tokens: number;
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Last Seen Version */
             last_seen_version: number;
+            /** Requested At */
+            requested_at?: string | null;
             /** Steps */
             steps: number;
             usage: components["schemas"]["Usage"];
@@ -1485,6 +1556,11 @@ export interface components {
              * @description 推理强度
              */
             reasoning_effort: string;
+            /**
+             * Supports Vision
+             * @description 模型是否支持图片输入
+             */
+            supports_vision?: boolean | null;
         };
         /** ModelConfig */
         "ModelConfig-Output": {
@@ -1518,6 +1594,11 @@ export interface components {
              * @description 推理强度
              */
             reasoning_effort: string;
+            /**
+             * Supports Vision
+             * @description 模型是否支持图片输入
+             */
+            supports_vision?: boolean | null;
         };
         /** ModelInput */
         ModelInput: {
@@ -1559,6 +1640,8 @@ export interface components {
              * @default none
              */
             reasoning_effort: string;
+            /** Supports Vision */
+            supports_vision?: boolean | null;
         };
         /** ModelSet */
         "ModelSet-Input": {
@@ -1786,6 +1869,13 @@ export interface components {
         /** Price */
         "Price-Input": {
             /**
+             * Billing Mode
+             * @description 固定费率或官方 DeepSeek 峰谷时段估算
+             * @default fixed
+             * @enum {string}
+             */
+            billing_mode: "fixed" | "deepseek_schedule";
+            /**
              * Cache Hit Per M
              * @description 每百万缓存命中输入 token 单价
              */
@@ -1813,6 +1903,13 @@ export interface components {
         };
         /** Price */
         "Price-Output": {
+            /**
+             * Billing Mode
+             * @description 固定费率或官方 DeepSeek 峰谷时段估算
+             * @default fixed
+             * @enum {string}
+             */
+            billing_mode: "fixed" | "deepseek_schedule";
             /**
              * Cache Hit Per M
              * @description 每百万缓存命中输入 token 单价
@@ -1911,10 +2008,32 @@ export interface components {
              */
             explore: string;
         };
+        /** ReconcileBody */
+        ReconcileBody: {
+            /** Expected Version */
+            expected_version: number;
+        };
         /** ReleaseBody */
         ReleaseBody: {
             /** Note */
             note: string;
+        };
+        /** ResumeBody */
+        ResumeBody: {
+            /** Additional Cost */
+            additional_cost: number | string;
+            /** Additional Minutes */
+            additional_minutes: number;
+            /**
+             * Refresh Tools
+             * @default false
+             */
+            refresh_tools: boolean;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
         };
         /** RuntimeUpdate */
         RuntimeUpdate: {
@@ -1943,6 +2062,8 @@ export interface components {
         SessionBody: {
             /** Deliveries */
             deliveries?: components["schemas"]["DeliveryBody"][];
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Expected Revision */
             expected_revision: number;
             /** Opening Instructions */
@@ -2038,6 +2159,13 @@ export interface components {
             acceptance_state: {
                 [key: string]: unknown;
             };
+            /**
+             * Active Seconds
+             * @default 0
+             */
+            active_seconds: number;
+            /** Active Since */
+            active_since?: string | null;
             /** Agent Profile */
             agent_profile: string;
             /** Agent Profile Version */
@@ -2046,6 +2174,15 @@ export interface components {
             agents: {
                 [key: string]: unknown;
             }[];
+            /** Budget */
+            budget?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Cleanup Ready
+             * @default false
+             */
+            cleanup_ready: boolean;
             /** Cost Currency */
             cost_currency?: string | null;
             /**
@@ -2064,6 +2201,15 @@ export interface components {
             id: string;
             /** Report Uri */
             report_uri: string | null;
+            /**
+             * Run Number
+             * @default 1
+             */
+            run_number: number;
+            /** Runs */
+            runs?: {
+                [key: string]: unknown;
+            }[];
             /** Status */
             status: string;
             /** Usage */
@@ -2081,6 +2227,8 @@ export interface components {
             args?: {
                 [key: string]: unknown;
             };
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
             /** Id */
             id: string;
             /** Result Head */
@@ -3314,7 +3462,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GraceBody"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3711,6 +3863,37 @@ export interface operations {
             };
         };
     };
+    record_cleanup_api_tasks__task_id__cleanup_ready_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     close_api_tasks__task_id__close_post: {
         parameters: {
             query?: never;
@@ -3735,6 +3918,76 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_api_tasks__task_id__cost_reconciliation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_api_tasks__task_id__cost_reconciliation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -4038,7 +4291,9 @@ export interface operations {
     };
     report_api_tasks__task_id__report_get: {
         parameters: {
-            query?: never;
+            query?: {
+                run?: number | null;
+            };
             header?: never;
             path: {
                 task_id: string;
@@ -4054,6 +4309,41 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_task_api_tasks__task_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
                 };
             };
             /** @description Validation Error */
@@ -4373,7 +4663,9 @@ export interface operations {
     };
     workspace_api_tasks__task_id__workspace_get: {
         parameters: {
-            query?: never;
+            query?: {
+                run?: number | null;
+            };
             header?: never;
             path: {
                 task_id: string;
@@ -4406,6 +4698,7 @@ export interface operations {
         parameters: {
             query: {
                 path: string;
+                run?: number | null;
             };
             header?: never;
             path: {
@@ -4437,7 +4730,9 @@ export interface operations {
     };
     workspace_tree_api_tasks__task_id__workspace_tree_get: {
         parameters: {
-            query?: never;
+            query?: {
+                run?: number | null;
+            };
             header?: never;
             path: {
                 task_id: string;

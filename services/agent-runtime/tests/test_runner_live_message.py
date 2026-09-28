@@ -65,6 +65,9 @@ class Service:
     def with_token(self, _token):
         return self
 
+    async def events(self, _task_id, *, since=0, for_agent=None):
+        return []
+
     async def get_agent_session(self, _task_id, _agent_id):
         if self.session is None:
             raise RemoteError(404, "missing")
@@ -86,6 +89,7 @@ class Service:
         expected_revision,
         deliveries,
         review_claim,
+        expected_derive_round=None,
     ):
         assert expected_revision == self.revision and origin == "native"
         assert review_claim is None
@@ -113,7 +117,7 @@ class Service:
             self.posted_message = None
         return []
 
-    async def record_tool_call(self, *_args):
+    async def record_tool_call(self, *_args, **_kwargs):
         return []
 
     async def heartbeat(self, _task_id, _agent_id, **kwargs):
@@ -122,7 +126,7 @@ class Service:
         self.run["context_tokens"] = kwargs["context_tokens"]
         return {}
 
-    async def finish_agent(self, _task_id, _agent_id, receipt, end_reason):
+    async def finish_agent(self, _task_id, _agent_id, receipt, end_reason, **_kwargs):
         self.finished = (receipt, end_reason)
         self.run["status"] = "finished"
         return []
@@ -228,3 +232,72 @@ async def test_two_new_message_batches_can_continue_without_replaying_old_delive
     history = AgentSession.from_dict(service.session).state["in_memory"]["messages"]
     controls = [m for m in history if (m.message_id or "").startswith("bbx-control-")]
     assert len(controls) == 2
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+async def test_derive_second_round_reuses_native_history_and_appends_board_delta(segmented):
+    class ReusableService(Service):
+        def __init__(self):
+            super().__init__(posted_message=None)
+            self.log = []
+
+        async def events(self, _task_id, *, since=0, for_agent=None):
+            return [event for event in self.log if event["version"] > since]
+
+    service = ReusableService()
+    runner = AgentRunner(
+        Settings.model_construct(),
+        cast(BlackboardClient, service),
+        cast(ObjectStore, Objects()),
+        Mock(),
+    )
+    first = ScriptedChatClient([ScriptStep(text=RECEIPT)])
+    await runner.run_agent(
+        service.task_id, service.agent_id, "derive", agent_token="test", client=first
+    )
+    assert service.session is not None
+    before = AgentSession.from_dict(service.session).state["in_memory"]["messages"]
+    before_dump = [message.to_dict() for message in before]
+    service.run.update(
+        status="running",
+        derive_round=2,
+        round_start_version=2,
+        previous_receipt={"accepted": True, "data": {"posted": [], "excluded": ["旧路径无效"]}},
+        context_tokens=Params().context_threshold if segmented else 0,
+    )
+    service.log.append(
+        {
+            "version": 3,
+            "type": "fact.posted",
+            "actor": "agent-2",
+            "object_id": "F1",
+            "payload": {"statement": "new independent evidence"},
+        }
+    )
+    second = ScriptedChatClient(
+        [
+            ScriptStep(
+                text=RECEIPT,
+                expect_contains="new independent evidence",
+            )
+        ]
+    )
+    await runner.run_agent(
+        service.task_id, service.agent_id, "derive", agent_token="test", client=second
+    )
+    received = second.received_messages[0]
+    if segmented:
+        assert len(received) == 1
+    else:
+        assert [
+            (message.role, [content.to_dict() for content in message.contents])
+            for message in received[: len(before_dump)]
+        ] == [
+            (message.role, [content.to_dict() for content in message.contents])
+            for message in before
+        ]
+    assert "第 2 轮推导" in received[-1].text
+    assert "旧路径无效" in received[-1].text
+    assert "new independent evidence" in received[-1].text
+    after = AgentSession.from_dict(service.session).state["in_memory"]["messages"]
+    assert [message.to_dict() for message in after[: len(before_dump)]] == before_dump

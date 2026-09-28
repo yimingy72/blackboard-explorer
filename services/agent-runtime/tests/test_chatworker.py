@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import struct
+import zlib
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -34,6 +36,10 @@ class ReviewService:
         self.completed = None
         self.get_calls = []
         self.profile = load_profile(PROFILE_DIR)[0].model_dump(mode="json")
+        self.evidence: dict[str, bytes] = {}
+
+    async def read_evidence(self, uri: str) -> bytes:
+        return self.evidence[uri]
 
     async def claim_agent_message(self, _task_id, _agent_id, _message_id, mode):
         assert mode == "review"
@@ -115,7 +121,18 @@ class ReviewService:
 
 
 async def test_read_only_review_resumes_native_session(monkeypatch):
-    service = ReviewService(native=True)
+    class AuditedService(ReviewService):
+        async def put_agent_session(self, *args, **kwargs):
+            saved = AgentSession.from_dict(kwargs["session"]).state
+            raw = saved.get("bbx_review_usage", {}).get(self.message_id)
+            if raw:
+                # Rates and cost must be durable in the same snapshot as the response.
+                billed = saved["bbx_review_billed"][self.message_id]
+                assert billed["usage"]["output_tokens"] == raw["output_token_count"]
+                assert all(call["pricing"]["requested_at"] for call in billed["calls"])
+            return await super().put_agent_session(*args, **kwargs)
+
+    service = AuditedService(native=True)
     script = ScriptedChatClient(
         [
             ScriptStep(
@@ -136,14 +153,49 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
     await worker.process(service.task_id, service.agent_id, service.message_id)
     assert service.completed is not None
     assert service.completed["content"] == "The finding was F1."
-    assert service.get_calls == [("F1", 1)]
+    assert service.get_calls == [("F1", 0)]
     assert service.completed["origin"] == "native"
     assert service.completed["usage"]["cache_hit_tokens"] == 7
     assert service.completed["usage"]["cache_miss_tokens"] == 9
     assert service.completed["usage"]["output_tokens"] == 11
     tools = script.received_options[0]["tools"]
-    assert {item.name for item in tools} == {"get", "search", "read_evidence"}
+    assert {item.name for item in tools} == {"get", "search", "read_evidence", "view_image"}
     assert "JSON 回执要求已结束" in script.received_options[0]["instructions"]
+
+
+async def test_review_view_image_uses_saved_task_evidence_only(monkeypatch):
+    service = ReviewService(native=True)
+    uri = f"evidence/{service.task_id}/agent-1/proof.png"
+
+    def chunk(name: bytes, payload: bytes) -> bytes:
+        body = name + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
+
+    service.evidence[uri] = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    script = ScriptedChatClient(
+        [
+            ScriptStep(calls=(ScriptToolCall("view_image", {"path_or_uri": uri}),)),
+            ScriptStep(text="I see the image."),
+        ]
+    )
+    monkeypatch.setattr("bbx_runtime.chatworker.make_client", lambda *_args, **_kwargs: script)
+    worker = ChatWorker(
+        Settings.model_construct(deepseek_api_key=SecretStr("test")),
+        cast(BlackboardClient, service),
+    )
+    await worker.process(service.task_id, service.agent_id, service.message_id)
+    assert service.completed is not None
+    assert any(
+        content.type == "data" and content.media_type == "image/png"
+        for message in script.received_messages[1]
+        for content in message.contents
+    )
+    assert service.session is not None and "data:image" not in str(service.session)
 
 
 async def test_legacy_review_is_marked_and_keeps_its_new_session(monkeypatch):

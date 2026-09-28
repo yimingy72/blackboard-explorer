@@ -47,8 +47,8 @@ def setup_executor():
         state=AsyncMock(
             return_value={
                 "agents": {
-                    "agent-1": {"status": "running"},
-                    "agent-2": {"status": "concluding"},
+                    "agent-1": {"status": "running", "task_type": "explore"},
+                    "agent-2": {"status": "concluding", "task_type": "explore"},
                 }
             }
         ),
@@ -69,6 +69,16 @@ def setup_executor():
         handle,
     )
     return executor, service, manager, runner, history
+
+
+async def test_stale_round_cancel_cannot_cancel_reactivated_derive():
+    executor, _, _, _, _ = setup_executor()
+    running = asyncio.create_task(asyncio.Event().wait())
+    executor.tasks["agent-1"] = running  # type: ignore[assignment]
+    executor.task_rounds["agent-1"] = 2
+    assert await executor.cancel("agent-1", "heartbeat", expected_derive_round=1) is False
+    assert not running.done()
+    assert await executor.cancel("agent-1", "heartbeat", expected_derive_round=2) is True
 
 
 async def test_spawn_claims_before_user_creation_and_cancel_forwards_reason():

@@ -15,8 +15,11 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
 )
+from bbx_contracts.billing import add_usage
 
+from bbx_runtime.billing import _usage
 from bbx_runtime.clients import BlackboardClient, RemoteError
+from bbx_runtime.image_view import hydrate_image_messages, strip_image_history
 
 INTERRUPTED_TOOL_RESULT = (
     "此前工具执行中断或结果未保存，不能认为调用成功；原工具没有在复盘中重新执行。"
@@ -94,6 +97,8 @@ class SessionCheckpoint:
         self.deliveries: list[dict[str, str]] = []
         self.delivered_message_ids: set[str] = set()
         self.review_claim: dict[str, str] | None = None
+        self.expected_derive_round: int | None = None
+        self.review_request: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -138,6 +143,7 @@ class SessionCheckpoint:
             }
             deliveries = [item for item in self.deliveries if item["id"] in persisted_ids]
             self.session.state["bbx_checkpoint_id"] = str(uuid4())
+            strip_image_history(self.session)
             payload = self.session.to_dict()
             try:
                 saved = await self.service.put_agent_session(
@@ -149,6 +155,11 @@ class SessionCheckpoint:
                     expected_revision=self.revision,
                     deliveries=deliveries,
                     review_claim=self.review_claim,
+                    **(
+                        {"expected_derive_round": self.expected_derive_round}
+                        if self.expected_derive_round is not None
+                        else {}
+                    ),
                 )
             except (httpx.TransportError, RemoteError) as error:
                 if isinstance(error, RemoteError) and error.status < 500:
@@ -179,6 +190,19 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
         self.checkpoint = checkpoint
         self.usage_key = usage_key
 
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        messages = await super().get_messages(session_id, state=state, **kwargs)
+
+        async def read_evidence(uri: str) -> bytes:
+            return await self.checkpoint.service.read_evidence(uri)
+
+        await hydrate_image_messages(
+            self.checkpoint.task_id, self.checkpoint.session, read_evidence, messages
+        )
+        return messages
+
     async def after_run(
         self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]
     ) -> None:
@@ -192,6 +216,20 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
         if self.usage_key is not None:
             response = context.response
             details = response.usage_details if response is not None else None
+            request = self.checkpoint.review_request
+            if details and request and request["message_id"] == self.usage_key:
+                usage, warning = _usage(details, request["price"], request["provider"])
+                ledger = session.state.setdefault("bbx_review_billed", {})
+                entry = ledger.setdefault(self.usage_key, {"usage": {}, "calls": []})
+                entry["usage"] = add_usage(entry["usage"], usage.model_dump(mode="json"))
+                entry["calls"].append(
+                    {
+                        "pricing": request["pricing"],
+                        "usage": usage.model_dump(mode="json"),
+                        "warning": warning,
+                    }
+                )
+                self.checkpoint.review_request = None
             if details:
                 all_usage = session.state.setdefault("bbx_review_usage", {})
                 running = all_usage.setdefault(self.usage_key, {})

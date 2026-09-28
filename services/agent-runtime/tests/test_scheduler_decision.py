@@ -425,6 +425,23 @@ def test_parallel_derive_waits_for_a_new_fact_version() -> None:
     assert decide(state, Params(), NOW) == [SpawnDerive(parallel=True)]
 
 
+def test_parallel_derive_does_not_repeat_facts_seen_before_its_finish() -> None:
+    state = board()
+    state["board_empty"] = False
+    state["facts"] = {"F1": {"version": 4}, "F2": {"version": 9}}
+    state["agents"] = {
+        "explore": agent("explore"),
+        "derive-1": {
+            **agent("derive-1", task_type="derive", status="finished", derive_from_version=4),
+            "end_reason": "normal",
+            "last_seen_version": 9,
+        },
+    }
+    assert decide(state, Params(), NOW) == []
+    state["facts"]["F3"] = {"version": 10}
+    assert decide(state, Params(), NOW) == [SpawnDerive(parallel=True)]
+
+
 def test_parallel_derive_respects_slots_open_intents_and_single_baseline() -> None:
     state = board()
     state["board_empty"] = False

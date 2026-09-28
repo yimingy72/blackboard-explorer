@@ -53,7 +53,7 @@ class FakeService:
     def __init__(self) -> None:
         self.trace_calls: list[tuple[Any, str, dict[str, Any]]] = []
 
-    async def post_fact(self, _tid, _aid, _body, *, dry_run=False):
+    async def post_fact(self, _tid, _aid, _body, *, dry_run=False, expected_derive_round=None):
         return {"valid": True} if dry_run else {"id": "F1"}
 
     async def record_agent_trace(self, tid, aid, body):

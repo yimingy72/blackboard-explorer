@@ -210,6 +210,17 @@
             "title": "Agent Id",
             "type": "string"
           },
+          "derive_round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derive Round"
+          },
           "token": {
             "title": "Token",
             "type": "string"
@@ -224,6 +235,18 @@
       },
       "AgentTraceBody": {
         "properties": {
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
           "kind": {
             "enum": [
               "initial_context",
@@ -422,6 +445,18 @@
             "title": "Deliveries",
             "type": "array"
           },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
           "expected_revision": {
             "minimum": 0.0,
             "title": "Expected Revision",
@@ -473,6 +508,18 @@
       },
       "ConcludeBody": {
         "properties": {
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
           "reason": {
             "minLength": 1,
             "title": "Reason",
@@ -582,6 +629,7 @@
       },
       "EventType": {
         "enum": [
+          "cost.reconciled",
           "task.created",
           "task.provisioning",
           "task.running",
@@ -590,6 +638,8 @@
           "task.failed",
           "task.stopped",
           "task.archived",
+          "task.resumed",
+          "task.cleanup_ready",
           "fact.posted",
           "fact.disputed",
           "fact.undisputed",
@@ -598,6 +648,7 @@
           "intent.released",
           "intent.closed",
           "agent.spawned",
+          "agent.reactivated",
           "agent.progress",
           "agent.finished",
           "agent.conclude_requested",
@@ -775,6 +826,18 @@
             "title": "End Reason",
             "type": "string"
           },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
           "receipt": {
             "additionalProperties": true,
             "title": "Receipt",
@@ -786,6 +849,24 @@
           "end_reason"
         ],
         "title": "FinishBody",
+        "type": "object"
+      },
+      "GraceBody": {
+        "properties": {
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          }
+        },
+        "title": "GraceBody",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -808,10 +889,34 @@
             "title": "Context Tokens",
             "type": "integer"
           },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
           "last_seen_version": {
             "minimum": 0.0,
             "title": "Last Seen Version",
             "type": "integer"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
           },
           "steps": {
             "minimum": 0.0,
@@ -1025,6 +1130,18 @@
             "minLength": 1,
             "title": "Reasoning Effort",
             "type": "string"
+          },
+          "supports_vision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型是否支持图片输入",
+            "title": "Supports Vision"
           }
         },
         "required": [
@@ -1098,6 +1215,18 @@
             "minLength": 1,
             "title": "Reasoning Effort",
             "type": "string"
+          },
+          "supports_vision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型是否支持图片输入",
+            "title": "Supports Vision"
           }
         },
         "required": [
@@ -1185,6 +1314,17 @@
             "minLength": 1,
             "title": "Reasoning Effort",
             "type": "string"
+          },
+          "supports_vision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Vision"
           }
         },
         "required": [
@@ -1589,6 +1729,16 @@
       "Price-Input": {
         "additionalProperties": false,
         "properties": {
+          "billing_mode": {
+            "default": "fixed",
+            "description": "固定费率或官方 DeepSeek 峰谷时段估算",
+            "enum": [
+              "fixed",
+              "deepseek_schedule"
+            ],
+            "title": "Billing Mode",
+            "type": "string"
+          },
           "cache_hit_per_m": {
             "anyOf": [
               {
@@ -1671,6 +1821,16 @@
       "Price-Output": {
         "additionalProperties": false,
         "properties": {
+          "billing_mode": {
+            "default": "fixed",
+            "description": "固定费率或官方 DeepSeek 峰谷时段估算",
+            "enum": [
+              "fixed",
+              "deepseek_schedule"
+            ],
+            "title": "Billing Mode",
+            "type": "string"
+          },
           "cache_hit_per_m": {
             "anyOf": [
               {
@@ -1892,6 +2052,20 @@
         "title": "PromptTemplates",
         "type": "object"
       },
+      "ReconcileBody": {
+        "properties": {
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReconcileBody",
+        "type": "object"
+      },
       "ReleaseBody": {
         "properties": {
           "note": {
@@ -1904,6 +2078,45 @@
           "note"
         ],
         "title": "ReleaseBody",
+        "type": "object"
+      },
+      "ResumeBody": {
+        "properties": {
+          "additional_cost": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Additional Cost"
+          },
+          "additional_minutes": {
+            "minimum": 0.0,
+            "title": "Additional Minutes",
+            "type": "integer"
+          },
+          "refresh_tools": {
+            "default": false,
+            "title": "Refresh Tools",
+            "type": "boolean"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "additional_cost",
+          "additional_minutes"
+        ],
+        "title": "ResumeBody",
         "type": "object"
       },
       "RuntimeUpdate": {
@@ -1977,6 +2190,18 @@
             },
             "title": "Deliveries",
             "type": "array"
+          },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
           },
           "expected_revision": {
             "minimum": 0.0,
@@ -2219,6 +2444,23 @@
             "title": "Acceptance State",
             "type": "object"
           },
+          "active_seconds": {
+            "default": 0,
+            "title": "Active Seconds",
+            "type": "integer"
+          },
+          "active_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Since"
+          },
           "agent_profile": {
             "title": "Agent Profile",
             "type": "string"
@@ -2234,6 +2476,16 @@
             },
             "title": "Agents",
             "type": "array"
+          },
+          "budget": {
+            "additionalProperties": true,
+            "title": "Budget",
+            "type": "object"
+          },
+          "cleanup_ready": {
+            "default": false,
+            "title": "Cleanup Ready",
+            "type": "boolean"
           },
           "cost_currency": {
             "anyOf": [
@@ -2274,6 +2526,19 @@
               }
             ],
             "title": "Report Uri"
+          },
+          "run_number": {
+            "default": 1,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "runs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Runs",
+            "type": "array"
           },
           "status": {
             "title": "Status",
@@ -2324,6 +2589,18 @@
             "additionalProperties": true,
             "title": "Args",
             "type": "object"
+          },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
           },
           "id": {
             "minLength": 1,
@@ -4259,6 +4536,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/GraceBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -4944,6 +5238,53 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/cleanup-ready": {
+      "post": {
+        "operationId": "record_cleanup_api_tasks__task_id__cleanup_ready_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "title": "Response Record Cleanup Api Tasks  Task Id  Cleanup Ready Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Cleanup",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/close": {
       "post": {
         "operationId": "close_api_tasks__task_id__close_post",
@@ -4999,6 +5340,104 @@
         "summary": "Close",
         "tags": [
           "agent"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/cost-reconciliation": {
+      "get": {
+        "operationId": "preview_api_tasks__task_id__cost_reconciliation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Api Tasks  Task Id  Cost Reconciliation Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview",
+        "tags": [
+          "tasks"
+        ]
+      },
+      "post": {
+        "operationId": "reconcile_api_tasks__task_id__cost_reconciliation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reconcile Api Tasks  Task Id  Cost Reconciliation Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile",
+        "tags": [
+          "tasks"
         ]
       }
     },
@@ -5529,6 +5968,23 @@
               "title": "Task Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
           }
         ],
         "responses": {
@@ -5554,6 +6010,59 @@
           }
         },
         "summary": "Report",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/resume": {
+      "post": {
+        "operationId": "resume_task_api_tasks__task_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Task",
         "tags": [
           "tasks"
         ]
@@ -6085,6 +6594,23 @@
               "title": "Task Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
           }
         ],
         "responses": {
@@ -6136,6 +6662,23 @@
               "title": "Path",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
           }
         ],
         "responses": {
@@ -6178,6 +6721,23 @@
               "format": "uuid",
               "title": "Task Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
             }
           }
         ],

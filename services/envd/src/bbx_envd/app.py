@@ -1,5 +1,7 @@
 """Authenticated internal API and MCP command server."""
 
+import asyncio
+import fcntl
 import fnmatch
 import hmac
 import json
@@ -10,8 +12,8 @@ import subprocess
 import tarfile
 import tempfile
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import BinaryIO
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.applications import Starlette
@@ -30,6 +32,7 @@ from bbx_envd.settings import Settings
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
 mcp = FastMCP("envd", host="0.0.0.0")
+RESTORE_MARKER = Path("/var/lib/bbx/restore-ready")
 
 
 @mcp.tool(name="execute_command")
@@ -187,13 +190,38 @@ async def stat(request) -> Response:
     )
 
 
+class ArchiveTooLarge(ValueError):
+    pass
+
+
+class ArchiveWriter:
+    """Apply the restore size limit to the exact uncompressed tar stream."""
+
+    def __init__(self, output: BinaryIO, limit: int) -> None:
+        self.output, self.limit, self.size = output, limit, 0
+
+    def write(self, data: bytes) -> int:
+        self.size += len(data)
+        if self.size > self.limit:
+            raise ArchiveTooLarge("expanded archive too large")
+        return self.output.write(data)
+
+
 def make_archive(agents_only: bool = False) -> str:
     rules = [
         item.strip().rstrip("/") for item in settings.archive_exclude.split(",") if item.strip()
     ]
 
+    entries = 0
+
     def exclude(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        return None if any(fnmatch.fnmatch(info.name, rule) for rule in rules) else info
+        nonlocal entries
+        if any(fnmatch.fnmatch(info.name, rule) for rule in rules):
+            return None
+        entries += 1
+        if entries > 100000:
+            raise ArchiveTooLarge("too many archive entries")
+        return info
 
     root = "agents" if agents_only else "."
     with tempfile.NamedTemporaryFile(
@@ -203,7 +231,8 @@ def make_archive(agents_only: bool = False) -> str:
         process = subprocess.Popen(["zstd", "-q", "-c"], stdin=subprocess.PIPE, stdout=target)
         try:
             assert process.stdin is not None
-            with tarfile.open(fileobj=process.stdin, mode="w|") as tar:
+            writer = ArchiveWriter(cast(BinaryIO, process.stdin), settings.archive_max_bytes * 4)
+            with tarfile.open(fileobj=cast(BinaryIO, writer), mode="w|") as tar:
                 tar.add(WORKSPACE / root, arcname=root, filter=exclude)
             process.stdin.close()
             if process.wait() != 0:
@@ -218,11 +247,23 @@ def make_archive(agents_only: bool = False) -> str:
 
 
 async def archive(request) -> Response:
-    name = make_archive()
-    fallback = os.path.getsize(name) > settings.archive_max_bytes
+    name = None
+    try:
+        name = await asyncio.to_thread(make_archive)
+        fallback = os.path.getsize(name) > settings.archive_max_bytes
+    except ArchiveTooLarge:
+        fallback = True
     if fallback:
-        os.unlink(name)
-        name = make_archive(agents_only=True)
+        if name is not None:
+            os.unlink(name)
+        try:
+            name = await asyncio.to_thread(make_archive, agents_only=True)
+        except ArchiveTooLarge:
+            return JSONResponse({"error": "expanded agent archive too large"}, status_code=413)
+        if os.path.getsize(name) > settings.archive_max_bytes:
+            os.unlink(name)
+            return JSONResponse({"error": "agent archive too large"}, status_code=413)
+    assert name is not None
     return FileResponse(
         name,
         media_type="application/zstd",
@@ -230,6 +271,131 @@ async def archive(request) -> Response:
         headers={"X-Archive-Fallback": "agents-only" if fallback else "none"},
         background=BackgroundTask(os.unlink, name),
     )
+
+
+def restore_archive(compressed: Path, unpacked: Path) -> int:
+    RESTORE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    with (RESTORE_MARKER.parent / "restore.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if RESTORE_MARKER.exists():
+            return int(RESTORE_MARKER.read_text())
+        return _restore_archive(compressed, unpacked)
+
+
+def _restore_archive(compressed: Path, unpacked: Path) -> int:
+    """Validate every member before extraction; restore only regular files and directories."""
+    with unpacked.open("wb") as output:
+        process = subprocess.Popen(["zstd", "-dc", str(compressed)], stdout=subprocess.PIPE)
+        try:
+            assert process.stdout is not None
+            expanded = 0
+            while chunk := process.stdout.read(65536):
+                expanded += len(chunk)
+                if expanded > settings.archive_max_bytes * 4:
+                    raise ValueError("expanded archive too large")
+                output.write(chunk)
+            if process.wait() != 0:
+                raise ValueError("invalid compressed archive")
+        except Exception:
+            process.kill()
+            process.wait()
+            raise
+    with tarfile.open(unpacked) as tar:
+        members = []
+        for member in tar:
+            if len(members) >= 100000:
+                raise ValueError("too many archive entries")
+            members.append(member)
+        total = 0
+        skipped_links = 0
+        owners: set[str] = set()
+        for member in members:
+            path = PurePosixPath(member.name)
+            if member.name.startswith("/") or ".." in path.parts:
+                raise ValueError("unsafe archive path")
+            if member.issym() or member.islnk():
+                skipped_links += 1
+                continue
+            if not (member.isdir() or member.isfile()):
+                raise ValueError("unsafe archive entry")
+            total += member.size
+            if total > settings.archive_max_bytes * 4:
+                raise ValueError("expanded archive too large")
+            if len(path.parts) >= 2 and path.parts[0] == "agents":
+                if not valid_agent_id(path.parts[1]):
+                    raise ValueError("invalid agent directory")
+                owners.add(path.parts[1])
+            if valid_agent_id(member.uname):
+                owners.add(member.uname)
+        for agent_id in owners:
+            try:
+                pwd.getpwnam(agent_id)
+            except KeyError:
+                subprocess.run(
+                    [
+                        "useradd",
+                        "-M",
+                        "-d",
+                        str(WORKSPACE / "agents" / agent_id),
+                        "-s",
+                        "/bin/bash",
+                        agent_id,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+        for member in members:
+            if not (member.isdir() or member.isfile()):
+                continue
+            tar.extract(member, WORKSPACE, filter="data")
+            path = PurePosixPath(member.name)
+            owner_name = (
+                path.parts[1]
+                if len(path.parts) >= 2 and path.parts[0] == "agents"
+                else member.uname
+                if valid_agent_id(member.uname)
+                else None
+            )
+            if owner_name:
+                owner = pwd.getpwnam(owner_name)
+                os.chown(WORKSPACE / path, owner.pw_uid, owner.pw_gid)
+        (WORKSPACE / "shared").chmod(0o1777)
+    RESTORE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    RESTORE_MARKER.write_text(str(skipped_links))
+    return skipped_links
+
+
+async def restore_status(request) -> Response:
+    return JSONResponse(
+        {
+            "restored": RESTORE_MARKER.exists(),
+            "skipped_links": int(RESTORE_MARKER.read_text()) if RESTORE_MARKER.exists() else 0,
+        }
+    )
+
+
+async def restore(request) -> Response:
+    if RESTORE_MARKER.exists():
+        return JSONResponse({"restored": True, "skipped_links": int(RESTORE_MARKER.read_text())})
+    with tempfile.TemporaryDirectory(prefix="bbx-restore-") as temporary:
+        compressed = Path(temporary) / "workspace.tar.zst"
+        unpacked = Path(temporary) / "workspace.tar"
+        size = 0
+        with compressed.open("wb") as output:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > settings.archive_max_bytes:
+                    return JSONResponse({"error": "archive too large"}, status_code=413)
+                output.write(chunk)
+        work = asyncio.create_task(asyncio.to_thread(restore_archive, compressed, unpacked))
+        try:
+            skipped_links = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            await work
+            raise
+        except (ValueError, tarfile.TarError, OSError, subprocess.CalledProcessError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"restored": True, "skipped_links": skipped_links})
 
 
 class TokenAuth:
@@ -263,6 +429,8 @@ app = TokenAuth(
             Route("/files", files),
             Route("/stat", stat),
             Route("/archive", archive, methods=["POST"]),
+            Route("/restore", restore, methods=["POST"]),
+            Route("/restore/status", restore_status),
             *mcp.streamable_http_app().routes,
         ],
         lifespan=lifespan,

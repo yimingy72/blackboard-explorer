@@ -26,6 +26,9 @@ class Service:
     async def state(self, _task_id: str) -> dict[str, Any]:
         return self.board
 
+    async def events(self, _task_id: str, *, since: int = 0, for_agent: str | None = None):
+        return []
+
     async def get_worker_prompt(self, role: str, since: int = 0) -> dict[str, Any]:
         assert role == "derive"
         return {

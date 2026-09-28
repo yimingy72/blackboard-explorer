@@ -3,6 +3,7 @@
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,7 +26,68 @@ ROOT = Path(__file__).resolve().parents[3]
 
 class FakeObjects:
     async def exists(self, uri):
-        return uri in {"evidence/one", "reports/final"} or uri.startswith("traces/")
+        return (
+            uri in {"evidence/one", "reports/final"}
+            or uri.startswith("traces/")
+            or (uri.startswith("workspace/") and uri.endswith(".tar.zst"))
+        )
+
+
+async def test_resume_keeps_history_and_counts_only_active_time(board_service):
+    tid = await task(board_service)
+    await board_service.transition(tid, "failed", reason="first run")
+    async with board_service.repo.engine.begin() as conn:
+        await board_service.repo.lock(conn, tid)
+        await board_service.repo.append(
+            conn,
+            tid,
+            [
+                {
+                    "type": "task.report",
+                    "actor": "system",
+                    "payload": {"uri": f"reports/{tid}.md"},
+                    "object_id": None,
+                    "addressed_to": None,
+                }
+            ],
+        )
+    await board_service.record_archive(tid, f"workspace/{tid}.tar.zst", 12, "none")
+    with pytest.raises(RuleViolation) as pending:
+        await board_service.resume(tid, uuid4(), 1, 10)
+    assert pending.value.code == "resume_archive_pending"
+    await board_service.record_cleanup(tid)
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(active_seconds=30))
+    request_id = uuid4()
+    await board_service.resume(tid, request_id, Decimal("1.00"), 10)
+    await board_service.resume(tid, request_id, Decimal("1.0"), 10)
+    state = await board_service.state(tid)
+    assert state["task"]["run_number"] == 2
+    assert state["task"]["status"] == "provisioning"
+    assert state["task"]["active_seconds"] == 30
+    assert state["task"]["active_since"] is None
+    assert Decimal(state["task"]["budget"]["max_cost"]) == 11
+    assert state["task"]["budget"]["max_minutes"] == 70
+    async with board_service.repo.engine.connect() as conn:
+        history = (
+            (
+                await conn.execute(
+                    select(s.task_runs).where(
+                        s.task_runs.c.task_id == tid,
+                        s.task_runs.c.run_number == 1,
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert history["report_uri"] == f"reports/{tid}.md"
+    assert history["workspace_uri"] == f"workspace/{tid}.tar.zst"
+    await board_service.transition(tid, "failed", reason="provision failed")
+    await board_service.record_cleanup(tid)
+    assert (await board_service.state(tid))["task"]["cleanup_ready"]
+    await board_service.resume(tid, uuid4(), Decimal("0"), 0)
+    assert (await board_service.state(tid))["task"]["run_number"] == 3
 
 
 async def test_agent_numbers_are_task_local_under_concurrent_registration(board_service):
@@ -325,6 +387,84 @@ async def test_parallel_derive_registration_and_empty_result(board_service):
     assert (await board_service.state(tid))["task"]["derive_empty_streak"] == 2
 
 
+async def test_idle_derive_review_is_reserved_while_task_runs(board_service):
+    tid = await task(board_service)
+    explore = await board_service.register_agent(tid, "explore")
+    await board_service.finish_agent(tid, explore, {"accepted": True}, "normal")
+    derive = await board_service.register_agent(tid, "derive")
+    await board_service.finish_agent(
+        tid, derive, {"accepted": True, "data": {"posted": [], "excluded": []}}, "normal"
+    )
+    conversations = Conversations(board_service.repo.engine)
+    explore_message = uuid4()
+    derive_message = uuid4()
+    await conversations.post_message(tid, explore, explore_message, "Explore review")
+    await conversations.post_message(tid, derive, derive_message, "Derive review")
+    pending = await conversations.pending()
+    assert any(item["id"] == explore_message for item in pending)
+    assert not any(item["id"] == derive_message for item in pending)
+    with pytest.raises(HTTPException) as reserved:
+        await conversations.claim(tid, derive, derive_message, "review")
+    assert reserved.value.status_code == 409
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(
+            update(s.agent_messages)
+            .where(s.agent_messages.c.task_id == tid)
+            .values(status="failed")
+        )
+
+
+async def test_old_derive_round_cannot_write_after_reactivation(board_service):
+    tid = await task(board_service)
+    derive = await board_service.register_agent(tid, "derive")
+    await board_service.finish_agent(
+        tid,
+        derive,
+        {"accepted": True, "data": {"posted": [], "excluded": []}},
+        "normal",
+        expected_derive_round=1,
+    )
+    assert await board_service.register_agent(tid, "derive") == derive
+    state = await board_service.state(tid)
+    assert state["agents"][derive]["derive_round"] == 2
+    for operation in (
+        board_service.finish_agent(
+            tid, derive, {"accepted": True}, "normal", expected_derive_round=1
+        ),
+        board_service.heartbeat(
+            tid,
+            derive,
+            steps=1,
+            context_tokens=1,
+            usage={},
+            last_seen_version=0,
+            expected_derive_round=1,
+        ),
+    ):
+        with pytest.raises(RuleViolation) as stale:
+            await operation
+        assert stale.value.code == "stale_agent_round"
+    with pytest.raises(RuleViolation) as missing_epoch:
+        await board_service.finish_agent(tid, derive, {"accepted": True}, "normal")
+    assert missing_epoch.value.code == "stale_agent_round"
+    conversations = Conversations(board_service.repo.engine)
+    with pytest.raises(HTTPException) as stale_session:
+        await conversations.put_session(
+            tid,
+            derive,
+            {"state": {}},
+            "opening",
+            "native",
+            0,
+            [],
+            expected_derive_round=1,
+        )
+    assert stale_session.value.status_code == 409
+    after = await board_service.state(tid)
+    assert after["agents"][derive]["status"] == "running"
+    assert after["agents"][derive]["steps"] == 0
+
+
 async def test_completion_review_requires_valid_receipt_and_second_judgment(board_service):
     service = board_service
     tid = await task(service)
@@ -353,6 +493,7 @@ async def test_completion_review_requires_valid_receipt_and_second_judgment(boar
         review,
         {"accepted": True, "data": {"posted": [], "excluded": ["No unverified direction remains"]}},
         "normal",
+        expected_derive_round=2,
     )
     state = await service.state(tid)
     assert state["agents"][review]["finished_version"] == finished[-1]["version"]

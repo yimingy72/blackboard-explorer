@@ -67,7 +67,15 @@ class TaskSupervisor:
             for aid, agent in state["agents"].items():
                 if agent["status"] in ACTIVE:
                     await self.service.finish_agent(
-                        tid, aid, {"accepted": False, "reason": "运行器重启"}, "runtime_restart"
+                        tid,
+                        aid,
+                        {"accepted": False, "reason": "运行器重启"},
+                        "runtime_restart",
+                        **(
+                            {"expected_derive_round": int(agent.get("derive_round") or 1)}
+                            if agent.get("task_type") == "derive"
+                            else {}
+                        ),
                     )
             state = await self.service.state(tid)
             status = state["task"]["status"]
@@ -94,9 +102,18 @@ class TaskSupervisor:
             if agent["status"] == "running":
                 try:
                     reason = "failed" if state["task"]["status"] == "failed" else "closing"
-                    await self.service.conclude(tid, aid, reason)
+                    await self.service.conclude(
+                        tid,
+                        aid,
+                        reason,
+                        **(
+                            {"expected_derive_round": int(agent.get("derive_round") or 1)}
+                            if agent.get("task_type") == "derive"
+                            else {}
+                        ),
+                    )
                 except RemoteError as error:
-                    if error.code != "agent_inactive":
+                    if error.code not in {"agent_inactive", "stale_agent_round"}:
                         raise
         while True:
             state = await self.service.state(tid)
@@ -118,9 +135,20 @@ class TaskSupervisor:
                         aid,
                         {"accepted": False, "reason": "运行协程已不存在"},
                         "runtime_restart",
+                        **(
+                            {"expected_derive_round": int(agent.get("derive_round") or 1)}
+                            if agent.get("task_type") == "derive"
+                            else {}
+                        ),
                     )
                 elif expired:
-                    await loop.executor.cancel(aid, "grace_timeout")  # type: ignore[union-attr]
+                    await loop.executor.cancel(  # type: ignore[union-attr]
+                        aid,
+                        "grace_timeout",
+                        int(agent.get("derive_round") or 1)
+                        if agent.get("task_type") == "derive"
+                        else None,
+                    )
             await asyncio.sleep(0.2)
         if loop := self.loops.pop(tid, None):
             await loop.stop(reason="grace_timeout")
@@ -132,8 +160,16 @@ class TaskSupervisor:
         state = await self.service.state(tid)
         handle = await self.manager.find(tid)
         if handle is not None:
-            if not state["task"].get("workspace_uri"):
-                archive = await self.manager.archive_to_store(handle)
+            if not state["task"].get("workspace_uri") and (
+                state["task"].get("run_started", True)
+                or not state["task"].get("resume_workspace_uri")
+            ):
+                run_number = int(state["task"].get("run_number", 1))
+                archive = (
+                    await self.manager.archive_to_store(handle)
+                    if run_number == 1
+                    else await self.manager.archive_to_store(handle, run_number)
+                )
                 await self.service.record_archive(tid, archive.uri, archive.size, archive.fallback)
             await self.manager.destroy(tid)
         elif state["task"].get("started_at") and not state["task"].get("workspace_uri"):
@@ -142,6 +178,9 @@ class TaskSupervisor:
                 "Previously persisted evidence is retained.",
                 tid,
             )
+        final_task = (await self.service.state(tid))["task"]
+        if final_task.get("workspace_uri") or final_task.get("resume_workspace_uri"):
+            await self.service.record_cleanup(tid)
         self.cleaned.add(tid)
 
     async def _purge_deleted(self, tid: str) -> None:
@@ -194,18 +233,25 @@ class TaskSupervisor:
             if self.stopping.is_set() or len(occupied) >= self.settings.max_running_tasks:
                 break
             tid = str(task["id"])
+            self.cleaned.discard(tid)
             try:
                 profile = load_runtime_profile(
                     await self.service.get_profile(
                         task["agent_profile"], task["agent_profile_version"]
                     )
                 )
-                handle = await self.manager.provision(tid, profile)
+                restore_uri = task.get("resume_workspace_uri")
+                handle = (
+                    await self.manager.provision(tid, profile, restore_uri)
+                    if restore_uri
+                    else await self.manager.provision(tid, profile)
+                )
                 occupied.add(tid)
                 fresh = await self.service.state(tid)
                 if fresh["task"]["status"] != "provisioning":
                     continue
                 await self.service.transition(tid, "running")
+                self.cleaned.discard(tid)
                 await self._start(await self.service.state(tid), handle)
             except Exception as error:
                 LOGGER.error("Provisioning failed for task %s: %s", tid, type(error).__name__)
@@ -216,7 +262,9 @@ class TaskSupervisor:
                     future.result()
                 except Exception as error:
                     LOGGER.error("Scheduler exited for task %s: %s", tid, type(error).__name__)
-                if tid not in {str(item["id"]) for item in tasks if item["status"] == "deleting"}:
+                if not self.stopping.is_set() and tid not in {
+                    str(item["id"]) for item in tasks if item["status"] == "deleting"
+                }:
                     await self._fail_if_active(tid, "调度循环异常退出")
 
     async def run(self) -> None:

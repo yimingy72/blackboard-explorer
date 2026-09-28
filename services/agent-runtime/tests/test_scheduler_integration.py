@@ -145,6 +145,7 @@ class ScriptedRunner(AgentRunner):
         client: BaseChatClient | None = None,
         handle: ExecEnvHandle | None = None,
         envd_http_client: httpx.AsyncClient | None = None,
+        expected_derive_round: int | None = None,
     ) -> RunResult:
         assert client is None and envd_http_client is None
         if task_type == "explore":
@@ -252,6 +253,7 @@ class ScriptedRunner(AgentRunner):
             client=model,
             handle=handle,
             envd_http_client=self.envd_http,
+            expected_derive_round=expected_derive_round,
         )
 
 
@@ -399,7 +401,22 @@ async def test_seed_fanout_and_restart_reassigns_without_attempts(
                 agent["usage"].get(field, 0) for agent in completed["agents"].values()
             )
 
-        derive = await board.register_agent(tid, "derive")
+        try:
+            derive = await board.register_agent(tid, "derive")
+        except Exception as error:
+            current = await board.state(tid)
+            events = await board.events(tid)
+            tail = [(event["version"], event["type"], event["payload"]) for event in events[-25:]]
+            agents = [
+                (a["id"], a["task_type"], a["status"], a.get("end_reason"), a.get("derive_round"))
+                for a in current["agents"].values()
+            ]
+            raise AssertionError(
+                f"Manual derive registration failed: {error}; "
+                f"task={current['task']['status']}/{current['task'].get('fail_reason')}; "
+                f"agents={agents}; "
+                f"events={tail}"
+            ) from error
         await board.with_token(derive["token"]).post_intent(
             tid,
             {
@@ -415,6 +432,7 @@ async def test_seed_fanout_and_restart_reassigns_without_attempts(
             derive["agent_id"],
             {"accepted": True, "data": {"posted": ["I4"], "excluded": []}},
             "normal",
+            expected_derive_round=derive.get("derive_round") or 1,
         )
 
         second_gate = Barrier(1)

@@ -285,6 +285,7 @@ class ScenarioRunner(AgentRunner):
         client: BaseChatClient | None = None,
         handle: ExecEnvHandle | None = None,
         envd_http_client: httpx.AsyncClient | None = None,
+        expected_derive_round: int | None = None,
     ) -> RunResult:
         assert client is None and envd_http_client is None
         if task_type == "explore":
@@ -304,6 +305,7 @@ class ScenarioRunner(AgentRunner):
             client=scripted,
             handle=handle,
             envd_http_client=self.envd_http,
+            expected_derive_round=expected_derive_round,
         )
 
 

@@ -3,6 +3,7 @@
 import importlib
 import io
 import os
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -40,6 +41,60 @@ def request(path: Path, method: str = "GET") -> Request:
             "headers": [],
         }
     )
+
+
+def test_archive_rejects_expanded_stream_beyond_restore_limit(service):
+    module, _ = service
+    target = io.BytesIO()
+    writer = module.ArchiveWriter(target, 8)
+    assert writer.write(b"12345678") == 8
+    with pytest.raises(module.ArchiveTooLarge):
+        writer.write(b"9")
+    assert target.getvalue() == b"12345678"
+
+
+def test_restore_regular_files_skips_links_and_rejects_escape(
+    service, monkeypatch, tmp_path: Path
+) -> None:
+    module, root = service
+    marker = tmp_path / "restore-ready"
+    monkeypatch.setattr(module, "RESTORE_MARKER", marker)
+
+    def packed(*members: tuple[str, bytes | None, bytes | None]) -> Path:
+        raw = io.BytesIO()
+        with tarfile.open(fileobj=raw, mode="w") as tar:
+            for name, data, link in members:
+                info = tarfile.TarInfo(name)
+                if link is not None:
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = link.decode()
+                elif data is not None:
+                    info.size = len(data)
+                else:
+                    info.type = tarfile.DIRTYPE
+                tar.addfile(info, io.BytesIO(data) if data is not None else None)
+        compressed = tmp_path / "input.tar.zst"
+        compressed.write_bytes(
+            subprocess.run(
+                ["zstd", "-q", "-c"], input=raw.getvalue(), capture_output=True, check=True
+            ).stdout
+        )
+        return compressed
+
+    safe = packed(
+        ("./shared", None, None),
+        ("./shared/ok.txt", b"restored", None),
+        ("./shared/escape", None, b"/etc/passwd"),
+    )
+    assert module.restore_archive(safe, tmp_path / "safe.tar") == 1
+    assert (root / "shared/ok.txt").read_bytes() == b"restored"
+    assert not (root / "shared/escape").exists()
+    assert marker.read_text() == "1"
+    marker.unlink()
+    unsafe = packed(("../outside.txt", b"bad", None))
+    with pytest.raises(ValueError, match="unsafe archive path"):
+        module.restore_archive(unsafe, tmp_path / "unsafe.tar")
+    assert not (tmp_path / "outside.txt").exists()
 
 
 @pytest.mark.asyncio
@@ -157,7 +212,6 @@ async def test_archive_fallback_keeps_exclusions(service, monkeypatch) -> None:
     shared = root / "shared"
     shared.mkdir()
     (shared / "outside-fallback.txt").write_text("shared")
-    monkeypatch.setattr(module.settings, "archive_max_bytes", 1)
 
     class FakeCompressor:
         def __init__(self, args, stdin, stdout):
@@ -176,6 +230,10 @@ async def test_archive_fallback_keeps_exclusions(service, monkeypatch) -> None:
             return 0
 
     monkeypatch.setattr(module.subprocess, "Popen", FakeCompressor)
+    agents_only = module.make_archive(agents_only=True)
+    limit = os.path.getsize(agents_only)
+    os.unlink(agents_only)
+    monkeypatch.setattr(module.settings, "archive_max_bytes", limit)
     app = Starlette(routes=[Route("/archive", module.archive, methods=["POST"])])
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

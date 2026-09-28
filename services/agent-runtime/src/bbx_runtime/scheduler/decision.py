@@ -35,10 +35,10 @@ def _explore_budget_exhausted(task: dict[str, Any], params: Params, now: datetim
     usage = task.get("usage") or {}
     spent = Decimal(str(usage.get("cost", 0) or 0))
     limit = Decimal(str(budget["max_cost"])) * (Decimal(1) - params.close_reserve_ratio)
-    started = _utc(task.get("started_at"))
+    started = _utc(task.get("active_since") or task.get("started_at"))
     current = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
     timed_out = started is not None and current >= started + timedelta(
-        minutes=int(budget["max_minutes"])
+        seconds=int(budget["max_minutes"]) * 60 - int(task.get("active_seconds") or 0)
     )
     return spent >= limit or timed_out
 
@@ -186,7 +186,12 @@ def decide(state: dict[str, Any], params: Params, now: datetime) -> list[Action]
         )
         latest_derive = max(
             (
-                int(agent["derive_from_version"])
+                max(
+                    int(agent["derive_from_version"]),
+                    int(agent.get("last_seen_version") or 0)
+                    if agent.get("status") == "finished" and agent.get("end_reason") == "normal"
+                    else 0,
+                )
                 for agent in agents
                 if agent["task_type"] == "derive" and agent.get("derive_from_version") is not None
             ),

@@ -55,11 +55,40 @@ tasks = Table(
     col("seed_empty_count", Integer, nullable=False, default=0),
     col("fail_reason", Text),
     col("usage", JSONB, nullable=False),
+    col("billing_mode", Text),
     col("report_uri", Text),
     col("workspace_uri", Text),
+    col("resume_workspace_uri", Text),
+    col("cleanup_ready", Boolean, nullable=False, server_default=text("false")),
+    col("run_number", Integer, nullable=False, server_default=text("1")),
+    col("run_started", Boolean, nullable=False, server_default=text("false")),
+    col("active_seconds", Integer, nullable=False, server_default=text("0")),
+    col("active_since", DateTime(timezone=True)),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     col("started_at", DateTime(timezone=True)),
     col("finished_at", DateTime(timezone=True)),
+)
+
+task_runs = Table(
+    "task_runs",
+    metadata,
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), primary_key=True),
+    col("run_number", Integer, primary_key=True),
+    col("report_uri", Text),
+    col("workspace_uri", Text),
+    col("agent_profile", Text),
+    col("agent_profile_version", Integer),
+)
+
+resume_requests = Table(
+    "resume_requests",
+    metadata,
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), primary_key=True),
+    col("request_id", UUID(as_uuid=True), primary_key=True),
+    col("additional_cost", Text, nullable=False),
+    col("additional_minutes", Integer, nullable=False),
+    col("refresh_tools", Boolean, nullable=False, server_default=text("false")),
+    col("run_number", Integer, nullable=False),
 )
 
 task_counters = Table(
@@ -128,6 +157,9 @@ agent_runs = scoped(
     col("derive_from_version", BigInteger),
     col("derive_parallel", Boolean, nullable=False, server_default=text("false")),
     col("derive_review", Boolean, nullable=False, server_default=text("false")),
+    col("derive_round", Integer, nullable=False, server_default=text("1")),
+    col("round_start_version", BigInteger, nullable=False, server_default=text("0")),
+    col("previous_receipt", JSONB),
     col("finished_version", BigInteger),
     col("intent_id", Text),
     col("status", Text, nullable=False),

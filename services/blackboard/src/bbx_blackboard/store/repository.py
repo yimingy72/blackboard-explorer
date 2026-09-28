@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from bbx_contracts.billing import add_usage
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -55,19 +56,105 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     stamp = evt["created_at"]
     if kind == "task.created":
         await patch(conn, s.tasks, tid, p)
+    elif kind == "task.resumed":
+        task = await row(conn, s.tasks, tid)
+        await conn.execute(
+            insert(s.task_runs)
+            .values(
+                task_id=tid,
+                run_number=task["run_number"],
+                report_uri=task["report_uri"],
+                workspace_uri=task["workspace_uri"],
+                agent_profile=task["agent_profile"],
+                agent_profile_version=task["agent_profile_version"],
+            )
+            .on_conflict_do_update(
+                index_elements=["task_id", "run_number"],
+                set_={
+                    "agent_profile": task["agent_profile"],
+                    "agent_profile_version": task["agent_profile_version"],
+                },
+            )
+        )
+        await patch(
+            conn,
+            s.tasks,
+            tid,
+            {
+                "status": "provisioning",
+                "budget": p["budget"],
+                "run_number": p["run_number"],
+                "run_started": False,
+                "resume_workspace_uri": p["workspace_uri"],
+                "agent_profile_version": p.get(
+                    "agent_profile_version", task["agent_profile_version"]
+                ),
+                "workspace_uri": None,
+                "report_uri": None,
+                "cleanup_ready": False,
+                "finished_at": None,
+                "fail_reason": None,
+                "last_change_version": version,
+                "last_judgment_version": 0,
+                "derive_empty_streak": 0,
+                "failure_streak": 0,
+                "seed_empty_count": 0,
+            },
+        )
+    elif kind == "task.cleanup_ready":
+        await patch(conn, s.tasks, tid, {"cleanup_ready": True})
     elif kind.startswith("task.") and kind not in {"task.report", "task.archived"}:
         values: dict[str, Any] = {"status": kind.split(".")[1]}
         if kind == "task.running":
-            values["started_at"] = stamp
+            task = await row(conn, s.tasks, tid)
+            values["active_since"] = stamp
+            values["run_started"] = True
+            if task["started_at"] is None:
+                values["started_at"] = stamp
         if kind in {"task.finished", "task.failed", "task.stopped"}:
             values["finished_at"] = stamp
+            task = await row(conn, s.tasks, tid)
+            if task["active_since"] is not None:
+                values["active_seconds"] = task["active_seconds"] + max(
+                    0, int((stamp - task["active_since"]).total_seconds())
+                )
+                values["active_since"] = None
+            values["cleanup_ready"] = False
         if kind == "task.failed":
             values["fail_reason"] = p.get("reason")
         await patch(conn, s.tasks, tid, values)
     elif kind == "task.report":
         await patch(conn, s.tasks, tid, {"report_uri": p["uri"]})
+        task = await row(conn, s.tasks, tid)
+        await conn.execute(
+            insert(s.task_runs)
+            .values(
+                task_id=tid,
+                run_number=task["run_number"],
+                report_uri=p["uri"],
+                agent_profile=task["agent_profile"],
+                agent_profile_version=task["agent_profile_version"],
+            )
+            .on_conflict_do_update(
+                index_elements=["task_id", "run_number"], set_={"report_uri": p["uri"]}
+            )
+        )
     elif kind == "task.archived":
         await patch(conn, s.tasks, tid, {"workspace_uri": p["uri"]})
+        task = await row(conn, s.tasks, tid)
+        await conn.execute(
+            insert(s.task_runs)
+            .values(
+                task_id=tid,
+                run_number=task["run_number"],
+                workspace_uri=p["uri"],
+                agent_profile=task["agent_profile"],
+                agent_profile_version=task["agent_profile_version"],
+            )
+            .on_conflict_do_update(
+                index_elements=["task_id", "run_number"], set_={"workspace_uri": p["uri"]}
+            )
+        )
     elif kind == "fact.posted":
         fields = {
             k: p.get(k)
@@ -179,6 +266,9 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 derive_from_version=p.get("derive_from_version"),
                 derive_parallel=p.get("derive_parallel", False),
                 derive_review=p.get("derive_review", False),
+                derive_round=p.get("derive_round", 1),
+                round_start_version=p.get("round_start_version", 0),
+                previous_receipt=None,
                 finished_version=None,
                 intent_id=None,
                 status="running",
@@ -190,7 +280,9 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 conclude_requested_at=None,
                 conclude_injected=False,
                 grace_calls_left=None,
-                last_seen_version=0,
+                last_seen_version=p.get("round_start_version", 0)
+                if p["task_type"] == "derive"
+                else 0,
                 last_heartbeat_at=stamp,
                 receipt=None,
                 started_at=stamp,
@@ -198,6 +290,34 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             )
         )
         await counter(conn, tid, "agent", int(p["id"].split("-")[1]))
+    elif kind == "agent.reactivated":
+        previous = await row(conn, s.agent_runs, tid, p["id"])
+        await patch(
+            conn,
+            s.agent_runs,
+            tid,
+            {
+                "derive_round": p["derive_round"],
+                "round_start_version": p["round_start_version"],
+                "previous_receipt": previous["receipt"],
+                "derive_from_version": p["derive_from_version"],
+                "derive_parallel": p["derive_parallel"],
+                "derive_review": p["derive_review"],
+                "finished_version": None,
+                "intent_id": None,
+                "status": "running",
+                "end_reason": None,
+                "conclude_reason": None,
+                "conclude_requested_at": None,
+                "conclude_injected": False,
+                "grace_calls_left": None,
+                "last_heartbeat_at": stamp,
+                "receipt": None,
+                "started_at": stamp,
+                "finished_at": None,
+            },
+            p["id"],
+        )
     elif kind == "agent.progress":
         agent = await row(conn, s.agent_runs, tid, p["agent_id"])
         values: dict[str, Any] = {"last_heartbeat_at": stamp}
@@ -209,10 +329,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             values["last_seen_version"] = max(agent["last_seen_version"], p["last_seen_version"])
         if "usage" in p:
             delta = p["usage"]
-            values["usage"] = {
-                k: agent["usage"].get(k, 0) + delta.get(k, 0)
-                for k in set(agent["usage"]) | set(delta)
-            }
+            values["usage"] = add_usage(agent["usage"], delta)
         if "grace_left" in p:
             values["grace_calls_left"] = p["grace_left"]
         await patch(conn, s.agent_runs, tid, values, p["agent_id"])
@@ -269,6 +386,17 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 tid,
                 {"derive_empty_streak": task["derive_empty_streak"] + 1 if not p["posted"] else 0},
             )
+    elif kind == "cost.reconciled":
+        task = await row(conn, s.tasks, tid)
+        await patch(
+            conn,
+            s.tasks,
+            tid,
+            {"usage": {**task["usage"], "cost": p["cost"]}, "billing_mode": p["billing_mode"]},
+        )
+        for aid, cost in p["agent_costs"].items():
+            agent = await row(conn, s.agent_runs, tid, aid)
+            await patch(conn, s.agent_runs, tid, {"usage": {**agent["usage"], "cost": cost}}, aid)
     elif kind == "budget.updated":
         await patch(conn, s.tasks, tid, {"usage": p["usage"]})
     elif kind == "acceptance.judged":
@@ -422,7 +550,14 @@ class Repository:
                     )
                 ).mappings()
             ]
-            for table in (s.facts, s.intents, s.agent_runs, s.tool_calls, s.task_counters):
+            for table in (
+                s.facts,
+                s.intents,
+                s.agent_runs,
+                s.tool_calls,
+                s.task_counters,
+                s.task_runs,
+            ):
                 await conn.execute(delete(table).where(table.c.task_id == tid))
             await patch(
                 conn,
@@ -435,7 +570,15 @@ class Repository:
                     "failure_streak": 0,
                     "seed_empty_count": 0,
                     "usage": {},
+                    "billing_mode": None,
                     "report_uri": None,
+                    "workspace_uri": None,
+                    "resume_workspace_uri": None,
+                    "cleanup_ready": False,
+                    "run_number": 1,
+                    "run_started": False,
+                    "active_seconds": 0,
+                    "active_since": None,
                     "started_at": None,
                     "finished_at": None,
                     "fail_reason": None,

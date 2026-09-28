@@ -44,6 +44,7 @@ class ActionExecutor:
         self.runner = runner
         self.handle = handle
         self.tasks: dict[str, asyncio.Task[RunResult]] = {}
+        self.task_rounds: dict[str, int | None] = {}
         self._stopping = False
         self._stop_reason = "runtime_restart"
 
@@ -115,6 +116,8 @@ class ActionExecutor:
                 return
             raise
         aid, token = registration["agent_id"], registration["token"]
+        raw_round = registration.get("derive_round") if task_type == "derive" else None
+        derive_round = int(raw_round) if raw_round is not None else None
         try:
             self._check_stopped()
             if intent_id is not None:
@@ -128,6 +131,7 @@ class ActionExecutor:
                         aid,
                         {"accepted": False, "reason": "claim_lost"},
                         "normal",
+                        **({"expected_derive_round": derive_round} if derive_round else {}),
                     )
                     return
                 self._check_stopped()
@@ -142,6 +146,7 @@ class ActionExecutor:
                 aid,
                 {"accepted": False, "reason": "runtime_stop_before_launch"},
                 self._stop_reason,
+                **({"expected_derive_round": derive_round} if derive_round else {}),
             )
             return
         except Exception:
@@ -150,6 +155,7 @@ class ActionExecutor:
                 aid,
                 {"accepted": False, "reason": "Agent 启动准备失败"},
                 "runtime_error",
+                **({"expected_derive_round": derive_round} if derive_round else {}),
             )
             raise
 
@@ -161,16 +167,19 @@ class ActionExecutor:
                 intent_id,
                 mode,
                 agent_token=token,
+                expected_derive_round=derive_round,
                 handle=self.handle,
             ),
             name=f"{self.task_id}/{aid}",
         )
         self.tasks[aid] = running
+        self.task_rounds[aid] = derive_round
         running.add_done_callback(lambda done, agent_id=aid: self._forget(agent_id, done))
 
     def _forget(self, aid: str, task: asyncio.Task[RunResult]) -> None:
         if self.tasks.get(aid) is task:
             self.tasks.pop(aid, None)
+            self.task_rounds.pop(aid, None)
         try:
             task.result()
         except asyncio.CancelledError:
@@ -178,9 +187,20 @@ class ActionExecutor:
         except Exception as error:
             logger.error("Agent %s task failed: %s", aid, type(error).__name__)
 
-    async def _conclude(self, aid: str, reason: str) -> None:
+    async def _conclude(
+        self, aid: str, reason: str, expected_derive_round: int | None = None
+    ) -> None:
         try:
-            await self.service.conclude(self.task_id, aid, reason)
+            await self.service.conclude(
+                self.task_id,
+                aid,
+                reason,
+                **(
+                    {"expected_derive_round": expected_derive_round}
+                    if expected_derive_round is not None
+                    else {}
+                ),
+            )
         except RemoteError as error:
             if error.status != 422:
                 raise
@@ -191,9 +211,15 @@ class ActionExecutor:
             if self._stopping:
                 return
             if agent["status"] == "running":
-                await self._conclude(aid, reason)
+                await self._conclude(
+                    aid,
+                    reason,
+                    int(agent.get("derive_round") or 1) if agent["task_type"] == "derive" else None,
+                )
 
-    async def cancel(self, aid: str, reason: str) -> bool:
+    async def cancel(self, aid: str, reason: str, expected_derive_round: int | None = None) -> bool:
+        if expected_derive_round is not None and self.task_rounds.get(aid) != expected_derive_round:
+            return False
         task = self.tasks.get(aid)
         if task is None:
             return False
