@@ -7,6 +7,26 @@ export type ProfileName = components['schemas']['ProfileName'];
 export type ProfileVersion = components['schemas']['ProfileVersion'];
 export type ProfileDocument = components['schemas']['ProfileDocument'];
 export type ProfileInput = components['schemas']['AgentProfile-Input'];
+export type PlatformModel = {
+  name: string; version: number; label: string;
+  config: ProfileInput['models']['explore'] & { platform_id?: string; platform_version?: number };
+  credential_source: 'environment' | 'stored' | 'none'; has_secret: boolean; enabled: boolean;
+};
+export type PlatformModelInput = {
+  label: string; provider: 'deepseek' | 'openai_chat' | 'openai_responses' | 'openai_compatible';
+  model: string; base_url: string; reasoning_effort: string;
+  price: ProfileInput['models']['explore']['price'];
+  credential_source: PlatformModel['credential_source']; api_key?: string; enabled: boolean;
+};
+export type McpServer = {
+  name: string; version: number; label: string; url: string; auth_header: string;
+  auth_scheme: string; has_secret: boolean; enabled: boolean;
+};
+export type McpServerInput = {
+  label: string; url: string; auth_header: string; auth_scheme: string;
+  secret?: string; clear_secret?: boolean; enabled: boolean;
+};
+export type McpTool = { name: string; description: string };
 export type BoardEvent = components['schemas']['Event'];
 export type PreviewData = { text: string; size: number; truncated: boolean; binary: boolean };
 export type AgentMessage = {
@@ -140,6 +160,14 @@ export const api = {
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions/${version}`),
   createProfileVersion: (name: string, profile: ProfileInput) =>
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
+  listPlatformModels: () => request<PlatformModel[]>('/platform/models'),
+  savePlatformModel: (name: string, input: PlatformModelInput) =>
+    request<PlatformModel>(`/platform/models/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
+  listMcpServers: () => request<McpServer[]>('/platform/mcp-servers'),
+  saveMcpServer: (name: string, input: McpServerInput) =>
+    request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
+  listMcpTools: (name: string, version: number) =>
+    request<{ tools: McpTool[] }>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
   getReport: async (id: string, signal?: AbortSignal) => (await textResponse(`${taskPath(id)}/report`, signal)).text(),
   getWorkspaceTree: (id: string) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree`),
   getWorkspaceFile: (id: string, path: string) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}`),

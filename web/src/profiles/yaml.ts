@@ -7,7 +7,7 @@ export type DiffLine = { kind: 'equal' | 'added' | 'removed'; text: string };
 const ROLES = ['explore', 'derive', 'close'] as const;
 const FIELDS = new Set([
   'models', 'params', 'prompts', 'prompt_templates', 'exec_image',
-  'exec_resources', 'privileged_allowlist',
+  'exec_resources', 'privileged_allowlist', 'worker_tools',
 ]);
 
 function record(value: unknown, label: string): Record<string, unknown> {

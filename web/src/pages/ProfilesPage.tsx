@@ -1,15 +1,16 @@
 import WorkerPrompts from '../components/WorkerPrompts';
+import PlatformCatalog from '../components/PlatformCatalog';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type ProfileInput } from '../api/client';
 import { readDefaultProfile, saveDefaultProfile } from '../profiles/preferences';
-import { diffProfileVersions, parseProfileYaml, stringifyProfileYaml } from '../profiles/yaml';
+import { parseProfileYaml, stringifyProfileYaml } from '../profiles/yaml';
 import controls from '../styles/controls.module.css';
 import { formatDate } from './format';
 import styles from './ProfilesPage.module.css';
 
-type View = 'view' | 'edit' | 'new' | 'compare';
+type View = 'view' | 'edit' | 'new';
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试。';
@@ -21,7 +22,8 @@ export default function ProfilesPage() {
   const queryClient = useQueryClient();
   const [selectedName, setSelectedName] = useState('');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const [compareVersion, setCompareVersion] = useState<number | null>(null);
+  const [section, setSection] = useState<'worker' | 'models' | 'mcp'>('worker');
+  const [catalogDirty, setCatalogDirty] = useState(false);
   const [view, setView] = useState<View>('view');
   const [newName, setNewName] = useState('');
   const [draft, setDraft] = useState('');
@@ -42,24 +44,13 @@ export default function ProfilesPage() {
     queryFn: () => api.getProfile(selectedName, selectedVersion!),
     enabled: Boolean(selectedName && selectedVersion),
   });
-  const compared = useQuery({
-    queryKey: ['profile', selectedName, compareVersion],
-    queryFn: () => api.getProfile(selectedName, compareVersion!),
-    enabled: view === 'compare' && Boolean(selectedName && compareVersion),
-  });
   const latest = profiles.data?.find((item) => item.name === selectedName)?.latest_version;
   const yaml = useMemo(
     () => document.data ? stringifyProfileYaml(document.data.profile as ProfileInput) : '',
     [document.data],
   );
-  const diff = useMemo(
-    () => document.data && compared.data
-      ? diffProfileVersions(compared.data.profile as ProfileInput, document.data.profile as ProfileInput)
-      : [],
-    [document.data, compared.data],
-  );
   const dirty = (view === 'edit' || view === 'new') && draft !== originalDraft;
-  const authError = [profiles.error, versions.error, document.error, compared.error]
+  const authError = [profiles.error, versions.error, document.error]
     .some((cause) => cause instanceof ApiError && cause.status === 401);
 
   useEffect(() => {
@@ -90,7 +81,6 @@ export default function ProfilesPage() {
     if (!canLeaveDraft()) return;
     setSelectedName(name);
     setSelectedVersion(null);
-    setCompareVersion(null);
     setView('view');
     setError('');
     setNotice('');
@@ -99,7 +89,6 @@ export default function ProfilesPage() {
   function chooseVersion(version: number) {
     if (!canLeaveDraft()) return;
     setSelectedVersion(version);
-    setCompareVersion(null);
     setView('view');
     setError('');
     setNotice('');
@@ -113,14 +102,6 @@ export default function ProfilesPage() {
     setError('');
     setNotice('');
     setView(mode);
-  }
-
-  function compare() {
-    if (!canLeaveDraft() || !versions.data) return;
-    setCompareVersion(versions.data.find((item) => item.version !== selectedVersion)?.version ?? null);
-    setView('compare');
-    setError('');
-    setNotice('');
   }
 
   async function publish() {
@@ -206,9 +187,12 @@ export default function ProfilesPage() {
       <header className={styles.pageHeader}>
         <div>
           <h1>Agent 配置</h1>
-          <p>按 worker 查看和编辑完整系统提示词；模型与参数可在高级 YAML 中调整。已有任务固定使用原版本。</p>
+          <p>配置 Worker、复用平台模型并管理外部 MCP。已有任务固定使用创建时的版本。</p>
         </div>
       </header>
+      <nav className={styles.topNav} aria-label="配置中心">
+        {([['worker', 'Worker 配置'], ['models', '平台模型'], ['mcp', 'MCP 工具']] as const).map(([id, label]) => <button key={id} type="button" className={section === id ? styles.tabActive : styles.tab} aria-current={section === id ? 'page' : undefined} onClick={() => { if (id === section) return; if (canLeaveDraft() && (!catalogDirty || window.confirm('当前平台配置尚未保存，确定放弃本次修改吗？'))) { setCatalogDirty(false); setSection(id); } }}>{label}</button>)}
+      </nav>
       {error && <p className={styles.errorBanner} role="alert">{error}</p>}
       {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
       {queryError && !authError && <div className={styles.errorBanner} role="alert">配置加载失败：{message(queryError)} <button type="button" onClick={() => {
@@ -217,7 +201,7 @@ export default function ProfilesPage() {
         if (document.isError) void document.refetch();
       }}>重试</button></div>}
 
-      <div className={styles.layout}>
+      {section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} /> : <div className={styles.layout}>
         <section className={styles.names} aria-labelledby="profiles-heading">
           <div className={styles.columnHeading}><h2 id="profiles-heading">配置</h2><span>{profiles.data?.length ?? 0}</span></div>
           {profiles.isLoading ? <div className={styles.skeletonList} role="status" aria-label="正在加载配置"><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : profiles.data?.length ? (
@@ -260,7 +244,6 @@ export default function ProfilesPage() {
               <div className={styles.toolbar}>
                 <div className={styles.tabs} role="group" aria-label="内容视图">
                   <button type="button" className={view === 'view' ? styles.tabActive : styles.tab} onClick={() => { if (canLeaveDraft()) setView('view'); }}>查看</button>
-                  <button type="button" className={view === 'compare' ? styles.tabActive : styles.tab} onClick={compare} disabled={(versions.data?.length ?? 0) < 2}>对比版本</button>
                 </div>
                 {view === 'view' && <div className={styles.actions}>
                   <button type="button" className={controls.button} onClick={saveBrowserDefault} disabled={saving || (browserDefault?.name === selectedName && browserDefault.version === selectedVersion)}>{browserDefault?.name === selectedName && browserDefault.version === selectedVersion ? '本浏览器默认' : '设为本浏览器默认'}</button>
@@ -273,23 +256,18 @@ export default function ProfilesPage() {
                 <div className={styles.editor}>
                   {view === 'new' && <div className={controls.field}><label className={controls.label} htmlFor="new-profile-name">新配置名称</label><input id="new-profile-name" className={controls.input} value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：review-specialist" autoFocus disabled={saving} /></div>}
                   <WorkerPrompts source={draft} onChange={(value) => { setDraft(value); setNotice(''); }} disabled={saving} />
-                  <p id="yaml-help" className={controls.hint}>保存会创建新版本；当前版本及已创建任务保持不变。</p>
+                  <p id="yaml-help" className={controls.hint}>保存会创建新版本；已有任务固定原配置，新任务可选择更新后的版本。</p>
                   <div className={styles.editorActions}>
                     <button type="button" className={controls.button} onClick={() => { try { parseProfileYaml(draft); setError(''); setNotice('YAML 格式和基本结构检查通过，仍需服务端校验。'); } catch (cause) { setError(message(cause)); } }} disabled={saving}>检查格式</button>
                     <button type="button" className={controls.button} onClick={() => { if (canLeaveDraft()) setView('view'); }} disabled={saving}>取消</button>
                     <button type="button" className={`${controls.button} ${controls.primary}`} onClick={() => void publish()} disabled={saving || !draft.trim()}>{saving ? '正在发布…' : '发布新版本'}</button>
                   </div>
                 </div>
-              ) : view === 'compare' ? (
-                <div className={styles.compare}>
-                  <div className={styles.compareControls}><label className={controls.label} htmlFor="compare-version">对比起点</label><select id="compare-version" className={controls.select} value={compareVersion ?? ''} onChange={(event) => setCompareVersion(Number(event.target.value))}>{versions.data?.filter((item) => item.version !== selectedVersion).map((item) => <option key={item.version} value={item.version}>v{item.version}</option>)}</select><span>→ 当前 v{selectedVersion}</span></div>
-                  {compared.isLoading ? <p className={styles.emptyDetail}>正在计算版本差异…</p> : compared.isError ? <p className={controls.error} role="alert">对比版本加载失败：{message(compared.error)}</p> : <div className={styles.diff} role="region" aria-label="YAML 版本差异" tabIndex={0}>{diff.map((line, index) => <div key={index} className={styles.diffLine} data-kind={line.kind}><span aria-label={line.kind === 'added' ? '新增' : line.kind === 'removed' ? '删除' : '未改'}>{line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' '}</span><code>{line.text || ' '}</code></div>)}</div>}
-                </div>
               ) : <WorkerPrompts source={yaml} />}
             </>
           )}
         </section>
-      </div>
+      </div>}
     </div>
   );
 }

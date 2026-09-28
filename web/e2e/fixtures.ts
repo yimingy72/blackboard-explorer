@@ -119,6 +119,17 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   const unexpected: string[] = [];
   const events = options.largeGraph ? largeGraphEvents() : ordinaryEvents();
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
+  const modelSaves: Record<string, unknown>[] = [];
+  const mcpSaves: Record<string, unknown>[] = [];
+  const platformModels = [{ name: 'review-model', version: 1, label: '审查模型',
+    config: { ...profile('x').models.explore, platform_id: 'review-model', platform_version: 1 },
+    credential_source: 'stored', has_secret: true, enabled: true }];
+  const mcpServers = [
+    { name: 'reference', version: 1, label: '资料检索', url: 'https://mcp.example.invalid/mcp',
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true },
+    { name: 'analysis', version: 1, label: '分析工具', url: 'https://analysis.example.invalid/mcp',
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: false, enabled: true },
+  ];
   const task = {
     id: TASK_ID, goal: GOAL, status: 'finished', acceptance_state: { A1: { status: 'met' } },
     cost_currency: 'CNY', usage: { cost: 0.02 }, agents: [], report_uri: `reports/${TASK_ID}/final.md`,
@@ -199,8 +210,40 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       profiles.set(version, body);
       return json(route, profileDocument(version, body));
     }
+    if (path === '/api/platform/models' && method === 'GET') return json(route, platformModels);
+    if (path === '/api/platform/mcp-servers' && method === 'GET') return json(route, mcpServers);
+    const modelMatch = /^\/api\/platform\/models\/([^/]+)$/.exec(path);
+    if (modelMatch && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      modelSaves.push(body);
+      const index = platformModels.findIndex((item) => item.name === modelMatch[1]);
+      const version = index < 0 ? 1 : platformModels[index].version + 1;
+      const saved = { name: modelMatch[1], version, label: String(body.label),
+        config: { provider: body.provider, model: body.model, base_url: body.base_url,
+          reasoning_effort: body.reasoning_effort, price: body.price, platform_id: modelMatch[1], platform_version: version },
+        credential_source: body.credential_source as 'stored', has_secret: Boolean(body.api_key) || index >= 0 && platformModels[index].has_secret,
+        enabled: Boolean(body.enabled) };
+      if (index < 0) platformModels.push(saved); else platformModels[index] = saved;
+      return json(route, saved);
+    }
+    const mcpMatch = /^\/api\/platform\/mcp-servers\/([^/]+)$/.exec(path);
+    if (mcpMatch && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      mcpSaves.push(body);
+      const index = mcpServers.findIndex((item) => item.name === mcpMatch[1]);
+      const version = index < 0 ? 1 : mcpServers[index].version + 1;
+      const saved = { name: mcpMatch[1], version, label: String(body.label), url: String(body.url),
+        auth_header: String(body.auth_header), auth_scheme: String(body.auth_scheme),
+        has_secret: Boolean(body.secret) || index >= 0 && mcpServers[index].has_secret && !body.clear_secret,
+        enabled: Boolean(body.enabled) };
+      if (index < 0) mcpServers.push(saved); else mcpServers[index] = saved;
+      return json(route, saved);
+    }
+    if (/^\/api\/platform\/mcp-servers\/[^/]+\/versions\/\d+\/tools$/.test(path) && method === 'GET') {
+      return json(route, { tools: [{ name: 'search_docs', description: '搜索文档' }, { name: 'read_docs', description: '读取文档' }] });
+    }
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
-  return { unexpected, events, profiles };
+  return { unexpected, events, profiles, modelSaves, mcpSaves };
 }

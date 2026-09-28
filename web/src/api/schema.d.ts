@@ -89,6 +89,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mcp Servers */
+        get: operations["mcp_servers_api_platform_mcp_servers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/mcp-servers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Mcp */
+        post: operations["save_mcp_api_platform_mcp_servers__name__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Tools */
+        get: operations["list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models */
+        get: operations["models_api_platform_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/models/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Model */
+        post: operations["save_model_api_platform_models__name__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/{kind}/{name}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Config Version */
+        get: operations["config_version_api_platform__kind___name__versions__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/{kind}/{name}/versions/{version}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Credentials */
+        get: operations["credentials_api_platform__kind___name__versions__version__credentials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/profiles": {
         parameters: {
             query?: never;
@@ -830,6 +949,10 @@ export interface components {
             prompt_templates: components["schemas"]["PromptTemplates"];
             /** @description 提示词模板文件路径 */
             prompts: components["schemas"]["PromptPaths"];
+            /** Worker Tools */
+            worker_tools?: {
+                [key: string]: components["schemas"]["WorkerTools"];
+            };
         };
         /** AgentProfile */
         "AgentProfile-Output": {
@@ -853,6 +976,10 @@ export interface components {
             prompt_templates: components["schemas"]["PromptTemplates"];
             /** @description 提示词模板文件路径 */
             prompts: components["schemas"]["PromptPaths"];
+            /** Worker Tools */
+            worker_tools?: {
+                [key: string]: components["schemas"]["WorkerTools"];
+            };
         };
         /** AgentRegisterBody */
         AgentRegisterBody: {
@@ -1154,6 +1281,44 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** McpBinding */
+        McpBinding: {
+            /** Allowed Tools */
+            allowed_tools?: string[] | null;
+            /** Name */
+            name: string;
+            /** Version */
+            version: number;
+        };
+        /** McpInput */
+        McpInput: {
+            /**
+             * Auth Header
+             * @default Authorization
+             */
+            auth_header: string;
+            /**
+             * Auth Scheme
+             * @default Bearer
+             */
+            auth_scheme: string;
+            /**
+             * Clear Secret
+             * @default false
+             */
+            clear_secret: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Label */
+            label: string;
+            /** Secret */
+            secret?: string | null;
+            /** Url */
+            url: string;
+        };
         /** ModelConfig */
         "ModelConfig-Input": {
             /**
@@ -1166,6 +1331,10 @@ export interface components {
              * @description 模型名称
              */
             model: string;
+            /** Platform Id */
+            platform_id?: string | null;
+            /** Platform Version */
+            platform_version?: number | null;
             /** @description 模型价格表 */
             price: components["schemas"]["Price-Input"];
             /**
@@ -1191,6 +1360,10 @@ export interface components {
              * @description 模型名称
              */
             model: string;
+            /** Platform Id */
+            platform_id?: string | null;
+            /** Platform Version */
+            platform_version?: number | null;
             /** @description 模型价格表 */
             price: components["schemas"]["Price-Output"];
             /**
@@ -1201,6 +1374,39 @@ export interface components {
             /**
              * Reasoning Effort
              * @description 推理强度
+             */
+            reasoning_effort: string;
+        };
+        /** ModelInput */
+        ModelInput: {
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Credential Source
+             * @default stored
+             * @enum {string}
+             */
+            credential_source: "environment" | "stored" | "none";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Label */
+            label: string;
+            /** Model */
+            model: string;
+            price: components["schemas"]["Price-Input"];
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "deepseek" | "openai_chat" | "openai_responses" | "openai_compatible";
+            /**
+             * Reasoning Effort
+             * @default none
              */
             reasoning_effort: string;
         };
@@ -1812,6 +2018,13 @@ export interface components {
             /** @description 满足或未满足 */
             verdict: components["schemas"]["Verdict"];
         };
+        /** WorkerTools */
+        WorkerTools: {
+            /** Builtin */
+            builtin: string[];
+            /** Mcp Servers */
+            mcp_servers?: components["schemas"]["McpBinding"][];
+        };
         /** WorkspaceEntryView */
         WorkspaceEntryView: {
             /**
@@ -1979,6 +2192,228 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+        };
+    };
+    mcp_servers_api_platform_mcp_servers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    save_mcp_api_platform_mcp_servers__name__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    models_api_platform_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    save_model_api_platform_models__name__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    config_version_api_platform__kind___name__versions__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "models" | "mcp-servers";
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    credentials_api_platform__kind___name__versions__version__credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "models" | "mcp-servers";
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

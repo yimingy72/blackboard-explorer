@@ -89,16 +89,12 @@ test('工作区目录、文件预览与 Markdown 报告', async ({ page }) => {
   expect(mock.unexpected).toEqual([]);
 });
 
-test('Profile YAML 校验、版本比较、发布与本浏览器默认', async ({ page }) => {
+test('Profile YAML 校验、发布与本浏览器默认', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto('/profiles');
   await expect(page.getByRole('heading', { name: 'Agent 配置' })).toBeVisible();
   await page.getByRole('button', { name: /^v1/ }).click();
-  await page.getByRole('button', { name: '对比版本' }).click();
-  const diff = page.getByRole('region', { name: 'YAML 版本差异' });
-  await expect(diff).toContainText('旧版探索模板');
-  await expect(diff).toContainText('新版探索模板');
-  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await expect(page.getByRole('button', { name: '对比版本' })).toHaveCount(0);
   await page.getByRole('button', { name: '编辑并发布新版本' }).click();
   await page.getByRole('button', { name: '高级 YAML', exact: true }).click();
   const editor = page.getByLabel('完整 AgentProfile YAML');
@@ -148,10 +144,10 @@ test('worker 提示词完整编辑、跨模式保留、发布并重新读取', a
   const source = await yaml.inputValue();
   expect(source).toContain('新的推导规则');
   await yaml.fill('models: [');
-  await page.getByRole('button', { name: 'Worker 提示词', exact: true }).click();
+  await page.getByRole('button', { name: 'Worker 配置', exact: true }).last().click();
   await expect(page.getByRole('status')).toContainText('草稿已保留');
   await yaml.fill(source);
-  await page.getByRole('button', { name: 'Worker 提示词', exact: true }).click();
+  await page.getByRole('button', { name: 'Worker 配置', exact: true }).last().click();
   await page.getByRole('button', { name: 'Explore · 探索', exact: true }).click();
   await expect(page.getByLabel('完整系统提示词 · explore')).toHaveValue(explore);
   await page.getByRole('button', { name: '发布新版本', exact: true }).click();
@@ -165,6 +161,62 @@ test('worker 提示词完整编辑、跨模式保留、发布并重新读取', a
   await page.screenshot({ path: '../.data/checkpoints/cny-worker-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: '../.data/checkpoints/cny-worker-desktop.png', fullPage: true });
+  expect(mock.unexpected).toEqual([]);
+});
+
+test('平台模型与 MCP 密钥只写、工具清单可读取', async ({ page }) => {
+  const mock = await installMockApi(page);
+  await page.goto('/profiles');
+  await page.getByRole('button', { name: '平台模型' }).click();
+  await page.getByRole('button', { name: /审查模型/ }).click();
+  const modelEditor = page.getByRole('region', { name: '平台模型编辑' });
+  await expect(modelEditor.getByLabel('API 密钥')).toHaveValue('');
+  await modelEditor.getByLabel('显示名称').fill('审查模型新版');
+  await modelEditor.getByRole('button', { name: '保存新版本' }).click();
+  await expect(modelEditor.getByRole('status')).toContainText('v2');
+  expect(mock.modelSaves[0]).not.toHaveProperty('api_key');
+  expect(mock.modelSaves[0]).toHaveProperty('price.currency', 'CNY');
+  await page.getByRole('button', { name: 'MCP 工具' }).click();
+  await page.getByRole('button', { name: /资料检索/ }).click();
+  const mcpEditor = page.getByRole('region', { name: 'MCP 服务编辑' });
+  await expect(mcpEditor.getByLabel('认证密钥')).toHaveValue('');
+  await mcpEditor.getByRole('button', { name: /查看 v1 工具清单/ }).click();
+  await expect(mcpEditor.getByText('search_docs')).toBeVisible();
+  await mcpEditor.getByLabel('显示名称').fill('资料检索新版');
+  await mcpEditor.getByRole('button', { name: '保存新版本' }).click();
+  expect(mock.mcpSaves[0]).not.toHaveProperty('secret');
+  await page.screenshot({ path: '../.data/checkpoints/platform-config/mcp-desktop.png', fullPage: true });
+  expect(mock.unexpected).toEqual([]);
+});
+
+test('Worker 表单保存模型快照、MCP 白名单及调度环境，切换草稿受保护', async ({ page }) => {
+  const mock = await installMockApi(page);
+  await page.goto('/profiles');
+  await page.getByRole('button', { name: '编辑并发布新版本' }).click();
+  await page.getByLabel('完整系统提示词 · explore').fill('未保存的探索提示词');
+  page.once('dialog', (dialog) => void dialog.dismiss());
+  await page.getByRole('button', { name: '平台模型' }).click();
+  await expect(page.getByLabel('完整系统提示词 · explore')).toHaveValue('未保存的探索提示词');
+  await page.getByLabel('平台模型').selectOption('review-model@1');
+  await page.getByLabel('资料检索 · v1').check();
+  await page.getByLabel('分析工具 · v1').check();
+  await page.getByRole('button', { name: '读取 资料检索 工具清单' }).click();
+  await page.getByLabel('read_docs').uncheck();
+  await page.getByText('调度参数与执行环境').click();
+  await page.getByLabel('CPU').fill('3');
+  await page.screenshot({ path: '../.data/checkpoints/platform-config/worker-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: '发布新版本' }).click();
+  await expect(page.getByRole('heading', { name: 'default · v3' })).toBeVisible();
+  const published = mock.profiles.get(3)!;
+  expect(published.models.explore).toHaveProperty('platform_id', 'review-model');
+  expect(published.models.explore).toHaveProperty('platform_version', 1);
+  expect(published.worker_tools?.explore?.mcp_servers).toEqual([
+    { name: 'reference', version: 1, allowed_tools: ['search_docs'] },
+    { name: 'analysis', version: 1, allowed_tools: null },
+  ]);
+  expect(published.exec_resources.cpus).toBe(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '../.data/checkpoints/platform-config/worker-mobile.png', fullPage: true });
   expect(mock.unexpected).toEqual([]);
 });
 
