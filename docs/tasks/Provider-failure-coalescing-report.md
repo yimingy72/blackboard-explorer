@@ -31,6 +31,12 @@
 - 任一正常 Agent 完成会清空窗口，这表示任务仍可取得模型响应；它不改变单个 Intent 的语义结果。
 - 本轮不修改 SDK 重试次数、默认并发、提示词、预算或领域策略，也不自动续跑失败任务。
 
+## 本地部署
+
+- 已部署 blackboard/runtime 与 schema0011；两容器健康、重启次数均为 0。部署前备份位于 `.data/backups/pre-provider-failure-coalescing.dump`。
+- 生产烟测直接通过领域/数据库接口提交 4 个并行 transient connection 结束事件：任务保持非终态、failure streak=1、窗口种类为 model_transient。临时任务及对象随后完整清理。
+- 失败任务 `ae3919e0-ffca-47d0-954f-3dccb3a5c5f6` 的 15 条 Fact、14 条 Intent、17 个 Agent、Session 和归档保持不变；没有自动续跑或模型调用。
+
 ## 提交划分
 
 设计合同；Runner 结构化 transient 回执；领域规则与数据库迁移/投影；集成场景、报告和部署记录。部署前备份数据库，升级 schema0011 后进行无模型 HTTP/DB 烟测。

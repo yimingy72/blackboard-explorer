@@ -41,11 +41,13 @@
   | Completion-review | ✅ 明确完成可免复核，其余正常收尾必经derive与再次Close；事务门控/过期失效/无效回执保护；509普通、55集成、32前端、17浏览器通过，schema0007已部署（2026-09-28） |
   | Runtime-continuation | ✅ 同任务续跑/归档恢复、Derive同ID会话复用与轮次隔离、MAF看图、证据分页、峰谷计费及审计校正；545普通/59集成/32前端/18浏览器通过，schema0010已部署，真实DeepSeek看图通过（2026-09-28） |
   | Runtime-failure-hardening | ✅ NUL安全会话、SDK瞬时错误4次重试、脱敏model_error trace、Derive分轮初始上下文；570普通/62集成/33前端/18浏览器通过并部署（2026-09-28） |
+  | Provider-failure-coalescing | ✅ 同一120秒窗口内并行模型瞬时故障只计一次，不消耗Intent/种子尝试；终态冻结与Close重试同步修复；580普通/65集成通过，schema0011已部署（2026-09-29） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；用户已允许按需使用GPT-6 Sol high协作开发。
 - **最新运行能力**：Runtime-continuation已合并部署；任务页可显式续跑（保留黑板/会话/旧产物、追加预算与活动时间，软硬链接/系统包/进程不恢复）。derive同ID多轮复用，旧轮token/请求受事务隔离；超阈值仅切模型输入段，完整会话不删除。新增view_image、证据分页与官方DeepSeek峰谷估算；最新任务4a695a5b费用校正v5532，由约¥10.89改为¥5.45，未自动重新执行。默认模型v2使用时段估算；545普通/59容器/32前端/18浏览器与独立DeepSeek红图测试通过，实测视觉估算¥0.00242224。详见[实施及性能报告](tasks/Runtime-continuation-report.md)。
 - **最新故障修复**：任务425ceb85因3次模型请求异常连续触发失败；另有13次命令二进制NUL导致Session JSONB写入失败。现已在PostgreSQL边界转写U+0000、为DeepSeek/OpenAI系启用SDK 4次瞬时错误重试、持久化脱敏model_error类别/状态/请求ID，并按derive轮次保存初始上下文。570普通、62容器集成、33前端、18浏览器通过；部署HTTP NUL烟测成功，失败任务未自动续跑。见[运行失败收敛报告](tasks/Runtime-failure-hardening-report.md)。
+- **并发故障合并**：任务ae3919e0的4个Agent在13秒内各自耗尽5次连接尝试，旧策略在第三个结束时误判为三次独立失败。现将120秒内的connection/timeout/429/409/5xx合并为一个任务级故障，不消耗Intent attempts或种子空产；持续跨三个窗口仍终止，正常完成清空窗口，终态后交接不改写失败计数。580普通/65容器集成及生产4并发事件烟测通过，schema0011已部署；原任务未自动续跑。见[模型瞬时故障合并报告](tasks/Provider-failure-coalescing-report.md)。
 - **最新调度与验证**：普通met不再直接收尾；只有Close逐项记录明确完成依据及支撑事实、且覆盖最新黑板，才能免derive。其余静止任务必须“完成复核”derive，再由Close裁定；新黑板变化使旧复核失效，失败/拒绝/假空回执不可通过。关闭主动推导仍保留必要复核，single新旧评估口径不能混算。509普通、55集成、32前端、17浏览器通过；schema0007/worker revision5已部署，两个容器无重启，原3任务保留。见[Completion-review报告](tasks/Completion-review-report.md)。
 - **Worker-settings交付记录**：Worker页面仅explore/derive/close直接编辑，隐藏历史版本、配置名、浏览器默认、内部标识。平台默认模型跨浏览器保存，任务创建选择模型；三角色共用任务模型。系统提示词保存后下一模型调用生效，模型/工具/预算仍固定。支持17种MAF Python连接方式；凭据全部平台加密保存，旧DeepSeek环境key已自动迁移为stored。schema0006，两个容器无重启、唯一运行锁；原3个任务USD账本保留。481普通、48集成、32前端、17浏览器通过，本轮无真实收费调用。见[Worker-settings报告](tasks/Worker-settings-report.md)。
 - **Platform-config交付记录**：Agent配置页有Worker配置、平台模型、MCP工具三个入口，移除版本对比。支持DeepSeek/OpenAI Chat Completions/Responses/OpenAI兼容接口；Explore可挂载Streamable HTTP MCP并选工具。平台密钥加密且只写，已有DeepSeek复用环境密钥。default/single v3以人民币计价，旧3个任务保持USD；schema0005，服务运行正常。435普通、47集成、37前端、18浏览器通过，本轮未调用真实模型。见[Platform-config报告](tasks/Platform-config-report.md)。
@@ -364,6 +366,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 ## 6.1 设计文档待同步
 
 Runtime-failure-hardening已同步设计与任务合同：对象存储保留完整工具记录，PostgreSQL/Session边界转写U+0000；OpenAI系使用SDK有界瞬时重试；最终错误只保存脱敏类别和请求标识；derive initial_context按轮次唯一。无待同步项。
+
+Provider-failure-coalescing已同步设计与任务合同：transient模型错误按任务120秒锚定窗口合并，Intent/种子不受基础设施错误惩罚，持续三窗口仍失败；事件固化增量以保证replay，续跑/正常完成清窗口，终态冻结触发时计数。无待同步项。
 
 Runtime-continuation已按用户确认同步设计与任务合同：同任务续跑、活动时长/历史产物、derive同ID复用与轮次隔离、完整Session的有界模型输入视图、MAF图片引用持久化、证据分页、峰谷估算及审计校正。无待同步项；取代旧“终态不能续跑、derive每次新建、价格只按固定快照”描述。
 
