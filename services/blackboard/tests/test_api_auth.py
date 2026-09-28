@@ -260,6 +260,7 @@ async def test_task_inherits_selected_profile_params_with_task_override() -> Non
         async def get(self, name, version):
             assert (name, version) == ("custom", 4)
             return {
+                "name": "custom",
                 "version": 4,
                 "params": {"explore_max_steps": 7, "seed_max_steps": 3},
             }

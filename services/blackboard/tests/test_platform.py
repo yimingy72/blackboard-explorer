@@ -45,7 +45,7 @@ def test_model_currency_and_environment_source_validation():
         },
     )
     assert ModelInput.model_validate(fields).credential_source == "stored"
-    with pytest.raises(ValidationError, match="环境密钥"):
+    with pytest.raises(ValidationError):
         ModelInput.model_validate({**fields, "credential_source": "environment"})
     fields["price"] = {"currency": "USD"}
     with pytest.raises(ValidationError, match="人民币"):

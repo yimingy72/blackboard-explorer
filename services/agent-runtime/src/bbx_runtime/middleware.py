@@ -8,7 +8,7 @@ import logging
 import secrets
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     ChatContext,
@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
+from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.trace import model_content, record_trace
 
 DIGEST_TYPES = {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
@@ -208,13 +209,34 @@ def _render_events(events: Sequence[Mapping[str, Any]], aid: str, max_lines: int
     return lines
 
 
-def _usage(details: Mapping[str, Any] | None, price: Price) -> tuple[Usage, str | None]:
+def _separate_cache_input(provider: str | None) -> bool:
+    return bool(provider and (provider.startswith("anthropic") or provider == "bedrock"))
+
+
+def _input_tokens(details: Mapping[str, Any] | None, provider: str | None = None) -> int:
+    details = details or {}
+    total = int(details.get("input_token_count") or 0)
+    if _separate_cache_input(provider):
+        total += int(details.get("cache_creation_input_token_count") or 0)
+        total += int(details.get("cache_read_input_token_count") or 0)
+    return total
+
+
+def _usage(
+    details: Mapping[str, Any] | None, price: Price, provider: str | None = None
+) -> tuple[Usage, str | None]:
     details = details or {}
     total_input = int(details.get("input_token_count") or 0)
-    raw_hit = details.get("prompt_cache_hit_tokens")
-    hit = int(raw_hit if raw_hit is not None else details.get("cache_read_input_token_count") or 0)
-    raw_miss = details.get("prompt_cache_miss_tokens")
-    miss = int(raw_miss if raw_miss is not None else max(0, total_input - hit))
+    if _separate_cache_input(provider):
+        hit = int(details.get("cache_read_input_token_count") or 0)
+        miss = total_input + int(details.get("cache_creation_input_token_count") or 0)
+    else:
+        raw_hit = details.get("prompt_cache_hit_tokens")
+        hit = int(
+            raw_hit if raw_hit is not None else details.get("cache_read_input_token_count") or 0
+        )
+        raw_miss = details.get("prompt_cache_miss_tokens")
+        miss = int(raw_miss if raw_miss is not None else max(0, total_input - hit))
     output = int(details.get("output_token_count") or 0)
     reasoning = int(details.get("reasoning_output_token_count") or 0)
     rates = (price.cache_hit_per_m, price.cache_miss_per_m, price.output_per_m)
@@ -247,6 +269,7 @@ class BoardSyncMiddleware(ChatMiddleware):
         self.price_warning: str | None = None
         self._warned_missing_price = False
         self.last_publication_check_version = int(ctx.state["task"].get("version") or 0)
+        self.prompt_provider = OpeningContextProvider(ctx, ctx.checkpoint)
 
     async def _inject_user_messages(self, context: ChatContext) -> None:
         checkpoint = self.ctx.checkpoint
@@ -303,6 +326,19 @@ class BoardSyncMiddleware(ChatMiddleware):
             raise RuntimeError(f"Agent {self.ctx.agent_id} is missing from the blackboard")
         last_seen = int(agent["last_seen_version"])
         step = int(agent.get("steps") or 0) + 1
+        checkpoint = self.ctx.checkpoint
+        if checkpoint is not None:
+            self.prompt_provider.current_instructions = checkpoint.opening_instructions
+            self.prompt_provider.prompt_revision = checkpoint.prompt_revision
+        if (
+            getattr(self.ctx.service, "get_worker_prompt", None) is not None
+            or self.prompt_provider.current_instructions
+        ):
+            instructions = await self.prompt_provider.refresh(
+                board if "task" in board else self.ctx.state, step=step
+            )
+            # The opening provider's instructions are already in these options.
+            cast(dict[str, Any], context.options)["instructions"] = instructions
         if self.ctx.task_type == "explore":
             last_seen = max(last_seen, self.last_appended_version)
             events = await self.ctx.board.events(
@@ -335,8 +371,8 @@ class BoardSyncMiddleware(ChatMiddleware):
             output, reasoning = model_content(response)
             await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
         details = response.usage_details if isinstance(response, ChatResponse) else None
-        price = getattr(self.ctx.profile.models, self.ctx.task_type).price
-        usage, self.price_warning = _usage(details, price)
+        model = getattr(self.ctx.profile.models, self.ctx.task_type)
+        usage, self.price_warning = _usage(details, model.price, model.provider)
         if self.price_warning and not self._warned_missing_price:
             logger.warning("Model price is not configured; cost is recorded as zero")
             self._warned_missing_price = True
@@ -344,7 +380,7 @@ class BoardSyncMiddleware(ChatMiddleware):
             self.ctx.task_id,
             self.ctx.agent_id,
             steps=1,
-            context_tokens=int(details.get("input_token_count") or 0) if details else 0,
+            context_tokens=_input_tokens(details, model.provider),
             usage=usage,
             last_seen_version=last_seen,
         )

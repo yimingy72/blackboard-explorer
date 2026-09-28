@@ -13,7 +13,13 @@ from agent_framework import Agent, AgentSession, BaseChatClient, Content, Messag
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.middleware import _usage
-from bbx_runtime.models import load_runtime_profile, make_client, model_api_key, model_run_options
+from bbx_runtime.models import (
+    close_model_client,
+    load_runtime_profile,
+    make_client,
+    model_run_options,
+    resolve_model_credentials,
+)
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
     SessionCheckpoint,
@@ -167,7 +173,7 @@ class ChatWorker:
                 await checkpoint.save()
             raw_usage = checkpoint.session.state.get("bbx_review_usage", {}).get(message_id)
             recovered_usage = (
-                _usage(raw_usage, model.price)[0].model_dump(mode="json")
+                _usage(raw_usage, model.price, model.provider)[0].model_dump(mode="json")
                 if raw_usage
                 else {"unavailable": True}
             )
@@ -180,12 +186,12 @@ class ChatWorker:
                 if recovered is not None:
                     answer, usage = recovered, recovered_usage
                 else:
-                    api_key = await model_api_key(
+                    credentials = await resolve_model_credentials(
                         self.service, model, self.settings.deepseek_api_key.get_secret_value()
                     )
                     client = make_client(
                         model,
-                        api_key=api_key,
+                        credentials=credentials,
                         explore_max_steps=3,  # make_client adds five; eight tool iterations total.
                         conclude_grace_calls=0,
                         max_duration_seconds=180,
@@ -227,7 +233,7 @@ class ChatWorker:
                     answer = response.text
                     raw_usage = checkpoint.session.state.get("bbx_review_usage", {}).get(message_id)
                     usage = (
-                        _usage(raw_usage, model.price)[0].model_dump(mode="json")
+                        _usage(raw_usage, model.price, model.provider)[0].model_dump(mode="json")
                         if raw_usage
                         else {"unavailable": True}
                     )
@@ -269,9 +275,8 @@ class ChatWorker:
                 if failure.status != 409:
                     raise
         finally:
-            owned = getattr(client, "client", None)
-            if owned is not None:
-                await owned.close()
+            if client is not None:
+                await close_model_client(client)
 
     async def run(self) -> None:
         try:

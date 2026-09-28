@@ -65,6 +65,10 @@ class ReviewService:
     async def get_profile(self, _name, _version):
         return self.profile
 
+    async def get_model_credentials(self, name, version):
+        assert (name, version) == ("deepseek-default", 1)
+        return {"credential_source": "stored", "secret": None, "credentials": {"api_key": "test"}}
+
     async def get_agent_session(self, _task_id, _agent_id):
         if self.session is None:
             raise RemoteError(404, "missing")

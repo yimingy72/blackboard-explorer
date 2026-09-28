@@ -12,6 +12,12 @@ from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import SchedulerSettings
 
 
+async def _import_legacy_key(settings: SchedulerSettings, service: BlackboardClient) -> None:
+    api_key = settings.deepseek_api_key.get_secret_value()
+    if api_key:
+        await service.import_environment_key(api_key)
+
+
 async def serve(settings: SchedulerSettings) -> None:
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -25,6 +31,7 @@ async def serve(settings: SchedulerSettings) -> None:
                 settings.blackboard_url, settings.service_token.get_secret_value()
             ) as service,
         ):
+            await _import_legacy_key(settings, service)
             objects = object_store(settings)
             manager = ExecEnvManager(settings, objects=objects)
             runner = AgentRunner(settings, service, objects, manager)

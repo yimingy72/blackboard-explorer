@@ -9,6 +9,7 @@ from typing import Any
 
 from bbx_contracts.models import AgentProfile
 from bbx_contracts.profile import load_profile
+from fastapi import HTTPException
 from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -67,7 +68,14 @@ class ProfileStore:
                 raise KeyError(name)
             return dict(row)
 
-    async def create(self, name: str, profile: AgentProfile, created_by: str) -> dict[str, Any]:
+    async def create(
+        self,
+        name: str,
+        profile: AgentProfile,
+        created_by: str,
+        *,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
         content = _content(profile)
         # Serialize version assignment for concurrent app startups or editors.
         lock = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "big", signed=True)
@@ -85,6 +93,12 @@ class ProfileStore:
                 .mappings()
                 .first()
             )
+            if expected_version is not None and (
+                current is None or current["version"] != expected_version
+            ):
+                raise HTTPException(
+                    409, "设置已被其他操作更新，请重新加载后再保存，当前草稿未被覆盖"
+                )
             if current is not None and _digest(_row_content(dict(current))) == _digest(content):
                 return dict(current)
             version = current["version"] + 1 if current is not None else 1

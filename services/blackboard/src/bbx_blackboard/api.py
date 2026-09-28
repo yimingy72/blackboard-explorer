@@ -49,6 +49,8 @@ from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.worker_settings import router as settings_router
+from bbx_blackboard.worker_settings import task_profile
 from bbx_blackboard.workspace import (
     ArchiveTooLarge,
     InvalidArchive,
@@ -64,6 +66,8 @@ class LoginBody(BaseModel):
 
 
 class TaskCreateBody(TaskSpec):
+    model_id: str | None = Field(default=None, min_length=1)
+    model_version: int | None = Field(default=None, ge=1)
     profile_version: int | None = Field(default=None, ge=1)
 
 
@@ -457,13 +461,23 @@ def create_app(
     async def create_task(request: Request, body: TaskCreateBody) -> TaskCreated:
         require_user_or_service(request)
         profiles = _profiles(request)
-        row = await profiles.get(body.agent_profile, body.profile_version)
-        spec = body.model_dump(exclude={"profile_version"})
+        if body.model_version is not None and body.model_id is None:
+            raise HTTPException(422, "模型版本需要同时指定模型")
+        if body.model_id is not None or (
+            body.agent_profile == "default" and body.profile_version is None
+        ):
+            row = await task_profile(
+                profiles, request.app.state.platform_store, body.model_id, body.model_version
+            )
+        else:
+            row = await profiles.get(body.agent_profile, body.profile_version)
+        spec = body.model_dump(exclude={"profile_version", "model_id", "model_version"})
+        spec["agent_profile"] = row["name"]
         spec["params"] = {**row["params"], **body.params}
         task_id = await _service(request).create_task(spec, profile_version=row["version"])
         return TaskCreated(
             id=task_id,
-            agent_profile=body.agent_profile,
+            agent_profile=row["name"],
             agent_profile_version=row["version"],
         )
 
@@ -1078,6 +1092,7 @@ def create_app(
         return _profile_document(row)
 
     app.include_router(platform_router)
+    app.include_router(settings_router)
     web_dist = _web_dist()
     if web_dist.is_dir():
         app.mount("/", SPAStaticFiles(directory=web_dist, html=True), name="web")

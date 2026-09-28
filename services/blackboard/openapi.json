@@ -826,6 +826,21 @@
         "title": "HeartbeatBody",
         "type": "object"
       },
+      "ImportKey": {
+        "properties": {
+          "api_key": {
+            "format": "password",
+            "title": "Api Key",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "api_key"
+        ],
+        "title": "ImportKey",
+        "type": "object"
+      },
       "IntentResult": {
         "enum": [
           "confirmed",
@@ -993,6 +1008,13 @@
             "title": "Provider",
             "type": "string"
           },
+          "provider_options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Provider Options",
+            "type": "object"
+          },
           "reasoning_effort": {
             "description": "推理强度",
             "minLength": 1,
@@ -1059,6 +1081,13 @@
             "title": "Provider",
             "type": "string"
           },
+          "provider_options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Provider Options",
+            "type": "object"
+          },
           "reasoning_effort": {
             "description": "推理强度",
             "minLength": 1,
@@ -1093,18 +1122,27 @@
             "title": "Api Key"
           },
           "base_url": {
+            "default": "",
             "title": "Base Url",
             "type": "string"
           },
           "credential_source": {
             "default": "stored",
             "enum": [
-              "environment",
               "stored",
               "none"
             ],
             "title": "Credential Source",
             "type": "string"
+          },
+          "credentials": {
+            "additionalProperties": {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            "title": "Credentials",
+            "type": "object"
           },
           "enabled": {
             "default": true,
@@ -1127,14 +1165,15 @@
             "$ref": "#/components/schemas/Price-Input"
           },
           "provider": {
-            "enum": [
-              "deepseek",
-              "openai_chat",
-              "openai_responses",
-              "openai_compatible"
-            ],
             "title": "Provider",
             "type": "string"
+          },
+          "provider_options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Provider Options",
+            "type": "object"
           },
           "reasoning_effort": {
             "default": "none",
@@ -1147,7 +1186,6 @@
           "label",
           "provider",
           "model",
-          "base_url",
           "price"
         ],
         "title": "ModelInput",
@@ -1863,6 +1901,42 @@
         "title": "ReleaseBody",
         "type": "object"
       },
+      "RuntimeUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "exec_image": {
+            "minLength": 1,
+            "title": "Exec Image",
+            "type": "string"
+          },
+          "exec_resources": {
+            "$ref": "#/components/schemas/ExecResources"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "params": {
+            "$ref": "#/components/schemas/Params-Input"
+          },
+          "privileged_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Privileged Allowlist",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "params",
+          "exec_image",
+          "exec_resources"
+        ],
+        "title": "RuntimeUpdate",
+        "type": "object"
+      },
       "SearchHit": {
         "properties": {
           "id": {
@@ -2040,6 +2114,30 @@
             "minLength": 1,
             "title": "Goal",
             "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
           },
           "params": {
             "additionalProperties": {
@@ -2472,6 +2570,31 @@
         "title": "WorkerTools",
         "type": "object"
       },
+      "WorkerUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "prompt": {
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/WorkerTools"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "prompt",
+          "tools"
+        ],
+        "title": "WorkerUpdate",
+        "type": "object"
+      },
       "WorkspaceEntryView": {
         "properties": {
           "kind": {
@@ -2719,6 +2842,51 @@
         ]
       }
     },
+    "/api/platform/import-environment-key": {
+      "post": {
+        "operationId": "import_key_api_platform_import_environment_key_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Import Key Api Platform Import Environment Key Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Key",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/platform/mcp-servers": {
       "get": {
         "operationId": "mcp_servers_api_platform_mcp_servers_get",
@@ -2740,6 +2908,47 @@
           }
         },
         "summary": "Mcp Servers",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "operationId": "new_mcp_api_platform_mcp_servers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response New Mcp Api Platform Mcp Servers Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "New Mcp",
         "tags": [
           "platform"
         ]
@@ -2876,6 +3085,47 @@
         "tags": [
           "platform"
         ]
+      },
+      "post": {
+        "operationId": "new_model_api_platform_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response New Model Api Platform Models Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "New Model",
+        "tags": [
+          "platform"
+        ]
       }
     },
     "/api/platform/models/{name}": {
@@ -2927,6 +3177,78 @@
           }
         },
         "summary": "Save Model",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/models/{name}/default": {
+      "post": {
+        "operationId": "default_model_api_platform_models__name__default_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Default Model Api Platform Models  Name  Default Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Default Model",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/providers": {
+      "get": {
+        "operationId": "providers_api_platform_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Providers Api Platform Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Providers",
         "tags": [
           "platform"
         ]
@@ -3233,6 +3555,196 @@
         "summary": "Profile Version",
         "tags": [
           "profiles"
+        ]
+      }
+    },
+    "/api/settings/prompts/{role}": {
+      "get": {
+        "operationId": "prompt_api_settings_prompts__role__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "explore",
+                "derive",
+                "close"
+              ],
+              "title": "Role",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Prompt Api Settings Prompts  Role  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prompt",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/runtime": {
+      "put": {
+        "operationId": "update_runtime_api_settings_runtime_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Runtime Api Settings Runtime Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Runtime",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/workers": {
+      "get": {
+        "operationId": "workers_api_settings_workers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Workers Api Settings Workers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Workers",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/workers/{role}": {
+      "put": {
+        "operationId": "update_worker_api_settings_workers__role__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "explore",
+                "derive",
+                "close"
+              ],
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Worker Api Settings Workers  Role  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Worker",
+        "tags": [
+          "settings"
         ]
       }
     },

@@ -859,3 +859,115 @@ async def test_platform_credentials_versions_and_profile_bindings(board_service)
     assert (await store.credentials("mcp-servers", "tools", 1))["secret"] == "mcp-fixture-secret"
     with pytest.raises(HTTPException):
         await store.save("models", "missing-key", ModelInput.model_validate(fields), "tester")
+
+
+async def test_direct_worker_settings_default_model_and_pinned_task(board_service):
+    import httpx
+    from bbx_blackboard.api import create_app
+    from bbx_blackboard.platform import PlatformStore
+    from bbx_blackboard.profiles import ProfileStore
+    from bbx_blackboard.settings import Settings
+    from bbx_contracts.models import BUILTIN_TOOLS
+    from pydantic import SecretStr
+
+    platform = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
+    profiles = ProfileStore(board_service.repo.engine)
+    await profiles.ensure_bundled(
+        Path(__file__).resolve().parents[3] / "profiles/default", platform
+    )
+    assert await platform.import_environment_key("fixture-existing-environment-key") >= 1
+    assert await platform.import_environment_key("must-not-overwrite-user-key") == 0
+    imported = await platform.credentials("models", "deepseek-default", 1)
+    assert imported["credentials"]["api_key"] == "fixture-existing-environment-key"
+    settings = Settings.model_construct(
+        postgres_password=SecretStr("test"),
+        minio_root_password=SecretStr("test"),
+        agent_token_secret=SecretStr("test-secret-for-platform-encryption"),
+        service_token=SecretStr("worker-api-service"),
+        admin_users=SecretStr("user:pass"),
+    )
+    app = create_app(settings, engine=board_service.repo.engine, objects=FakeObjects())
+    headers = {"Authorization": "Bearer worker-api-service"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers
+    ) as client:
+        current = (await client.get("/api/settings/workers")).json()
+        body = {
+            "expected_revision": current["revision"],
+            "prompt": "New worker instruction {{ goal }}",
+            "tools": {"builtin": sorted(BUILTIN_TOOLS["explore"]), "mcp_servers": []},
+        }
+        saved = await client.put("/api/settings/workers/explore", json=body)
+        assert saved.status_code == 200, saved.text
+        revision = saved.json()["revision"]
+        assert revision > current["revision"]
+        stale = await client.put(
+            "/api/settings/workers/explore", json={**body, "prompt": "stale text"}
+        )
+        assert stale.status_code == 409
+        assert (
+            await client.get("/api/settings/prompts/explore", params={"since": revision})
+        ).json()["prompt"] is None
+        assert (await client.get("/api/settings/prompts/explore", params={"since": 0})).json()[
+            "prompt"
+        ] == body["prompt"]
+        bad = await client.put(
+            "/api/settings/workers/explore",
+            json={**body, "expected_revision": revision, "prompt": "{{ unsupported_variable }}"},
+        )
+        assert bad.status_code == 422
+        model = await client.post(
+            "/api/platform/models",
+            json={
+                "label": "Task model",
+                "provider": "openai_chat",
+                "model": "chosen-model",
+                "base_url": "https://example.invalid/v1",
+                "credentials": {"api_key": "fixture-platform-key"},
+                "price": {
+                    "currency": "CNY",
+                    "cache_hit_per_m": 0,
+                    "cache_miss_per_m": 1,
+                    "output_per_m": 2,
+                    "off_peak": False,
+                },
+            },
+        )
+        assert model.status_code == 200, model.text
+        model_data = model.json()
+        assert model_data["name"].startswith("model-")
+        assert "fixture-platform-key" not in model.text
+        assert model_data["configured_credentials"] == ["api_key"]
+        assert (
+            await client.post(f"/api/platform/models/{model_data['name']}/default")
+        ).status_code == 200
+        assert (await platform.default_model_name()) == model_data["name"]
+        listed = (await client.get("/api/platform/models")).json()
+        assert [item["name"] for item in listed if item["is_default"]] == [model_data["name"]]
+        spec = {
+            "goal": "Check task model",
+            "acceptance": [{"id": "A1", "desc": "Evidence"}],
+            "budget": {"max_cost": "1", "max_minutes": 10},
+            "agent_profile": "default",
+        }
+        created = await client.post("/api/tasks", json=spec)
+        assert created.status_code == 200, created.text
+        task = created.json()
+        snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
+        assert {item["model"] for item in snapshot["models"].values()} == {"chosen-model"}
+        assert snapshot["prompt_templates"]["explore"] == body["prompt"]
+        await client.put(
+            "/api/settings/workers/explore",
+            json={**body, "expected_revision": revision, "prompt": "Live follow-up {{ goal }}"},
+        )
+        old_snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
+        assert old_snapshot["prompt_templates"]["explore"] == body["prompt"]
+        assert (await client.get("/api/settings/prompts/explore")).json()[
+            "prompt"
+        ] == "Live follow-up {{ goal }}"
+        await profiles.ensure_bundled(
+            Path(__file__).resolve().parents[3] / "profiles/default", platform
+        )
+        assert (await profiles.get("default"))["prompt_templates"][
+            "explore"
+        ] == "Live follow-up {{ goal }}"

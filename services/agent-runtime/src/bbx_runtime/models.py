@@ -2,19 +2,39 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, cast
 
-from agent_framework import BaseChatClient, Content, UsageDetails
+from agent_framework import (
+    BaseChatClient,
+    Content,
+    FunctionInvocationConfiguration,
+    UsageDetails,
+)
+from agent_framework.amazon import BedrockChatClient
+from agent_framework.anthropic import (
+    AnthropicBedrockClient,
+    AnthropicClient,
+    AnthropicFoundryClient,
+    AnthropicVertexClient,
+)
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.gemini import GeminiChatClient
+from agent_framework.mistral import MistralChatClient
+from agent_framework.ollama import OllamaChatClient
 from agent_framework.openai import (
     OpenAIChatClient,
     OpenAIChatCompletionClient,
     OpenAIChatCompletionOptions,
 )
+from azure.identity.aio import ClientSecretCredential
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.profile import load_profile
-from openai import AsyncOpenAI
+from bbx_contracts.providers import PROVIDERS
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
@@ -55,6 +75,12 @@ class DeepSeekChatClient(OpenAIChatCompletionClient):
         return cast(UsageDetails, details)
 
 
+class PlatformFoundryChatClient(FoundryChatClient):
+    """Retain the service principal so its transport can be closed."""
+
+    identity: ClientSecretCredential
+
+
 def load_runtime_profile(source: Path | Mapping[str, Any]) -> AgentProfile:
     """Accept a local profile or the complete versioned document from blackboard."""
     if isinstance(source, Path):
@@ -62,14 +88,16 @@ def load_runtime_profile(source: Path | Mapping[str, Any]) -> AgentProfile:
     return AgentProfile.model_validate(source.get("profile", source))
 
 
-async def model_api_key(
+async def resolve_model_credentials(
     service: BlackboardClient, model: ModelConfig, deepseek_api_key: str
-) -> str:
+) -> dict[str, str]:
     """Resolve a private credential for the pinned platform version."""
     name = model.platform_id
     version = model.platform_version
     if name is None and version is None:
-        return deepseek_api_key if model.provider == "deepseek" else "not-required"
+        if model.provider != "deepseek":
+            return {}
+        name, version = "deepseek-default", 1
     if not name or version is None:
         raise ValueError("Incomplete platform model reference")
     credential = await service.get_model_credentials(name, version)
@@ -78,34 +106,159 @@ async def model_api_key(
     if source == "environment":
         if model.provider != "deepseek":
             raise ValueError("Environment credentials are only available for DeepSeek")
-        return deepseek_api_key
+        return {"api_key": deepseek_api_key}
     if source == "stored":
-        if not isinstance(secret, str) or not secret:
+        credentials = credential.get("credentials") or {}
+        if not isinstance(credentials, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in credentials.items()
+        ):
+            raise ValueError("Stored model credential is invalid")
+        if not credentials and isinstance(secret, str) and secret:
+            credentials = {"api_key": secret}
+        if not credentials:
             raise ValueError("Stored model credential is unavailable")
-        return secret
+        return credentials
     if source == "none":
-        return "not-required"
+        return {}
     raise ValueError("Unknown model credential source")
+
+
+async def model_api_key(
+    service: BlackboardClient, model: ModelConfig, deepseek_api_key: str
+) -> str:
+    """Backward-compatible key accessor for API-key providers."""
+    return (await resolve_model_credentials(service, model, deepseek_api_key)).get(
+        "api_key", "not-required"
+    )
 
 
 def make_client(
     model: ModelConfig,
     *,
-    api_key: str,
+    api_key: str | None = None,
+    credentials: Mapping[str, str] | None = None,
     explore_max_steps: int,
     conclude_grace_calls: int,
     max_duration_seconds: int,
-) -> BaseChatClient:
+) -> BaseChatClient[Any]:
     provider = model.provider
-    if provider not in {"deepseek", "openai_chat", "openai_responses", "openai_compatible"}:
+    if provider not in PROVIDERS:
         raise ValueError(f"Unsupported model provider: {model.provider}")
-    if not api_key or min(explore_max_steps, max_duration_seconds) <= 0 or conclude_grace_calls < 0:
-        raise ValueError("Model key, step limit, and duration must be valid")
-    client_type = (
+    if min(explore_max_steps, max_duration_seconds) <= 0 or conclude_grace_calls < 0:
+        raise ValueError("Model step limit and duration must be valid")
+    secrets = dict(credentials or {})
+    if api_key and api_key != "not-required":
+        secrets.setdefault("api_key", api_key)
+    options = model.provider_options
+    definition = PROVIDERS[provider]
+    for field in definition["options_fields"]:
+        if field["required"] and not options.get(field["name"]):
+            raise ValueError(f"Missing model option: {field['name']}")
+    if not definition["allow_no_auth"] or secrets:
+        for field in definition["credential_fields"]:
+            if field["required"] and not secrets.get(field["name"]):
+                raise ValueError(f"Missing model credential: {field['name']}")
+    config: FunctionInvocationConfiguration = {
+        "max_iterations": explore_max_steps + conclude_grace_calls + 5,
+        "max_duration_seconds": max_duration_seconds,
+    }
+    key = secrets.get("api_key", "not-required")
+    if provider in {"anthropic", "anthropic_foundry", "anthropic_bedrock", "anthropic_vertex"}:
+        common = {"model": model.model, "function_invocation_configuration": config}
+        if provider == "anthropic":
+            return AnthropicClient(api_key=key, base_url=model.base_url, **common)
+        if provider == "anthropic_foundry":
+            return AnthropicFoundryClient(api_key=key, base_url=model.base_url, **common)
+        if provider == "anthropic_bedrock":
+            return AnthropicBedrockClient(
+                aws_access_key=secrets["access_key_id"],
+                aws_secret_key=secrets["secret_access_key"],
+                aws_session_token=secrets.get("session_token"),
+                aws_region=options["region"],
+                **common,
+            )
+        from google.oauth2 import service_account
+
+        google_credentials = service_account.Credentials.from_service_account_info(
+            json.loads(secrets["service_account_json"]),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        return AnthropicVertexClient(
+            project_id=options["project"],
+            region=options["location"],
+            credentials=google_credentials,
+            **common,
+        )
+    if provider == "bedrock":
+        return BedrockChatClient(
+            model=model.model,
+            region=options["region"],
+            access_key=secrets["access_key_id"],
+            secret_key=secrets["secret_access_key"],
+            session_token=secrets.get("session_token"),
+            function_invocation_configuration=config,
+        )
+    if provider in {"gemini", "gemini_vertex"}:
+        kwargs: dict[str, Any] = {"model": model.model, "function_invocation_configuration": config}
+        if provider == "gemini":
+            kwargs["api_key"] = key
+        else:
+            from google.oauth2 import service_account
+
+            kwargs.update(
+                vertexai=True,
+                project=options["project"],
+                location=options["location"],
+                credentials=service_account.Credentials.from_service_account_info(
+                    json.loads(secrets["service_account_json"]),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                ),
+            )
+        return GeminiChatClient(**kwargs)
+    if provider == "ollama":
+        return OllamaChatClient(
+            host=model.base_url, model=model.model, function_invocation_configuration=config
+        )
+    if provider == "mistral":
+        return MistralChatClient(
+            model=model.model,
+            api_key=key,
+            server_url=model.base_url,
+            function_invocation_configuration=config,
+        )
+    if provider == "foundry":
+        identity = ClientSecretCredential(
+            tenant_id=secrets["tenant_id"],
+            client_id=secrets["client_id"],
+            client_secret=secrets["client_secret"],
+        )
+        client = PlatformFoundryChatClient(
+            project_endpoint=model.base_url,
+            model=model.model,
+            credential=identity,
+            function_invocation_configuration=config,
+        )
+        client.identity = identity
+        return client
+    if provider in {"azure_openai_chat", "azure_openai_responses"}:
+        openai_client = AsyncAzureOpenAI(
+            api_key=key,
+            azure_endpoint=model.base_url,
+            api_version=options["api_version"],
+            timeout=min(120, max_duration_seconds),
+        )
+    else:
+        openai_client = AsyncOpenAI(
+            api_key=key,
+            base_url=model.base_url,
+            timeout=min(120, max_duration_seconds),
+        )
+    client_type: Any = (
         DeepSeekChatClient
         if provider == "deepseek"
         else OpenAIChatClient
-        if provider == "openai_responses"
+        if provider in {"openai_responses", "azure_openai_responses"}
         else OpenAIChatCompletionClient
     )
     kwargs: dict[str, Any] = (
@@ -113,17 +266,42 @@ def make_client(
     )
     return client_type(
         model=model.model,
-        async_client=AsyncOpenAI(
-            api_key=api_key,
-            base_url=model.base_url,
-            timeout=min(120, max_duration_seconds),
-        ),
-        function_invocation_configuration={
-            "max_iterations": explore_max_steps + conclude_grace_calls + 5,
-            "max_duration_seconds": max_duration_seconds,
-        },
+        async_client=openai_client,
+        function_invocation_configuration=config,
         **kwargs,
     )
+
+
+async def close_model_client(client: BaseChatClient[Any]) -> None:
+    """Close the transport owned by each MAF connector."""
+    if isinstance(client, MistralChatClient):
+        await client.close()
+    elif isinstance(
+        client,
+        (AnthropicClient, AnthropicFoundryClient, AnthropicBedrockClient, AnthropicVertexClient),
+    ):
+        await client.anthropic_client.close()
+    elif isinstance(client, BedrockChatClient):
+        client._bedrock_client.close()
+    elif isinstance(client, GeminiChatClient):
+        await client._genai_client.aio.aclose()
+        client._genai_client.close()
+    elif isinstance(client, OllamaChatClient):
+        await client.client._client.aclose()
+    elif isinstance(client, PlatformFoundryChatClient):
+        try:
+            await client.client.close()
+        finally:
+            try:
+                await client.project_client.close()
+            finally:
+                await client.identity.close()
+    else:
+        close = getattr(getattr(client, "client", None), "close", None)
+        if close is not None:
+            result = close()
+            if isawaitable(result):
+                await result
 
 
 def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
@@ -131,6 +309,14 @@ def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
     effort = model.reasoning_effort
     if effort in {"none", "off", ""}:
         return {}
-    if model.provider == "openai_responses":
+    if model.provider in {"openai_responses", "azure_openai_responses"}:
         return {"reasoning": {"effort": effort}}
-    return {"reasoning_effort": effort}
+    if model.provider in {
+        "deepseek",
+        "openai_chat",
+        "openai_compatible",
+        "azure_openai_chat",
+        "mistral",
+    }:
+        return {"reasoning_effort": effort}
+    return {}

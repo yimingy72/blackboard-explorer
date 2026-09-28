@@ -412,6 +412,7 @@ class Price(ContractModel):
 
 
 class ModelConfig(ContractModel):
+    provider_options: dict[str, str] = Field(default_factory=dict)
     platform_id: str | None = Field(default=None, min_length=1)
     platform_version: int | None = Field(default=None, ge=1)
     provider: str = Field(min_length=1, description="模型供应商")

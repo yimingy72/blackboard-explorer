@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -24,7 +24,13 @@ from bbx_runtime.clients import BlackboardClient, EnvdClient
 from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
-from bbx_runtime.models import load_runtime_profile, make_client, model_api_key, model_run_options
+from bbx_runtime.models import (
+    close_model_client,
+    load_runtime_profile,
+    make_client,
+    model_run_options,
+    resolve_model_credentials,
+)
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.receipts import parse_receipt
 from bbx_runtime.scheduler.decision import _ever_claimed
@@ -149,12 +155,12 @@ class AgentRunner:
             # The scheduler stops exploration at the budget deadline; this is only a hard guard.
             run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
             if client is None:
-                api_key = await model_api_key(
+                credentials = await resolve_model_credentials(
                     self.service, model, self.settings.deepseek_api_key.get_secret_value()
                 )
                 owned_client = make_client(
                     model,
-                    api_key=api_key,
+                    credentials=credentials,
                     explore_max_steps=ctx.params.explore_max_steps,
                     conclude_grace_calls=ctx.params.conclude_grace_calls,
                     max_duration_seconds=run_limit,
@@ -273,7 +279,7 @@ class AgentRunner:
                 if envd is not None:
                     resources.push_async_callback(envd.close)
                 if owned_client is not None:
-                    resources.push_async_callback(cast(Any, owned_client).client.close)
+                    resources.push_async_callback(close_model_client, owned_client)
                 if mcp_http is not None and envd_http_client is None:
                     resources.push_async_callback(mcp_http.aclose)
                 if external_mcp_http is not None:

@@ -6,7 +6,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
-from agent_framework import Agent, AgentSession, Content, Message, tool
+from agent_framework import Agent, AgentSession, ChatResponse, Content, Message, tool
 from bbx_contracts.models import Price, Usage
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
@@ -17,7 +17,9 @@ from bbx_runtime.middleware import (
     GraceGateMiddleware,
     ToolLogMiddleware,
     _append_call_id,
+    _input_tokens,
     _render_events,
+    _usage,
     append_board_update,
 )
 from bbx_runtime.models import load_runtime_profile
@@ -614,3 +616,67 @@ def test_default_cny_token_accounting_uses_yuan_without_currency_conversion():
     )
     assert warning is None
     assert usage.cost == Decimal("10.04")
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["anthropic", "anthropic_foundry", "anthropic_bedrock", "anthropic_vertex", "bedrock"],
+)
+def test_separate_cache_counters_count_reads_and_writes(provider: str) -> None:
+    details = {
+        "input_token_count": 1_000_000,
+        "cache_creation_input_token_count": 200_000,
+        "cache_read_input_token_count": 500_000,
+        "output_token_count": 300_000,
+    }
+    price = Price(
+        cache_hit_per_m=Decimal("1"), cache_miss_per_m=Decimal("2"), output_per_m=Decimal("3")
+    )
+    usage, warning = _usage(details, price, provider)
+    assert warning is None
+    assert usage.cache_hit_tokens == 500_000
+    assert usage.cache_miss_tokens == 1_200_000
+    assert usage.cost == Decimal("3.8")
+    assert _input_tokens(details, provider) == 1_700_000
+
+
+def test_inclusive_cache_counters_and_explicit_deepseek_usage_remain_unchanged() -> None:
+    price = Price(
+        cache_hit_per_m=Decimal("1"), cache_miss_per_m=Decimal("2"), output_per_m=Decimal("3")
+    )
+    details = {"input_token_count": 1_000_000, "cache_read_input_token_count": 500_000}
+    usage, _ = _usage(details, price, "openai_chat")
+    assert (usage.cache_hit_tokens, usage.cache_miss_tokens) == (500_000, 500_000)
+    assert _input_tokens(details, "openai_chat") == 1_000_000
+    deepseek = {**details, "prompt_cache_hit_tokens": 300_000, "prompt_cache_miss_tokens": 900_000}
+    usage, _ = _usage(deepseek, price, "deepseek")
+    assert (usage.cache_hit_tokens, usage.cache_miss_tokens) == (300_000, 900_000)
+
+
+async def test_heartbeat_context_includes_separate_cache_tokens() -> None:
+    service = FakeService()
+    ctx = run_context(service)
+    ctx.task_type = "derive"
+    derive = ctx.profile.models.derive.model_copy(update={"provider": "anthropic"})
+    ctx.profile = ctx.profile.model_copy(
+        update={"models": ctx.profile.models.model_copy(update={"derive": derive})}
+    )
+
+    class CachedClient(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs: Any):
+            response = super()._inner_get_response(**kwargs)
+
+            async def with_cache() -> ChatResponse:
+                result = await cast(Any, response)
+                assert result.usage_details is not None
+                result.usage_details["cache_read_input_token_count"] = 130_000
+                result.usage_details["cache_creation_input_token_count"] = 2_000
+                return result
+
+            return with_cache()
+
+    client = CachedClient([ScriptStep(text="done", usage=ScriptUsage(0, 1_000, 100))])
+    assert (
+        await Agent(client=client, middleware=[BoardSyncMiddleware(ctx)]).run("start")
+    ).text == "done"
+    assert service.beats[0]["context_tokens"] == 133_000

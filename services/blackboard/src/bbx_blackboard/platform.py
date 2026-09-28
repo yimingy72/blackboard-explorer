@@ -5,20 +5,25 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-from typing import Any, Literal
+import json
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 from bbx_contracts.models import AgentProfile, ModelConfig, Price
+from bbx_contracts.providers import PROVIDERS
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, HTTPException, Request, Response
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.auth import require_service, require_user_or_service
+from bbx_blackboard.store.schema import app_settings
 from bbx_blackboard.store.schema import platform_configs as table
 
 Kind = Literal["models", "mcp-servers"]
@@ -36,23 +41,40 @@ def check_url(value: str) -> str:
 class ModelInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     label: str = Field(min_length=1, max_length=100)
-    provider: Literal["deepseek", "openai_chat", "openai_responses", "openai_compatible"]
+    provider: str
     model: str = Field(min_length=1, max_length=200)
-    base_url: str
+    base_url: str = ""
     reasoning_effort: str = Field(default="none", min_length=1)
     price: Price
-    credential_source: Literal["environment", "stored", "none"] = "stored"
+    provider_options: dict[str, str] = Field(default_factory=dict)
+    credentials: dict[str, SecretStr] = Field(default_factory=dict)
+    credential_source: Literal["stored", "none"] = "stored"
     api_key: SecretStr | None = None
     enabled: bool = True
 
-    _url = field_validator("base_url")(check_url)
-
     @model_validator(mode="after")
     def check_model(self) -> ModelInput:
+        spec = cast(dict[str, Any] | None, PROVIDERS.get(self.provider))
+        if spec is None:
+            raise ValueError("不支持此 Provider，请从平台目录选择")
         if self.price.currency != "CNY" or not self.price.is_complete():
             raise ValueError("平台模型须填写完整人民币 CNY 价格表，包括 off_peak")
-        if self.credential_source == "environment" and self.provider != "deepseek":
-            raise ValueError("环境密钥仅用于现有 DeepSeek 连接")
+        default_url = str(spec.get("default_base_url") or "")
+        if default_url == "provider-default" and not spec.get("base_url_required"):
+            if self.base_url not in {"", "provider-default"}:
+                raise ValueError("此服务端点由区域和项目确定，不接受自定义 API 地址")
+            self.base_url = "provider-default"
+        else:
+            self.base_url = check_url(self.base_url or default_url)
+        allowed = {item["name"] for item in spec["options_fields"]}
+        if not set(self.provider_options) <= allowed:
+            raise ValueError("存在当前 Provider 不支持的连接选项")
+        for item in spec["options_fields"]:
+            if item.get("required") and not self.provider_options.get(item["name"], "").strip():
+                raise ValueError(f"缺少连接选项：{item['name']}")
+        allowed_credentials = {item["name"] for item in spec["credential_fields"]}
+        if not set(self.credentials) <= allowed_credentials:
+            raise ValueError("存在当前 Provider 不支持的凭据字段")
         return self
 
 
@@ -76,8 +98,7 @@ class PlatformStore:
         derived = hashlib.sha256(b"bbx-platform-credentials-v1\0" + signing_key.encode()).digest()
         self.cipher = Fernet(base64.urlsafe_b64encode(derived))
 
-    @staticmethod
-    def public(row: dict[str, Any]) -> dict[str, Any]:
+    def public(self, row: dict[str, Any]) -> dict[str, Any]:
         common = {key: row[key] for key in ("name", "version", "label", "enabled")}
         common["has_secret"] = bool(row["secret_ciphertext"])
         if row["kind"] == "models":
@@ -89,6 +110,7 @@ class PlatformStore:
                     "platform_version": row["version"],
                 },
                 "credential_source": row["credential_source"],
+                "configured_credentials": sorted(self._decrypt_model_credentials(row)),
             }
         return {**common, **row["config"]}
 
@@ -117,10 +139,21 @@ class PlatformStore:
             latest = {}
             for row in rows:
                 latest.setdefault(row["name"], self.public(dict(row)))
-        return list(latest.values())
+        result = list(latest.values())
+        if kind == "models":
+            default_name = await self.default_model_name()
+            for item in result:
+                item["is_default"] = item["name"] == default_name
+        return result
 
     async def save(
-        self, kind: Kind, name: str, body: ModelInput | McpInput, actor: str
+        self,
+        kind: Kind,
+        name: str,
+        body: ModelInput | McpInput,
+        actor: str,
+        *,
+        bootstrap: bool = False,
     ) -> dict[str, Any]:
         import re
 
@@ -147,14 +180,40 @@ class PlatformStore:
             )
             ciphertext = previous["secret_ciphertext"] if previous else None
             if isinstance(body, ModelInput):
-                source = body.credential_source
-                secret = body.api_key.get_secret_value() if body.api_key else None
-                config = body.model_dump(
-                    mode="json", exclude={"label", "api_key", "credential_source", "enabled"}
+                spec = cast(dict[str, Any], PROVIDERS[body.provider])
+                values = (
+                    self._decrypt_model_credentials(dict(previous))
+                    if previous and previous["config"].get("provider") == body.provider
+                    else {}
                 )
-                if source != "stored":
-                    ciphertext = None
-                    secret = None
+                values.update(
+                    {
+                        key: value.get_secret_value()
+                        for key, value in body.credentials.items()
+                        if value.get_secret_value()
+                    }
+                )
+                if body.api_key and body.api_key.get_secret_value():
+                    values["api_key"] = body.api_key.get_secret_value()
+                required = [
+                    item["name"] for item in spec["credential_fields"] if item.get("required")
+                ]
+                if (
+                    not bootstrap
+                    and not spec["allow_no_auth"]
+                    and any(not values.get(key) for key in required)
+                ):
+                    raise HTTPException(
+                        422, "请填写所选 Provider 所需的全部平台凭据；已有字段留空可保留"
+                    )
+                if values and any(not values.get(key) for key in required):
+                    raise HTTPException(422, "凭据不完整，请补齐所选 Provider 的必填字段")
+                source = "stored" if values or not spec["allow_no_auth"] else "none"
+                ciphertext = self._encrypt_credentials(values) if values else None
+                config = body.model_dump(
+                    mode="json",
+                    exclude={"label", "api_key", "credentials", "credential_source", "enabled"},
+                )
             else:
                 source = "stored"
                 secret = body.secret.get_secret_value() if body.secret else None
@@ -163,10 +222,8 @@ class PlatformStore:
                 )
                 if body.clear_secret:
                     ciphertext, secret = None, None
-            if secret:
-                ciphertext = self.cipher.encrypt(secret.encode()).decode()
-            if isinstance(body, ModelInput) and source == "stored" and not ciphertext:
-                raise HTTPException(422, "首次保存此模型需要填写 API Key，或选择无需认证")
+                if secret:
+                    ciphertext = self.cipher.encrypt(secret.encode()).decode()
             row = (
                 (
                     await conn.execute(
@@ -190,14 +247,76 @@ class PlatformStore:
             )
         return self.public(dict(row))
 
+    def _encrypt_credentials(self, values: dict[str, str]) -> str:
+        return self.cipher.encrypt(
+            json.dumps({"bbx_credentials_v": 1, "values": values}).encode()
+        ).decode()
+
+    def _decrypt_model_credentials(self, row: dict[str, Any]) -> dict[str, str]:
+        if not row.get("secret_ciphertext"):
+            return {}
+        plain = self.cipher.decrypt(row["secret_ciphertext"].encode()).decode()
+        try:
+            value = json.loads(plain)
+            if isinstance(value, dict) and value.get("bbx_credentials_v") == 1:
+                return value["values"]
+        except (ValueError, TypeError):
+            pass
+        return {"api_key": plain}
+
     async def credentials(self, kind: Kind, name: str, version: int) -> dict[str, Any]:
         row = await self.get(kind, name, version)
+        if kind == "models":
+            values = self._decrypt_model_credentials(row)
+            return {
+                "secret": values.get("api_key"),
+                "credentials": values,
+                "credential_source": "stored" if values else "none",
+            }
         secret = (
             self.cipher.decrypt(row["secret_ciphertext"].encode()).decode()
             if row["secret_ciphertext"]
             else None
         )
         return {"secret": secret, "credential_source": row["credential_source"]}
+
+    async def import_environment_key(self, key: str) -> int:
+        if not key:
+            return 0
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                update(table)
+                .where(
+                    table.c.kind == "models",
+                    table.c.secret_ciphertext.is_(None),
+                    (table.c.credential_source == "environment")
+                    | (table.c.name == "deepseek-default"),
+                )
+                .values(
+                    secret_ciphertext=self._encrypt_credentials({"api_key": key}),
+                    credential_source="stored",
+                )
+            )
+            return result.rowcount
+
+    async def default_model_name(self) -> str:
+        async with self.engine.connect() as conn:
+            value = (
+                await conn.execute(
+                    select(app_settings.c.value).where(app_settings.c.key == "default_model")
+                )
+            ).scalar_one_or_none()
+        return value["name"] if value else "deepseek-default"
+
+    async def set_default_model(self, name: str) -> None:
+        if not (await self.get("models", name))["enabled"]:
+            raise HTTPException(422, "默认模型必须启用")
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                pg_insert(app_settings)
+                .values(key="default_model", value={"name": name})
+                .on_conflict_do_update(index_elements=["key"], set_={"value": {"name": name}})
+            )
 
     async def ensure_default_model(self, model: ModelConfig) -> ModelConfig:
         try:
@@ -210,10 +329,11 @@ class PlatformStore:
                 "deepseek-default",
                 ModelInput(
                     label="DeepSeek · 默认连接",
-                    credential_source="environment",
+                    credential_source="stored",
                     **model.model_dump(exclude={"platform_id", "platform_version"}),
                 ),
                 "system",
+                bootstrap=True,
             )
         return ModelConfig.model_validate(row["config"])
 
@@ -247,6 +367,37 @@ async def models(request: Request) -> list[dict[str, Any]]:
     return await store(request).list("models")
 
 
+@router.get("/providers")
+async def providers(request: Request) -> list[dict[str, Any]]:
+    require_user_or_service(request)
+    return [dict(item) for item in PROVIDERS.values()]
+
+
+@router.post("/models")
+async def new_model(request: Request, body: ModelInput) -> dict[str, Any]:
+    identity = require_user_or_service(request)
+    return await store(request).save("models", f"model-{uuid4().hex[:16]}", body, identity.name)
+
+
+@router.post("/models/{name}/default")
+async def default_model(request: Request, name: str) -> dict[str, str]:
+    require_user_or_service(request)
+    await store(request).set_default_model(name)
+    return {"default_model_id": name}
+
+
+class ImportKey(BaseModel):
+    api_key: SecretStr
+
+
+@router.post("/import-environment-key")
+async def import_key(request: Request, body: ImportKey) -> dict[str, int]:
+    require_service(request)
+    return {
+        "imported": await store(request).import_environment_key(body.api_key.get_secret_value())
+    }
+
+
 @router.post("/models/{name}")
 async def save_model(request: Request, name: str, body: ModelInput) -> dict[str, Any]:
     identity = require_user_or_service(request)
@@ -257,6 +408,12 @@ async def save_model(request: Request, name: str, body: ModelInput) -> dict[str,
 async def mcp_servers(request: Request) -> list[dict[str, Any]]:
     require_user_or_service(request)
     return await store(request).list("mcp-servers")
+
+
+@router.post("/mcp-servers")
+async def new_mcp(request: Request, body: McpInput) -> dict[str, Any]:
+    identity = require_user_or_service(request)
+    return await store(request).save("mcp-servers", f"mcp-{uuid4().hex[:16]}", body, identity.name)
 
 
 @router.post("/mcp-servers/{name}")

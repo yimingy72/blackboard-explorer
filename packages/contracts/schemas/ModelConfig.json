@@ -90,6 +90,13 @@
   },
   "additionalProperties": false,
   "properties": {
+    "provider_options": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Provider Options",
+      "type": "object"
+    },
     "platform_id": {
       "anyOf": [
         {

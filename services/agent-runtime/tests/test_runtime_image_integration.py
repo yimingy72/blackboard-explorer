@@ -33,11 +33,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.respond(b'[]')
     def do_POST(self):
-        if (self.headers.get('Authorization') != 'Bearer image-test'
-                or self.path != '/api/conversations/recover'):
+        allowed = self.path in (
+            '/api/conversations/recover', '/api/platform/import-environment-key'
+        )
+        if self.headers.get('Authorization') != 'Bearer image-test' or not allowed:
             self.send_error(403)
             return
-        self.respond(b'{"requeued":0}')
+        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        imported = self.path.endswith('import-environment-key')
+        self.respond(b'{"imported":1}' if imported else b'{"requeued":0}')
 HTTPServer(('0.0.0.0', 8000), Handler).serve_forever()
 """
 

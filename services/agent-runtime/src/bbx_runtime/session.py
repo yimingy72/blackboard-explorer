@@ -96,6 +96,14 @@ class SessionCheckpoint:
         self.review_claim: dict[str, str] | None = None
         self._lock = asyncio.Lock()
 
+    @property
+    def prompt_revision(self) -> int:
+        return int(self.session.state.get("bbx_prompt_revision") or 0)
+
+    @prompt_revision.setter
+    def prompt_revision(self, value: int) -> None:
+        self.session.state["bbx_prompt_revision"] = value
+
     @classmethod
     async def load(
         cls, service: BlackboardClient, task_id: str, agent_id: str

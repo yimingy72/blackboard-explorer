@@ -224,3 +224,11 @@ platform_configs = Table(
     col("created_by", Text, nullable=False),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
+
+
+app_settings = Table(
+    "app_settings",
+    metadata,
+    col("key", Text, primary_key=True),
+    col("value", JSONB, nullable=False),
+)

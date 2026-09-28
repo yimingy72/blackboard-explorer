@@ -7,6 +7,7 @@ from agent_framework import ContextProvider, SessionContext
 from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
+from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.session import SessionCheckpoint
 from bbx_runtime.trace import record_trace
@@ -83,10 +84,12 @@ class OpeningContextProvider(ContextProvider):
         self.environment = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
         self.trace_recorded = False
         self.checkpoint = checkpoint
+        self.prompt_revision = checkpoint.prompt_revision if checkpoint else 0
+        self.current_instructions = checkpoint.opening_instructions if checkpoint else ""
 
-    async def render(self) -> str:
+    async def render(self, source: str | None = None, board: dict[str, Any] | None = None) -> str:
         run = self.run
-        board = run.state
+        board = board or run.state
         task = board["task"]
         facts = board.get("facts", {})
         intents = board.get("intents", {})
@@ -145,8 +148,63 @@ class OpeningContextProvider(ContextProvider):
                 ]
             )
 
-        source = getattr(run.profile.prompt_templates, run.task_type)
+        if source is None:
+            source = getattr(run.profile.prompt_templates, run.task_type)
+        assert isinstance(source, str)
         return self.environment.from_string(source).render(**data)
+
+    async def refresh(self, board: dict[str, Any] | None = None, *, step: int = 0) -> str:
+        """Read the live template and keep exactly one rendered system instruction."""
+        getter = getattr(self.run.service, "get_worker_prompt", None)
+        if getter is not None:
+            try:
+                latest = await getter(self.run.task_type, since=self.prompt_revision)
+            except RemoteError as error:
+                if error.status != 404:
+                    raise
+            else:
+                revision = int(latest["revision"])
+                if revision < self.prompt_revision:
+                    raise ValueError("Worker prompt revision moved backwards")
+                source = latest.get("prompt")
+                if source is not None:
+                    if not isinstance(source, str):
+                        raise ValueError("Worker prompt must be text")
+                    previous = self.run.profile.prompt_templates
+                    pinned = getattr(previous, self.run.task_type)
+                    current_source = (
+                        self.checkpoint.session.state.get("bbx_prompt_source", pinned)
+                        if self.checkpoint
+                        else getattr(self, "_prompt_source", pinned)
+                    )
+                    if source != current_source:
+                        self.current_instructions = await self.render(source, board)
+                        if self.checkpoint:
+                            self.checkpoint.opening_instructions = self.current_instructions
+                            self.checkpoint.session.state["bbx_prompt_source"] = source
+                            self.checkpoint.prompt_revision = revision
+                            await self.checkpoint.save()
+                        else:
+                            self._prompt_source = source
+                        if step:
+                            await record_trace(
+                                self.run,
+                                "board_update",
+                                step,
+                                "[Worker 系统提示词更新，版本 "
+                                f"{revision}]\n{self.current_instructions}",
+                            )
+                    elif self.checkpoint and revision != self.prompt_revision:
+                        self.checkpoint.prompt_revision = revision
+                        if self.current_instructions:
+                            await self.checkpoint.save()
+                self.prompt_revision = revision
+        if not self.current_instructions:
+            self.current_instructions = await self.render(board=board)
+            if self.checkpoint:
+                self.checkpoint.opening_instructions = self.current_instructions
+                await self.checkpoint.save()
+        return self.current_instructions
 
     async def before_run(
         self,
@@ -156,12 +214,9 @@ class OpeningContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        rendered = self.checkpoint.opening_instructions if self.checkpoint else ""
-        if not rendered:
-            rendered = await self.render()
-            if self.checkpoint is not None:
-                self.checkpoint.opening_instructions = rendered
-                await self.checkpoint.save()
+        rendered = (
+            await self.refresh() if not self.current_instructions else self.current_instructions
+        )
         context.extend_instructions(self.source_id, rendered)
         if not self.trace_recorded:
             await record_trace(self.run, "initial_context", 0, f"开始。\n\n{rendered}")
