@@ -38,10 +38,12 @@
   | Interactive-agents | ✅ 及时发布/并行derive、运行中定向消息、持久Session/只读续聊、确认删除与重试清理；412普通、45集成、36前端、14浏览器及真实隔离闭环通过，已部署v2配置（2026-09-27） |
   | Platform-config / CNY | ✅ 平台多模型与加密凭据、Explore外部MCP/工具白名单、worker完整提示词/参数表单、移除版本对比、人民币账本展示；435普通、47集成、37前端、18浏览器通过，schema0005/default与single v3已部署（2026-09-28） |
   | Worker-settings | ✅ 三Worker直接编辑/提示词下次模型调用生效、去历史/浏览器默认、平台默认模型/任务选模型、凭据统一加密保存/自动迁移、MAF Python 17连接方式；481普通、48集成、32前端、17浏览器通过，schema0006已部署（2026-09-28） |
+  | Completion-review | ✅ 明确完成可免复核，其余正常收尾必经derive与再次Close；事务门控/过期失效/无效回执保护；509普通、55集成、32前端、17浏览器通过，schema0007已部署（2026-09-28） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；用户已允许按需使用GPT-6 Sol high协作开发。
-- **最新工作台与验证**：Worker页面仅explore/derive/close直接编辑，隐藏历史版本、配置名、浏览器默认、内部标识。平台默认模型跨浏览器保存，任务创建选择模型；三角色共用任务模型。系统提示词保存后下一模型调用生效，模型/工具/预算仍固定。支持17种MAF Python连接方式；凭据全部平台加密保存，旧DeepSeek环境key已自动迁移为stored。schema0006，两个容器无重启、唯一运行锁；原3个任务USD账本保留。481普通、48集成、32前端、17浏览器通过，本轮无真实收费调用。见[Worker-settings报告](tasks/Worker-settings-report.md)。
+- **最新调度与验证**：普通met不再直接收尾；只有Close逐项记录明确完成依据及支撑事实、且覆盖最新黑板，才能免derive。其余静止任务必须“完成复核”derive，再由Close裁定；新黑板变化使旧复核失效，失败/拒绝/假空回执不可通过。关闭主动推导仍保留必要复核，single新旧评估口径不能混算。509普通、55集成、32前端、17浏览器通过；schema0007/worker revision5已部署，两个容器无重启，原3任务保留。见[Completion-review报告](tasks/Completion-review-report.md)。
+- **Worker-settings交付记录**：Worker页面仅explore/derive/close直接编辑，隐藏历史版本、配置名、浏览器默认、内部标识。平台默认模型跨浏览器保存，任务创建选择模型；三角色共用任务模型。系统提示词保存后下一模型调用生效，模型/工具/预算仍固定。支持17种MAF Python连接方式；凭据全部平台加密保存，旧DeepSeek环境key已自动迁移为stored。schema0006，两个容器无重启、唯一运行锁；原3个任务USD账本保留。481普通、48集成、32前端、17浏览器通过，本轮无真实收费调用。见[Worker-settings报告](tasks/Worker-settings-report.md)。
 - **Platform-config交付记录**：Agent配置页有Worker配置、平台模型、MCP工具三个入口，移除版本对比。支持DeepSeek/OpenAI Chat Completions/Responses/OpenAI兼容接口；Explore可挂载Streamable HTTP MCP并选工具。平台密钥加密且只写，已有DeepSeek复用环境密钥。default/single v3以人民币计价，旧3个任务保持USD；schema0005，服务运行正常。435普通、47集成、37前端、18浏览器通过，本轮未调用真实模型。见[Platform-config报告](tasks/Platform-config-report.md)。
 - **上一轮真实闭环及验证**：Interactive-agents 的412普通、45集成、36前端和14浏览器检查通过；真实CSV闭环2/2验收满足，首Fact约31秒、种子58秒，峰值2个Explore/3工作槽位，1次并行derive。运行中消息送达、结束后两轮复盘与重启Session保持、删除测试任务清理均通过，估算总费用USD0.165891。
 - **Interactive-agents 工作台记录**：Agent右侧支持输入消息与持久续聊；运行中下一轮模型调用送达，结束后只读复盘，删除任务才清会话。旧任务使用明确标记的legacy上下文。已部署schema0004，default/single最新v2，原3个任务与3份归档保留；新任务应选最新Profile。见 [Interactive-agents报告](tasks/Interactive-agents-report.md)。
@@ -356,6 +358,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Completion-review按用户“原则必经、明确达成例外”同步概念/实现设计与任务合同（3ab3fcf）：explicit完成依据，fresh derive_review及再次裁定门控，预算/人工停止保持。无待同步项；取代此前单凭全部met直接收尾及single完全禁derive描述。
 
 Worker-settings已按用户最新确认同步设计（dc72f84）：三角色直接设置、默认模型/任务选择、凭据统一平台保存、MAF Python连接器范围、提示词下一模型调用热更新。模型/工具快照保留，取代旧“所有配置固定”及历史版本UI描述；无待同步项。
 
