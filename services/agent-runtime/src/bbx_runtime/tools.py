@@ -271,7 +271,13 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
 
     common = [get_object, search, read_evidence]
     if ctx.task_type == "explore":
-        return [post_fact, post_intent, claim, release, *common]
-    if ctx.task_type == "derive":
-        return [post_intent, *common]
-    return [submit_close, *common]
+        available = [post_fact, post_intent, claim, release, *common]
+    elif ctx.task_type == "derive":
+        available = [post_intent, *common]
+    else:
+        available = [submit_close, *common]
+    worker = ctx.profile.worker_tools.get(ctx.task_type)
+    if worker is None:
+        return available
+    enabled = set(worker.builtin)
+    return [item for item in available if item.name in enabled]

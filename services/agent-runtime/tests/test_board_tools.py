@@ -10,6 +10,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from agent_framework import Agent, FunctionTool
+from bbx_contracts.models import WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
@@ -120,6 +121,23 @@ def context(
 
 def named(ctx: RunContext) -> dict[str, FunctionTool]:
     return {item.name: item for item in make_board_tools(ctx)}
+
+
+def test_worker_tool_selection_preserves_legacy_and_filters_builtin():
+    ctx = context(Board(), MemoryObjects())
+    assert set(named(ctx)) == {
+        "post_fact",
+        "post_intent",
+        "claim",
+        "release",
+        "get",
+        "search",
+        "read_evidence",
+    }
+    ctx.profile.worker_tools["explore"] = WorkerTools(
+        builtin=["post_fact", "release", "get"], mcp_servers=[]
+    )
+    assert set(named(ctx)) == {"post_fact", "release", "get"}
 
 
 async def call(item: FunctionTool, **arguments: Any) -> str:

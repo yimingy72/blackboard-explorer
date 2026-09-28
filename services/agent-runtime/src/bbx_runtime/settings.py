@@ -14,7 +14,7 @@ class ControlSettings(BaseSettings):
 
 
 class Settings(ControlSettings):
-    deepseek_api_key: SecretStr
+    deepseek_api_key: SecretStr = SecretStr("")
     deepseek_base_url: str = "https://api.deepseek.com"
     minio_root_user: str = "blackboard"
     minio_root_password: SecretStr

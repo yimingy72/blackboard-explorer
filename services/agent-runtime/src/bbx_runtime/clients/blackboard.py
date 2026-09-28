@@ -227,6 +227,21 @@ class BlackboardClient:
     async def get_profile(self, name: str, version: int) -> dict[str, Any]:
         return await self._json("GET", f"/profiles/{quote(name, safe='')}/versions/{version}")
 
+    async def get_model_credentials(self, name: str, version: int) -> dict[str, Any]:
+        return await self._json(
+            "GET", f"/platform/models/{quote(name, safe='')}/versions/{version}/credentials"
+        )
+
+    async def get_mcp_server(self, name: str, version: int) -> dict[str, Any]:
+        return await self._json(
+            "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}"
+        )
+
+    async def get_mcp_credentials(self, name: str, version: int) -> dict[str, Any]:
+        return await self._json(
+            "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}/credentials"
+        )
+
     def _agent(self, task_id: UUID | str, agent_id: str) -> str:
         return f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}"
 

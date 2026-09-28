@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import httpx
@@ -24,7 +24,7 @@ from bbx_runtime.clients import BlackboardClient, EnvdClient
 from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
-from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
+from bbx_runtime.models import load_runtime_profile, make_client, model_api_key, model_run_options
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.receipts import parse_receipt
 from bbx_runtime.scheduler.decision import _ever_claimed
@@ -42,6 +42,43 @@ from bbx_runtime.trace import record_trace
 class RunResult:
     receipt: dict[str, Any]
     end_reason: str
+
+
+async def external_mcp_tools(
+    service: BlackboardClient, bindings: list[Any], http_client: httpx.AsyncClient
+) -> list[MCPStreamableHTTPTool]:
+    """Build Explore-only tools from immutable platform server versions."""
+    result: list[MCPStreamableHTTPTool] = []
+    for index, binding in enumerate(bindings):
+        if binding.allowed_tools == []:
+            continue
+        server = await service.get_mcp_server(binding.name, binding.version)
+        if (
+            server.get("name") != binding.name
+            or server.get("version") != binding.version
+            or not server.get("enabled")
+        ):
+            raise ValueError("Pinned MCP server is unavailable")
+        headers: dict[str, str] = {}
+        if server.get("has_secret"):
+            credentials = await service.get_mcp_credentials(binding.name, binding.version)
+            secret = credentials.get("secret")
+            if not isinstance(secret, str) or not secret:
+                raise ValueError("MCP server credential is unavailable")
+            headers[server["auth_header"]] = f"{server['auth_scheme']} {secret}".strip()
+        result.append(
+            MCPStreamableHTTPTool(
+                name=f"platform_{index}",
+                url=server["url"],
+                static_headers=headers,
+                tool_name_prefix=f"mcp_{index}_{binding.name}",
+                allowed_tools=binding.allowed_tools,
+                load_prompts=False,
+                sampling_max_requests=0,
+                http_client=http_client,
+            )
+        )
+    return result
 
 
 class AgentRunner:
@@ -73,6 +110,7 @@ class AgentRunner:
         owned_client = None
         envd = None
         mcp_http = envd_http_client
+        external_mcp_http: httpx.AsyncClient | None = None
         cancelled = False
         checkpoint: SessionCheckpoint | None = None
         try:
@@ -111,16 +149,20 @@ class AgentRunner:
             # The scheduler stops exploration at the budget deadline; this is only a hard guard.
             run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
             if client is None:
+                api_key = await model_api_key(
+                    self.service, model, self.settings.deepseek_api_key.get_secret_value()
+                )
                 owned_client = make_client(
                     model,
-                    api_key=self.settings.deepseek_api_key.get_secret_value(),
+                    api_key=api_key,
                     explore_max_steps=ctx.params.explore_max_steps,
                     conclude_grace_calls=ctx.params.conclude_grace_calls,
                     max_duration_seconds=run_limit,
                 )
                 client = owned_client
             tools: list[FunctionTool | MCPStreamableHTTPTool] = list(make_board_tools(ctx))
-            if envd is not None:
+            worker = profile.worker_tools.get(task_type)
+            if envd is not None and (worker is None or "execute_command" in worker.builtin):
                 if mcp_http is None:
                     mcp_http = httpx.AsyncClient(
                         trust_env=False, timeout=httpx.Timeout(600, connect=10)
@@ -132,6 +174,13 @@ class AgentRunner:
                         static_headers={**envd.headers, "X-Agent-Id": agent_id},
                         http_client=mcp_http,
                     )
+                )
+            if task_type == "explore" and worker is not None and worker.mcp_servers:
+                external_mcp_http = httpx.AsyncClient(
+                    trust_env=False, timeout=httpx.Timeout(600, connect=10)
+                )
+                tools.extend(
+                    await external_mcp_tools(self.service, worker.mcp_servers, external_mcp_http)
                 )
             async with Agent(
                 client=client,
@@ -224,9 +273,11 @@ class AgentRunner:
                 if envd is not None:
                     resources.push_async_callback(envd.close)
                 if owned_client is not None:
-                    resources.push_async_callback(owned_client.client.close)
+                    resources.push_async_callback(cast(Any, owned_client).client.close)
                 if mcp_http is not None and envd_http_client is None:
                     resources.push_async_callback(mcp_http.aclose)
+                if external_mcp_http is not None:
+                    resources.push_async_callback(external_mcp_http.aclose)
                 save_error: Exception | None = None
                 if checkpoint is not None:
                     try:

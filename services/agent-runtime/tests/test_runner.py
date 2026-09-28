@@ -8,9 +8,10 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from bbx_contracts.models import Params
+from bbx_contracts.models import McpBinding, Params, WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_runtime.execenv import ExecEnvHandle
+from bbx_runtime.middleware import GraceGateMiddleware, ToolLogMiddleware
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient
@@ -92,6 +93,86 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
             assert "provider request details" not in str(result.receipt)
     service.finish_agent.assert_awaited_once()
     assert service.finish_agent.call_args.args[-1] == expected
+
+
+async def test_explore_selection_excludes_exec_and_keeps_external_tool_in_guarded_agent(
+    monkeypatch,
+):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    profile.worker_tools["explore"] = WorkerTools(
+        builtin=["post_fact", "release"],
+        mcp_servers=[McpBinding(name="remote-tools", version=2, allowed_tools=["ping"])],
+    )
+    service = SimpleNamespace(
+        state=AsyncMock(
+            return_value={
+                "task": {
+                    "agent_profile": "default",
+                    "agent_profile_version": 1,
+                    "params": Params().model_dump(),
+                    "budget": {"max_minutes": 1},
+                },
+                "agents": {"agent-1": {"task_type": "explore", "status": "running"}},
+            }
+        ),
+        get_profile=AsyncMock(return_value=profile.model_dump()),
+        get_mcp_server=AsyncMock(
+            return_value={
+                "name": "remote-tools",
+                "version": 2,
+                "enabled": True,
+                "has_secret": False,
+                "url": "https://external.test/mcp",
+            }
+        ),
+        finish_agent=AsyncMock(),
+        with_token=Mock(),
+    )
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def create_session(self):
+            return object()
+
+        async def run(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                text='{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
+            )
+
+    monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
+    handle = ExecEnvHandle(
+        task_id=uuid4(),
+        container_id="envd",
+        name="envd",
+        base_url="http://envd.test",
+        token="token",
+    )
+    runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200))
+    ) as http:
+        result = await runner.run_agent(
+            "task",
+            "agent-1",
+            "explore",
+            agent_token="issued",
+            client=ScriptedChatClient([]),
+            handle=handle,
+            envd_http_client=http,
+        )
+    assert result.end_reason == "normal"
+    assert [tool.name for tool in captured["tools"]] == ["post_fact", "release", "platform_0"]
+    assert any(isinstance(item, ToolLogMiddleware) for item in captured["middleware"])
+    assert any(isinstance(item, GraceGateMiddleware) for item in captured["middleware"])
 
 
 @pytest.mark.asyncio

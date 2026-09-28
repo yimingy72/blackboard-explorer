@@ -1,4 +1,4 @@
-"""Pinned task profiles and DeepSeek chat client construction."""
+"""Pinned task profiles and provider-specific chat client construction."""
 
 from __future__ import annotations
 
@@ -6,14 +6,20 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from agent_framework import Content, UsageDetails
-from agent_framework.openai import OpenAIChatCompletionClient, OpenAIChatCompletionOptions
+from agent_framework import BaseChatClient, Content, UsageDetails
+from agent_framework.openai import (
+    OpenAIChatClient,
+    OpenAIChatCompletionClient,
+    OpenAIChatCompletionOptions,
+)
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.profile import load_profile
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
+
+from bbx_runtime.clients import BlackboardClient
 
 
 def preserve_reasoning(
@@ -31,6 +37,7 @@ def preserve_reasoning(
 class DeepSeekChatOptions(OpenAIChatCompletionOptions[None], total=False):
     reasoning_effort: str
     parallel_tool_calls: bool
+    reasoning: dict[str, str]
 
 
 class DeepSeekChatClient(OpenAIChatCompletionClient):
@@ -55,6 +62,32 @@ def load_runtime_profile(source: Path | Mapping[str, Any]) -> AgentProfile:
     return AgentProfile.model_validate(source.get("profile", source))
 
 
+async def model_api_key(
+    service: BlackboardClient, model: ModelConfig, deepseek_api_key: str
+) -> str:
+    """Resolve a private credential for the pinned platform version."""
+    name = model.platform_id
+    version = model.platform_version
+    if name is None and version is None:
+        return deepseek_api_key if model.provider == "deepseek" else "not-required"
+    if not name or version is None:
+        raise ValueError("Incomplete platform model reference")
+    credential = await service.get_model_credentials(name, version)
+    source = credential.get("credential_source")
+    secret = credential.get("secret")
+    if source == "environment":
+        if model.provider != "deepseek":
+            raise ValueError("Environment credentials are only available for DeepSeek")
+        return deepseek_api_key
+    if source == "stored":
+        if not isinstance(secret, str) or not secret:
+            raise ValueError("Stored model credential is unavailable")
+        return secret
+    if source == "none":
+        return "not-required"
+    raise ValueError("Unknown model credential source")
+
+
 def make_client(
     model: ModelConfig,
     *,
@@ -62,14 +95,24 @@ def make_client(
     explore_max_steps: int,
     conclude_grace_calls: int,
     max_duration_seconds: int,
-) -> DeepSeekChatClient:
-    if model.provider != "deepseek":
+) -> BaseChatClient:
+    provider = model.provider
+    if provider not in {"deepseek", "openai_chat", "openai_responses", "openai_compatible"}:
         raise ValueError(f"Unsupported model provider: {model.provider}")
     if not api_key or min(explore_max_steps, max_duration_seconds) <= 0 or conclude_grace_calls < 0:
         raise ValueError("Model key, step limit, and duration must be valid")
-    return DeepSeekChatClient(
+    client_type = (
+        DeepSeekChatClient
+        if provider == "deepseek"
+        else OpenAIChatClient
+        if provider == "openai_responses"
+        else OpenAIChatCompletionClient
+    )
+    kwargs: dict[str, Any] = (
+        {"response_parser": preserve_reasoning} if provider == "deepseek" else {}
+    )
+    return client_type(
         model=model.model,
-        response_parser=preserve_reasoning,
         async_client=AsyncOpenAI(
             api_key=api_key,
             base_url=model.base_url,
@@ -79,9 +122,15 @@ def make_client(
             "max_iterations": explore_max_steps + conclude_grace_calls + 5,
             "max_duration_seconds": max_duration_seconds,
         },
+        **kwargs,
     )
 
 
 def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
-    """Pass DeepSeek's reasoning setting through MAF Chat Completions options."""
-    return {"reasoning_effort": model.reasoning_effort}
+    """Use the option shape expected by the pinned provider's API."""
+    effort = model.reasoning_effort
+    if effort in {"none", "off", ""}:
+        return {}
+    if model.provider == "openai_responses":
+        return {"reasoning": {"effort": effort}}
+    return {"reasoning_effort": effort}

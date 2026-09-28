@@ -9,11 +9,11 @@ import logging
 from typing import Any, Literal
 
 import httpx
-from agent_framework import Agent, AgentSession, Content, Message, tool
+from agent_framework import Agent, AgentSession, BaseChatClient, Content, Message, tool
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.middleware import _usage
-from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
+from bbx_runtime.models import load_runtime_profile, make_client, model_api_key, model_run_options
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
     SessionCheckpoint,
@@ -140,7 +140,7 @@ class ChatWorker:
             raise
         token = str(claim["claim_token"])
         user = claim["message"]
-        client = None
+        client: BaseChatClient | None = None
         try:
             state = await self.service.state(task_id)
             task = state["task"]
@@ -180,9 +180,12 @@ class ChatWorker:
                 if recovered is not None:
                     answer, usage = recovered, recovered_usage
                 else:
+                    api_key = await model_api_key(
+                        self.service, model, self.settings.deepseek_api_key.get_secret_value()
+                    )
                     client = make_client(
                         model,
-                        api_key=self.settings.deepseek_api_key.get_secret_value(),
+                        api_key=api_key,
                         explore_max_steps=3,  # make_client adds five; eight tool iterations total.
                         conclude_grace_calls=0,
                         max_duration_seconds=180,

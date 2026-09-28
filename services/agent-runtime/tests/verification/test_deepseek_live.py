@@ -4,10 +4,16 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 from agent_framework import Agent, ChatMiddleware, Message, tool
-from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
+from bbx_runtime.models import (
+    DeepSeekChatClient,
+    load_runtime_profile,
+    make_client,
+    model_run_options,
+)
 
 pytestmark = pytest.mark.live
 PROFILE_DIR = Path(__file__).resolve().parents[4] / "profiles" / "default"
@@ -20,12 +26,15 @@ def _client(*, max_steps: int = 8):
     model = load_runtime_profile(PROFILE_DIR).models.explore
     if base_url := os.environ.get("DEEPSEEK_BASE_URL"):
         model = model.model_copy(update={"base_url": base_url})
-    client = make_client(
-        model,
-        api_key=key,
-        explore_max_steps=max_steps,
-        conclude_grace_calls=3,
-        max_duration_seconds=90,
+    client = cast(
+        DeepSeekChatClient,
+        make_client(
+            model,
+            api_key=key,
+            explore_max_steps=max_steps,
+            conclude_grace_calls=3,
+            max_duration_seconds=90,
+        ),
     )
     return client, model
 
