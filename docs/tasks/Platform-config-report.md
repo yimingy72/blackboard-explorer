@@ -29,3 +29,9 @@
 ## 提交与交付
 
 设计合同已先提交。实现分为平台连接存储/API及迁移、运行时provider/MCP、配置中心前端与文档。原3个已结束任务保留；本地部署后新任务使用default/single最新人民币配置。检查日志、截图和离线构建说明保存在主仓库`.data/checkpoints/platform-config/`。
+
+## 本地部署确认
+
+已合并部署blackboard/runtime，迁移为0005，二者运行且重启计数0，runtime持有唯一数据库锁。default/single最新v3使用CNY并引用deepseek-default v1；runtime已成功解析其环境密钥（只检查是否存在，未输出密钥、未调用模型）。三个模板正文分别为4675/1543/2429字符。原3个finished任务的API币种仍为USD，未改写历史金额。
+
+部署前备份`.data/backups/pre-platform-config.dump`，最终检查/构建日志和截图在`.data/checkpoints/platform-config/`。无需用户执行部署命令；刷新配置页后可操作，浏览器若固定旧版请为新任务选择v3或新发布版本。
