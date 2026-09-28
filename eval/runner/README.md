@@ -122,3 +122,6 @@ make eval-score EVAL_OUT=eval/results/experiment-01
 - 过程：争议事件数、裁定次数、最终仍 met 的证据声明占全部 satisfies 声明的比例、Agent 结束原因分布。
 
 对比报告列两组的平均值、最差一次和各自样本数；失败/缺失值不伪造为零。至少两组各 5 次且复核/复现/覆盖数据完整，才判断平均多找到至少一个问题。召回持平时报告实际耗时变化，“明显更短”的门槛留给人工判断。不得用模拟数据声称多 Agent 在真实任务上占优。
+
+
+2026-09-28行为更新：single的derive_enabled=false仅关闭主动推导，必要完成复核仍保留（明确达成可跳过）。新版单Explore基线可能包含derive完成复核调用，须与同版default重跑比较；不要与此前完全无derive的single账本混算。

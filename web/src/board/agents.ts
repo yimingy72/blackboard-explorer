@@ -40,7 +40,7 @@ export function agentLabel(id: string, numbers: Record<string, number>): string 
 export function agentRole(agent: BoardAgent): string {
   if (agent.isSeed) return '种子探索';
   if (agent.taskType === 'explore') return '探索';
-  if (agent.taskType === 'derive') return agent.deriveParallel ? '并行推导' : '推导';
+  if (agent.taskType === 'derive') return agent.deriveReview ? '完成复核' : agent.deriveParallel ? '并行推导' : '推导';
   return agent.closeMode === 'final' ? '终结' : '裁定';
 }
 

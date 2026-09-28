@@ -1109,6 +1109,11 @@ export interface components {
             /** Derive Parallel */
             derive_parallel?: boolean | null;
             /**
+             * Derive Review
+             * @default false
+             */
+            derive_review: boolean;
+            /**
              * Is Seed
              * @default false
              */
@@ -1601,7 +1606,7 @@ export interface components {
             derive_empty_limit: number;
             /**
              * Derive Enabled
-             * @description 探索静止且裁定后是否继续推导
+             * @description 启用主动并行推导及额外空复核；必要完成复核始终保留
              * @default true
              */
             derive_enabled: boolean;
@@ -1688,7 +1693,7 @@ export interface components {
             derive_empty_limit: number;
             /**
              * Derive Enabled
-             * @description 探索静止且裁定后是否继续推导
+             * @description 启用主动并行推导及额外空复核；必要完成复核始终保留
              * @default true
              */
             derive_enabled: boolean;
@@ -2155,6 +2160,14 @@ export interface components {
         Verdict: "met" | "unmet";
         /** VerdictItem */
         VerdictItem: {
+            /**
+             * Completion Basis
+             * @default inferred
+             * @enum {string}
+             */
+            completion_basis: "explicit" | "inferred";
+            /** Completion Reason */
+            completion_reason?: string | null;
             /**
              * Evidence Facts
              * @description 支撑事实

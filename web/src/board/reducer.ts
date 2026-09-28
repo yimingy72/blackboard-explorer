@@ -87,6 +87,8 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
             missing: saved?.missing ?? null,
             evidence_facts: saved?.evidence_facts ?? [],
             judged_version: saved?.judged_version ?? null,
+            completion_basis: saved?.completion_basis ?? 'inferred',
+            completion_reason: saved?.completion_reason ?? null,
           };
         }
         break;
@@ -218,6 +220,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           taskType: p.task_type as BoardAgent['taskType'],
           isSeed: p.is_seed === true,
           deriveParallel: p.derive_parallel === true,
+          deriveReview: p.derive_review === true,
           closeMode: (p.close_mode ?? null) as BoardAgent['closeMode'],
           status: 'running',
           steps: 0,
@@ -286,6 +289,8 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           reason: string;
           missing?: string | null;
           evidence_facts?: string[];
+          completion_basis?: string;
+          completion_reason?: string | null;
         }>;
         for (const verdict of verdicts) {
           const item = state.acceptance[verdict.id];
@@ -295,6 +300,8 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           item.missing = verdict.missing ?? null;
           item.evidence_facts = verdict.evidence_facts ?? [];
           item.judged_version = typeof p.judge_from_version === 'number' ? p.judge_from_version : null;
+          item.completion_basis = verdict.completion_basis === 'explicit' ? 'explicit' : 'inferred';
+          item.completion_reason = typeof verdict.completion_reason === 'string' ? verdict.completion_reason : null;
         }
         break;
       }

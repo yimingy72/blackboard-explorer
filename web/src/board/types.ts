@@ -20,6 +20,8 @@ export interface BoardAcceptance {
   missing: string | null;
   evidence_facts: string[];
   judged_version: number | null;
+  completion_basis?: string;
+  completion_reason?: string | null;
 }
 
 export interface BoardTask {
@@ -80,6 +82,7 @@ export interface BoardAgent {
   taskType: 'explore' | 'derive' | 'close';
   isSeed: boolean;
   deriveParallel?: boolean;
+  deriveReview?: boolean;
   closeMode: 'judge' | 'final' | null;
   status: 'running' | 'concluding' | 'finished' | 'failed';
   steps: number;
