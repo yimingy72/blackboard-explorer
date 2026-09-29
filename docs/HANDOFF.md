@@ -43,6 +43,7 @@
   | Runtime-failure-hardening | ✅ NUL安全会话、SDK瞬时错误4次重试、脱敏model_error trace、Derive分轮初始上下文；570普通/62集成/33前端/18浏览器通过并部署（2026-09-28） |
   | Provider-failure-coalescing | ✅ 同一120秒窗口内并行模型瞬时故障只计一次，不消耗Intent/种子尝试；终态冻结与Close重试同步修复；580普通/65集成通过，schema0011已部署（2026-09-29） |
   | Agent-settings | ✅ 主会话重做Worker/模型/MCP配置页，模型context_window与80%交接阈值；586普通/65集成/33前端/20浏览器通过，本地已部署（2026-09-29） |
+  | Runtime-streaming | ✅ 六类 OpenAI 系连接器的 Worker/只读对话启用后端流式；逐调用记账、完整终态校验、百智云空占位兼容；671普通/65集成与真实两轮工具烟测通过，已合并本地部署（2026-09-29） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；用户已允许按需使用GPT-6 Sol high协作开发。
@@ -365,6 +366,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Runtime-streaming 已合并实现并本地部署；Responses 保持 store:false、本地工具历史回放，六类 OpenAI 系连接器使用 ResponseStream 并在每次完整模型响应后记账。实现架构第 6–7 节的旧非流式示例尚待补充流式处理说明，本轮未改设计文档。详细范围、错误边界、真实网关验证和前端仍按完整响应展示的限制见 [Runtime-streaming 报告](tasks/Runtime-streaming-report.md)。
 
 Agent-settings已先同步设计：模型上下文容量、80%任务阈值/旧任务固定、配置页角色侧栏和分组表单，已合并部署。无待同步项；见tasks/Agent-settings-report.md。
 

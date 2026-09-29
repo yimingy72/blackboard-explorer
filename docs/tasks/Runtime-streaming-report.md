@@ -31,9 +31,16 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache make check
 
 ## 下一步与建议提交划分
 
-建议审核通过后分两次提交；本轮未提交、合并或部署。
+已按以下划分提交并快进合并到 main：实现提交 `5c1126c`，任务说明与验证报告提交 `ea30dc7`。
 
 1. `Enable complete model streams in runtime workers`：`services/agent-runtime/src/bbx_runtime/{runner,chatworker,models,middleware,image_view,model_errors}.py` 及对应测试、脚本客户端测试辅助修改。
 2. `Document runtime streaming verification`：`docs/tasks/Runtime-streaming.md` 和 `docs/tasks/Runtime-streaming-report.md`。
 
 提交正文按 `AGENTS.md` 补 `Implemented by Codex (gpt-6-sol) for task Runtime-streaming.`。
+
+## 本地部署复核（2026-09-29）
+
+- 部署前确认没有 running / closing / provisioning 任务；仅重建启动 agent-runtime，没有自动续跑历史任务。
+- 使用最终集成测试构建的镜像 `90adfedf1379`。容器运行正常、重启次数 0，PostgreSQL 中仅一个已授予的运行锁；工作台 `/login` 返回 HTTP 200。
+- 容器内 models、runner、middleware、image_view、model_errors、chatworker 六个模块的 SHA-256 与 main 源码逐项相同。
+- 现在新建或显式续跑的任务，以及结束后的只读对话，在上述六类连接器下使用模型流式请求。前端仍按完整响应展示；未推送远程。
