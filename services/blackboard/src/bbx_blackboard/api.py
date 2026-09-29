@@ -702,8 +702,13 @@ def create_app(
     async def purge_task(request: Request, task_id: UUID) -> dict[str, bool]:
         require_service(request)
         result = await _conversations(request).purge(task_id, request.app.state.objects)
-        await request.app.state.workspace_cache.invalidate(f"workspace/{task_id}.tar.zst")
+        await request.app.state.workspace_cache.invalidate_task(task_id)
         return result
+
+    @app.get("/api/tasks/{task_id}/archive-data", tags=["system"])
+    async def archive_data(request: Request, task_id: UUID) -> dict[str, Any]:
+        require_service(request)
+        return await _conversations(request).export_archive(task_id)
 
     @app.get("/api/conversations/pending", tags=["system"])
     async def pending_conversations(request: Request) -> list[dict[str, Any]]:

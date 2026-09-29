@@ -11,6 +11,7 @@ from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
+from bbx_runtime.execenv.archive import ArchiveCapacityError
 from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.scheduler.executor import ActionExecutor
@@ -159,40 +160,27 @@ class TaskSupervisor:
         state = await self.service.state(tid)
         await self._drain(tid, state)
         state = await self.service.state(tid)
-        handle = await self.manager.find(tid)
-        if handle is not None:
-            if not state["task"].get("workspace_uri") and (
-                state["task"].get("run_started", True)
-                or not state["task"].get("resume_workspace_uri")
-            ):
-                run_number = int(state["task"].get("run_number", 1))
-                try:
-                    archive = (
-                        await self.manager.archive_to_store(handle)
-                        if run_number == 1
-                        else await self.manager.archive_to_store(handle, run_number)
-                    )
-                except RemoteError as error:
-                    if error.status != 413:
-                        raise
-                    LOGGER.error(
-                        "Task %s archive exceeds capacity; execution environment and workspace "
-                        "are retained and archive capacity needs attention.",
-                        tid,
-                    )
-                    self.archive_blocked.add(tid)
-                    return
-                await self.service.record_archive(tid, archive.uri, archive.size, archive.fallback)
-            await self.manager.destroy(tid)
-        elif state["task"].get("started_at") and not state["task"].get("workspace_uri"):
-            LOGGER.error(
-                "Task %s execution environment is missing; workspace cannot be archived. "
-                "Previously persisted evidence is retained.",
-                tid,
-            )
-        final_task = (await self.service.state(tid))["task"]
-        if final_task.get("workspace_uri") or final_task.get("resume_workspace_uri"):
-            await self.service.record_cleanup(tid)
+        if not state["task"].get("workspace_uri"):
+            data = await self.service.archive_data(tid)
+            try:
+                archive = await self.manager.archive_task(tid, data)
+            except ArchiveCapacityError:
+                LOGGER.error(
+                    "Task %s archive exceeds capacity; execution environment retained.", tid
+                )
+                self.archive_blocked.add(tid)
+                return
+            except RemoteError as error:
+                if error.status != 413:
+                    raise
+                LOGGER.error(
+                    "Task %s archive exceeds capacity; execution environment retained.", tid
+                )
+                self.archive_blocked.add(tid)
+                return
+            await self.service.record_archive(tid, archive.uri, archive.size, archive.fallback)
+        await self.manager.destroy(tid)
+        await self.service.record_cleanup(tid)
         self.cleaned.add(tid)
 
     async def _purge_deleted(self, tid: str) -> None:

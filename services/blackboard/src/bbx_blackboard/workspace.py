@@ -9,6 +9,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import BinaryIO, Literal, Protocol
+from uuid import UUID
 
 import anyio
 import zstandard
@@ -225,8 +226,10 @@ class WorkspaceArchiveCache:
                 _, index = self._entries.popitem(last=False)
                 await anyio.to_thread.run_sync(index.close)
 
-    async def invalidate(self, uri: str) -> None:
+    async def invalidate_task(self, task_id: UUID) -> None:
+        legacy = f"workspace/{task_id}.tar.zst"
+        prefix = f"workspace/{task_id}/"
         async with self._lock:
-            index = self._entries.pop(uri, None)
-            if index is not None:
-                await anyio.to_thread.run_sync(index.close)
+            for uri in list(self._entries):
+                if uri == legacy or uri.startswith(prefix):
+                    await anyio.to_thread.run_sync(self._entries.pop(uri).close)

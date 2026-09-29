@@ -215,6 +215,10 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> 
             assert task_id == tid
             return {"task_id": tid, "deleting": True}
 
+        async def export_archive(self, task_id):
+            assert task_id == tid
+            return {"format": "bbx.task-archive.v1", "task_id": str(tid)}
+
     app.state.conversations = FakeConversations()
     agent = {"Authorization": f"Bearer {issue_agent_token(config, tid, 'agent-1')}"}
     service = {"Authorization": "Bearer service-test"}
@@ -228,6 +232,8 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> 
             )
         ).status_code == 403
         assert (await client.get(f"{path}/session", headers=agent)).status_code == 403
+        archive_path = f"/api/tasks/{tid}/archive-data"
+        assert (await client.get(archive_path, headers=agent)).status_code == 403
         assert (
             await client.post(
                 f"{path}/messages", json={"id": str(mid), "content": "hello"}, headers=service
@@ -236,11 +242,16 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> 
         assert (await client.delete(f"/api/tasks/{tid}", headers=service)).status_code == 403
         client.cookies.set("bbx_session", issue_user_token(config, "alice"), path="/api")
         assert (await client.get(f"{path}/session")).status_code == 403
+        assert (await client.get(archive_path)).status_code == 403
         assert (
             await client.post(f"{path}/messages", json={"id": str(mid), "content": "hello"})
         ).status_code == 200
         assert (await client.delete(f"/api/tasks/{tid}")).status_code == 202
         assert (await client.get(f"{path}/session", headers=service)).json()["revision"] == 1
+        assert (await client.get(archive_path, headers=service)).json() == {
+            "format": "bbx.task-archive.v1",
+            "task_id": str(tid),
+        }
         response = await client.get("/api/profiles", headers=[(b"Authorization", b"Bearer \xff")])
         assert response.status_code == 401
         user = issue_user_token(config, "alice")

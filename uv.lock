@@ -522,6 +522,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pyyaml" },
     { name = "socksio" },
+    { name = "zstandard" },
 ]
 
 [package.metadata]
@@ -543,6 +544,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.24,<2" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "socksio", specifier = ">=1,<2" },
+    { name = "zstandard", specifier = ">=0.25,<1" },
 ]
 
 [[package]]

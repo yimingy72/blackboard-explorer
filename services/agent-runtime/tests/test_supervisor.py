@@ -14,6 +14,7 @@ import pytest
 from bbx_contracts.profile import load_profile
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.execenv import ArchiveResult, ExecEnvManager
+from bbx_runtime.execenv.archive import ArchiveCapacityError
 from bbx_runtime.scheduler.loop import SchedulerLoop
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import Settings
@@ -51,6 +52,10 @@ class Service:
 
     async def state(self, tid: str) -> dict:
         return deepcopy(self.states[tid])
+
+    async def archive_data(self, tid: str) -> dict:
+        self.calls.append(("archive_data", tid))
+        return {"task_id": tid, "run_number": self.states[tid]["task"].get("run_number", 1)}
 
     async def get_profile(self, name: str, version: int) -> dict:
         self.calls.append(("profile", name, version))
@@ -92,7 +97,7 @@ class Manager:
         self.handles: dict[str, SimpleNamespace] = {}
         self.calls: list[tuple] = []
         self.archive_gate: asyncio.Event | None = None
-        self.archive_errors: list[RemoteError] = []
+        self.archive_errors: list[Exception] = []
 
     async def find(self, tid: str) -> SimpleNamespace | None:
         self.calls.append(("find", tid))
@@ -107,13 +112,19 @@ class Manager:
         self.handles[tid] = handle
         return handle
 
-    async def archive_to_store(self, handle: SimpleNamespace) -> ArchiveResult:
-        self.calls.append(("archive", handle.task_id))
+    async def archive_task(self, tid: str, data: dict) -> ArchiveResult:
+        self.calls.append(("archive", tid))
         if self.archive_gate is not None:
             await self.archive_gate.wait()
         if self.archive_errors:
             raise self.archive_errors.pop(0)
-        return ArchiveResult(f"workspace/{handle.task_id}.tar.zst", 123, "none")
+        run_number = data["run_number"]
+        uri = (
+            f"workspace/{tid}.tar.zst"
+            if run_number == 1
+            else f"workspace/{tid}/run-{run_number}.tar.zst"
+        )
+        return ArchiveResult(uri, 123, "none")
 
     async def destroy(self, tid: str) -> None:
         self.calls.append(("destroy", tid))
@@ -244,6 +255,31 @@ async def test_archive_record_precedes_destroy_and_failure_retains_container(
 
 
 @pytest.mark.asyncio
+async def test_missing_source_container_still_archives_from_persisted_data() -> None:
+    service = Service([task("gone", "failed")])
+    manager = Manager()
+    owner = supervisor(service, manager)
+    await owner._cleanup("gone")
+    assert ("archive", "gone") in manager.calls
+    assert ("destroy", "gone") in manager.calls
+    assert service.states["gone"]["task"]["cleanup_ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_archive_upload_failure_retains_container_and_does_not_record_cleanup() -> None:
+    service = Service([task("kept", "finished")])
+    manager = Manager()
+    manager.handles["kept"] = SimpleNamespace(task_id="kept")
+    manager.archive_errors.append(OSError("object store upload failed"))
+    owner = supervisor(service, manager)
+    with pytest.raises(OSError):
+        await owner._cleanup("kept")
+    assert "kept" in manager.handles
+    assert ("destroy", "kept") not in manager.calls
+    assert not service.states["kept"]["task"].get("cleanup_ready", False)
+
+
+@pytest.mark.asyncio
 async def test_cleanup_occupies_slot_until_archive_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,6 +324,20 @@ async def test_archive_413_retains_workspace_without_retries_or_occupying_slot(
     assert ("destroy", "done") not in manager.calls
     assert [call for call in manager.calls if call[0] == "archive"] == [("archive", "done")]
     assert ("provision", "waiting") in manager.calls
+
+
+@pytest.mark.asyncio
+async def test_local_archive_capacity_error_retains_container() -> None:
+    service = Service([task("oversized", "finished")])
+    manager = Manager()
+    manager.handles["oversized"] = SimpleNamespace(task_id="oversized")
+    manager.archive_errors.append(ArchiveCapacityError("restore limit"))
+    owner = supervisor(service, manager)
+    await owner._cleanup("oversized")
+    assert owner.archive_blocked == {"oversized"}
+    assert "oversized" in manager.handles
+    assert ("destroy", "oversized") not in manager.calls
+    assert not service.states["oversized"]["task"].get("cleanup_ready", False)
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Database behavior against an isolated pgvector PostgreSQL container."""
 
 import asyncio
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -16,6 +17,7 @@ from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.service import BoardService
 from bbx_blackboard.store import schema as s
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.community.postgres import PostgresContainer
@@ -500,9 +502,13 @@ async def test_session_storage_escapes_nested_nul_and_returns_stored_snapshot(bo
 async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
     first, second = await asyncio.gather(task(board_service), task(board_service))
     aid = await board_service.register_agent(first, "explore")
+    other_aid = await board_service.register_agent(second, "explore")
     store = Conversations(board_service.repo.engine)
     await store.put_session(first, aid, {"type": "session"}, "opening", "native", 0, [])
     await store.post_message(first, aid, uuid4(), "queued")
+    await store.put_session(second, other_aid, {"other": True}, "keep", "native", 0, [])
+    await store.post_message(second, other_aid, uuid4(), "keep")
+    other_state = await board_service.state(second)
     with pytest.raises(HTTPException) as active:
         await store.request_delete(first)
     assert active.value.status_code == 409
@@ -522,10 +528,21 @@ async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
         def __init__(self):
             self.keys = {
                 f"evidence/{first}/agent-1/a",
+                f"evidence/{first}/agent-1/old-run",
+                f"toolcalls/{first}/agent-1/call.json",
                 f"traces/{first}/agent-1/a.json",
                 f"reports/{first}.md",
+                f"reports/{first}/run-1.md",
                 f"workspace/{first}.tar.zst",
+                f"workspace/{first}/run-1.tar.zst",
+                f"workspace/{first}/run-2.tar.zst",
                 f"evidence/{second}/agent-1/keep",
+                f"toolcalls/{second}/agent-1/keep.json",
+                f"traces/{second}/agent-1/keep.json",
+                f"reports/{second}.md",
+                f"reports/{second}/run-1.md",
+                f"workspace/{second}.tar.zst",
+                f"workspace/{second}/run-1.tar.zst",
             }
             self.fail_once = True
 
@@ -542,11 +559,88 @@ async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
     with pytest.raises(RuntimeError):
         await store.purge(first, objects)
     assert first in await store.deletions()
+    assert (await board_service.state(first))["task"]["deleting"]
     assert (await store.purge(first, objects))["purged"]
     assert (await store.purge(first, objects))["purged"]
     assert await store.deletions() == []
-    assert objects.keys == {f"evidence/{second}/agent-1/keep"}
-    assert (await board_service.state(second))["task"]["id"] == second
+    assert objects.keys == {
+        f"evidence/{second}/agent-1/keep",
+        f"toolcalls/{second}/agent-1/keep.json",
+        f"traces/{second}/agent-1/keep.json",
+        f"reports/{second}.md",
+        f"reports/{second}/run-1.md",
+        f"workspace/{second}.tar.zst",
+        f"workspace/{second}/run-1.tar.zst",
+    }
+    assert await board_service.state(second) == other_state
+    assert (await store.get_session(second, other_aid))["session"] == {"other": True}
+    assert (await store.list_messages(second, other_aid))["messages"][0]["content"] == "keep"
+
+
+async def test_archive_export_is_complete_consistent_and_task_scoped(board_service):
+    first, second = await asyncio.gather(task(board_service), task(board_service))
+    store = Conversations(board_service.repo.engine)
+    with pytest.raises(HTTPException) as missing:
+        await store.export_archive(uuid4())
+    assert missing.value.status_code == 404
+    with pytest.raises(HTTPException) as nonterminal:
+        await store.export_archive(first)
+    assert nonterminal.value.status_code == 409
+
+    aid = await board_service.register_agent(first, "explore")
+    await board_service.post_fact(first, aid, fact())
+    await board_service.post_intent(first, aid, intent())
+    session = {"type": "session", "history": ["complete"]}
+    await store.put_session(first, aid, session, "opening", "native", 0, [])
+    mid = uuid4()
+    await store.post_message(first, aid, mid, "What happened?")
+    claim = await store.claim(first, aid, mid, "active")
+    await store.fail(first, aid, mid, claim["claim_token"], "archived")
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(update(s.tasks).where(s.tasks.c.id == first).values(status="finished"))
+    with pytest.raises(HTTPException) as active:
+        await store.export_archive(first)
+    assert active.value.status_code == 409
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(update(s.tasks).where(s.tasks.c.id == first).values(status="running"))
+    await append_agent_finished(board_service, first, aid)
+    await board_service.transition(first, "closing")
+    await board_service.transition(first, "finished")
+    await board_service.transition(second, "closing")
+    await board_service.transition(second, "finished")
+
+    snapshot = await store.export_archive(first)
+    assert snapshot["format"] == "bbx.task-archive.v1"
+    assert snapshot["task_id"] == str(first)
+    assert snapshot["run_number"] == 1
+    assert snapshot["state"] == jsonable_encoder(await board_service.state(first))
+    assert snapshot["state"]["facts"]["F1"]["evidence"][0]["uri"] == "evidence/one"
+    assert [row["version"] for row in snapshot["events"]] == sorted(
+        row["version"] for row in snapshot["events"]
+    )
+    assert snapshot["sessions"][0]["agent_id"] == aid
+    assert snapshot["sessions"][0]["session"] == session
+    assert snapshot["sessions"][0]["opening_instructions"] == "opening"
+    assert snapshot["sessions"][0]["origin"] == "native"
+    assert snapshot["sessions"][0]["revision"] == 1
+    assert snapshot["sessions"][0]["updated_at"]
+    assert snapshot["messages"][0]["id"] == str(mid)
+    assert snapshot["messages"][0]["content"] == "What happened?"
+    assert "claim_token" not in snapshot["messages"][0]
+    assert "lease_until" not in snapshot["messages"][0]
+    assert str(claim["claim_token"]) not in json.dumps(snapshot)
+    assert snapshot["task_runs"] == []
+    assert all(row["task_id"] == str(first) for row in snapshot["events"])
+
+    await board_service.record_archive(first, f"workspace/{first}.tar.zst", 12, "none")
+    archived = await store.export_archive(first)
+    assert archived["task_runs"][0]["run_number"] == 1
+    assert archived["task_runs"][0]["workspace_uri"] == f"workspace/{first}.tar.zst"
+
+    await store.request_delete(second)
+    with pytest.raises(HTTPException) as deleting:
+        await store.export_archive(second)
+    assert deleting.value.status_code == 409
 
 
 async def test_message_and_delete_share_task_lock(board_service):

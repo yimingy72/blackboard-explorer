@@ -270,3 +270,77 @@ async def test_workspace_cache_evicts_old_indexes(monkeypatch: pytest.MonkeyPatc
     finally:
         await cache.close()
     assert all(index.file.closed for index in remaining)
+
+
+@pytest.mark.asyncio
+async def test_workspace_cache_invalidate_task_closes_every_run_and_preserves_other() -> None:
+    first, other = uuid4(), uuid4()
+    legacy = f"workspace/{first}.tar.zst"
+    run_two = f"workspace/{first}/run-2.tar.zst"
+    run_three = f"workspace/{first}/run-3.tar.zst"
+    other_run = f"workspace/{other}/run-1.tar.zst"
+    objects = Objects(
+        {
+            uri: archive(("./proof.txt", uri.encode(), None))
+            for uri in (legacy, run_two, run_three, other_run)
+        }
+    )
+    cache = workspace.WorkspaceArchiveCache()
+    try:
+        await cache.tree(objects, legacy)
+        await cache.tree(objects, run_two)
+        legacy_index, run_two_index = cache._entries[legacy], cache._entries[run_two]
+        await cache.invalidate_task(first)
+        assert not cache._entries
+        assert legacy_index.file.closed and run_two_index.file.closed
+
+        await cache.tree(objects, run_three)
+        await cache.tree(objects, other_run)
+        run_three_index, other_index = cache._entries[run_three], cache._entries[other_run]
+        await cache.invalidate_task(first)
+        assert run_three_index.file.closed
+        assert not other_index.file.closed
+        assert list(cache._entries) == [other_run]
+        assert await cache.file(objects, other_run, "proof.txt")
+        assert objects.streams.count(other_run) == 1
+    finally:
+        await cache.close()
+
+
+@pytest.mark.asyncio
+async def test_purge_invalidates_cache_only_after_success() -> None:
+    task_id = uuid4()
+    uri = f"workspace/{task_id}/run-2.tar.zst"
+    objects = Objects({uri: archive(("./proof.txt", b"proof", None))})
+    app = api.create_app(settings())
+    app.state.objects = objects
+
+    class Purger:
+        attempts = 0
+
+        async def purge(self, tid, _objects):
+            assert tid == task_id
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("object removal failed")
+            return {"purged": True}
+
+    app.state.conversations = Purger()
+    cache = app.state.workspace_cache
+    await cache.tree(objects, uri)
+    index = cache._entries[uri]
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            path = f"/api/tasks/{task_id}/purge"
+            headers = {"Authorization": "Bearer service-test"}
+            with pytest.raises(RuntimeError, match="object removal failed"):
+                await client.post(path, headers=headers)
+            assert not index.file.closed
+            response = await client.post(path, headers=headers)
+            assert response.status_code == 200 and response.json() == {"purged": True}
+            assert index.file.closed
+            assert uri not in cache._entries
+    finally:
+        await cache.close()

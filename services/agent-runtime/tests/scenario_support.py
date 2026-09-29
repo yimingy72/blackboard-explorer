@@ -20,6 +20,7 @@ from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient
 from bbx_runtime.context import CloseMode, TaskType
 from bbx_runtime.execenv import ArchiveResult, ExecEnvHandle, ExecEnvManager
+from bbx_runtime.execenv.archive import build_archive
 from bbx_runtime.runner import AgentRunner, RunResult
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import Settings
@@ -262,6 +263,24 @@ class FakeManager:
                     )
                     self.archives.append(result)
                     return result
+
+    async def archive_task(self, task_id: str, data: dict[str, Any]) -> ArchiveResult:
+        task = UUID(task_id)
+        run_number = int(data["run_number"])
+        uri = (
+            f"workspace/{task}.tar.zst"
+            if run_number == 1
+            else f"workspace/{task}/run-{run_number}.tar.zst"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "workspace.tar.zst"
+            await build_archive(self.objects, task, data, output)
+            size = output.stat().st_size
+            with output.open("rb") as file:
+                await self.objects.put(uri, file, length=size, content_type="application/zstd")
+        result = ArchiveResult(uri, size, "none")
+        self.archives.append(result)
+        return result
 
     async def destroy(self, task_id: str) -> None:
         self.destroyed.append(task_id)

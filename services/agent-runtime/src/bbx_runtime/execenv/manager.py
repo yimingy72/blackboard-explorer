@@ -9,6 +9,7 @@ import logging
 import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from bbx_objects import ObjectStore
 from docker.errors import NotFound
 
 from bbx_runtime.clients import EnvdClient, RemoteError, object_store
+from bbx_runtime.execenv.archive import ARCHIVE_MAX_BYTES, ArchiveCapacityError, build_archive
 from bbx_runtime.settings import Settings
 
 MANAGED = "bbx.managed"
@@ -326,6 +328,26 @@ class ExecEnvManager:
                     return ArchiveResult(
                         uri, size, response.headers.get("X-Archive-Fallback", "none")
                     )
+
+    async def archive_task(self, task_id: UUID | str, data: dict[str, Any]) -> ArchiveResult:
+        task = self._task(task_id)
+        run_number = data.get("run_number")
+        if not isinstance(run_number, int) or run_number < 1:
+            raise ValueError("Invalid archive run number")
+        uri = (
+            f"workspace/{task}.tar.zst"
+            if run_number == 1
+            else f"workspace/{task}/run-{run_number}.tar.zst"
+        )
+        with tempfile.TemporaryDirectory(prefix="bbx-task-archive-") as temporary:
+            output = Path(temporary) / "workspace.tar.zst"
+            await build_archive(self.objects, task, data, output)
+            size = output.stat().st_size
+            if size > ARCHIVE_MAX_BYTES:
+                raise ArchiveCapacityError("Compressed archive exceeds restore limit")
+            with output.open("rb") as file:
+                await self.objects.put(uri, file, length=size, content_type="application/zstd")
+        return ArchiveResult(uri, size, "none")
 
     async def destroy(self, task_id: UUID | str) -> None:
         task = self._task(task_id)

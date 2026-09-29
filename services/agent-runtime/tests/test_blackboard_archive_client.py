@@ -43,6 +43,21 @@ async def test_archive_command_and_all_task_pages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_archive_data_reads_service_snapshot() -> None:
+    task_id = uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/api/tasks/{task_id}/archive-data"
+        assert request.headers["authorization"] == "Bearer service-test"
+        return httpx.Response(200, json={"format": "bbx.task-archive.v1", "task_id": str(task_id)})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        board = BlackboardClient("http://test", "service-test", http)
+        assert (await board.archive_data(task_id))["task_id"] == str(task_id)
+
+
+@pytest.mark.asyncio
 async def test_sse_stream_yields_full_events_and_ignores_heartbeat() -> None:
     task_id = uuid4()
     first = {"version": 10, "type": "fact.posted", "payload": {"id": "F1"}}

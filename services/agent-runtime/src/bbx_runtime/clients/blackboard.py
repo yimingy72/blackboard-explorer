@@ -105,6 +105,9 @@ class BlackboardClient:
     async def state(self, task_id: UUID | str) -> dict[str, Any]:
         return await self._json("GET", f"{self._task(task_id)}/state")
 
+    async def archive_data(self, task_id: UUID | str) -> dict[str, Any]:
+        return await self._json("GET", f"{self._task(task_id)}/archive-data")
+
     async def events(
         self, task_id: UUID | str, since: int = 0, for_agent: str | None = None
     ) -> list[dict[str, Any]]:

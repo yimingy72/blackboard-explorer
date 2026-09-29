@@ -5219,6 +5219,51 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/archive-data": {
+      "get": {
+        "operationId": "archive_data_api_tasks__task_id__archive_data_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Archive Data Api Tasks  Task Id  Archive Data Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Data",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/claim_for": {
       "post": {
         "operationId": "claim_for_api_tasks__task_id__claim_for_post",

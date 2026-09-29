@@ -8,11 +8,12 @@ from uuid import UUID, uuid4
 
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from bbx_blackboard.domain.rules import event
+from bbx_blackboard.domain.rules import dispute_fields, event, pending_claims
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 
@@ -44,6 +45,89 @@ def _public(row: Any) -> dict[str, Any]:
 class Conversations:
     def __init__(self, engine: AsyncEngine) -> None:
         self.repo = Repository(engine)
+
+    async def export_archive(self, tid: UUID) -> dict[str, Any]:
+        async with self.repo.engine.begin() as conn:
+            try:
+                await self.repo.lock(conn, tid)
+            except KeyError:
+                raise HTTPException(404, "Task not found") from None
+            state = await self.repo.load(conn, tid)
+            if state.task["deleting"]:
+                raise HTTPException(409, "Task is being deleted")
+            if state.task["status"] not in {"finished", "failed", "stopped"}:
+                raise HTTPException(409, "Task is not terminal")
+            if any(agent["status"] in ACTIVE for agent in state.agents.values()):
+                raise HTTPException(409, "Task has active agents")
+
+            dispute = dispute_fields(state.facts)
+            facts = {fid: {**fact, **dispute[fid]} for fid, fact in state.facts.items()}
+            events = (
+                (
+                    await conn.execute(
+                        select(s.events)
+                        .where(s.events.c.task_id == tid)
+                        .order_by(s.events.c.version)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            sessions = (
+                (
+                    await conn.execute(
+                        select(s.agent_sessions)
+                        .where(s.agent_sessions.c.task_id == tid)
+                        .order_by(s.agent_sessions.c.agent_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            messages = (
+                (
+                    await conn.execute(
+                        select(*(s.agent_messages.c[key] for key in MESSAGE_FIELDS))
+                        .where(s.agent_messages.c.task_id == tid)
+                        .order_by(s.agent_messages.c.created_at, s.agent_messages.c.id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            task_runs = (
+                (
+                    await conn.execute(
+                        select(s.task_runs)
+                        .where(s.task_runs.c.task_id == tid)
+                        .order_by(s.task_runs.c.run_number)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return jsonable_encoder(
+                {
+                    "format": "bbx.task-archive.v1",
+                    "task_id": str(tid),
+                    "run_number": state.task["run_number"],
+                    "state": {
+                        "task": state.task,
+                        "facts": facts,
+                        "intents": state.intents,
+                        "agents": state.agents,
+                        "counters": state.counters,
+                        "pending_claims": pending_claims(state),
+                        "board_empty": not (state.facts or state.intents),
+                        "last_change_version": state.task["last_change_version"],
+                        "last_judgment_version": state.task["last_judgment_version"],
+                    },
+                    "events": [dict(row) for row in events],
+                    "sessions": [dict(row) for row in sessions],
+                    "messages": [dict(row) for row in messages],
+                    "task_runs": [dict(row) for row in task_runs],
+                }
+            )
 
     async def _task_agent(
         self, conn: AsyncConnection, tid: UUID, aid: str, *, writable: bool = False

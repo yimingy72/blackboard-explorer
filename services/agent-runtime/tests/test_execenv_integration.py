@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
+import json
 import tarfile
 from pathlib import Path
 from uuid import uuid4
@@ -121,28 +123,79 @@ async def test_execenv_lifecycle_with_archive(
                         await session.initialize()
                         result = await session.call_tool(
                             "execute_command",
-                            {"command": "echo m2a-proof > evidence.txt; cat evidence.txt"},
+                            {
+                                "command": (
+                                    "echo m2a-proof > evidence.txt; "
+                                    "dd if=/dev/zero of=transient.bin bs=1M count=8 2>/dev/null; "
+                                    "cat evidence.txt"
+                                )
+                            },
                         )
                         assert not result.isError
                         assert "m2a-proof" in str(result.structuredContent)
 
-            archive = await manager.archive_to_store(handle)
+            evidence_uri = f"evidence/{task_id}/agent-1/proof"
+            dependency_uri = f"evidence/{task_id}/agent-1/dependency"
+            await objects.put(evidence_uri, b"m2a-proof\n")
+            await objects.put(dependency_uri, b'{"input": 1}\n')
+            data = {
+                "format": "bbx.task-archive.v1",
+                "task_id": str(task_id),
+                "run_number": 1,
+                "state": {
+                    "task": {"id": str(task_id)},
+                    "facts": {
+                        "F1": {
+                            "version": 1,
+                            "evidence": [
+                                {
+                                    "path": "/workspace/agents/agent-1/evidence.txt",
+                                    "uri": evidence_uri,
+                                    "size": 10,
+                                },
+                                {
+                                    "path": "/workspace/shared/input.json",
+                                    "uri": dependency_uri,
+                                    "size": 13,
+                                },
+                            ],
+                        }
+                    },
+                    "intents": {},
+                    "agents": {},
+                },
+                "events": [],
+                "sessions": [],
+                "messages": [],
+                "task_runs": [],
+            }
+            archive = await manager.archive_task(task_id, data)
             assert archive.uri == f"workspace/{task_id}.tar.zst"
             assert archive.size > 0 and archive.fallback == "none"
             compressed = await objects.get(archive.uri)
             raw = zstandard.ZstdDecompressor().decompress(compressed, max_output_size=20_000_000)
             with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as content:
-                assert any(
-                    name.endswith("agents/agent-1/evidence.txt") for name in content.getnames()
+                assert "agents/agent-1/evidence.txt" in content.getnames()
+                assert not any("transient.bin" in name for name in content.getnames())
+                assert content.extractfile("agents/agent-1/evidence.txt").read() == b"m2a-proof\n"  # type: ignore[union-attr]
+                assert content.extractfile("shared/input.json").read() == b'{"input": 1}\n'  # type: ignore[union-attr]
+                manifest = json.loads(content.extractfile(".bbx/manifest.json").read())  # type: ignore[union-attr]
+                restored_files = {item["path"]: item for item in manifest["restored_files"]}
+                assert (
+                    restored_files["agents/agent-1/evidence.txt"]["sha256"]
+                    == hashlib.sha256(b"m2a-proof\n").hexdigest()
                 )
+                assert restored_files["shared/input.json"]["size"] == 13
             assert (await manager.find(task_id)) == handle
             await manager.destroy(task_id)
             restored = await manager.provision(task_id, profile, archive.uri)
             async with EnvdClient(restored.base_url, restored.token) as envd:
                 restored_file = await envd.read_file("/workspace/agents/agent-1/evidence.txt")
                 assert restored_file == b"m2a-proof\n"
+                assert await envd.read_file("/workspace/shared/input.json") == b'{"input": 1}\n'
                 assert (await envd.restore_status())["restored"]
-            second = await manager.archive_to_store(restored, 2)
+            data["run_number"] = 2
+            second = await manager.archive_task(task_id, data)
             assert second.uri == f"workspace/{task_id}/run-2.tar.zst"
             assert await objects.exists(second.uri)
     finally:
