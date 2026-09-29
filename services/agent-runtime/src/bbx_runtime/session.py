@@ -146,41 +146,53 @@ class SessionCheckpoint:
             self.session.state["bbx_checkpoint_id"] = str(uuid4())
             strip_image_history(self.session)
             payload = storage_safe(self.session.to_dict())
-            try:
-                saved = await self.service.put_agent_session(
-                    self.task_id,
-                    self.agent_id,
-                    session=payload,
-                    opening_instructions=self.opening_instructions,
-                    origin=self.origin,
-                    expected_revision=self.revision,
-                    deliveries=deliveries,
-                    review_claim=self.review_claim,
-                    **(
-                        {"expected_derive_round": self.expected_derive_round}
-                        if self.expected_derive_round is not None
-                        else {}
-                    ),
-                )
-            except (httpx.TransportError, RemoteError) as error:
-                if isinstance(error, RemoteError) and error.status < 500:
-                    raise
-                # A lost response can follow a committed PUT. Accept it only when the
-                # durable revision and entire snapshot prove this exact write landed.
+
+            async def write() -> dict[str, Any]:
                 try:
+                    return await self.service.put_agent_session(
+                        self.task_id,
+                        self.agent_id,
+                        session=payload,
+                        opening_instructions=self.opening_instructions,
+                        origin=self.origin,
+                        expected_revision=self.revision,
+                        deliveries=deliveries,
+                        review_claim=self.review_claim,
+                        **(
+                            {"expected_derive_round": self.expected_derive_round}
+                            if self.expected_derive_round is not None
+                            else {}
+                        ),
+                    )
+                except (httpx.TransportError, RemoteError) as error:
+                    if isinstance(error, RemoteError) and error.status < 500:
+                        raise
+                    # A lost response can follow a committed PUT. Accept it only when the
+                    # durable revision and entire snapshot prove this exact write landed.
                     saved = await self.service.get_agent_session(self.task_id, self.agent_id)
-                except Exception:
-                    raise
-                if (
-                    int(saved["revision"]) != self.revision + 1
-                    or saved["session"] != payload
-                    or saved["opening_instructions"] != self.opening_instructions
-                    or saved["origin"] != self.origin
-                ):
-                    raise
+                    if (
+                        int(saved["revision"]) != self.revision + 1
+                        or saved["session"] != payload
+                        or saved["opening_instructions"] != self.opening_instructions
+                        or saved["origin"] != self.origin
+                    ):
+                        raise
+                    return saved
+
+            pending = asyncio.create_task(write())
+            cancelled: asyncio.CancelledError | None = None
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError as error:
+                    if cancelled is None:
+                        cancelled = error
+            saved = pending.result()
             self.revision = int(saved["revision"])
             self.delivered_message_ids.update(item["id"] for item in deliveries)
             self.deliveries = [item for item in self.deliveries if item not in deliveries]
+            if cancelled is not None:
+                raise cancelled
 
 
 class CheckpointHistoryProvider(InMemoryHistoryProvider):

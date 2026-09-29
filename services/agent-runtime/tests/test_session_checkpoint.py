@@ -187,6 +187,110 @@ async def test_lost_checkpoint_response_reconciles_committed_revision_and_delive
     assert checkpoint.revision == 2
 
 
+@pytest.mark.parametrize("lose_response", [False, True])
+@pytest.mark.parametrize("cancel_reason", ["runtime_restart", "heartbeat"])
+async def test_cancelled_committed_put_finishes_before_next_save(
+    lose_response: bool, cancel_reason: str
+):
+    class HeldResponseService(MemorySessionService):
+        def __init__(self):
+            super().__init__()
+            self.committed = asyncio.Event()
+            self.release = asyncio.Event()
+            self.in_flight = False
+
+        async def put_agent_session(self, *args, **kwargs):
+            self.in_flight = True
+            try:
+                saved = await super().put_agent_session(*args, **kwargs)
+                self.committed.set()
+                await self.release.wait()
+                if lose_response:
+                    raise httpx.ReadError("response lost after commit")
+                return saved
+            finally:
+                self.in_flight = False
+
+    service = HeldResponseService()
+    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", AgentSession())
+    checkpoint.session.state["in_memory"] = {
+        "messages": [
+            Message(role="user", message_id="message-1", contents=[Content.from_text("hello")])
+        ]
+    }
+    checkpoint.stage_delivery("message-1", "claim-1")
+    pending = asyncio.create_task(checkpoint.save())
+    await asyncio.wait_for(service.committed.wait(), 2)
+    pending.cancel(cancel_reason)
+    await asyncio.sleep(0)
+    assert not pending.done()
+    pending.cancel("grace_timeout")
+    await asyncio.sleep(0)
+    assert not pending.done()
+    assert service.in_flight
+    service.release.set()
+    with pytest.raises(asyncio.CancelledError) as cancelled:
+        await asyncio.wait_for(pending, 2)
+    assert cancelled.value.args == (cancel_reason,)
+    assert not service.in_flight
+    assert checkpoint.revision == 1
+    assert checkpoint.deliveries == []
+    assert service.deliveries == [{"id": "message-1", "claim_token": "claim-1"}]
+    assert service.saved is not None
+    assert (
+        service.saved["session"]["state"]["in_memory"]["messages"][0]["message_id"] == "message-1"
+    )
+    await checkpoint.save()
+    assert checkpoint.revision == 2
+    assert service.deliveries == [{"id": "message-1", "claim_token": "claim-1"}]
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_cancelled_checkpoint_still_exposes_write_failure(conflict: bool):
+    class HeldFailureService(MemorySessionService):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.in_flight = False
+
+        async def put_agent_session(self, *args, **kwargs):
+            self.in_flight = True
+            try:
+                self.started.set()
+                await self.release.wait()
+                if not conflict:
+                    raise RuntimeError("write failed")
+                return await super().put_agent_session(*args, **kwargs)
+            finally:
+                self.in_flight = False
+
+    service = HeldFailureService()
+    if conflict:
+        service.saved = {
+            "session": {"state": {"other_writer": True}},
+            "opening_instructions": "other",
+            "origin": "native",
+            "revision": 1,
+        }
+    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", AgentSession())
+    pending = asyncio.create_task(checkpoint.save())
+    await asyncio.wait_for(service.started.wait(), 2)
+    pending.cancel()
+    await asyncio.sleep(0)
+    assert not pending.done()
+    service.release.set()
+    with pytest.raises(RemoteError if conflict else RuntimeError) as error:
+        await asyncio.wait_for(pending, 2)
+    if conflict:
+        assert isinstance(error.value, RemoteError)
+        assert error.value.status == 409
+        assert service.saved is not None
+        assert service.saved["session"] == {"state": {"other_writer": True}}
+    assert checkpoint.revision == 0
+    assert not service.in_flight
+
+
 async def test_post_commit_server_error_reconciles_but_claim_conflict_does_not():
     service = MemorySessionService()
     checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", AgentSession())
