@@ -36,20 +36,20 @@ export default function WorkspaceExplorer({ taskId, available }: { taskId: strin
         <button type="button" aria-pressed={selectedPath === node.path} onClick={() => setSelection({ taskId, path: node.path })} title={node.path}>{node.path.split('/').at(-1)}</button>}
     </li>)}</ul>;
   }
-  if (!available) return <p className={styles.empty}>当前版本尚未登记工作区归档。任务结束并完成归档后可查看。</p>;
+  if (!available) return <p className={styles.empty}>当前版本尚无可查看的任务归档。任务结束并完成归档后可查看已登记文件。</p>;
   return <div className={styles.workspaceFiles}>
     <section aria-label="工作区目录" className={styles.fileTree}>
-      {treeQuery.isPending ? <p role="status">正在读取归档目录…</p> : treeQuery.isError ? <div role="alert"><p>目录读取失败：{treeQuery.error.message}</p><button type="button" onClick={() => void treeQuery.refetch()}>重试</button></div> : tree.length ? render(tree) : <p className={styles.empty}>归档为空。</p>}
+      {treeQuery.isPending ? <p role="status">正在读取归档目录…</p> : treeQuery.isError ? <div role="alert"><p>目录读取失败：{treeQuery.error.message}</p><button type="button" onClick={() => void treeQuery.refetch()}>重试</button></div> : tree.length ? render(tree) : <p className={styles.empty}>本轮没有已登记文件。</p>}
     </section>
     <section aria-label="文件预览" className={styles.filePreview}>
       {!selectedPath ? <p className={styles.empty}>选择一个文件查看只读内容。</p> : <>
         <h3>{selectedPath}</h3>
         {fileQuery.isPending ? <p role="status">正在读取文件…</p> : fileQuery.isError ? <div role="alert"><p>文件读取失败：{fileQuery.error.message}</p><button type="button" onClick={() => void fileQuery.refetch()}>重试</button></div> : fileQuery.data && <>
           <p className={styles.muted}>{fileQuery.data.size.toLocaleString()} 字节{fileQuery.data.truncated ? ' · 仅显示头尾 200 KiB' : ''}</p>
-          {fileQuery.data.binary ? <p className={styles.muted}>这是二进制文件，无法显示文字预览。请下载完整归档查看。</p> : <pre tabIndex={0}>{fileQuery.data.text || '（空文件）'}</pre>}
+          {fileQuery.data.binary ? <p className={styles.muted}>这是二进制文件，无法显示文字预览。请下载本轮归档查看。</p> : <pre tabIndex={0}>{fileQuery.data.text || '（空文件）'}</pre>}
         </>}
       </>}
-      <a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`}>下载完整归档</a>
+      <a className={controls.button} href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`}>下载本轮归档</a>
     </section>
   </div>;
 }

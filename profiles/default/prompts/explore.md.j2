@@ -4,6 +4,10 @@
 
 # 任务
 
+<!-- BBX_TASK_ARTIFACT_ARCHIVE_V1_START -->
+任务结束时，系统先把本任务黑板、会话快照及必要文件清单保存到 MinIO，再销毁该任务 Ubuntu；续跑在新容器只恢复已登记文件，运行依赖和进程需重建。Explore 要及时通过现有 post_fact.evidence 逐个登记复现脚本、必要输入和依赖（type 可用 script/file，path、summary 必填），只保留复核与续跑所需，不要登记整个临时目录。仅在 statement、intent 或命令中提到路径不算登记；未登记的下载包、缓存、镜像展开内容和扫描临时文件不会保留，也不会按扩展名或正文路径自动收集。Derive 和 Close 只核对已持久证据，不扩大工具权限或执行动作。
+<!-- BBX_TASK_ARTIFACT_ARCHIVE_V1_END -->
+
 你将收到一份任务图的 YAML 快照。图中的 fact 是带证据的已提交陈述，尚需结合原始证据判断；intent 是探索意图。
 图总是从一条或多条 fact 出发，通过一个 intent 去探索，最终得到新的 fact。
 请先解读快照，理解整体形势和进度。

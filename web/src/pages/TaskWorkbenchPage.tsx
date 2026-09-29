@@ -186,12 +186,12 @@ export default function TaskWorkbenchPage() {
       <dialog ref={resumeDialog} className={styles.resumeDialog} aria-label="续跑任务" onCancel={(event) => { if (resuming) event.preventDefault(); }}>
         <form onSubmit={(event) => void resume(event)}>
           <h2>续跑同一任务</h2>
-          <p>保留黑板、Agent 会话和已归档的常规工作区文件。软链接、硬链接、设备文件、进程及容器外安装包不会恢复。</p>
+          <p>保留黑板和 Agent 会话，在新 Ubuntu 容器中只恢复通过 Fact 附件登记的必要文件。未登记的临时文件不保留；运行依赖和进程需重新建立。旧版全量归档仍可查看。</p>
           <label className={controls.field}><span className={controls.label}>追加金额（{task?.cost_currency ?? '任务币种'}）</span><input className={controls.input} type="number" min="0" step="any" required value={resumeCost} onChange={(event) => setResumeCost(event.target.value)} /></label>
           <label className={controls.field}><span className={controls.label}>追加运行分钟</span><input className={controls.input} type="number" min="0" step="1" required value={resumeMinutes} onChange={(event) => setResumeMinutes(event.target.value)} /></label>
           <label className={styles.refreshTools}><input type="checkbox" checked={refreshTools} onChange={(event) => setRefreshTools(event.target.checked)} />采用当前 Worker 工具设置</label>
           <p className={styles.resumeHint}>当前总限额：{formatMoney(task?.budget?.max_cost ?? boardTask?.budget.max_cost, task?.cost_currency)}、{String(task?.budget?.max_minutes ?? boardTask?.budget.max_minutes ?? 0)} 分钟；已累计运行 {duration}。追加后须留有可探索额度。</p>
-          {!task?.cleanup_ready && <p className={styles.resumeHint} role="status">正在完成工作区归档与清理，完成后即可续跑。</p>}
+          {!task?.cleanup_ready && <p className={styles.resumeHint} role="status">正在归档已登记文件并清理任务容器，完成后即可续跑。</p>}
           {resumeError && <p className={controls.error} role="alert">{resumeError}</p>}
           <div className={styles.resumeActions}><button className={controls.button} type="button" disabled={resuming} onClick={() => resumeDialog.current?.close()}>取消</button><button className={`${controls.button} ${controls.primary}`} type="submit" disabled={resuming || !task?.cleanup_ready}>{resuming ? '正在续跑…' : '确认续跑'}</button></div>
         </form>
