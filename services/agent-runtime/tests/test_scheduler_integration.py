@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agent_framework import BaseChatClient, ChatResponse
+from agent_framework import BaseChatClient, ChatResponse, ResponseStream
 from bbx_blackboard.api import create_app
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_objects import ObjectStore
@@ -70,12 +70,24 @@ class GatedScriptedClient(ScriptedChatClient):
         self.entered = False
 
     def _inner_get_response(self, *, messages, stream, options, **kwargs):
-        if self.entered or stream:
+        if self.entered:
             return super()._inner_get_response(
                 messages=messages, stream=stream, options=options, **kwargs
             )
         self.entered = True
         self.gate.enter(self.agent_id)
+
+        if stream:
+
+            async def held_stream():
+                await self.gate.release.wait()
+                produced = super(GatedScriptedClient, self)._inner_get_response(
+                    messages=messages, stream=True, options=options, **kwargs
+                )
+                assert isinstance(produced, ResponseStream)
+                return produced
+
+            return ResponseStream.from_awaitable(held_stream())
 
         async def held():
             await self.gate.release.wait()

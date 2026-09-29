@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from agent_framework import ResponseStream
 from bbx_contracts.models import Params
 from bbx_contracts.profile import load_profile
 from bbx_runtime.runner import AgentRunner
@@ -57,9 +58,13 @@ async def test_runner_finishes_once_with_allowed_cancel_reason(
         def create_session(self):
             return object()
 
-        async def run(self, *_args, **_kwargs):
-            started.set()
-            await asyncio.Event().wait()
+        def run(self, *_args, **_kwargs):
+            async def updates():
+                started.set()
+                await asyncio.Event().wait()
+                yield None
+
+            return ResponseStream(updates())
 
     monkeypatch.setattr("bbx_runtime.runner.Agent", WaitingAgent)
     runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]

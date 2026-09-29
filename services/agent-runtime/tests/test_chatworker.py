@@ -158,6 +158,7 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
     assert service.completed["usage"]["cache_hit_tokens"] == 7
     assert service.completed["usage"]["cache_miss_tokens"] == 9
     assert service.completed["usage"]["output_tokens"] == 11
+    assert script.received_streams == [True, True]
     tools = script.received_options[0]["tools"]
     assert {item.name for item in tools} == {"get", "search", "read_evidence", "view_image"}
     assert "JSON 回执要求已结束" in script.received_options[0]["instructions"]

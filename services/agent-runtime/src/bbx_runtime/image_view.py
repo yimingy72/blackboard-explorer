@@ -16,6 +16,7 @@ from agent_framework import (
     Content,
     FunctionTool,
     Message,
+    ResponseStream,
     tool,
 )
 
@@ -237,12 +238,29 @@ class ImageViewMiddleware(ChatMiddleware):
         context.messages = list(context.messages)
         messages = context.messages
         injection = await append_pending_images(self.ctx, messages)
-        sent = False
         try:
             await call_next()
-            sent = True
-        finally:
-            finish_pending_images(messages, injection, sent=sent)
+        except BaseException:
+            finish_pending_images(messages, injection, sent=False)
+            raise
+        if isinstance(context.result, ResponseStream):
+            inner = context.result
+
+            async def updates():
+                sent = False
+                try:
+                    async for update in inner:
+                        yield update
+                    await inner.get_final_response()
+                    sent = True
+                finally:
+                    finish_pending_images(messages, injection, sent=sent)
+
+            context.result = ResponseStream(
+                updates(), finalizer=lambda _: inner.get_final_response()
+            )
+        else:
+            finish_pending_images(messages, injection, sent=True)
 
 
 def strip_image_history(session: AgentSession) -> None:

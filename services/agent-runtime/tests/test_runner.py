@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +12,7 @@ from uuid import uuid4
 import httpx
 import httpx2
 import pytest
+from agent_framework import ResponseStream
 from agent_framework.exceptions import ChatClientException
 from bbx_contracts.models import McpBinding, Params, WorkerTools
 from bbx_contracts.profile import load_profile
@@ -20,6 +22,16 @@ from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient
 from openai import APIConnectionError, APIStatusError
+
+
+def fake_stream(response: Awaitable[Any], *, stream: bool):
+    if not stream:
+        return response
+
+    async def updates():
+        yield await response
+
+    return ResponseStream(updates(), finalizer=lambda items: items[-1])
 
 
 @pytest.mark.parametrize(
@@ -68,25 +80,28 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
         def create_session(self):
             return object()
 
-        async def run(self, *args, **kwargs):
-            if outcome == "timeout":
-                await asyncio.sleep(10)
-            if outcome == "cancelled":
-                raise asyncio.CancelledError
-            if outcome == "runtime_error":
-                raise RuntimeError("Never publish provider request details")
-            if outcome == "model_error":
-                response = httpx2.Response(
-                    429, request=httpx2.Request("POST", "https://model.invalid")
+        def run(self, *args, stream=False, **kwargs):
+            async def response():
+                if outcome == "timeout":
+                    await asyncio.sleep(10)
+                if outcome == "cancelled":
+                    raise asyncio.CancelledError
+                if outcome == "runtime_error":
+                    raise RuntimeError("Never publish provider request details")
+                if outcome == "model_error":
+                    raw = httpx2.Response(
+                        429, request=httpx2.Request("POST", "https://model.invalid")
+                    )
+                    error = APIStatusError("secret provider body", response=raw, body=None)
+                    raise ChatClientException("secret wrapper", inner_exception=error)
+                text = (
+                    '{"accepted":false,"reason":"前提不可用"}'
+                    if outcome == "refused"
+                    else '{"accepted":true,"data":{"posted":[],"excluded":[]}}'
                 )
-                error = APIStatusError("secret provider body", response=response, body=None)
-                raise ChatClientException("secret wrapper", inner_exception=error)
-            text = (
-                '{"accepted":false,"reason":"前提不可用"}'
-                if outcome == "refused"
-                else '{"accepted":true,"data":{"posted":[],"excluded":[]}}'
-            )
-            return SimpleNamespace(text=text)
+                return SimpleNamespace(text=text)
+
+            return fake_stream(response(), stream=stream)
 
     monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
     runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
@@ -218,10 +233,13 @@ async def test_explore_selection_excludes_exec_and_keeps_external_tool_in_guarde
         def create_session(self):
             return object()
 
-        async def run(self, *_args, **_kwargs):
-            return SimpleNamespace(
-                text='{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
-            )
+        def run(self, *_args, stream=False, **_kwargs):
+            async def response():
+                return SimpleNamespace(
+                    text='{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
+                )
+
+            return fake_stream(response(), stream=stream)
 
     monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
     handle = ExecEnvHandle(
@@ -290,8 +308,11 @@ async def test_runner_waits_for_finish_after_repeated_cancellation(monkeypatch):
         def create_session(self):
             return object()
 
-        async def run(self, *_args, **_kwargs):
-            return SimpleNamespace(text='{"accepted":true,"data":{"posted":[],"excluded":[]}}')
+        def run(self, *_args, stream=False, **_kwargs):
+            async def response():
+                return SimpleNamespace(text='{"accepted":true,"data":{"posted":[],"excluded":[]}}')
+
+            return fake_stream(response(), stream=stream)
 
     monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
     runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
@@ -354,9 +375,14 @@ async def test_runner_waits_for_envd_cleanup_when_cancelled(monkeypatch):
         def create_session(self):
             return object()
 
-        async def run(self, *_args, **_kwargs):
-            receipt = '{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
-            return SimpleNamespace(text=receipt)
+        def run(self, *_args, stream=False, **_kwargs):
+            async def response():
+                receipt = (
+                    '{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
+                )
+                return SimpleNamespace(text=receipt)
+
+            return fake_stream(response(), stream=stream)
 
     monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
     handle = ExecEnvHandle(

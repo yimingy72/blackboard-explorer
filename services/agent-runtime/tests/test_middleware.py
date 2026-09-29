@@ -9,7 +9,15 @@ from uuid import uuid4
 
 import httpx2
 import pytest
-from agent_framework import Agent, AgentSession, ChatResponse, Content, Message, tool
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    tool,
+)
 from bbx_contracts.models import Price, Usage
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
@@ -140,6 +148,78 @@ async def test_final_model_failure_records_safe_trace_without_replaying_tool():
     payload = objects.files[traces[0]["uri"]].decode()
     assert json.loads(json.loads(payload)["text"])["category"] == "rate_limit"
     assert "secret" not in payload
+
+
+async def test_lazy_stream_failure_records_model_error_before_heartbeat():
+    service, objects = FakeService(), FakeObjects()
+    service.record_agent_trace = AsyncMock()  # type: ignore[attr-defined]
+
+    class BrokenStream(ScriptedChatClient):
+        def _inner_get_response(self, *, stream, **kwargs):
+            assert stream
+
+            async def updates():
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("partial")])
+                raise httpx2.ReadError("secret transport detail")
+
+            return self._build_response_stream(updates())
+
+    client = BrokenStream([])
+    with pytest.raises(httpx2.ReadError):
+        await (
+            Agent(
+                client=client,
+                middleware=[BoardSyncMiddleware(run_context(service, objects=objects))],
+            )
+            .run("secret prompt", stream=True)
+            .get_final_response()
+        )
+    assert service.beats == []
+    traces = [
+        call.args[2]
+        for call in service.record_agent_trace.await_args_list  # type: ignore[attr-defined]
+        if call.args[2]["kind"] == "model_error"
+    ]
+    assert len(traces) == 1
+    payload = json.loads(objects.files[traces[0]["uri"]])["text"]
+    assert json.loads(payload)["category"] == "connection"
+    assert "secret" not in payload
+
+
+async def test_streamed_model_turns_keep_per_call_usage_and_trace():
+    service, objects = FakeService(), FakeObjects()
+    service.record_agent_trace = AsyncMock()  # type: ignore[attr-defined]
+
+    @tool
+    async def lookup(name: str) -> str:
+        return f"found {name}"
+
+    client = ScriptedChatClient(
+        [
+            ScriptStep(
+                calls=(ScriptToolCall("lookup", {"name": "a"}),), usage=ScriptUsage(2, 3, 4)
+            ),
+            ScriptStep(text="found a", usage=ScriptUsage(5, 6, 7)),
+        ]
+    )
+    response = (
+        await Agent(
+            client=client,
+            tools=[lookup],
+            middleware=[BoardSyncMiddleware(run_context(service, objects=objects))],
+        )
+        .run("start", stream=True)
+        .get_final_response()
+    )
+    assert response.text == "found a"
+    assert client.received_streams == [True, True]
+    assert len(service.beats) == 2
+    assert [beat["usage"].output_tokens for beat in service.beats] == [4, 7]
+    assert [beat["usage"].cache_hit_tokens for beat in service.beats] == [2, 5]
+    assert [
+        call.args[2]["kind"]
+        for call in service.record_agent_trace.await_args_list  # type: ignore[attr-defined]
+    ] == ["model_output", "model_output"]
 
 
 def run_context(

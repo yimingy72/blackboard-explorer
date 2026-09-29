@@ -80,6 +80,7 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
         self.jump_on = dict(jump_on or {})
         self.received_messages: list[list[Message]] = []
         self.received_options: list[dict[str, Any]] = []
+        self.received_streams: list[bool] = []
         self._index = 0
         self._used_jumps: set[str] = set()
 
@@ -93,6 +94,7 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         self.received_messages.append(deepcopy(list(messages)))
         self.received_options.append(deepcopy(dict(options)))
+        self.received_streams.append(stream)
         message_text = (
             fragment
             for message in messages

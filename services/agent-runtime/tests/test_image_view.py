@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import struct
 import zlib
 from types import SimpleNamespace
 from typing import Any, cast
 
-from agent_framework import Agent, AgentSession, ChatContext, ChatMiddleware, Content, Message, tool
+import pytest
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ChatContext,
+    ChatMiddleware,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    tool,
+)
 from agent_framework.amazon import BedrockChatClient
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.foundry import FoundryChatClient
@@ -20,6 +31,7 @@ from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.image_view import (
     IMAGE_STATE_KEY,
+    ImageViewMiddleware,
     append_pending_images,
     finish_pending_images,
     make_view_image_tool,
@@ -300,6 +312,43 @@ async def test_native_maf_two_calls_keep_same_image_and_small_session() -> None:
     assert second_prefix == first_prefix
     assert objects.data
     assert service.saved is not None and "data:image" not in str(service.saved)
+
+
+async def test_stream_cancel_removes_transient_image_bytes_and_keeps_pending_reference() -> None:
+    ctx, objects = context()
+    service = SessionService(objects)
+    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), TASK, "agent-1", AgentSession())
+    ctx.checkpoint = checkpoint
+    await invoke(ctx, "/workspace/image.png")
+    started = asyncio.Event()
+
+    class WaitingStream(ScriptedChatClient):
+        def _inner_get_response(self, *, stream, **kwargs):
+            assert stream
+
+            async def updates():
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("partial")])
+                started.set()
+                await asyncio.Event().wait()
+
+            return self._build_response_stream(updates())
+
+    client = WaitingStream([])
+    async with Agent(
+        client=client,
+        context_providers=[CheckpointHistoryProvider(checkpoint)],
+        middleware=[ImageViewMiddleware(ctx)],
+        require_per_service_call_history_persistence=True,
+    ) as agent:
+        task = asyncio.create_task(
+            agent.run("look", stream=True, session=checkpoint.session).get_final_response()
+        )
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert checkpoint.session.state[IMAGE_STATE_KEY]
+    assert "data:image" not in str(checkpoint.session.to_dict())
 
 
 async def test_maf_tool_loop_keeps_image_in_all_following_calls() -> None:

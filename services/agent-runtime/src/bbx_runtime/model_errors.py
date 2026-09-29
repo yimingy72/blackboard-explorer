@@ -8,6 +8,7 @@ from datetime import UTC
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Any
 
+import httpx2
 from agent_framework import Message
 from agent_framework.exceptions import (
     ChatClientContentFilterException,
@@ -29,6 +30,16 @@ OPENAI_PROVIDERS = {
     "azure_openai_chat",
     "azure_openai_responses",
 }
+
+
+class ModelStreamError(RuntimeError):
+    """A provider terminal event that cannot be used as a complete model turn."""
+
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__("Model stream did not complete successfully")
+
+
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _SECONDS = re.compile(r"[0-9]{1,8}(?:\.[0-9]{1,3})?\Z")
@@ -117,9 +128,11 @@ def model_error_metadata(
         isinstance(item, ChatClientInvalidRequestException) for item in chain
     ):
         category = "invalid_request"
-    elif any(isinstance(item, APITimeoutError) for item in chain):
+    elif stream_error := next((item for item in chain if isinstance(item, ModelStreamError)), None):
+        category = stream_error.category
+    elif any(isinstance(item, (APITimeoutError, httpx2.TimeoutException)) for item in chain):
         category = "timeout"
-    elif any(isinstance(item, APIConnectionError) for item in chain):
+    elif any(isinstance(item, (APIConnectionError, httpx2.TransportError)) for item in chain):
         category = "connection"
     else:
         category = "unknown"

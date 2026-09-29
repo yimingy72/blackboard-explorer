@@ -17,6 +17,7 @@ from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.evidence import evidence_page
 from bbx_runtime.image_view import ImageViewMiddleware, make_view_image_tool
+from bbx_runtime.model_errors import OPENAI_PROVIDERS
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
@@ -255,11 +256,20 @@ class ChatWorker:
                         require_per_service_call_history_persistence=True,
                     ) as agent:
                         async with asyncio.timeout(180):
-                            response = await agent.run(
-                                prompt,
-                                session=checkpoint.session,
-                                options=model_run_options(model),
-                            )
+                            if model.provider in OPENAI_PROVIDERS:
+                                stream = agent.run(
+                                    prompt,
+                                    stream=True,
+                                    session=checkpoint.session,
+                                    options=model_run_options(model),
+                                )
+                                response = await stream.get_final_response()
+                            else:
+                                response = await agent.run(
+                                    prompt,
+                                    session=checkpoint.session,
+                                    options=model_run_options(model),
+                                )
                     answer = response.text
                     raw_usage = checkpoint.session.state.get("bbx_review_usage", {}).get(message_id)
                     billed = checkpoint.session.state.get("bbx_review_billed", {}).get(message_id)

@@ -26,7 +26,7 @@ from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
-from bbx_runtime.model_errors import model_error_metadata
+from bbx_runtime.model_errors import OPENAI_PROVIDERS, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
@@ -291,9 +291,18 @@ class AgentRunner:
                         confirmed_before = (
                             set(checkpoint.delivered_message_ids) if checkpoint else set()
                         )
-                        response = await agent.run(
-                            prompt, session=session, options=model_run_options(model)
-                        )
+                        if model.provider in OPENAI_PROVIDERS:
+                            stream = agent.run(
+                                prompt,
+                                stream=True,
+                                session=session,
+                                options=model_run_options(model),
+                            )
+                            response = await stream.get_final_response()
+                        else:
+                            response = await agent.run(
+                                prompt, session=session, options=model_run_options(model)
+                            )
                         receipt = parse_receipt(response.text, task_type)
                         if not (
                             "raw_text" in receipt

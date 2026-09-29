@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping, Sequence
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, cast
 
+import httpx2
 from agent_framework import (
     BaseChatClient,
+    ChatResponse,
+    ChatResponseUpdate,
     Content,
     FunctionInvocationConfiguration,
+    Message,
+    ResponseStream,
     UsageDetails,
 )
 from agent_framework.amazon import BedrockChatClient
@@ -21,6 +26,7 @@ from agent_framework.anthropic import (
     AnthropicFoundryClient,
     AnthropicVertexClient,
 )
+from agent_framework.exceptions import ChatClientContentFilterException
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.gemini import GeminiChatClient
 from agent_framework.mistral import MistralChatClient
@@ -40,6 +46,7 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
 
 from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.model_errors import ModelStreamError
 
 
 def preserve_reasoning(
@@ -61,8 +68,137 @@ class DeepSeekChatOptions(OpenAIChatCompletionOptions[None], total=False):
     store: bool
 
 
-class DeepSeekChatClient(OpenAIChatCompletionClient):
+def _require_complete_stream(
+    stream: ResponseStream[ChatResponseUpdate, ChatResponse], *, responses: bool
+) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+    """Reject an incomplete provider turn before MAF executes its tool calls."""
+    completed = False
+
+    def observe(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        nonlocal completed
+        if responses:
+            event = update.raw_representation
+            kind = getattr(event, "type", None)
+            if (
+                kind == "response.content_part.added"
+                and getattr(getattr(event, "part", None), "type", None) == "output_text"
+            ):
+                # Some compatible gateways send a null placeholder before text deltas.
+                for content in update.contents:
+                    if content.type == "text" and content.text is None:
+                        content.text = ""
+            if kind in {"response.failed", "response.incomplete", "error"}:
+                response = getattr(event, "response", None)
+                code = (
+                    getattr(event, "code", None)
+                    if kind == "error"
+                    else getattr(getattr(response, "error", None), "code", None)
+                )
+                reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+                if reason == "content_filter" or code == "content_filter":
+                    raise ChatClientContentFilterException("Model stream was filtered")
+                category = (
+                    "rate_limit"
+                    if code in {"rate_limit", "rate_limit_exceeded"}
+                    else "server_error"
+                    if code == "server_error"
+                    else "invalid_response"
+                    if kind == "response.incomplete"
+                    else "unknown"
+                )
+                raise ModelStreamError(category)
+            if kind == "response.completed":
+                completed = getattr(getattr(event, "response", None), "status", None) == "completed"
+        elif update.finish_reason is not None:
+            if update.finish_reason not in {"stop", "tool_calls"}:
+                if update.finish_reason == "content_filter":
+                    raise ChatClientContentFilterException("Model stream was filtered")
+                raise ModelStreamError("invalid_response")
+            completed = True
+        return update
+
+    def verify(response: ChatResponse) -> ChatResponse:
+        if not completed:
+            raise httpx2.RemoteProtocolError("Model stream ended without a completed response")
+        return response
+
+    stream.with_transform_hook(observe)
+    stream.with_result_hook(verify)
+    return stream
+
+
+class CompleteChatCompletionClient(OpenAIChatCompletionClient):
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        result = super()._inner_get_response(
+            messages=messages, options=options, stream=stream, **kwargs
+        )
+        if isinstance(result, ResponseStream):
+            return _require_complete_stream(result, responses=False)
+        return result
+
+
+class CompleteResponsesClient(OpenAIChatClient):
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        result = super()._inner_get_response(
+            messages=messages, options=options, stream=stream, **kwargs
+        )
+        if isinstance(result, ResponseStream):
+            return _require_complete_stream(result, responses=True)
+        return result
+
+
+class DeepSeekChatClient(CompleteChatCompletionClient):
     """Preserve the two DeepSeek cache counters omitted by MAF's default parser."""
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        result = super()._inner_get_response(
+            messages=messages, options=options, stream=stream, **kwargs
+        )
+        if isinstance(result, ResponseStream):
+
+            def keep_reasoning(response: ChatResponse) -> ChatResponse:
+                reasoning = "".join(
+                    value
+                    for update in result.updates
+                    for content in update.contents
+                    if isinstance(
+                        value := content.additional_properties.get("deepseek_reasoning"), str
+                    )
+                )
+                if reasoning:
+                    for message in response.messages:
+                        if message.role == "assistant" and message.contents:
+                            for content in message.contents:
+                                content.additional_properties.pop("deepseek_reasoning", None)
+                            message.contents[0].additional_properties["deepseek_reasoning"] = (
+                                reasoning
+                            )
+                            break
+                return response
+
+            result.with_result_hook(keep_reasoning)
+        return result
 
     def _parse_usage_from_openai(self, usage: CompletionUsage) -> UsageDetails:
         details = dict(super()._parse_usage_from_openai(usage))
@@ -260,9 +396,9 @@ def make_client(
     client_type: Any = (
         DeepSeekChatClient
         if provider == "deepseek"
-        else OpenAIChatClient
+        else CompleteResponsesClient
         if provider in {"openai_responses", "azure_openai_responses"}
-        else OpenAIChatCompletionClient
+        else CompleteChatCompletionClient
     )
     kwargs: dict[str, Any] = (
         {"response_parser": preserve_reasoning} if provider == "deepseek" else {}

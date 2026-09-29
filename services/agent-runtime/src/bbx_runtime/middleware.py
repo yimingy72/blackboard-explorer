@@ -19,6 +19,7 @@ from agent_framework import (
     FunctionInvocationContext,
     FunctionMiddleware,
     Message,
+    ResponseStream,
 )
 from bbx_contracts.billing import effective_price
 from bbx_contracts.storage import storage_safe
@@ -348,11 +349,8 @@ class BoardSyncMiddleware(ChatMiddleware):
         requested_at = datetime.now(UTC)
         started_at = monotonic()
         model = getattr(self.ctx.profile.models, self.ctx.task_type)
-        sent = False
-        try:
-            await call_next()
-            sent = True
-        except Exception as error:
+
+        async def record_error(error: Exception) -> None:
             metadata = model_error_metadata(
                 error,
                 elapsed_ms=int((monotonic() - started_at) * 1000),
@@ -364,32 +362,64 @@ class BoardSyncMiddleware(ChatMiddleware):
             except Exception:
                 pass
             await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
-            raise
-        finally:
-            finish_pending_images(messages, injection, sent=sent)
-        response = context.result
-        if isinstance(response, ChatResponse):
+
+        async def record(response: ChatResponse) -> ChatResponse:
             output, reasoning = model_content(response)
             await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
-        details = response.usage_details if isinstance(response, ChatResponse) else None
-        price, _ = effective_price(
-            model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
-        )
-        usage, self.price_warning = _usage(details, price, model.provider)
-        if self.price_warning and not self._warned_missing_price:
-            logger.warning("Model price is not configured; cost is recorded as zero")
-            self._warned_missing_price = True
-        await self.ctx.service.heartbeat(
-            self.ctx.task_id,
-            self.ctx.agent_id,
-            steps=1,
-            context_tokens=_input_tokens(details, model.provider),
-            usage=usage,
-            last_seen_version=last_seen,
-            requested_at=requested_at,
-            **(
-                {"expected_derive_round": self.ctx.expected_derive_round}
-                if self.ctx.expected_derive_round is not None
-                else {}
-            ),
-        )
+            details = response.usage_details
+            price, _ = effective_price(
+                model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
+            )
+            usage, self.price_warning = _usage(details, price, model.provider)
+            if self.price_warning and not self._warned_missing_price:
+                logger.warning("Model price is not configured; cost is recorded as zero")
+                self._warned_missing_price = True
+            await self.ctx.service.heartbeat(
+                self.ctx.task_id,
+                self.ctx.agent_id,
+                steps=1,
+                context_tokens=_input_tokens(details, model.provider),
+                usage=usage,
+                last_seen_version=last_seen,
+                requested_at=requested_at,
+                **(
+                    {"expected_derive_round": self.ctx.expected_derive_round}
+                    if self.ctx.expected_derive_round is not None
+                    else {}
+                ),
+            )
+            return response
+
+        try:
+            await call_next()
+        except BaseException as error:
+            finish_pending_images(messages, injection, sent=False)
+            if isinstance(error, Exception):
+                await record_error(error)
+            raise
+        response = context.result
+        if isinstance(response, ResponseStream):
+            inner = response
+
+            async def updates():
+                sent = False
+                try:
+                    async for update in inner:
+                        yield update
+                    result = await inner.get_final_response()
+                    sent = True
+                except BaseException as error:
+                    if isinstance(error, Exception):
+                        await record_error(error)
+                    raise
+                finally:
+                    finish_pending_images(messages, injection, sent=sent)
+                await record(result)
+
+            context.result = ResponseStream(
+                updates(), finalizer=lambda _: inner.get_final_response()
+            )
+        else:
+            finish_pending_images(messages, injection, sent=True)
+            if isinstance(response, ChatResponse):
+                await record(response)

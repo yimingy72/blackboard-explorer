@@ -13,7 +13,7 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
-from agent_framework import BaseChatClient, ChatResponse
+from agent_framework import BaseChatClient, ChatResponse, ResponseStream
 from bbx_blackboard.api import create_app
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_objects import ObjectStore
@@ -94,11 +94,23 @@ class GateClient(ScriptedChatClient):
 
     def _inner_get_response(self, *, messages, stream, options, **kwargs):
         self.calls += 1
-        if self.calls != self.at_call or stream:
+        if self.calls != self.at_call:
             return super()._inner_get_response(
                 messages=messages, stream=stream, options=options, **kwargs
             )
         self.gate.enter(self.agent_id)
+
+        if stream:
+
+            async def held_stream():
+                await self.gate.release.wait()
+                produced = super(GateClient, self)._inner_get_response(
+                    messages=messages, stream=True, options=options, **kwargs
+                )
+                assert isinstance(produced, ResponseStream)
+                return produced
+
+            return ResponseStream.from_awaitable(held_stream())
 
         async def held():
             await self.gate.release.wait()
