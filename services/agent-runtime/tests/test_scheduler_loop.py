@@ -3,6 +3,8 @@
 import asyncio
 from typing import cast
 
+import httpx
+import pytest
 from bbx_contracts.models import Params
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.scheduler import loop as loop_module
@@ -139,4 +141,125 @@ async def test_stop_cancels_blocked_sweeper_before_executor_shutdown(monkeypatch
     await asyncio.wait_for(started.wait(), 2)
     await asyncio.wait_for(loop.stop("runtime_restart"), 0.5)
     await asyncio.wait_for(running, 2)
+    assert executor.shutdown_reasons == ["runtime_restart"]
+
+
+async def test_blackboard_read_disconnect_waits_for_next_tick_without_stopping_agents(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(loop_module, "FALLBACK_SECONDS", 0.03)
+    monkeypatch.setattr(loop_module, "decide", lambda *_args: [])
+
+    class FlakyRead(FakeStreamService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        async def state(self, task_id: str) -> dict:
+            self.reads += 1
+            if self.reads == 1:
+                raise httpx.RemoteProtocolError("lost internal response")
+            return await super().state(task_id)
+
+    service, executor = FlakyRead(), FakeExecutor()
+    loop = SchedulerLoop(cast(ActionExecutor, executor), cast(BlackboardClient, service), Params())
+
+    async def idle_sweeper() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(loop._sweeper, "run", idle_sweeper)
+    agent = asyncio.create_task(asyncio.Event().wait())
+    running = asyncio.create_task(loop.run())
+    try:
+        await wait_ticks(executor, 1)
+        assert service.reads >= 2
+        assert not running.done() and not agent.done()
+        assert executor.request_reasons == []
+        assert executor.shutdown_reasons == []
+        assert "phase=read_state error=RemoteProtocolError" in caplog.text
+        assert "lost internal response" not in caplog.text
+    finally:
+        await loop.stop()
+        await asyncio.wait_for(running, 2)
+        agent.cancel()
+        await asyncio.gather(agent, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "control_url",
+    ["http://blackboard.test/api/tasks/task/agents", "http://envd.test/users"],
+)
+async def test_lost_write_reply_rechecks_board_before_any_new_action(
+    monkeypatch, caplog, control_url
+):
+    monkeypatch.setattr(loop_module, "FALLBACK_SECONDS", 0.03)
+
+    class CommittedBoard(FakeStreamService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.committed = False
+            self.reads = 0
+
+        async def state(self, _task_id: str) -> dict:
+            self.reads += 1
+            return {
+                "task": {"status": "running"},
+                "agents": {"existing": {}} if self.committed else {},
+            }
+
+    service = CommittedBoard()
+
+    class LostReply(FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.actions: list[list[str]] = []
+
+        async def execute(self, actions: list[str]) -> None:
+            self.actions.append(actions)
+            if actions:
+                service.committed = True
+                raise httpx.RemoteProtocolError(
+                    "write committed, reply lost",
+                    request=httpx.Request("POST", control_url),
+                )
+            self.ticks += 1
+
+    executor = LostReply()
+    monkeypatch.setattr(
+        loop_module, "decide", lambda state, *_args: ["spawn"] if not state["agents"] else []
+    )
+    loop = SchedulerLoop(cast(ActionExecutor, executor), cast(BlackboardClient, service), Params())
+
+    async def idle_sweeper() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(loop._sweeper, "run", idle_sweeper)
+    running = asyncio.create_task(loop.run())
+    try:
+        await wait_ticks(executor, 1)
+        assert service.reads >= 2
+        assert executor.actions[:2] == [["spawn"], []]
+        assert executor.actions.count(["spawn"]) == 1
+        assert not running.done() and executor.shutdown_reasons == []
+        assert "phase=apply_actions error=RemoteProtocolError" in caplog.text
+        assert "write committed, reply lost" not in caplog.text
+    finally:
+        await loop.stop()
+        await asyncio.wait_for(running, 2)
+
+
+async def test_unexpected_tick_error_still_exits_scheduler(monkeypatch):
+    class BrokenState(FakeStreamService):
+        async def state(self, _task_id: str) -> dict:
+            raise ValueError("invalid scheduling state")
+
+    service, executor = BrokenState(), FakeExecutor()
+    loop = SchedulerLoop(cast(ActionExecutor, executor), cast(BlackboardClient, service), Params())
+
+    async def idle_sweeper() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(loop._sweeper, "run", idle_sweeper)
+    with pytest.raises(ValueError, match="invalid scheduling state"):
+        await loop.run()
     assert executor.shutdown_reasons == ["runtime_restart"]

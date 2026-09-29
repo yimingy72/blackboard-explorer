@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import httpx
 from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient
@@ -59,10 +60,27 @@ class SchedulerLoop:
         async with self._tick_lock:
             if self._stop.is_set():
                 return
-            state = await self.service.state(self.task_id)
+            try:
+                state = await self.service.state(self.task_id)
+            except httpx.TransportError as error:
+                logger.warning(
+                    "Task %s decision tick reconnecting phase=read_state error=%s",
+                    self.task_id,
+                    type(error).__name__,
+                )
+                self._last_tick_at = time.monotonic()
+                return
             if state["task"]["status"] in {"finished", "failed", "stopped"}:
                 return
-            await self.executor.execute(decide(state, self.params, self.now()))
+            actions = decide(state, self.params, self.now())
+            try:
+                await self.executor.execute(actions)
+            except httpx.TransportError as error:
+                logger.warning(
+                    "Task %s decision tick reconnecting phase=apply_actions error=%s",
+                    self.task_id,
+                    type(error).__name__,
+                )
             self._last_tick_at = time.monotonic()
 
     async def _listen(self) -> None:

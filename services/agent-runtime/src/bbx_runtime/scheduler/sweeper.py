@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient
@@ -14,6 +16,7 @@ from bbx_runtime.clients.blackboard import RemoteError
 from .executor import ActionExecutor
 
 SWEEP_SECONDS = 30.0
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -85,7 +88,14 @@ class Sweeper:
 
     async def run(self) -> None:
         while not self._stop.is_set():
-            await self.check_once()
+            try:
+                await self.check_once()
+            except httpx.TransportError as error:
+                logger.warning(
+                    "Task %s sweeper reconnecting phase=sweep error=%s",
+                    self.executor.task_id,
+                    type(error).__name__,
+                )
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=SWEEP_SECONDS)
             except TimeoutError:
