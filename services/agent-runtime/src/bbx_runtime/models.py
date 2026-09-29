@@ -145,6 +145,46 @@ class CompleteChatCompletionClient(OpenAIChatCompletionClient):
 
 
 class CompleteResponsesClient(OpenAIChatClient):
+    def _prepare_message_for_openai(
+        self,
+        message: Message,
+        *,
+        request_uses_service_side_storage: bool = True,
+        reasoning_items: Mapping[str, dict[str, Any]] | None = None,
+        serialized_reasoning_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        items = super()._prepare_message_for_openai(
+            message,
+            request_uses_service_side_storage=request_uses_service_side_storage,
+            reasoning_items=reasoning_items,
+            serialized_reasoning_ids=serialized_reasoning_ids,
+        )
+        if message.role != "assistant" or request_uses_service_side_storage:
+            return items
+        first_call = next(
+            (index for index, item in enumerate(items) if item.get("type") == "function_call"),
+            None,
+        )
+        if first_call is None:
+            return items
+        for index, item in enumerate(items):
+            contents = item.get("content")
+            if (
+                index > first_call
+                and item.get("type") == "message"
+                and item.get("role") == "assistant"
+                and isinstance(contents, list)
+                and any(
+                    isinstance(part, Mapping)
+                    and part.get("type") == "output_text"
+                    and isinstance(part.get("text"), str)
+                    and bool(part["text"])
+                    for part in contents
+                )
+            ):
+                return [*items[:first_call], item, *items[first_call:index], *items[index + 1 :]]
+        return items
+
     def _inner_get_response(
         self,
         *,
