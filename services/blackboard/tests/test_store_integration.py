@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
@@ -1498,6 +1498,7 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
                 "label": "Task model",
                 "provider": "openai_chat",
                 "model": "chosen-model",
+                "context_window": 500000,
                 "base_url": "https://example.invalid/v1",
                 "credentials": {"api_key": "fixture-platform-key"},
                 "price": {
@@ -1531,6 +1532,11 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
         task = created.json()
         snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
         assert {item["model"] for item in snapshot["models"].values()} == {"chosen-model"}
+        assert {item["context_window"] for item in snapshot["models"].values()} == {500000}
+        assert snapshot["params"]["context_threshold"] == 400000
+        assert (await board_service.state(UUID(task["id"])))["task"]["params"][
+            "context_threshold"
+        ] == 400000
         assert snapshot["prompt_templates"]["explore"] == body["prompt"]
         await client.put(
             "/api/settings/workers/explore",

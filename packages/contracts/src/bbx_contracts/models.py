@@ -439,6 +439,9 @@ class Price(ContractModel):
 
 class ModelConfig(ContractModel):
     supports_vision: bool | None = Field(default=None, description="模型是否支持图片输入")
+    context_window: int | None = Field(
+        default=None, strict=True, ge=1, description="模型上下文容量，单位 token"
+    )
     provider_options: dict[str, str] = Field(default_factory=dict)
     platform_id: str | None = Field(default=None, min_length=1)
     platform_version: int | None = Field(default=None, ge=1)

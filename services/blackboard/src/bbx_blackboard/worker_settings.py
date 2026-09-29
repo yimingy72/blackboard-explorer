@@ -68,6 +68,15 @@ async def read_workers(profiles: ProfileStore) -> dict[str, Any]:
     return {"revision": row["version"], "profile": profile.model_dump(mode="json")}
 
 
+def model_context_threshold(models: dict[str, Any]) -> int | None:
+    windows = [
+        model["context_window"]
+        for model in models.values()
+        if model.get("context_window") is not None
+    ]
+    return max(1, min(windows) * 4 // 5) if windows else None
+
+
 async def task_profile(
     profiles: ProfileStore,
     platform: PlatformStore,
@@ -82,6 +91,9 @@ async def task_profile(
     model = platform.public(row)["config"]
     content = workers["profile"]
     content["models"] = {role: model for role in ("explore", "derive", "close")}
+    threshold = model_context_threshold(content["models"])
+    if threshold is not None:
+        content["params"]["context_threshold"] = threshold
     profile = AgentProfile.model_validate(content)
     return await profiles.create("task-settings", profile, "task")
 

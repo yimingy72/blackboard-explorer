@@ -1532,6 +1532,11 @@ export interface components {
              */
             base_url: string;
             /**
+             * Context Window
+             * @description 模型上下文容量，单位 token
+             */
+            context_window?: number | null;
+            /**
              * Model
              * @description 模型名称
              */
@@ -1569,6 +1574,11 @@ export interface components {
              * @description 模型接口地址
              */
             base_url: string;
+            /**
+             * Context Window
+             * @description 模型上下文容量，单位 token
+             */
+            context_window?: number | null;
             /**
              * Model
              * @description 模型名称
@@ -1609,6 +1619,8 @@ export interface components {
              * @default
              */
             base_url: string;
+            /** Context Window */
+            context_window?: number | null;
             /**
              * Credential Source
              * @default stored

@@ -52,8 +52,8 @@ from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.worker_settings import model_context_threshold, task_profile
 from bbx_blackboard.worker_settings import router as settings_router
-from bbx_blackboard.worker_settings import task_profile
 from bbx_blackboard.workspace import (
     ArchiveTooLarge,
     InvalidArchive,
@@ -549,9 +549,18 @@ def create_app(
             )
         else:
             row = await profiles.get(body.agent_profile, body.profile_version)
+        threshold = model_context_threshold(row["models"])
+        if threshold is not None and row["params"].get("context_threshold") != threshold:
+            content = {key: row[key] for key in AgentProfile.model_fields}
+            content["params"] = {**content["params"], "context_threshold": threshold}
+            row = await profiles.create(
+                "task-settings", AgentProfile.model_validate(content), "task"
+            )
         spec = body.model_dump(exclude={"profile_version", "model_id", "model_version"})
         spec["agent_profile"] = row["name"]
         spec["params"] = {**row["params"], **body.params}
+        if threshold is not None:
+            spec["params"]["context_threshold"] = threshold
         task_id = await _service(request).create_task(spec, profile_version=row["version"])
         return TaskCreated(
             id=task_id,

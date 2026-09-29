@@ -47,6 +47,7 @@ class ModelInput(BaseModel):
     base_url: str = ""
     reasoning_effort: str = Field(default="none", min_length=1)
     supports_vision: bool | None = None
+    context_window: int | None = Field(default=None, strict=True, ge=1)
     price: Price
     provider_options: dict[str, str] = Field(default_factory=dict)
     credentials: dict[str, SecretStr] = Field(default_factory=dict)

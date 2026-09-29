@@ -3,6 +3,33 @@
     "ModelConfig": {
       "additionalProperties": false,
       "properties": {
+        "supports_vision": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "模型是否支持图片输入",
+          "title": "Supports Vision"
+        },
+        "context_window": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "模型上下文容量，单位 token",
+          "title": "Context Window"
+        },
         "provider_options": {
           "additionalProperties": {
             "type": "string"
@@ -78,6 +105,16 @@
     "Price": {
       "additionalProperties": false,
       "properties": {
+        "billing_mode": {
+          "default": "fixed",
+          "description": "固定费率或官方 DeepSeek 峰谷时段估算",
+          "enum": [
+            "fixed",
+            "deepseek_schedule"
+          ],
+          "title": "Billing Mode",
+          "type": "string"
+        },
         "currency": {
           "anyOf": [
             {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -15,6 +16,7 @@ import pytest
 from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.settings import Settings
+from bbx_contracts.profile import load_profile
 from pydantic import SecretStr
 
 
@@ -276,6 +278,7 @@ async def test_task_inherits_selected_profile_params_with_task_override() -> Non
                 "name": "custom",
                 "version": 4,
                 "params": {"explore_max_steps": 7, "seed_max_steps": 3},
+                "models": {},
             }
 
     class Service:
@@ -317,6 +320,50 @@ async def test_task_inherits_selected_profile_params_with_task_override() -> Non
         "max_cost": Decimal("2"),
         "max_minutes": 10,
     }
+
+
+async def test_task_uses_smallest_explicit_profile_context_window() -> None:
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    profile.models.explore.context_window = 300000
+    profile.models.derive.context_window = 500000
+    row = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
+
+    class Profiles:
+        async def get(self, name, version):
+            assert (name, version) == ("custom", 4)
+            return row
+
+        async def create(self, name, snapshot, actor):
+            assert (name, actor) == ("task-settings", "task")
+            assert snapshot.params.context_threshold == 240000
+            return {"name": name, "version": 1, **snapshot.model_dump(mode="json")}
+
+    class Service:
+        async def create_task(self, spec, *, profile_version):
+            assert spec["params"]["context_threshold"] == 240000
+            assert profile_version == 1
+            return uuid4()
+
+    app = api.create_app(settings())
+    app.state.profile_store = Profiles()
+    app.state.board_service = Service()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+    ) as client:
+        response = await client.post(
+            "/api/tasks",
+            headers={"Authorization": "Bearer service-test"},
+            json={
+                "goal": "Check window",
+                "acceptance": [{"id": "A1", "desc": "Done"}],
+                "budget": {"max_cost": "2", "max_minutes": 10},
+                "agent_profile": "custom",
+                "profile_version": 4,
+                "params": {"context_threshold": 128000},
+            },
+        )
+    assert response.status_code == 200, response.text
+    assert row["params"]["context_threshold"] == 128000
 
 
 @pytest.mark.asyncio

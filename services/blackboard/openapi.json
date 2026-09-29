@@ -1079,6 +1079,19 @@
             "title": "Base Url",
             "type": "string"
           },
+          "context_window": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型上下文容量，单位 token",
+            "title": "Context Window"
+          },
           "model": {
             "description": "模型名称",
             "minLength": 1,
@@ -1163,6 +1176,19 @@
             "minLength": 1,
             "title": "Base Url",
             "type": "string"
+          },
+          "context_window": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型上下文容量，单位 token",
+            "title": "Context Window"
           },
           "model": {
             "description": "模型名称",
@@ -1260,6 +1286,18 @@
             "default": "",
             "title": "Base Url",
             "type": "string"
+          },
+          "context_window": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
           },
           "credential_source": {
             "default": "stored",

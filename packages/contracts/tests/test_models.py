@@ -328,3 +328,11 @@ def test_platform_model_reference_requires_both_name_and_version():
         ).platform_version
         == 2
     )
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "2048"])
+def test_model_context_window_requires_positive_integer(value):
+    with pytest.raises(ValidationError):
+        m.ModelConfig.model_validate({**MODEL, "context_window": value})
+    assert m.ModelConfig.model_validate(MODEL).context_window is None
+    assert m.ModelConfig.model_validate({**MODEL, "context_window": 2048}).context_window == 2048

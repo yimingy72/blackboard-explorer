@@ -45,6 +45,10 @@ def test_model_currency_and_environment_source_validation():
         },
     )
     assert ModelInput.model_validate(fields).credential_source == "stored"
+    assert ModelInput.model_validate({**fields, "context_window": 256000}).context_window == 256000
+    for invalid in (0, True, 1.5, "256000"):
+        with pytest.raises(ValidationError):
+            ModelInput.model_validate({**fields, "context_window": invalid})
     with pytest.raises(ValidationError):
         ModelInput.model_validate({**fields, "credential_source": "environment"})
     fields["price"] = {"currency": "USD"}
