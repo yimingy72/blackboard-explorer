@@ -142,9 +142,9 @@ test('Worker 工具与全局运行参数分别保存', async ({ page }) => {
 test('Provider 目录驱动模型字段、密钥只写、平台默认与 MCP 自动标识', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto('/profiles');
-  await page.getByRole('button', { name: '平台模型' }).click();
+  await page.getByRole('button', { name: '模型配置' }).click();
   await page.getByRole('button', { name: /审查模型/ }).click();
-  const editor = page.getByRole('region', { name: '平台模型编辑' });
+  const editor = page.getByRole('region', { name: '模型配置编辑' });
   await expect(editor.getByLabel('API 密钥')).toHaveValue('');
   await expect(editor.getByText('凭据来源')).toHaveCount(0);
   await editor.getByLabel('显示名称').fill('审查模型新版');

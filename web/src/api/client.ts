@@ -32,6 +32,7 @@ export type PlatformModel = {
 export type PlatformModelInput = {
   label: string; provider: string; model: string; base_url: string; reasoning_effort: string;
   supports_vision?: boolean | null;
+  context_window?: number | null;
   price: ProfileInput['models']['explore']['price']; provider_options?: Record<string, string>;
   credentials?: Record<string, string>; api_key?: string; enabled: boolean;
 };

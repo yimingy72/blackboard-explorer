@@ -275,7 +275,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       const credentials = body.credentials as Record<string, string> | undefined;
       const saved = { name, version, label: String(body.label),
         config: { provider: body.provider, model: body.model, base_url: body.base_url,
-          reasoning_effort: body.reasoning_effort, price: body.price, provider_options: body.provider_options, platform_id: name, platform_version: version },
+          reasoning_effort: body.reasoning_effort, context_window: body.context_window, supports_vision: body.supports_vision, price: body.price, provider_options: body.provider_options, platform_id: name, platform_version: version },
         credential_source: 'stored', has_secret: Boolean(credentials && Object.keys(credentials).length) || index >= 0 && platformModels[index].has_secret,
         configured_credentials: credentials && Object.keys(credentials).length ? Object.keys(credentials) : index >= 0 ? platformModels[index].configured_credentials : [],
         enabled: Boolean(body.enabled), is_default: index >= 0 && platformModels[index].is_default };

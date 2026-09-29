@@ -27,11 +27,11 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
     catch (cause) { setToolError(cause instanceof Error ? cause.message : '工具读取失败。'); }
   }
   return <div className={styles.workerContent}>
-    <div className={styles.workerHeading}><div><h2>{info.title}</h2><p>{info.description}</p></div></div>
-    <label className={controls.label} htmlFor={`prompt-${role}`}>完整系统提示词</label>
+    <div className={styles.workerHeading}><div><h2>{info.title}<span className={styles.headingCode}>{role[0].toUpperCase() + role.slice(1)}</span></h2><p>{info.description}</p></div></div>
+    <div className={styles.promptLabel}><label className={controls.label} htmlFor={`prompt-${role}`}>完整系统提示词</label><span>下一次模型调用生效</span></div>
     <textarea id={`prompt-${role}`} className={`${controls.textarea} ${styles.promptEditor}`} value={prompt} onChange={(event) => onPromptChange(event.target.value)} spellCheck={false} disabled={disabled} aria-describedby="prompt-help" />
     <p id="prompt-help" className={controls.hint}>保存后的提示词会在运行中 Agent 的下一次模型调用前，使用当前任务上下文重新渲染。工具设置仅对新任务生效。</p>
-    <fieldset className={styles.toolFieldset}><legend>内置工具</legend><div className={styles.toolChecks}>{builtin[role].map((name) => <label key={name} className={styles.checkRow}><input type="checkbox" checked={tools.builtin.includes(name)} disabled={disabled || required[role].includes(name)} onChange={(event) => onToolsChange({ ...tools, builtin: event.target.checked ? [...tools.builtin, name] : tools.builtin.filter((item) => item !== name) })} />{name}{required[role].includes(name) && <small>必需</small>}</label>)}</div></fieldset>
+    <fieldset className={styles.toolFieldset}><legend>内置工具</legend><p className={styles.sectionHint}>选择该角色可以使用的能力，必需工具始终开启。</p><div className={styles.toolChecks}>{builtin[role].map((name) => <label key={name} className={styles.checkRow}><input type="checkbox" checked={tools.builtin.includes(name)} disabled={disabled || required[role].includes(name)} onChange={(event) => onToolsChange({ ...tools, builtin: event.target.checked ? [...tools.builtin, name] : tools.builtin.filter((item) => item !== name) })} />{name}{required[role].includes(name) && <small>必需</small>}</label>)}</div></fieldset>
     {role === 'explore' && <fieldset className={styles.toolFieldset}><legend>外部 MCP 工具</legend>
       {(servers.data?.length || selected.length) ? [...(servers.data ?? []), ...selected.filter((bound) => !servers.data?.some((item) => item.name === bound.name && item.version === bound.version)).map((bound) => ({ name: bound.name, version: bound.version, label: bound.name, enabled: false }))].map((server) => {
         const bound = selected.find((entry) => entry.name === server.name && entry.version === server.version);
