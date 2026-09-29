@@ -47,7 +47,7 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache uv run pytest -q services/agent-runtime/t
 3. `Retain workspaces when archive capacity is exceeded`：`scheduler/supervisor.py` 与 `test_supervisor.py`。
 4. `Document control connection recovery`：`docs/tasks/Control-connection-resilience-report.md`。
 
-提交正文按 `AGENTS.md` 补 `Implemented by Codex (gpt-6-sol) for task Control-connection-resilience.`。本轮未提交、合并或部署。
+提交正文按 `AGENTS.md` 补 `Implemented by Codex (gpt-6-sol) for task Control-connection-resilience.`。主代理最终提交与部署记录见下。
 
 ## 本地部署复核（2026-09-29）
 
