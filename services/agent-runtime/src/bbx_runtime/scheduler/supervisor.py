@@ -38,6 +38,7 @@ class TaskSupervisor:
         self.loop_tasks: dict[str, asyncio.Task[None]] = {}
         self.cleanups: dict[str, asyncio.Task[None]] = {}
         self.cleaned: set[str] = set()
+        self.archive_blocked: set[str] = set()
         self.stopping = asyncio.Event()
         self.tick_lock = asyncio.Lock()
 
@@ -165,11 +166,22 @@ class TaskSupervisor:
                 or not state["task"].get("resume_workspace_uri")
             ):
                 run_number = int(state["task"].get("run_number", 1))
-                archive = (
-                    await self.manager.archive_to_store(handle)
-                    if run_number == 1
-                    else await self.manager.archive_to_store(handle, run_number)
-                )
+                try:
+                    archive = (
+                        await self.manager.archive_to_store(handle)
+                        if run_number == 1
+                        else await self.manager.archive_to_store(handle, run_number)
+                    )
+                except RemoteError as error:
+                    if error.status != 413:
+                        raise
+                    LOGGER.error(
+                        "Task %s archive exceeds capacity; execution environment and workspace "
+                        "are retained and archive capacity needs attention.",
+                        tid,
+                    )
+                    self.archive_blocked.add(tid)
+                    return
                 await self.service.record_archive(tid, archive.uri, archive.size, archive.fallback)
             await self.manager.destroy(tid)
         elif state["task"].get("started_at") and not state["task"].get("workspace_uri"):
@@ -193,6 +205,7 @@ class TaskSupervisor:
         await self.manager.destroy(tid)
         await self.service.purge_task(tid)
         self.cleaned.discard(tid)
+        self.archive_blocked.discard(tid)
 
     async def tick(self) -> None:
         async with self.tick_lock:
@@ -216,10 +229,13 @@ class TaskSupervisor:
                 del self.cleanups[tid]
         for task in tasks:
             tid = str(task["id"])
+            if task["status"] == "provisioning":
+                self.archive_blocked.discard(tid)
             if (
                 task["status"] in TERMINAL
                 and not task.get("deleting")
                 and tid not in self.cleaned
+                and tid not in self.archive_blocked
                 and tid not in self.cleanups
             ):
                 self.cleanups[tid] = asyncio.create_task(self._cleanup(tid), name=f"cleanup:{tid}")

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from bbx_contracts.profile import load_profile
-from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.execenv import ArchiveResult, ExecEnvManager
 from bbx_runtime.scheduler.loop import SchedulerLoop
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
@@ -92,6 +92,7 @@ class Manager:
         self.handles: dict[str, SimpleNamespace] = {}
         self.calls: list[tuple] = []
         self.archive_gate: asyncio.Event | None = None
+        self.archive_errors: list[RemoteError] = []
 
     async def find(self, tid: str) -> SimpleNamespace | None:
         self.calls.append(("find", tid))
@@ -110,6 +111,8 @@ class Manager:
         self.calls.append(("archive", handle.task_id))
         if self.archive_gate is not None:
             await self.archive_gate.wait()
+        if self.archive_errors:
+            raise self.archive_errors.pop(0)
         return ArchiveResult(f"workspace/{handle.task_id}.tar.zst", 123, "none")
 
     async def destroy(self, tid: str) -> None:
@@ -257,6 +260,113 @@ async def test_cleanup_occupies_slot_until_archive_finishes(
     await asyncio.wait_for(owner.cleanups["done"], 2)
     await owner.tick()
     assert ("provision", "waiting") in manager.calls
+
+
+@pytest.mark.asyncio
+async def test_archive_413_retains_workspace_without_retries_or_occupying_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = Service([task("done", "finished"), task("waiting", "provisioning", 1)])
+    manager = Manager()
+    manager.handles["done"] = SimpleNamespace(task_id="done")
+    manager.archive_errors.append(RemoteError(413, "archive too large"))
+    owner = supervisor(service, manager)
+    monkeypatch.setattr(owner, "_start", AsyncMock())
+
+    await owner.tick()
+    assert ("provision", "waiting") not in manager.calls
+    await asyncio.wait_for(owner.cleanups["done"], 2)
+    await owner.tick()
+    await owner.tick()
+
+    assert owner.archive_blocked == {"done"}
+    assert "done" in manager.handles
+    assert "done" not in owner.cleaned
+    assert service.states["done"]["task"]["workspace_uri"] is None
+    assert not service.states["done"]["task"].get("cleanup_ready", False)
+    assert not any(call[0] == "record" for call in service.calls)
+    assert ("destroy", "done") not in manager.calls
+    assert [call for call in manager.calls if call[0] == "archive"] == [("archive", "done")]
+    assert ("provision", "waiting") in manager.calls
+
+
+@pytest.mark.asyncio
+async def test_archive_transient_error_still_retries() -> None:
+    service = Service([task("retry", "finished")])
+    manager = Manager()
+    manager.handles["retry"] = SimpleNamespace(task_id="retry")
+    manager.archive_errors.append(RemoteError(503, "temporary"))
+    owner = supervisor(service, manager)
+
+    await owner.tick()
+    await asyncio.gather(*owner.cleanups.values(), return_exceptions=True)
+    assert "retry" not in owner.archive_blocked
+    assert "retry" in manager.handles
+    await owner.tick()
+    await asyncio.wait_for(owner.cleanups["retry"], 2)
+    assert [call for call in manager.calls if call == ("archive", "retry")] == [
+        ("archive", "retry"),
+        ("archive", "retry"),
+    ]
+    assert ("destroy", "retry") in manager.calls
+    assert service.states["retry"]["task"]["cleanup_ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_record_archive_413_does_not_block_archive_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = Service([task("retry", "finished")])
+    manager = Manager()
+    manager.handles["retry"] = SimpleNamespace(task_id="retry")
+    owner = supervisor(service, manager)
+    record_archive = service.record_archive
+    monkeypatch.setattr(
+        service, "record_archive", AsyncMock(side_effect=RemoteError(413, "storage rejected"))
+    )
+
+    with pytest.raises(RemoteError):
+        await owner._cleanup("retry")
+    assert "retry" not in owner.archive_blocked
+    assert "retry" in manager.handles
+
+    monkeypatch.setattr(service, "record_archive", record_archive)
+    await owner._cleanup("retry")
+    assert [call for call in manager.calls if call == ("archive", "retry")] == [
+        ("archive", "retry"),
+        ("archive", "retry"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deleted_archive_block_is_purged(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = Service([task("blocked", "finished")])
+    manager = Manager()
+    manager.handles["blocked"] = SimpleNamespace(task_id="blocked")
+    manager.archive_errors.append(RemoteError(413, "too large"))
+    owner = supervisor(service, manager)
+    await owner.tick()
+    await asyncio.wait_for(owner.cleanups["blocked"], 2)
+    assert "blocked" in owner.archive_blocked
+
+    service.tasks[0]["deleting"] = True
+    pending_deletions = AsyncMock(return_value=["blocked"])
+    purge_task = AsyncMock(return_value={"purged": True})
+    monkeypatch.setattr(service, "pending_deletions", pending_deletions, raising=False)
+    monkeypatch.setattr(service, "purge_task", purge_task, raising=False)
+    await owner.tick()
+    assert ("destroy", "blocked") in manager.calls
+    purge_task.assert_awaited_once_with("blocked")
+    assert "blocked" not in owner.archive_blocked
+
+
+@pytest.mark.asyncio
+async def test_new_provisioning_clears_archive_block() -> None:
+    service = Service([task("reused", "provisioning")])
+    owner = supervisor(service, Manager(), limit=0)
+    owner.archive_blocked.add("reused")
+    await owner.tick()
+    assert "reused" not in owner.archive_blocked
 
 
 @pytest.mark.asyncio
