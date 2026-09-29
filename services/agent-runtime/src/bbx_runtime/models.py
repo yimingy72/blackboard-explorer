@@ -8,7 +8,6 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, cast
 
-import httpx2
 from agent_framework import (
     BaseChatClient,
     ChatResponse,
@@ -46,7 +45,7 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
 
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.model_errors import ModelStreamError
+from bbx_runtime.model_errors import IncompleteModelStreamError, ModelStreamError
 
 
 def preserve_reasoning(
@@ -106,7 +105,7 @@ def _require_complete_stream(
                     if kind == "response.incomplete"
                     else "unknown"
                 )
-                raise ModelStreamError(category)
+                raise ModelStreamError(category, event_type=kind, provider_code=code)
             if kind == "response.completed":
                 completed = getattr(getattr(event, "response", None), "status", None) == "completed"
         elif update.finish_reason is not None:
@@ -119,7 +118,7 @@ def _require_complete_stream(
 
     def verify(response: ChatResponse) -> ChatResponse:
         if not completed:
-            raise httpx2.RemoteProtocolError("Model stream ended without a completed response")
+            raise IncompleteModelStreamError("Model stream ended without a completed response")
         return response
 
     stream.with_transform_hook(observe)

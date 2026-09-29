@@ -7,9 +7,9 @@ import httpx2
 import pytest
 from agent_framework import Content, Message
 from agent_framework.exceptions import ChatClientException
-from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
+from bbx_runtime.model_errors import ModelStreamError, model_attempt_limit, model_error_metadata
 from bbx_runtime.models import make_client
-from openai import APIConnectionError, APIStatusError, APITimeoutError
+from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
 
 def status_error(status: int, code: str = "safe_code", **headers: str) -> APIStatusError:
@@ -47,6 +47,11 @@ def test_status_error_category_and_safe_metadata(status, code, category, transie
     )
     assert metadata == {
         "category": category,
+        "exception_type": "ChatClientException",
+        "cause_type": "APIStatusError",
+        "transport_type": None,
+        "failure_phase": "http_response",
+        "event_type": None,
         "transient": transient,
         "http_status": status,
         "provider_code": code,
@@ -76,6 +81,75 @@ def test_non_http_categories(error, category, transient):
     metadata = model_error_metadata(error)
     assert metadata["category"] == category
     assert metadata["transient"] is transient
+
+
+@pytest.mark.parametrize(
+    ("transport_class", "phase", "category"),
+    [
+        (httpx2.ProxyError, "proxy_connect", "connection"),
+        (httpx2.ConnectError, "connect", "connection"),
+        (httpx2.ReadError, "response_read", "connection"),
+        (httpx2.RemoteProtocolError, "response_read", "connection"),
+        (httpx2.LocalProtocolError, "request_write", "connection"),
+        (httpx2.ConnectTimeout, "connect", "timeout"),
+        (httpx2.ReadTimeout, "response_read", "timeout"),
+    ],
+)
+def test_wrapped_transport_diagnostics_are_bounded(transport_class, phase, category):
+    request = httpx2.Request(
+        "POST", "https://model.invalid/v1?credential=secret", headers={"authorization": "secret"}
+    )
+    error = APIConnectionError(message="secret provider body", request=request)
+    error.__cause__ = transport_class("secret transport detail", request=request)
+    metadata = model_error_metadata(error)
+    assert metadata["category"] == category
+    assert metadata["exception_type"] == "APIConnectionError"
+    assert metadata["cause_type"] == transport_class.__name__
+    assert metadata["transport_type"] == transport_class.__name__
+    assert metadata["failure_phase"] == phase
+    assert "secret" not in json.dumps(metadata)
+    assert "credential" not in json.dumps(metadata)
+
+
+def test_unknown_and_stream_codes_cannot_expose_exception_or_provider_text():
+    secret_error = type("secret_exception_name", (Exception,), {})()
+    metadata = model_error_metadata(secret_error)
+    assert metadata["category"] == "unknown"
+    assert metadata["exception_type"] == "OtherException"
+    assert metadata["cause_type"] is None
+    assert metadata["failure_phase"] == "unknown"
+
+    stream = ModelStreamError(
+        "unknown", event_type="error", provider_code="secret code with spaces"
+    )
+    metadata = model_error_metadata(stream)
+    assert metadata["category"] == "unknown"
+    assert metadata["event_type"] == "error"
+    assert metadata["provider_code"] is None
+    assert "secret" not in json.dumps(metadata)
+
+
+def test_wrapped_local_type_error_and_sdk_error_keep_only_safe_cause_classes():
+    request = httpx2.Request(
+        "POST", "https://model.invalid/v1?credential=secret", headers={"authorization": "secret"}
+    )
+    sdk_error = APIError("secret SDK details", request=request, body="secret response")
+    sdk_error.__cause__ = TypeError("secret local validation details")
+    wrapped = ChatClientException("secret wrapper", inner_exception=sdk_error)
+    metadata = model_error_metadata(wrapped)
+    assert metadata["category"] == "unknown"
+    assert metadata["exception_type"] == "ChatClientException"
+    assert metadata["cause_type"] == "TypeError"
+    assert metadata["transport_type"] is None
+    assert metadata["failure_phase"] == "unknown"
+    assert "secret" not in json.dumps(metadata)
+    assert "credential" not in json.dumps(metadata)
+    assert model_error_metadata(sdk_error)["exception_type"] == "APIError"
+
+    direct = ChatClientException("secret wrapper", inner_exception=TypeError("secret detail"))
+    direct_metadata = model_error_metadata(direct)
+    assert direct_metadata["cause_type"] == "TypeError"
+    assert "secret" not in json.dumps(direct_metadata)
 
 
 def test_nested_causes_and_untrusted_headers_are_bounded():

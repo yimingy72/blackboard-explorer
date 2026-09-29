@@ -131,7 +131,7 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
     assert service.finish_agent.call_args.args[-1] == expected
 
 
-async def test_real_agent_fake_client_persists_safe_model_failure_receipt():
+async def test_real_agent_fake_client_persists_safe_model_failure_receipt(caplog):
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     state = {
         "task": {
@@ -178,6 +178,9 @@ async def test_real_agent_fake_client_persists_safe_model_failure_receipt():
     assert result.receipt["error"]["category"] == "connection"
     assert result.receipt["error"]["transient"] is True
     assert result.receipt["error"]["attempt_limit"] == 5
+    assert "Model call failed" in caplog.text
+    assert "failed after retries" not in caplog.text
+    assert "secret" not in caplog.text
     assert "secret" not in json.dumps(result.receipt)
     assert "test-key" not in json.dumps(result.receipt)
     service.finish_agent.assert_awaited_once_with(

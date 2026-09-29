@@ -16,7 +16,11 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework.openai import OpenAIChatClient
-from bbx_runtime.model_errors import ModelStreamError, model_error_metadata
+from bbx_runtime.model_errors import (
+    IncompleteModelStreamError,
+    ModelStreamError,
+    model_error_metadata,
+)
 from bbx_runtime.models import (
     CompleteResponsesClient,
     close_model_client,
@@ -307,7 +311,12 @@ async def test_chat_sse_partial_reply_is_rejected(monkeypatch, terminal):
             with pytest.raises((httpx.RemoteProtocolError, ModelStreamError)) as failure:
                 await agent.run("Start", stream=True).get_final_response()
         category = "connection" if terminal == "missing" else "invalid_response"
-        assert model_error_metadata(failure.value)["category"] == category
+        metadata = model_error_metadata(failure.value)
+        assert metadata["category"] == category
+        assert metadata["failure_phase"] == "stream_completion"
+        if terminal == "missing":
+            assert isinstance(failure.value, IncompleteModelStreamError)
+            assert metadata["transport_type"] == "RemoteProtocolError"
     finally:
         await close_model_client(client)
 
@@ -556,13 +565,19 @@ async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status):
                 await agent.run(
                     "Start", stream=True, options=model_run_options(model)
                 ).get_final_response()
-        assert model_error_metadata(failure.value)["category"] == (
+        metadata = model_error_metadata(failure.value)
+        assert metadata["category"] == (
             "connection"
             if status == "missing"
             else "invalid_response"
             if status == "incomplete"
             else "unknown"
         )
+        assert metadata["failure_phase"] == "stream_completion"
+        if status == "missing":
+            assert isinstance(failure.value, IncompleteModelStreamError)
+        else:
+            assert metadata["event_type"] == f"response.{status}"
     finally:
         await close_model_client(client)
 
@@ -619,6 +634,9 @@ async def test_responses_sse_error_codes_are_classified(monkeypatch, event_type,
                 ).get_final_response()
         metadata = model_error_metadata(failure.value)
         assert metadata["category"] == category
+        assert metadata["failure_phase"] == "stream_completion"
+        assert metadata["event_type"] == event_type
+        assert metadata["provider_code"] == code
         assert "private body" not in str(metadata)
     finally:
         await close_model_client(client)

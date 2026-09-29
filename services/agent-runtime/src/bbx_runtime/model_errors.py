@@ -12,11 +12,13 @@ import httpx2
 from agent_framework import Message
 from agent_framework.exceptions import (
     ChatClientContentFilterException,
+    ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
 )
 from openai import (
     APIConnectionError,
+    APIError,
     APIStatusError,
     APITimeoutError,
     ContentFilterFinishReasonError,
@@ -35,18 +37,62 @@ OPENAI_PROVIDERS = {
 class ModelStreamError(RuntimeError):
     """A provider terminal event that cannot be used as a complete model turn."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(
+        self, category: str, *, event_type: str | None = None, provider_code: str | None = None
+    ) -> None:
         self.category = category
+        self.event_type = (
+            event_type if isinstance(event_type, str) and event_type in _STREAM_EVENTS else None
+        )
+        self.provider_code = _bounded_identifier(provider_code, _IDENTIFIER)
         super().__init__("Model stream did not complete successfully")
+
+
+class IncompleteModelStreamError(httpx2.RemoteProtocolError):
+    """A locally detected stream EOF without a valid completion event."""
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _SECONDS = re.compile(r"[0-9]{1,8}(?:\.[0-9]{1,3})?\Z")
+_STREAM_EVENTS = {"response.failed", "response.incomplete", "error"}
+_TRANSPORT_TYPES = (
+    httpx2.ProxyError,
+    httpx2.ConnectError,
+    httpx2.ReadError,
+    httpx2.RemoteProtocolError,
+    httpx2.LocalProtocolError,
+    httpx2.ConnectTimeout,
+    httpx2.ReadTimeout,
+    httpx2.WriteError,
+    httpx2.WriteTimeout,
+    httpx2.PoolTimeout,
+)
+_EXCEPTION_TYPES = {
+    IncompleteModelStreamError,
+    ModelStreamError,
+    APIError,
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    ChatClientException,
+    ChatClientContentFilterException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+    ContentFilterFinishReasonError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    *_TRANSPORT_TYPES,
+}
 
 
 def _bounded_identifier(value: Any, pattern: re.Pattern[str]) -> str | None:
     return value if isinstance(value, str) and pattern.fullmatch(value) else None
+
+
+def _safe_exception_type(error: BaseException) -> str | None:
+    return type(error).__name__ if type(error) in _EXCEPTION_TYPES else None
 
 
 def _retry_after(value: Any) -> str | None:
@@ -105,6 +151,33 @@ def model_error_metadata(
         request_id = _bounded_identifier(status_error.request_id, _REQUEST_ID)
         retry_after = _retry_after(status_error.response.headers.get("retry-after"))
 
+    stream_error = next((item for item in chain if isinstance(item, ModelStreamError)), None)
+    transport_error = next((item for item in chain if isinstance(item, _TRANSPORT_TYPES)), None)
+    transport_type = (
+        next(
+            (kind.__name__ for kind in _TRANSPORT_TYPES if isinstance(transport_error, kind)),
+            None,
+        )
+        if transport_error is not None
+        else None
+    )
+    if status is not None:
+        failure_phase = "http_response"
+    elif any(isinstance(item, IncompleteModelStreamError) for item in chain) or stream_error:
+        failure_phase = "stream_completion"
+    elif isinstance(transport_error, httpx2.ProxyError):
+        failure_phase = "proxy_connect"
+    elif isinstance(transport_error, (httpx2.ConnectError, httpx2.ConnectTimeout)):
+        failure_phase = "connect"
+    elif isinstance(transport_error, httpx2.LocalProtocolError):
+        failure_phase = "request_write"
+    elif isinstance(
+        transport_error, (httpx2.ReadError, httpx2.ReadTimeout, httpx2.RemoteProtocolError)
+    ):
+        failure_phase = "response_read"
+    else:
+        failure_phase = "unknown"
+
     if code in {"content_filter", "content_filter_error", "content_policy_violation"} or any(
         isinstance(item, (ChatClientContentFilterException, ContentFilterFinishReasonError))
         for item in chain
@@ -128,7 +201,7 @@ def model_error_metadata(
         isinstance(item, ChatClientInvalidRequestException) for item in chain
     ):
         category = "invalid_request"
-    elif stream_error := next((item for item in chain if isinstance(item, ModelStreamError)), None):
+    elif stream_error is not None:
         category = stream_error.category
     elif any(isinstance(item, (APITimeoutError, httpx2.TimeoutException)) for item in chain):
         category = "timeout"
@@ -145,10 +218,25 @@ def model_error_metadata(
     )
     return {
         "category": category,
+        "exception_type": _safe_exception_type(error) or "OtherException",
+        "cause_type": next(
+            (name for item in reversed(chain[1:]) if (name := _safe_exception_type(item))),
+            None,
+        ),
+        "transport_type": transport_type,
+        "failure_phase": failure_phase,
+        "event_type": stream_error.event_type
+        if stream_error and stream_error.event_type in _STREAM_EVENTS
+        else None,
         "transient": category
         in {"connection", "timeout", "rate_limit", "conflict", "server_error"},
         "http_status": status,
-        "provider_code": code,
+        "provider_code": code
+        or (
+            _bounded_identifier(stream_error.provider_code, _IDENTIFIER)
+            if stream_error is not None
+            else None
+        ),
         "request_id": request_id,
         "retry_after": retry_after,
         "elapsed_ms": max(0, min(elapsed_ms, 86_400_000)),

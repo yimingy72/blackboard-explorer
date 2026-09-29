@@ -366,22 +366,23 @@ class AgentRunner:
                 metadata = classified if classified["category"] != "unknown" else None
             if isinstance(metadata, dict):
                 logger.warning(
-                    "Model request failed after retries",
+                    "Model call failed",
                     extra={"fields": {"task_id": task_id, "agent_id": agent_id, **metadata}},
                 )
                 reason = f"模型请求失败：{metadata['category']}"
             else:
+                safe_type = model_error_metadata(error)["exception_type"]
                 logger.warning(
                     "Agent run failed",
                     extra={
                         "fields": {
                             "task_id": task_id,
                             "agent_id": agent_id,
-                            "category": type(error).__name__,
+                            "category": safe_type,
                         }
                     },
                 )
-                reason = f"运行失败：{type(error).__name__}"
+                reason = f"运行失败：{safe_type}"
             receipt = {"accepted": False, "reason": reason}
             if isinstance(metadata, dict):
                 receipt["error"] = metadata
