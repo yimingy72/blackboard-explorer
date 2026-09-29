@@ -46,3 +46,5 @@ PLAYWRIGHT_BROWSERS_PATH=/Users/yym/blackboard-explorer/.data/playwright pnpm --
 ## 本地交付
 
 部署前确认无活动任务，再切换构建后的blackboard/runtime镜像；部署结果另附下方。
+
+部署完成：2026-09-29，在数据库确认活动任务数为0后，切换任务构建镜像并仅重建blackboard与agent-runtime。两服务running、restart=0；Worker与平台模型GET均HTTP200，OpenAPI含context_window，新前端bundle含“模型配置”“上下文大小”。旧模型未填写容量时其历史JSON可能不含字段，前端按null兼容；未修改现有平台模型。工作台仍在http://127.0.0.1:58000。无需要用户手工执行的命令，刷新配置页即可。
