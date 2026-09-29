@@ -47,4 +47,9 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache make test-integration
 
 ## 交付补充
 
-待容器集成与本地部署完成后填写。
+- 设计c0a1f25/4b55756、实现9b4b41e、提示与文档b252179已快进合并main；未推送远程。
+- 本地blackboard与agent-runtime已重建并部署，状态running、重启次数0；登录页HTTP200。执行镜像710b06065799、runtime镜像90109e8dce3f、blackboard镜像5cfc53642264。正式服务中的前端bundle已核对包含新的执行权限说明。
+- default/single从revision8更新为9，只更新Explore的执行环境段落。逐字段对比确认模型、工具、参数、镜像/资源和derive/close提示词保持一致；原Explore其他段落保留。发布脚本同时登记新bundled内容，服务重启后版本仍为9，避免启动时覆盖用户配置。
+- 部署后从正式runtime服务创建临时任务执行容器，经实际MCP验证普通UID非0、sudo UID为0、TUN创建/删除成功；命令审计与sudo原生日志均存在。测试容器随后销毁并确认不存在，未调用任何模型或目标靶场。
+- 部署前后原任务均为2个failed、5个finished，无运行中任务被中断、没有自动续跑。需要使用新能力时直接新建任务，或在已有终态任务页面显式续跑。
+- 无需用户手工安装sudo、配置设备或执行额外命令。已有未重建的旧容器不会获得新增能力。
