@@ -17,7 +17,7 @@ import zstandard
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import EnvdClient
-from bbx_runtime.execenv import ExecEnvManager
+from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.settings import Settings
 from docker.errors import ImageNotFound
 from mcp import ClientSession
@@ -26,6 +26,25 @@ from pydantic import SecretStr
 from testcontainers.core.container import DockerContainer
 
 pytestmark = pytest.mark.integration
+
+
+async def command(handle: ExecEnvHandle, value: str) -> dict:
+    async with httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {handle.token}", "X-Agent-Id": "agent-1"},
+        trust_env=False,
+        timeout=30,
+    ) as http:
+        async with streamable_http_client(f"{handle.base_url}/mcp", http_client=http) as (
+            reader,
+            writer,
+            _,
+        ):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                result = await session.call_tool("execute_command", {"command": value})
+                assert not result.isError
+                assert result.structuredContent is not None
+                return result.structuredContent
 
 
 @pytest.mark.asyncio
@@ -95,8 +114,14 @@ async def test_execenv_lifecycle_with_archive(
             envd_container.reload()
             assert list(envd_container.attrs["NetworkSettings"]["Networks"]) == [network.name]
             assert envd_container.attrs["HostConfig"]["PortBindings"] in (None, {})
-            assert "KILL" in envd_container.attrs["HostConfig"]["CapAdd"]
-            assert envd_container.attrs["HostConfig"]["CapDrop"] == ["ALL"]
+            assert envd_container.attrs["HostConfig"]["CapAdd"] == ["NET_ADMIN"]
+            assert not envd_container.attrs["HostConfig"]["CapDrop"]
+            assert not envd_container.attrs["HostConfig"]["Privileged"]
+            assert not envd_container.attrs["HostConfig"]["SecurityOpt"]
+            assert (
+                envd_container.attrs["HostConfig"]["Devices"][0]["PathInContainer"]
+                == "/dev/net/tun"
+            )
             assert envd_container.labels["bbx.task-id"] == str(task_id)
             assert "PRIVILEGED_PREFIXES=" in envd_container.attrs["Config"]["Env"]
             proxy_vars = [
@@ -109,30 +134,12 @@ async def test_execenv_lifecycle_with_archive(
             assert (await manager.create_user(handle, "agent-1"))["home"].endswith("agent-1")
             async with EnvdClient(handle.base_url, handle.token) as envd:
                 assert (await envd.health())["status"] == "ok"
-            async with httpx.AsyncClient(
-                headers={"Authorization": f"Bearer {handle.token}", "X-Agent-Id": "agent-1"},
-                trust_env=False,
-                timeout=30,
-            ) as http:
-                async with streamable_http_client(f"{handle.base_url}/mcp", http_client=http) as (
-                    reader,
-                    writer,
-                    _,
-                ):
-                    async with ClientSession(reader, writer) as session:
-                        await session.initialize()
-                        result = await session.call_tool(
-                            "execute_command",
-                            {
-                                "command": (
-                                    "echo m2a-proof > evidence.txt; "
-                                    "dd if=/dev/zero of=transient.bin bs=1M count=8 2>/dev/null; "
-                                    "cat evidence.txt"
-                                )
-                            },
-                        )
-                        assert not result.isError
-                        assert "m2a-proof" in str(result.structuredContent)
+            result = await command(
+                handle,
+                "sudo -n id -u; echo m2a-proof > evidence.txt; "
+                "dd if=/dev/zero of=transient.bin bs=1M count=8 2>/dev/null; cat evidence.txt",
+            )
+            assert result["exit_code"] == 0 and "m2a-proof" in result["stdout"]
 
             evidence_uri = f"evidence/{task_id}/agent-1/proof"
             dependency_uri = f"evidence/{task_id}/agent-1/dependency"
@@ -186,9 +193,24 @@ async def test_execenv_lifecycle_with_archive(
                     == hashlib.sha256(b"m2a-proof\n").hexdigest()
                 )
                 assert restored_files["shared/input.json"]["size"] == 13
+                audit_uri = f"toolcalls/{task_id}/runtime-audit-run-1.txt"
+                assert audit_uri in manifest["references"]
+                task_snapshot = json.loads(content.extractfile(".bbx/task.json").read())  # type: ignore[union-attr]
+                assert task_snapshot["runtime_audit"]["result_uri"] == audit_uri
+            audit_bytes = await objects.get(audit_uri)
+            audit = json.loads(audit_bytes)
+            assert audit["task_id"] == str(task_id) and audit["run_number"] == 1
+            assert "agent-1" in audit["sudo"] and "COMMAND=" in audit["sudo"]
+            assert "sudo -n id -u" in audit["commands"]
+            assert (
+                task_snapshot["runtime_audit"]["sha256"] == hashlib.sha256(audit_bytes).hexdigest()
+            )
             assert (await manager.find(task_id)) == handle
             await manager.destroy(task_id)
             restored = await manager.provision(task_id, profile, archive.uri)
+            restored_sudo = await command(restored, "sudo -n id -u")
+            assert restored_sudo["exit_code"] == 0
+            assert restored_sudo["stdout"] == "<command_output>0\n</command_output>"
             async with EnvdClient(restored.base_url, restored.token) as envd:
                 restored_file = await envd.read_file("/workspace/agents/agent-1/evidence.txt")
                 assert restored_file == b"m2a-proof\n"
@@ -198,6 +220,8 @@ async def test_execenv_lifecycle_with_archive(
             second = await manager.archive_task(task_id, data)
             assert second.uri == f"workspace/{task_id}/run-2.tar.zst"
             assert await objects.exists(second.uri)
+            assert await objects.exists(audit_uri)
+            assert await objects.exists(f"toolcalls/{task_id}/runtime-audit-run-2.txt")
     finally:
         if manager is not None:
             await manager.destroy(task_id)

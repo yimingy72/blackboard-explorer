@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import tempfile
 import time
@@ -26,7 +27,6 @@ from bbx_runtime.settings import Settings
 MANAGED = "bbx.managed"
 TASK_ID = "bbx.task-id"
 ROLE = "bbx.role"
-CAPABILITIES = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"]
 LOGGER = logging.getLogger(__name__)
 
 # One fixed destination per relay, supplied when the container starts.
@@ -170,9 +170,8 @@ class ExecEnvManager:
             network=self.settings.exec_network,
             labels=self._labels(task_id, "envd"),
             environment=environment,
-            cap_drop=["ALL"],
-            cap_add=CAPABILITIES,
-            security_opt=["no-new-privileges"],
+            cap_add=["NET_ADMIN"],
+            devices=["/dev/net/tun:/dev/net/tun:rwm"],
             read_only=False,
             nano_cpus=int(profile.exec_resources.cpus * 1_000_000_000),
             mem_limit=profile.exec_resources.mem,
@@ -339,6 +338,7 @@ class ExecEnvManager:
             if run_number == 1
             else f"workspace/{task}/run-{run_number}.tar.zst"
         )
+        data = {**data, "runtime_audit": await self._archive_audit(task, run_number)}
         with tempfile.TemporaryDirectory(prefix="bbx-task-archive-") as temporary:
             output = Path(temporary) / "workspace.tar.zst"
             await build_archive(self.objects, task, data, output)
@@ -348,6 +348,36 @@ class ExecEnvManager:
             with output.open("rb") as file:
                 await self.objects.put(uri, file, length=size, content_type="application/zstd")
         return ArchiveResult(uri, size, "none")
+
+    async def _archive_audit(self, task: UUID, run_number: int) -> dict[str, Any]:
+        uri = f"toolcalls/{task}/runtime-audit-run-{run_number}.txt"
+        # A lost container must not prevent archiving evidence already in MinIO.
+        if await self._role(task, "envd") is None:
+            if await self.objects.exists(uri):
+                return {"status": "saved", "result_uri": uri}
+            return {"status": "unavailable", "reason": "runtime_missing"}
+        handle = await self.find(task)
+        if handle is None:
+            raise RuntimeError("Execution environment disappeared during audit collection")
+        async with EnvdClient(handle.base_url, handle.token) as envd:
+            health = await envd.health()
+            if health.get("runtime_audit") is not True:
+                return {"status": "unavailable", "reason": "legacy_runtime"}
+            audit = await envd.audit()
+        if audit.get("format") != "bbx.runtime-audit.v1" or not all(
+            isinstance(audit.get(key), str) for key in ("commands", "sudo")
+        ):
+            raise ValueError("Invalid execution environment audit snapshot")
+        encoded = json.dumps(
+            {**audit, "task_id": str(task), "run_number": run_number}, ensure_ascii=False
+        ).encode("utf-8")
+        await self.objects.put(uri, encoded, content_type="application/json")
+        return {
+            "status": "saved",
+            "result_uri": uri,
+            "size": len(encoded),
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        }
 
     async def destroy(self, task_id: UUID | str) -> None:
         task = self._task(task_id)

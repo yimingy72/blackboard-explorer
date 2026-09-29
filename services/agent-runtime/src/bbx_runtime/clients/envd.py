@@ -56,8 +56,11 @@ class EnvdClient:
         )
         return await self._check(response)
 
-    async def health(self) -> dict[str, str]:
+    async def health(self) -> dict[str, Any]:
         return (await self._response("GET", "/health")).json()
+
+    async def audit(self) -> dict[str, Any]:
+        return (await self._response("GET", "/audit")).json()
 
     async def create_user(self, agent_id: str) -> dict[str, str]:
         return (await self._response("POST", "/users", json={"agent_id": agent_id})).json()

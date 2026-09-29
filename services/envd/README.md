@@ -45,20 +45,23 @@ make test-integration
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| GET | `/health` | 无 | `{"status":"ok"}` |
+| GET | `/health` | 无 | `{"status":"ok","runtime_audit":true}` |
+| GET | `/audit` | 无 | `{"format":"bbx.runtime-audit.v1","commands":"<JSONL>","sudo":"<text>"}`；日志缺失 503、合计超过 32 MiB 返回 413 |
 | POST | `/users` | `{"agent_id":"agent-1"}` | `{"agent_id", "home"}`，幂等 |
 | GET | `/files?path=` | `/workspace` 下绝对路径 | 文件字节；超限 413 |
 | GET | `/stat?path=` | `/workspace` 下绝对路径 | `exists`、存在时的 `size`、`is_file`、`is_dir` |
 | POST | `/archive` | 无 | `application/zstd` 的 tar.zst；`X-Archive-Fallback: none` 或 `agents-only` |
 | POST/GET/DELETE | `/mcp` | MCP streamable HTTP | 仅 `execute_command(command, cwd, timeout_sec, privileged)` 工具 |
 
-`execute_command` 返回 `exit_code`、`stdout`、`stderr`、`truncated`、`full_output_path`。stdout/stderr 以 `<command_output>` 标签包裹。默认工作目录是 `/workspace/agents/<id>`。输出总量超过 64 KiB 时显示头尾各 32 KiB，完整输出写入该 Agent 的 `.outputs/`。超时的退出码为 124。`privileged=true` 仅允许简单的白名单命令，默认前缀为 `apt-get install`、`apt-get update`、`pip install`、`npm install -g`。
+`execute_command` 返回 `exit_code`、`stdout`、`stderr`、`truncated`、`full_output_path` 和 `execution`（命令 ID、Agent、目录、起止时间、耗时、状态、提权请求标记）。stdout/stderr 以 `<command_output>` 标签包裹。默认工作目录是 `/workspace/agents/<id>`。输出总量超过 64 KiB 时显示头尾各 32 KiB，完整输出写入该 Agent 的 `.outputs/`。超时的退出码为 124。普通命令以 Agent 用户运行；`privileged=true` 由该用户通过 `sudo -n` 执行任意 shell 命令。Agent 也可在普通命令中自行调用 `sudo -n`。
 
-配置环境变量：`ENVD_TOKEN`（必填）、`COMMAND_TIMEOUT_MAX`（默认 1200 秒）、`EVIDENCE_MAX_BYTES`（默认 50 MiB）、`ARCHIVE_MAX_BYTES`（默认 2 GiB）、`PRIVILEGED_PREFIXES`（逗号分隔）、`ARCHIVE_EXCLUDE`（逗号分隔）。
+envd 将每次命令的开始与结果写入 root 持有的 `/var/log/bbx/commands.jsonl`；sudo 将实际提权调用和退出状态写入 `/var/log/bbx/sudo.log`。两个文件在服务启动时建立，`/audit` 返回其文本快照。若文件后来被 root 删除，接口返回 503，不能视作完整审计。已获 root 的进程可篡改容器内日志；sudo 对 shell 或脚本记录一次调用及退出，不会逐条记录内部子命令。归档前由 runtime 持久化快照，`execution` 随已有工具记录持久化。
+
+配置环境变量：`ENVD_TOKEN`（必填）、`COMMAND_TIMEOUT_MAX`（默认 1200 秒）、`EVIDENCE_MAX_BYTES`（默认 50 MiB）、`ARCHIVE_MAX_BYTES`（默认 2 GiB）、`ARCHIVE_EXCLUDE`（逗号分隔）。旧 `PRIVILEGED_PREFIXES` 仅保留配置读取兼容，不再限制执行。
 
 ## 隔离运行
 
-agent-runtime创建容器时应使用可写根文件系统、`cap_drop=ALL`，仅加`CHOWN,DAC_OVERRIDE,FOWNER,SETUID,SETGID,KILL`，`KILL`用于在超时时终止其他UID的Agent进程组；启用`no-new-privileges`，并按profile设置CPU、内存、PID上限。默认执行容器只接入有网关的exec网络，不设置代理。下例为**显式代理隔离模式**：exec网络改为internal，HTTP(S)代理变量指向同时接入exec与有网关网络的egress-proxy。
+agent-runtime 创建容器时使用可写根文件系统，保留 Docker 默认 capabilities、增加 `NET_ADMIN`，挂载 `/dev/net/tun`，并按 profile 设置 CPU、内存、PID 上限。执行容器不设置 `no-new-privileges`；不使用 Docker privileged 模式、宿主网络或 Docker socket。默认执行容器只接入有网关的 exec 网络，不设置代理。下例为**显式代理隔离模式**：exec 网络改为 internal，HTTP(S) 代理变量指向同时接入 exec 与有网关网络的 egress-proxy。
 
 以下示例可直接运行；使用示例 token，请在实际任务中替换。结束后执行末尾清理命令。
 
@@ -67,7 +70,7 @@ make image-exec-env image-egress-proxy
 docker network create --internal bbx-m2env-exec
 docker run -d --name bbx-m2env-proxy --network bbx-m2env-exec --network-alias egress-proxy -e EGRESS_ALLOWLIST=example.com bbx-egress-proxy:latest
 docker network connect bridge bbx-m2env-proxy
-docker run -d --name bbx-m2env-envd --network bbx-m2env-exec --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL --security-opt no-new-privileges --cpus 2 --memory 4g --pids-limit 256 -e ENVD_TOKEN=replace-me -e HTTP_PROXY=http://egress-proxy:8888 -e HTTPS_PROXY=http://egress-proxy:8888 -e http_proxy=http://egress-proxy:8888 -e https_proxy=http://egress-proxy:8888 bbx-exec-env:latest
+docker run -d --name bbx-m2env-envd --network bbx-m2env-exec --cap-add NET_ADMIN --device /dev/net/tun --cpus 2 --memory 4g --pids-limit 256 -e ENVD_TOKEN=replace-me -e HTTP_PROXY=http://egress-proxy:8888 -e HTTPS_PROXY=http://egress-proxy:8888 -e http_proxy=http://egress-proxy:8888 -e https_proxy=http://egress-proxy:8888 bbx-exec-env:latest
 docker exec bbx-m2env-envd curl -fsS -H 'Authorization: Bearer replace-me' http://127.0.0.1:8080/health
 docker rm -f bbx-m2env-envd bbx-m2env-proxy
 docker network rm bbx-m2env-exec

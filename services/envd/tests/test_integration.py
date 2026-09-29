@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import os
 import tarfile
 import time
@@ -60,14 +61,9 @@ def envd_url():
             .with_network_aliases("envd")
             .with_env("ENVD_TOKEN", TOKEN)
             .with_env("EVIDENCE_MAX_BYTES", "100000")
-            .with_env(
-                "PRIVILEGED_PREFIXES",
-                "apt-get install,apt-get update,pip install,npm install -g,id",
-            )
             .with_kwargs(
-                cap_drop=["ALL"],
-                cap_add=["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"],
-                security_opt=["no-new-privileges"],
+                cap_add=["NET_ADMIN"],
+                devices=["/dev/net/tun:/dev/net/tun:rwm"],
                 nano_cpus=2_000_000_000,
                 mem_limit="4g",
                 pids_limit=256,
@@ -80,6 +76,7 @@ def envd_url():
                 .with_name(f"bbx-m2env-relay-{uuid.uuid4().hex[:8]}")
                 .with_command(["python", "-c", RELAY])
                 .with_exposed_ports(8080)
+                .with_kwargs(cap_drop=["ALL"], security_opt=["no-new-privileges"])
             )
             network.connect(relay.get_container_id())
             url = f"http://{relay.get_container_host_ip()}:{relay.get_exposed_port(8080)}"
@@ -119,13 +116,17 @@ async def test_envd_container(envd_url: str) -> None:
     async with httpx.AsyncClient(
         headers={"Authorization": f"Bearer {TOKEN}"}, trust_env=False
     ) as client:
-        assert (await client.get(f"{url}/health")).status_code == 200
+        assert (await client.get(f"{url}/health")).json() == {"status": "ok", "runtime_audit": True}
         async with httpx.AsyncClient(trust_env=False) as unauthenticated:
             assert (await unauthenticated.get(f"{url}/health")).status_code == 401
             assert (await unauthenticated.post(f"{url}/mcp")).status_code == 401
+            assert (await unauthenticated.get(f"{url}/audit")).status_code == 401
         for agent_id in ("agent-1", "agent-2"):
             response = await client.post(f"{url}/users", json={"agent_id": agent_id})
             assert response.status_code == 200, response.text
+            assert (
+                await client.post(f"{url}/users", json={"agent_id": agent_id})
+            ).status_code == 200
         assert (await client.post(f"{url}/users", json={"agent_id": "bad;id"})).status_code == 400
 
         own = result_data(await command(url, "agent-2", "echo private > own.txt; cat own.txt"))
@@ -151,6 +152,21 @@ async def test_envd_container(envd_url: str) -> None:
         await asyncio.sleep(1)
         child = result_data(await command(url, "agent-1", "kill -0 $(cat child.pid)"))
         assert child["exit_code"] != 0
+        root_timeout = result_data(
+            await command(
+                url,
+                "agent-1",
+                "sleep 30 & echo $! > root-child.pid; wait",
+                timeout_sec=1,
+                privileged=True,
+            )
+        )
+        assert root_timeout["exit_code"] == 124
+        await asyncio.sleep(1)
+        root_child = result_data(
+            await command(url, "agent-1", "sudo -n kill -0 $(cat root-child.pid)")
+        )
+        assert root_child["exit_code"] != 0
 
         large = result_data(await command(url, "agent-1", "python3 -c 'print(\"x\" * 80000)'"))
         assert large["truncated"] is True
@@ -178,16 +194,66 @@ async def test_envd_container(envd_url: str) -> None:
             await client.get(f"{url}/files", params={"path": "/workspace/agents/agent-1/too-big"})
         ).status_code == 413
 
-        denied_privileged = await command(url, "agent-1", "apt-get install x; id", privileged=True)
-        assert denied_privileged.isError
-        allowed = result_data(await command(url, "agent-1", "id -u", privileged=True))
-        assert allowed["stdout"] == "<command_output>0\n</command_output>"
+        allowed = result_data(await command(url, "agent-1", "id -u; whoami", privileged=True))
+        assert allowed["stdout"] == "<command_output>0\nroot\n</command_output>"
+        assert allowed["execution"]["privileged_requested"] is True
+        assert allowed["execution"]["agent_id"] == "agent-1"
+        assert allowed["execution"]["command_id"]
+        audit_owner = result_data(
+            await command(
+                url,
+                "agent-1",
+                "stat -c '%U %a' /var/log/bbx/commands.jsonl",
+                privileged=True,
+            )
+        )
+        assert audit_owner["stdout"] == "<command_output>root 600\n</command_output>"
+        assert (
+            result_data(await command(url, "agent-1", "cat /var/log/bbx/commands.jsonl"))[
+                "exit_code"
+            ]
+            != 0
+        )
+        assert (
+            result_data(await command(url, "agent-1", "sudo -n id -u"))["stdout"]
+            == "<command_output>0\n</command_output>"
+        )
         assert result_data(await command(url, "agent-1", "id -u"))["stdout"] != allowed["stdout"]
+        failed = result_data(await command(url, "agent-1", "exit 17", privileged=True))
+        assert failed["exit_code"] == 17
+        tun = result_data(
+            await command(
+                url,
+                "agent-1",
+                "ip tuntap add dev bbx-test mode tun; ip tuntap del dev bbx-test mode tun",
+                privileged=True,
+            )
+        )
+        assert tun["exit_code"] == 0, tun
         token_env = result_data(
             await command(url, "agent-1", "printenv ENVD_TOKEN ENVD_TOKEN_SECRET")
         )
         assert token_env["exit_code"] != 0
         assert token_env["stdout"] == "<command_output></command_output>"
+        privileged_token_env = result_data(
+            await command(url, "agent-1", "printenv ENVD_TOKEN ENVD_TOKEN_SECRET", privileged=True)
+        )
+        assert privileged_token_env["exit_code"] != 0
+        concurrent = await asyncio.gather(
+            command(url, "agent-1", "sleep 0.1; echo one"),
+            command(url, "agent-2", "sleep 0.1; echo two", privileged=True),
+        )
+        concurrent_ids = {result_data(item)["execution"]["command_id"] for item in concurrent}
+        assert len(concurrent_ids) == 2
+        snapshot = (await client.get(f"{url}/audit")).json()
+        assert snapshot["format"] == "bbx.runtime-audit.v1"
+        events = [json.loads(line) for line in snapshot["commands"].splitlines()]
+        assert concurrent_ids <= {event["command_id"] for event in events}
+        assert len({event["command_id"] for event in events if event["status"] == "started"}) >= 10
+        assert {"completed", "timed_out"} <= {event["status"] for event in events}
+        assert any(event["exit_code"] == 17 for event in events if event["status"] == "completed")
+        assert "agent-1" in snapshot["sudo"] and "COMMAND=" in snapshot["sudo"]
+        assert "EXIT=" in snapshot["sudo"]
         assert (await command(url, "agent-3", "id")).isError
 
         result_data(

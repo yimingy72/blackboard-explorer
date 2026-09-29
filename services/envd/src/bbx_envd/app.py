@@ -22,8 +22,11 @@ from starlette.responses import FileResponse, JSONResponse, Response, StreamingR
 from starlette.routing import Route
 
 from bbx_envd.core import (
+    COMMAND_LOG,
+    SUDO_LOG,
     WORKSPACE,
     execute_command,
+    prepare_audit_logs,
     prepare_workspace,
     valid_agent_id,
     workspace_path,
@@ -33,6 +36,7 @@ from bbx_envd.settings import Settings
 settings = Settings()  # pyright: ignore[reportCallIssue]
 mcp = FastMCP("envd", host="0.0.0.0")
 RESTORE_MARKER = Path("/var/lib/bbx/restore-ready")
+AUDIT_MAX_BYTES = 32 * 1024 * 1024
 
 
 @mcp.tool(name="execute_command")
@@ -51,7 +55,33 @@ async def execute_command_tool(
 
 
 async def health(request) -> Response:
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "ok", "runtime_audit": True})
+
+
+async def audit(request) -> Response:
+    try:
+        contents: list[str] = []
+        remaining = AUDIT_MAX_BYTES
+        for path in (COMMAND_LOG, SUDO_LOG):
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                if not stat_mode.S_ISREG(os.fstat(fd).st_mode):
+                    return JSONResponse({"error": "audit log is not a file"}, status_code=503)
+                with os.fdopen(fd, "rb", closefd=False) as source:
+                    data = source.read(remaining + 1)
+                if len(data) > remaining:
+                    return JSONResponse({"error": "audit logs too large"}, status_code=413)
+                remaining -= len(data)
+                contents.append(data.decode("utf-8", errors="replace"))
+            finally:
+                os.close(fd)
+    except FileNotFoundError:
+        return JSONResponse({"error": "audit log missing"}, status_code=503)
+    except OSError:
+        return JSONResponse({"error": "audit log unavailable"}, status_code=503)
+    return JSONResponse(
+        {"format": "bbx.runtime-audit.v1", "commands": contents[0], "sudo": contents[1]}
+    )
 
 
 async def users(request) -> Response:
@@ -74,6 +104,14 @@ async def users(request) -> Response:
         except subprocess.CalledProcessError as exc:
             return JSONResponse({"error": exc.stderr.decode(errors="replace")}, status_code=500)
     home.mkdir(mode=0o755, exist_ok=True)
+    try:
+        subprocess.run(
+            ["usermod", "-a", "-G", "bbx-agents", agent_id],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        return JSONResponse({"error": exc.stderr.decode(errors="replace")}, status_code=500)
     owner = pwd.getpwnam(agent_id)
     os.chown(home, owner.pw_uid, owner.pw_gid)
     home.chmod(0o755)
@@ -344,6 +382,11 @@ def _restore_archive(compressed: Path, unpacked: Path) -> int:
                     check=True,
                     capture_output=True,
                 )
+            subprocess.run(
+                ["usermod", "-a", "-G", "bbx-agents", agent_id],
+                check=True,
+                capture_output=True,
+            )
         for member in members:
             if not (member.isdir() or member.isfile()):
                 continue
@@ -417,6 +460,7 @@ class TokenAuth:
 @asynccontextmanager
 async def lifespan(app):
     prepare_workspace()
+    prepare_audit_logs()
     async with mcp.session_manager.run():
         yield
 
@@ -425,6 +469,7 @@ app = TokenAuth(
     Starlette(
         routes=[
             Route("/health", health),
+            Route("/audit", audit),
             Route("/users", users, methods=["POST"]),
             Route("/files", files),
             Route("/stat", stat),

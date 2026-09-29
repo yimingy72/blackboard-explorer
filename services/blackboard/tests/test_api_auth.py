@@ -266,6 +266,7 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> 
 def test_key_layout() -> None:
     task_id = uuid4()
     assert api._key_task(f"toolcalls/{task_id}/call-1.txt") == task_id
+    assert api._key_task(f"toolcalls/{task_id}/runtime-audit-run-2.txt") == task_id
     assert api._key_task(f"evidence/{task_id}/agent-1/a.txt") == task_id
     assert api._key_task(f"evidence/{task_id}/agent-1/../a.txt") is None
     assert api._key_task(f"reports/{task_id}.md") is None

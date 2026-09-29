@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import builtins
 import hmac
+import json
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import docker
@@ -14,6 +16,7 @@ import pytest
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.execenv import ExecEnvManager, task_token
+from bbx_runtime.execenv import manager as manager_module
 from bbx_runtime.settings import Settings
 from docker.errors import NotFound
 from pydantic import SecretStr
@@ -144,15 +147,18 @@ async def test_provision_idempotent_with_direct_egress_and_relay(
     assert envd.labels["bbx.task-id"] == str(task_id)
     assert envd.kwargs["network"] == "bbx-test-exec"
     assert "ports" not in envd.kwargs
-    assert envd.kwargs["cap_drop"] == ["ALL"]
-    assert "KILL" in envd.kwargs["cap_add"]
+    assert "cap_drop" not in envd.kwargs
     assert envd.kwargs["environment"]["PRIVILEGED_PREFIXES"] == ""
     assert not any("PROXY" in key.upper() for key in envd.kwargs["environment"])
-    assert envd.kwargs["security_opt"] == ["no-new-privileges"]
+    assert "security_opt" not in envd.kwargs
+    assert not envd.kwargs.get("privileged", False)
+    assert envd.kwargs["cap_add"] == ["NET_ADMIN"]
+    assert envd.kwargs["devices"] == ["/dev/net/tun:/dev/net/tun:rwm"]
     assert envd.kwargs["nano_cpus"] == 2_000_000_000
     assert relay.kwargs["network"] == "bridge"
     assert relay.kwargs["ports"] == {"8080/tcp": ("127.0.0.1", 0)}
     assert relay.kwargs["cap_drop"] == ["ALL"]
+    assert relay.kwargs["security_opt"] == ["no-new-privileges"]
     assert fake.networks.network.connected == [relay.id]
     again = await manager.provision(task_id, profile)
     assert again.container_id == handle.container_id
@@ -260,3 +266,62 @@ async def test_explicit_proxy_mode_injects_proxy_on_internal_network(
     env = fake.containers.items[0].kwargs["environment"]
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         assert env[key] == "http://egress-proxy:8888"
+
+
+@pytest.mark.asyncio
+async def test_runtime_audit_is_saved_with_task_and_run_identity(monkeypatch) -> None:
+    task = uuid4()
+    objects = AsyncMock()
+    manager = ExecEnvManager(settings(), docker_client=cast(Any, Docker()), objects=objects)
+    handle = manager_module.ExecEnvHandle(task, "container", "envd", "http://envd:8080", "token")
+    monkeypatch.setattr(manager, "_role", AsyncMock(return_value=object()))
+    monkeypatch.setattr(manager, "find", AsyncMock(return_value=handle))
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.health.return_value = {"status": "ok", "runtime_audit": True}
+    client.audit.return_value = {
+        "format": "bbx.runtime-audit.v1",
+        "commands": '{"agent_id":"agent-1","command":"sudo -n id"}\n',
+        "sudo": "agent-1 ; USER=root ; COMMAND=/usr/bin/id\n",
+    }
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: client)
+    result = await manager._archive_audit(task, 3)
+    assert result["result_uri"] == f"toolcalls/{task}/runtime-audit-run-3.txt"
+    stored = json.loads(objects.put.call_args.args[1])
+    assert stored["task_id"] == str(task) and stored["run_number"] == 3
+    assert stored["commands"] == client.audit.return_value["commands"]
+    client.audit.side_effect = TimeoutError("transport unavailable")
+    objects.put.reset_mock()
+    with pytest.raises(TimeoutError):
+        await manager._archive_audit(task, 3)
+    objects.put.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_and_legacy_runtimes_do_not_invent_audit_records(monkeypatch) -> None:
+    task = uuid4()
+    objects = AsyncMock()
+    objects.exists.return_value = False
+    manager = ExecEnvManager(settings(), docker_client=cast(Any, Docker()), objects=objects)
+    role = AsyncMock(return_value=None)
+    monkeypatch.setattr(manager, "_role", role)
+    assert await manager._archive_audit(task, 1) == {
+        "status": "unavailable",
+        "reason": "runtime_missing",
+    }
+    objects.exists.return_value = True
+    saved = await manager._archive_audit(task, 1)
+    assert saved["status"] == "saved" and str(task) in saved["result_uri"]
+    role.return_value = object()
+    handle = manager_module.ExecEnvHandle(task, "container", "envd", "http://envd:8080", "token")
+    monkeypatch.setattr(manager, "find", AsyncMock(return_value=handle))
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.health.return_value = {"status": "ok"}
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: client)
+    assert await manager._archive_audit(task, 1) == {
+        "status": "unavailable",
+        "reason": "legacy_runtime",
+    }
+    client.audit.assert_not_awaited()
+    objects.put.assert_not_awaited()
