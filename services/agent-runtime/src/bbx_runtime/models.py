@@ -58,6 +58,7 @@ class DeepSeekChatOptions(OpenAIChatCompletionOptions[None], total=False):
     reasoning_effort: str
     parallel_tool_calls: bool
     reasoning: dict[str, str]
+    store: bool
 
 
 class DeepSeekChatClient(OpenAIChatCompletionClient):
@@ -309,10 +310,14 @@ async def close_model_client(client: BaseChatClient[Any]) -> None:
 def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
     """Use the option shape expected by the pinned provider's API."""
     effort = model.reasoning_effort
+    if model.provider in {"openai_responses", "azure_openai_responses"}:
+        # Keep history in the platform instead of relying on provider-side storage.
+        options: DeepSeekChatOptions = {"store": False}
+        if effort not in {"none", "off", ""}:
+            options["reasoning"] = {"effort": effort}
+        return options
     if effort in {"none", "off", ""}:
         return {}
-    if model.provider in {"openai_responses", "azure_openai_responses"}:
-        return {"reasoning": {"effort": effort}}
     if model.provider in {
         "deepseek",
         "openai_chat",

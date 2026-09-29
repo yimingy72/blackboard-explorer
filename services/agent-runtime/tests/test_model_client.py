@@ -113,11 +113,32 @@ def test_platform_provider_uses_pinned_endpoint(provider, client_type):
     assert client.model == "snapshot-model"
     assert str(client.client.base_url) == "https://model.test/v1/"
     assert model_run_options(model) == (
-        {"reasoning": {"effort": "high"}}
+        {"store": False, "reasoning": {"effort": "high"}}
         if provider == "openai_responses"
         else {"reasoning_effort": "high"}
     )
-    assert model_run_options(model.model_copy(update={"reasoning_effort": "off"})) == {}
+    assert model_run_options(model.model_copy(update={"reasoning_effort": "off"})) == (
+        {"store": False} if provider == "openai_responses" else {}
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+@pytest.mark.parametrize("effort", ["high", "none", "off", ""])
+def test_only_responses_providers_disable_service_side_history(provider, effort):
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={"provider": provider, "reasoning_effort": effort}
+    )
+    options = model_run_options(model)
+    if provider in {"openai_responses", "azure_openai_responses"}:
+        assert options == (
+            {"store": False, "reasoning": {"effort": "high"}}
+            if effort == "high"
+            else {"store": False}
+        )
+    else:
+        assert "store" not in options
+        if effort != "high":
+            assert options == {}
 
 
 async def test_model_credentials_use_pinned_version_and_environment_only_for_deepseek():
@@ -377,3 +398,89 @@ async def test_compatible_client_runs_local_tool_over_mock_http(monkeypatch):
     assert len(requests) == 2
     assert requests[0]["tools"][0]["function"]["name"] == "lookup"
     assert requests[1]["messages"][-1]["content"] == "found a"
+
+
+async def test_responses_client_replays_local_tool_history_without_server_storage(monkeypatch):
+    from openai import AsyncOpenAI
+
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/responses"
+        requests.append(json.loads(request.content))
+        output = (
+            {
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call-1",
+                "name": "lookup",
+                "arguments": '{"name":"a"}',
+                "status": "completed",
+            }
+            if len(requests) == 1
+            else {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "found a", "annotations": []}],
+            }
+        )
+        return httpx.Response(
+            200,
+            json={
+                "id": f"resp_{len(requests)}",
+                "object": "response",
+                "created_at": 1,
+                "model": "test-model",
+                "status": "completed",
+                "output": [output],
+            },
+        )
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        "bbx_runtime.models.AsyncOpenAI",
+        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
+    )
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={
+            "provider": "openai_responses",
+            "model": "test-model",
+            "base_url": "https://model.test/v1",
+        }
+    )
+    client = make_client(
+        model,
+        credentials={"api_key": "test-only-key"},
+        explore_max_steps=2,
+        conclude_grace_calls=0,
+        max_duration_seconds=10,
+    )
+    assert isinstance(client, OpenAIChatClient)
+    lookup_calls = 0
+
+    def lookup(name: str) -> str:
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return f"found {name}"
+
+    async with Agent(client=client, tools=[lookup]) as agent:
+        result = await agent.run("Find a", options=model_run_options(model))
+    await close_model_client(client)
+    assert result.text == "found a"
+    assert lookup_calls == 1
+    assert len(requests) == 2
+    for body in requests:
+        assert body["store"] is False
+        assert body.get("stream", False) is False
+        assert "previous_response_id" not in body
+        assert "conversation" not in body
+    assert requests[0]["tools"][0]["name"] == "lookup"
+    assert any(
+        item.get("type") == "function_call_output"
+        and item["call_id"] == "call-1"
+        and item["output"] == "found a"
+        for item in requests[1]["input"]
+    )
+    assert any(item.get("type") == "function_call" for item in requests[1]["input"])
