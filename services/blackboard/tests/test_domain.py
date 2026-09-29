@@ -361,6 +361,7 @@ def test_close_verdict_validation():
 
 def test_budget_and_failure_thresholds():
     state = board()
+    state.task["failure_window_kind"] = "model_error"
     heartbeat = decide(
         state,
         "heartbeat",
@@ -374,6 +375,7 @@ def test_budget_and_failure_thresholds():
         },
     )
     assert [x["type"] for x in heartbeat] == ["agent.progress", "budget.updated"]
+    assert heartbeat[0]["payload"]["reset_failure_streak"] is True
     assert heartbeat[1]["payload"]["exhausted"]
     state.task["failure_streak"] = 2
     failure = decide(
@@ -490,7 +492,7 @@ def test_transient_model_error_starts_new_window_after_120_seconds() -> None:
     )
     assert [item["type"] for item in third] == ["agent.finished", "task.failed"]
     assert third[0]["payload"]["failure_increment"] == 1
-    assert third[1]["payload"]["reason"] == "模型服务连续不可用"
+    assert third[1]["payload"]["reason"] == "连续运行失败达到保护阈值"
 
 
 def test_transient_model_error_preserves_intent_and_seed_retries() -> None:
@@ -543,10 +545,90 @@ def test_legacy_and_permanent_runtime_errors_still_count(receipt) -> None:
     )
     assert [item["type"] for item in events] == ["agent.finished", "task.failed"]
     assert events[0]["payload"]["failure_increment"] == 1
-    assert events[0]["payload"]["failure_window_kind"] is None
+    assert events[0]["payload"]["failure_window_kind"] == "mixed"
     assert events[0]["payload"]["failure_window_started_at"] is None
     assert events[0]["payload"]["transient_model_error"] is False
-    assert events[1]["payload"]["reason"] == "Agent 连续运行失败"
+    assert events[1]["payload"]["reason"] == "连续运行失败达到保护阈值"
+
+
+@pytest.mark.parametrize(
+    "steps,kind,terminal,expected",
+    [
+        (1, "model_error", False, True),
+        (1, "model_transient", False, True),
+        (1, None, False, False),
+        (0, "model_error", False, False),
+        (1, "model_error", True, False),
+    ],
+)
+def test_heartbeat_marks_only_live_model_success(
+    steps: int, kind: str | None, terminal: bool, expected: bool
+) -> None:
+    state = board()
+    state.task["failure_window_kind"] = kind
+    if terminal:
+        state.task["status"] = "failed"
+    progress = decide(
+        state,
+        "heartbeat",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "steps": steps,
+            "context_tokens": 1,
+            "last_seen_version": 0,
+            "usage": {},
+        },
+    )
+    assert progress[0]["payload"]["reset_failure_streak"] is expected
+    grace = decide(state, "take_grace", "agent-4", {"agent_id": "agent-4"})
+    assert "reset_failure_streak" not in grace[0]["payload"]
+
+
+def test_nontransient_model_error_is_marked_for_success_reset() -> None:
+    state = board()
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": {"category": "unknown", "transient": False}},
+        },
+    )
+    assert events[0]["payload"]["failure_window_kind"] == "model_error"
+    assert events[0]["payload"]["failure_window_started_at"] is None
+
+
+def test_model_failure_after_local_failure_keeps_streak_mixed() -> None:
+    state = board()
+    state.task["failure_streak"] = 1
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": {"category": "unknown", "transient": False}},
+        },
+    )
+    assert events[0]["payload"]["failure_window_kind"] == "mixed"
+    state.task["failure_window_kind"] = "mixed"
+    progress = decide(
+        state,
+        "heartbeat",
+        "agent-2",
+        {
+            "agent_id": "agent-2",
+            "steps": 1,
+            "context_tokens": 1,
+            "last_seen_version": 0,
+            "usage": {},
+        },
+    )
+    assert progress[0]["payload"]["reset_failure_streak"] is False
 
 
 @pytest.mark.parametrize("terminal", ["finished", "failed", "stopped"])

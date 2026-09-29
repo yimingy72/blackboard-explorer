@@ -526,7 +526,17 @@ def decide(
         usage = add_usage(previous, delta)
         exhausted = Decimal(str(usage.get("cost", 0))) >= Decimal(str(task["budget"]["max_cost"]))
         return [
-            event("agent.progress", actor, data, data["agent_id"]),
+            event(
+                "agent.progress",
+                actor,
+                {
+                    **data,
+                    "reset_failure_streak": data["steps"] > 0
+                    and task["status"] not in {"finished", "failed", "stopped"}
+                    and task.get("failure_window_kind") in {"model_transient", "model_error"},
+                },
+                data["agent_id"],
+            ),
             event("budget.updated", "system", {"usage": usage, "exhausted": exhausted}),
         ]
     if command == "conclude":
@@ -656,11 +666,30 @@ def decide(
             agent["status"] == "concluding" and agent.get("conclude_reason") == "closing"
         )
         error = receipt.get("error") if isinstance(receipt, dict) else None
+        model_error = (
+            reason == "runtime_error"
+            and isinstance(error, dict)
+            and isinstance(error.get("category"), str)
+            and bool(error["category"])
+        )
         transient_model_error = (
             reason == "runtime_error" and isinstance(error, dict) and error.get("transient") is True
         )
         failure_increment = int(reason == "runtime_error")
+        previous_kind = task.get("failure_window_kind")
+        mixed_failures = task["failure_streak"] > 0 and previous_kind not in {
+            "model_transient",
+            "model_error",
+        }
         failure_window_kind = None
+        if model_error:
+            failure_window_kind = "mixed" if mixed_failures else "model_error"
+        elif reason == "runtime_error" and previous_kind in {
+            "model_transient",
+            "model_error",
+            "mixed",
+        }:
+            failure_window_kind = "mixed"
         failure_window_started_at = None
         if transient_model_error:
             now = datetime.now(UTC)
@@ -670,14 +699,14 @@ def decide(
             if isinstance(started, datetime) and started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             if (
-                task.get("failure_window_kind") == "model_transient"
+                previous_kind in {"model_transient", "mixed"}
                 and isinstance(started, datetime)
                 and 0 <= (now - started).total_seconds() < 120
             ):
                 failure_increment = 0
             else:
                 started = now
-            failure_window_kind = "model_transient"
+            failure_window_kind = "mixed" if mixed_failures else "model_transient"
             failure_window_started_at = started.isoformat()
         counted = (
             not transient_model_error
@@ -726,9 +755,7 @@ def decide(
                     "system",
                     {
                         "status": "failed",
-                        "reason": "模型服务连续不可用"
-                        if transient_model_error
-                        else "Agent 连续运行失败",
+                        "reason": "连续运行失败达到保护阈值",
                     },
                 )
             )

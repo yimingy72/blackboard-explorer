@@ -723,6 +723,9 @@ async def test_old_derive_round_cannot_write_after_reactivation(board_service):
     assert await board_service.register_agent(tid, "derive") == derive
     state = await board_service.state(tid)
     assert state["agents"][derive]["derive_round"] == 2
+    failed = await board_service.register_agent(tid, "explore")
+    await append_agent_finished(board_service, tid, failed)
+    assert (await board_service.state(tid))["task"]["failure_streak"] == 1
     for operation in (
         board_service.finish_agent(
             tid, derive, {"accepted": True}, "normal", expected_derive_round=1
@@ -759,6 +762,7 @@ async def test_old_derive_round_cannot_write_after_reactivation(board_service):
     after = await board_service.state(tid)
     assert after["agents"][derive]["status"] == "running"
     assert after["agents"][derive]["steps"] == 0
+    assert after["task"]["failure_streak"] == 1
 
 
 async def test_completion_review_requires_valid_receipt_and_second_judgment(board_service):
@@ -1271,6 +1275,142 @@ async def test_failure_window_projection_and_legacy_replay(board_service):
     assert task_state["failure_streak"] == 2
     assert task_state["failure_window_kind"] is None
     assert task_state["failure_window_started_at"] is None
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
+async def test_model_success_resets_failure_window_without_finishing_agent(board_service):
+    service = board_service
+    tid = await task(service)
+    unknown = await service.register_agent(tid, "explore")
+    first_connection = await service.register_agent(tid, "explore")
+    second_connection = await service.register_agent(tid, "explore")
+    long_agent = await service.register_agent(tid, "explore")
+
+    async def health():
+        task_state = (await service.state(tid))["task"]
+        return (
+            task_state["failure_streak"],
+            task_state["failure_window_kind"],
+            task_state["failure_window_started_at"],
+        )
+
+    async def heartbeat(steps):
+        result = await service.heartbeat(
+            tid, long_agent, steps=steps, context_tokens=10, usage={}, last_seen_version=0
+        )
+        return result["events"][0]["payload"]["reset_failure_streak"]
+
+    await service.finish_agent(
+        tid,
+        unknown,
+        {"error": {"category": "unknown", "transient": False}},
+        "runtime_error",
+    )
+    assert await health() == (1, "model_error", None)
+    assert await heartbeat(1) is True
+    assert await health() == (0, None, None)
+
+    start = "2026-09-28T00:00:00+00:00"
+    await append_agent_finished(
+        service,
+        tid,
+        first_connection,
+        failure_increment=1,
+        transient_model_error=True,
+        failure_window_kind="model_transient",
+        failure_window_started_at=start,
+    )
+    assert (await health())[0] == 1
+    assert await heartbeat(0) is False
+    await service.conclude(tid, long_agent, "limit")
+    await service.take_grace(tid, long_agent)
+    assert (await health())[0] == 1
+    assert await heartbeat(80) is True
+    assert await health() == (0, None, None)
+    assert (await service.state(tid))["agents"][long_agent]["status"] == "concluding"
+
+    await append_agent_finished(
+        service,
+        tid,
+        second_connection,
+        failure_increment=1,
+        transient_model_error=True,
+        failure_window_kind="model_transient",
+        failure_window_started_at="2026-09-28T00:03:00+00:00",
+    )
+    assert (await health())[0] == 1
+    async with service.repo.engine.begin() as conn:
+        await service.repo.lock(conn, tid)
+        await service.repo.append(
+            conn,
+            tid,
+            [
+                {
+                    "type": "agent.progress",
+                    "actor": long_agent,
+                    "object_id": long_agent,
+                    "payload": {"agent_id": long_agent, "steps": 1},
+                    "addressed_to": None,
+                }
+            ],
+        )
+    assert (await health())[0] == 1
+    await service.transition(tid, "failed", reason="test terminal snapshot")
+    frozen = await health()
+    assert await heartbeat(1) is False
+    assert await health() == frozen
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
+async def test_model_heartbeats_do_not_clear_consecutive_local_failures(board_service):
+    service = board_service
+    tid = await task(service)
+    long_agent = await service.register_agent(tid, "explore")
+    for expected in (1, 2, 3):
+        failed_agent = await service.register_agent(tid, "explore")
+        await service.heartbeat(
+            tid, long_agent, steps=1, context_tokens=1, usage={}, last_seen_version=0
+        )
+        events = await service.finish_agent(tid, failed_agent, {}, "runtime_error")
+        state = (await service.state(tid))["task"]
+        assert state["failure_streak"] == expected
+        assert state["failure_window_kind"] is None
+        assert [event["type"] for event in events] == (
+            ["agent.finished", "task.failed"] if expected == 3 else ["agent.finished"]
+        )
+    assert state["status"] == "failed"
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
+async def test_mixed_failure_streak_survives_model_success(board_service):
+    service = board_service
+    tid = await task(service)
+    long_agent = await service.register_agent(tid, "explore")
+    local_agent = await service.register_agent(tid, "explore")
+    model_agent = await service.register_agent(tid, "explore")
+    final_agent = await service.register_agent(tid, "explore")
+    await service.finish_agent(tid, local_agent, {}, "runtime_error")
+    await service.finish_agent(
+        tid,
+        model_agent,
+        {"error": {"category": "unknown", "transient": False}},
+        "runtime_error",
+    )
+    state = (await service.state(tid))["task"]
+    assert (state["failure_streak"], state["failure_window_kind"]) == (2, "mixed")
+    progress = await service.heartbeat(
+        tid, long_agent, steps=1, context_tokens=1, usage={}, last_seen_version=0
+    )
+    assert progress["events"][0]["payload"]["reset_failure_streak"] is False
+    assert (await service.state(tid))["task"]["failure_streak"] == 2
+    events = await service.finish_agent(tid, final_agent, {}, "runtime_error")
+    assert [item["type"] for item in events] == ["agent.finished", "task.failed"]
     before = await projections(service, tid)
     await service.replay(tid)
     assert await projections(service, tid) == before

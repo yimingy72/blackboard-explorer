@@ -336,6 +336,21 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         if "grace_left" in p:
             values["grace_calls_left"] = p["grace_left"]
         await patch(conn, s.agent_runs, tid, values, p["agent_id"])
+        if p.get("reset_failure_streak") is True:
+            task = await row(conn, s.tasks, tid)
+            if task["status"] not in {"finished", "failed", "stopped"} and task[
+                "failure_window_kind"
+            ] in {"model_transient", "model_error"}:
+                await patch(
+                    conn,
+                    s.tasks,
+                    tid,
+                    {
+                        "failure_streak": 0,
+                        "failure_window_kind": None,
+                        "failure_window_started_at": None,
+                    },
+                )
     elif kind == "agent.conclude_requested":
         task = await row(conn, s.tasks, tid)
         await patch(
