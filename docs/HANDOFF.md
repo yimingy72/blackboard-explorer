@@ -45,6 +45,7 @@
   | Agent-settings | ✅ 主会话重做Worker/模型/MCP配置页，模型context_window与80%交接阈值；586普通/65集成/33前端/20浏览器通过，本地已部署（2026-09-29） |
   | Runtime-streaming | ✅ 六类 OpenAI 系连接器的 Worker/只读对话启用后端流式；逐调用记账、完整终态校验、百智云空占位兼容；671普通/65集成与真实两轮工具烟测通过，已合并本地部署（2026-09-29） |
   | Responses-tool-order | ✅ 修复混合助手正文与工具调用的 Responses 本地回放顺序；最新任务 12 次内部400001/外层502通过中性A/B定位；677普通/65集成及真实混合输出两轮通过，已合并本地部署（2026-09-29） |
+  | Control-connection-resilience | ✅ 调度/清扫内部传输异常恢复、Session取消提交确认、归档413保留工作区并暂停重复压缩；695普通/65集成通过，已合并本地部署；4891d8c7第2轮工作区约12.8GB/10.6万条目，完整归档及旧任务续跑仍受容量阻塞（2026-09-29） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **当前交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；用户已允许按需使用GPT-6 Sol high协作开发。
@@ -367,6 +368,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Control-connection-resilience 已修复控制链断连引发全任务取消及Session提交确认竞态，保持非传输异常失败语义与CAS保护。归档413改为本进程暂停自动重试、保留容器、不标cleanup_ready；完整大工作区归档/恢复方案及对应设计仍待处理，不能将当前容量保护视作归档成功。见 [报告](tasks/Control-connection-resilience-report.md)。
 
 Runtime-streaming 已合并实现并本地部署；Responses 保持 store:false、本地工具历史回放，六类 OpenAI 系连接器使用 ResponseStream 并在每次完整模型响应后记账。实现架构第 6–7 节的旧非流式示例尚待补充流式处理说明，本轮未改设计文档。详细范围、错误边界、真实网关验证和前端仍按完整响应展示的限制见 [Runtime-streaming 报告](tasks/Runtime-streaming-report.md)。
 

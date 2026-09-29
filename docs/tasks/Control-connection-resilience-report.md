@@ -48,3 +48,9 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache uv run pytest -q services/agent-runtime/t
 4. `Document control connection recovery`：`docs/tasks/Control-connection-resilience-report.md`。
 
 提交正文按 `AGENTS.md` 补 `Implemented by Codex (gpt-6-sol) for task Control-connection-resilience.`。本轮未提交、合并或部署。
+
+## 本地部署复核（2026-09-29）
+
+主代理已按上述四项划分提交并快进合并到 main（`a283a4b`、`29ed0c8`、`2f45f9e`、`e2ddca8`），随后用最终测试镜像 `90f60d61070a` 更新本地 agent-runtime。部署前无运行、收尾或排队 provisioning 任务；部署后容器 running、重启次数 0、运行锁 1 个、工作台 `/login` 返回 200。Session 与三个调度模块的容器内 SHA-256 与 main 逐项一致。
+
+没有自动重跑原任务或删除原执行容器；完整归档容量仍待处理，旧任务未标记 cleanup_ready，不能据本轮修复宣称已恢复续跑能力。
