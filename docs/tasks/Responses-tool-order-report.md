@@ -36,3 +36,9 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache make check
 2. `Document Responses tool replay ordering fix`：`docs/tasks/Responses-tool-order-report.md`。
 
 提交正文按 `AGENTS.md` 补 `Implemented by Codex (gpt-6-sol) for task Responses-tool-order.`。
+
+## 本地部署（2026-09-29）
+
+- 实现 `ac08090`、报告 `98a2749` 已快进合并到 main。部署前无运行或收尾中的任务，已用最终测试镜像 `c7111cf5449c` 更新 agent-runtime。
+- 容器 running、重启次数 0、运行锁仅 1 个，工作台 `/login` 返回 200；容器内 models.py 的 SHA-256 与 main 一致。
+- 原任务于 14:12:18 因用户手动停止进入收尾，14:16:21 完成收尾。本轮没有自动续跑或重放目标操作；后续显式续跑会使用修复后的 API 转换。
