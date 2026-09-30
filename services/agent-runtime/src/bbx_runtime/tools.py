@@ -53,10 +53,6 @@ def _data_block(name: str, value: Any) -> str:
     return f"<{name}>\n{html.escape(content, quote=False)}\n</{name}>"
 
 
-def _remote_error(exc: RemoteError) -> str:
-    return exc.message
-
-
 def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
     """Bind task identity once; the model never supplies task or agent IDs."""
     close_lock = asyncio.Lock()
@@ -102,7 +98,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
             try:
                 info = await ctx.envd.stat(path)
             except RemoteError as exc:
-                return _remote_error(exc)
+                return exc.message
             if not info.get("exists") or not info.get("is_file"):
                 return f"证据文件 {path} 不存在或不是普通文件，请先写入文件。"
             if int(info.get("size", 0)) > EVIDENCE_MAX_BYTES:
@@ -112,7 +108,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
             except RemoteError as exc:
                 if exc.status == 413:
                     return "证据文件过大，请截取相关部分另存后再提交。"
-                return _remote_error(exc)
+                return exc.message
             if len(data) > EVIDENCE_MAX_BYTES:
                 return "证据文件过大，请截取相关部分另存后再提交。"
             uri = (
@@ -159,7 +155,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             response = await ctx.board.post_fact(ctx.task_id, request)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return f"已提交事实 {response['id']}。"
 
     @tool(approval_mode="never_require")
@@ -187,7 +183,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         except ValidationError as exc:
             return f"意图字段不合法，请补齐依据、预期、方法和关联项：{exc.errors()[0]['msg']}"
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         suffix = "，并已认领" if claim else ""
         return f"已提交意图 {response['id']}{suffix}。"
 
@@ -197,7 +193,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             await ctx.board.claim(ctx.task_id, intent_id)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return f"已认领意图 {intent_id}。"
 
     @tool(approval_mode="never_require")
@@ -206,7 +202,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             await ctx.board.release(ctx.task_id, intent_id, note)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return f"已释放意图 {intent_id}，交接说明已记录。"
 
     @tool(name="get", approval_mode="never_require")
@@ -215,7 +211,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             response = await ctx.board.get_object(ctx.task_id, object_id, depth)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return _data_block("blackboard_data", response)
 
     @tool(approval_mode="never_require")
@@ -228,7 +224,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             response = await ctx.board.search(ctx.task_id, q, k, type)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return _data_block("blackboard_data", response)
 
     @tool(approval_mode="never_require")
@@ -237,7 +233,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
         try:
             content = await ctx.board.read_evidence(uri)
         except RemoteError as exc:
-            return _remote_error(exc)
+            return exc.message
         return _data_block("evidence", evidence_page(content, offset, limit))
 
     @tool(approval_mode="never_require")
@@ -257,7 +253,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
                 try:
                     current = await ctx.board.state(ctx.task_id)
                 except RemoteError as exc:
-                    return _remote_error(exc)
+                    return exc.message
                 if current["task"]["status"] != "closing":
                     return "任务已结束或不在收尾状态，不能再次写入终结报告。"
                 run_number = int(current["task"].get("run_number") or 1)
@@ -273,7 +269,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
             try:
                 await ctx.board.submit_close(ctx.task_id, request, report_uri=uri)
             except RemoteError as exc:
-                return _remote_error(exc)
+                return exc.message
             return "终结报告与验收裁定已提交。" if ctx.mode == "final" else "验收裁定已提交。"
 
     common = [get_object, search, read_evidence, make_view_image_tool(ctx)]

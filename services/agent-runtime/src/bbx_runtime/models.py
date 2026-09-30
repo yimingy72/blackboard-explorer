@@ -432,13 +432,13 @@ def make_client(
             timeout=min(120, max_duration_seconds),
             max_retries=4,
         )
-    client_type: Any = (
-        DeepSeekChatClient
-        if provider == "deepseek"
-        else CompleteResponsesClient
-        if provider in {"openai_responses", "azure_openai_responses"}
-        else CompleteChatCompletionClient
-    )
+    client_type: Any
+    if provider == "deepseek":
+        client_type = DeepSeekChatClient
+    elif provider in {"openai_responses", "azure_openai_responses"}:
+        client_type = CompleteResponsesClient
+    else:
+        client_type = CompleteChatCompletionClient
     kwargs: dict[str, Any] = (
         {"response_parser": preserve_reasoning} if provider == "deepseek" else {}
     )

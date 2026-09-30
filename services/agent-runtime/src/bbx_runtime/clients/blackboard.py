@@ -375,7 +375,7 @@ class BlackboardClient:
     ) -> dict[str, Any]:
         return await self._json(
             "PATCH",
-            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}",
+            self._agent(task_id, agent_id),
             json={
                 "steps": steps,
                 "context_tokens": context_tokens,
@@ -400,7 +400,7 @@ class BlackboardClient:
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
-            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/conclude",
+            f"{self._agent(task_id, agent_id)}/conclude",
             json={
                 "reason": reason,
                 **(
@@ -420,7 +420,7 @@ class BlackboardClient:
     ) -> int:
         result = await self._json(
             "POST",
-            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/grace",
+            f"{self._agent(task_id, agent_id)}/grace",
             **(
                 {"json": {"expected_derive_round": expected_derive_round}}
                 if expected_derive_round is not None
@@ -440,7 +440,7 @@ class BlackboardClient:
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
-            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/finish",
+            f"{self._agent(task_id, agent_id)}/finish",
             json={
                 "receipt": receipt,
                 "end_reason": end_reason,
@@ -515,7 +515,7 @@ class BlackboardClient:
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
-            f"{self._task(task_id)}/agents/{quote(agent_id, safe='')}/traces",
+            f"{self._agent(task_id, agent_id)}/traces",
             json={
                 **trace,
                 **(

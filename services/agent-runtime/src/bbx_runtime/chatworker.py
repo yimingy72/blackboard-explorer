@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 import httpx
 from agent_framework import Agent, AgentSession, BaseChatClient, Content, Message, tool
+from bbx_contracts.models import ModelConfig
 from bbx_objects import ObjectStore
 
 from bbx_runtime.billing import ReviewBillingMiddleware, _usage
@@ -69,6 +70,16 @@ def _completed_text(session: AgentSession, message_id: str) -> str | None:
             elif message.text:
                 answer = message.text
     return answer
+
+
+def _review_usage(session: AgentSession, message_id: str, model: ModelConfig) -> dict[str, Any]:
+    raw_usage = session.state.get("bbx_review_usage", {}).get(message_id)
+    billed = session.state.get("bbx_review_billed", {}).get(message_id)
+    if billed:
+        return billed["usage"]
+    if raw_usage:
+        return _usage(raw_usage, model.price, model.provider)[0].model_dump(mode="json")
+    return {"unavailable": True}
 
 
 def _legacy_opening(state: dict[str, Any], agent_id: str) -> str:
@@ -177,17 +188,7 @@ class ChatWorker:
                 checkpoint.review_claim = {"id": message_id, "claim_token": token}
             if repair_unpaired_tool_calls(checkpoint.session, include_interrupted=True):
                 await checkpoint.save()
-            raw_usage = checkpoint.session.state.get("bbx_review_usage", {}).get(message_id)
-            billed = checkpoint.session.state.get("bbx_review_billed", {}).get(message_id)
-            recovered_usage = (
-                billed["usage"]
-                if billed
-                else (
-                    _usage(raw_usage, model.price, model.provider)[0].model_dump(mode="json")
-                    if raw_usage
-                    else {"unavailable": True}
-                )
-            )
+            recovered_usage = _review_usage(checkpoint.session, message_id, model)
             prior = checkpoint.session.state.get("bbx_review_response")
             if isinstance(prior, dict) and prior.get("message_id") == message_id:
                 answer = str(prior["content"])
@@ -271,19 +272,7 @@ class ChatWorker:
                                     options=model_run_options(model),
                                 )
                     answer = response.text
-                    raw_usage = checkpoint.session.state.get("bbx_review_usage", {}).get(message_id)
-                    billed = checkpoint.session.state.get("bbx_review_billed", {}).get(message_id)
-                    usage = (
-                        billed["usage"]
-                        if billed
-                        else (
-                            _usage(raw_usage, model.price, model.provider)[0].model_dump(
-                                mode="json"
-                            )
-                            if raw_usage
-                            else {"unavailable": True}
-                        )
-                    )
+                    usage = _review_usage(checkpoint.session, message_id, model)
                 checkpoint.session.state["bbx_review_response"] = {
                     "message_id": message_id,
                     "content": answer,
