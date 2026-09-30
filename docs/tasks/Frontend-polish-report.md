@@ -80,4 +80,10 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache make test-integration
 - 视觉规范与审核报告：web/DESIGN.md及本报告，建议`Document frontend audit and UI validation`。
 - 无新的Python/npm依赖，无数据库迁移、环境变量或全局设置修改。主会话设计/实施，GPT-6.1 Sol high做只读复核。
 
-本地部署验证将在下方补充。
+## 本地交付补充
+
+- c4d2047设计、dc0b9c6实现、662f61e文档已快进合并main，未推送远程。
+- 主工作树重新构建前端，将新assets上传后再替换index，保留旧hash资源供已打开页面使用；当前服务静态目录已更新。blackboard与agent-runtime仍running、重启次数0，没有为UI更新重启后端或执行任务。
+- 正式`http://127.0.0.1:58000/login`返回200。另用全新匿名浏览器实际打开登录页，确认新密码显示按钮和界面已加载；API请求数0，未登录、读取或操作真实任务。截图为`.data/checkpoints/frontend-polish/production-login.png`。
+- 持久部署镜像已构建为`bbx-blackboard:latest`及任务标签`bbx-frontend-polish-blackboard:latest`，镜像381e1c07f690；当前运行容器通过静态文件更新提供新版UI，下次正常重建服务使用同一新版资源。
+- 50份样例前后截图及正式匿名登录截图已同步至主仓库`.data/checkpoints/frontend-polish/`。无需用户运行额外命令，刷新页面即可使用。
