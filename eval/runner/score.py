@@ -35,10 +35,12 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _rows(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
-        return [row for row in value.values() if isinstance(row, dict)]
-    if isinstance(value, list):
-        return [row for row in value if isinstance(row, dict)]
-    return []
+        rows = value.values()
+    elif isinstance(value, list):
+        rows = value
+    else:
+        return []
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _persisted_uris(fact: dict[str, Any], task_id: str) -> list[str]:

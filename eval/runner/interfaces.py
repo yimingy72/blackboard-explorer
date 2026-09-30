@@ -13,15 +13,15 @@ def routes(source: str) -> dict[str, tuple[str, str]]:
     tree = ast.parse(source)
     prefixes = {"app": ""}
     for node in tree.body:
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if isinstance(node.value.func, ast.Name) and node.value.func.id == "APIRouter":
-                prefix = next(
-                    (item.value for item in node.value.keywords if item.arg == "prefix"), None
-                )
-                value = ast.literal_eval(prefix) if prefix is not None else ""
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        prefixes[target.id] = value
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if not isinstance(node.value.func, ast.Name) or node.value.func.id != "APIRouter":
+            continue
+        prefix = next((item.value for item in node.value.keywords if item.arg == "prefix"), None)
+        value = ast.literal_eval(prefix) if prefix is not None else ""
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                prefixes[target.id] = value
     result = {}
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
