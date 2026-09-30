@@ -2169,6 +2169,11 @@ export interface components {
             };
             /** Profile Version */
             profile_version?: number | null;
+            /**
+             * Reasoning Effort
+             * @description 任务思考强度；省略或 null 沿用模型配置
+             */
+            reasoning_effort?: string | null;
         };
         /** TaskCreated */
         TaskCreated: {

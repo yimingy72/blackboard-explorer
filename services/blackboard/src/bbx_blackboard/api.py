@@ -52,7 +52,11 @@ from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
-from bbx_blackboard.worker_settings import model_context_threshold, task_profile
+from bbx_blackboard.worker_settings import (
+    model_context_threshold,
+    override_reasoning_effort,
+    task_profile,
+)
 from bbx_blackboard.worker_settings import router as settings_router
 from bbx_blackboard.workspace import (
     ArchiveTooLarge,
@@ -72,6 +76,9 @@ class TaskCreateBody(TaskSpec):
     model_id: str | None = Field(default=None, min_length=1)
     model_version: int | None = Field(default=None, ge=1)
     profile_version: int | None = Field(default=None, ge=1)
+    reasoning_effort: str | None = Field(
+        default=None, min_length=1, description="任务思考强度；省略或 null 沿用模型配置"
+    )
 
 
 class TaskCreated(BaseModel):
@@ -537,22 +544,38 @@ def create_app(
         profiles = _profiles(request)
         if body.model_version is not None and body.model_id is None:
             raise HTTPException(422, "模型版本需要同时指定模型")
+        custom_override = False
         if body.model_id is not None or (
             body.agent_profile == "default" and body.profile_version is None
         ):
             row = await task_profile(
-                profiles, request.app.state.platform_store, body.model_id, body.model_version
+                profiles,
+                request.app.state.platform_store,
+                body.model_id,
+                body.model_version,
+                body.reasoning_effort,
             )
         else:
             row = await profiles.get(body.agent_profile, body.profile_version)
+            if body.reasoning_effort is not None:
+                row = {
+                    **row,
+                    "models": override_reasoning_effort(row["models"], body.reasoning_effort),
+                }
+                custom_override = True
         threshold = model_context_threshold(row["models"])
-        if threshold is not None and row["params"].get("context_threshold") != threshold:
+        if custom_override or (
+            threshold is not None and row["params"].get("context_threshold") != threshold
+        ):
             content = {key: row[key] for key in AgentProfile.model_fields}
-            content["params"] = {**content["params"], "context_threshold": threshold}
+            if threshold is not None:
+                content["params"] = {**content["params"], "context_threshold": threshold}
             row = await profiles.create(
                 "task-settings", AgentProfile.model_validate(content), "task"
             )
-        spec = body.model_dump(exclude={"profile_version", "model_id", "model_version"})
+        spec = body.model_dump(
+            exclude={"profile_version", "model_id", "model_version", "reasoning_effort"}
+        )
         spec["agent_profile"] = row["name"]
         spec["params"] = {**row["params"], **body.params}
         if threshold is not None:

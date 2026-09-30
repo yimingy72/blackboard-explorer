@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from bbx_contracts.models import AgentProfile, ExecResources, Params, WorkerTools
+from bbx_contracts.providers import reasoning_efforts
 from fastapi import APIRouter, HTTPException, Request
 from jinja2 import TemplateSyntaxError, meta
 from jinja2.sandbox import SandboxedEnvironment
@@ -77,11 +78,24 @@ def model_context_threshold(models: dict[str, Any]) -> int | None:
     return max(1, min(windows) * 4 // 5) if windows else None
 
 
+def override_reasoning_effort(models: dict[str, Any], effort: str) -> dict[str, Any]:
+    for model in models.values():
+        allowed = reasoning_efforts(model["provider"], model["model"])
+        if not allowed:
+            raise HTTPException(422, "所选模型的 Provider 不支持思考强度覆盖")
+        if "max" in allowed:
+            allowed.extend(["minimal", "medium", "xhigh", "off"])
+        if effort not in ["none", *allowed]:
+            raise HTTPException(422, "所选模型不支持此思考强度，请选择可用选项")
+    return {role: {**model, "reasoning_effort": effort} for role, model in models.items()}
+
+
 async def task_profile(
     profiles: ProfileStore,
     platform: PlatformStore,
     model_id: str | None,
     model_version: int | None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     workers = await read_workers(profiles)
     name = model_id or await platform.default_model_name()
@@ -91,6 +105,8 @@ async def task_profile(
     model = platform.public(row)["config"]
     content = workers["profile"]
     content["models"] = {role: model for role in ("explore", "derive", "close")}
+    if reasoning_effort is not None:
+        content["models"] = override_reasoning_effort(content["models"], reasoning_effort)
     threshold = model_context_threshold(content["models"])
     if threshold is not None:
         content["params"]["context_threshold"] = threshold

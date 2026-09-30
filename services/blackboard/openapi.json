@@ -2441,6 +2441,19 @@
               }
             ],
             "title": "Profile Version"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "任务思考强度；省略或 null 沿用模型配置",
+            "title": "Reasoning Effort"
           }
         },
         "required": [

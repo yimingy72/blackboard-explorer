@@ -13,6 +13,7 @@ class ProviderField(TypedDict):
 
 class ProviderSpec(TypedDict):
     supports_reasoning_effort: bool
+    reasoning_efforts: list[str]
     id: str
     label: str
     options_fields: list[ProviderField]
@@ -52,18 +53,25 @@ def _provider(
     base_url_required: bool = False,
     base_url_label: str = "API 地址",
 ) -> ProviderSpec:
-    return {
-        "id": provider_id,
-        "supports_reasoning_effort": provider_id
+    efforts = (
+        ["low", "high", "max"]
+        if provider_id == "deepseek"
+        else ["minimal", "low", "medium", "high", "xhigh"]
+        if provider_id
         in {
-            "deepseek",
             "openai_chat",
             "openai_responses",
             "openai_compatible",
             "azure_openai_chat",
             "azure_openai_responses",
             "mistral",
-        },
+        }
+        else []
+    )
+    return {
+        "id": provider_id,
+        "supports_reasoning_effort": bool(efforts),
+        "reasoning_efforts": efforts,
         "label": label,
         "options_fields": options or [],
         "credential_fields": credentials or [],
@@ -191,3 +199,13 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ),
     )
 }
+
+
+def reasoning_efforts(provider: str, model: str) -> list[str]:
+    """Include native DeepSeek choices for compatible provider connections."""
+    spec = PROVIDERS.get(provider)
+    if spec is None or not spec["supports_reasoning_effort"]:
+        return []
+    if "deepseek" in model.lower():
+        return list(PROVIDERS["deepseek"]["reasoning_efforts"])
+    return list(spec["reasoning_efforts"])

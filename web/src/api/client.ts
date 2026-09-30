@@ -22,6 +22,7 @@ export type ProviderField = { name: string; label?: string; required: boolean };
 export type ProviderSpec = {
   id: string; label: string; options_fields: ProviderField[]; credential_fields: ProviderField[];
   allow_no_auth: boolean; default_base_url: string; base_url_required: boolean; supports_reasoning_effort: boolean;
+  reasoning_efforts: string[];
 };
 export type PlatformModel = {
   name: string; version: number; label: string;

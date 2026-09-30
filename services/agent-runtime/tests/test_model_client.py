@@ -484,3 +484,87 @@ async def test_responses_client_replays_local_tool_history_without_server_storag
         for item in requests[1]["input"]
     )
     assert any(item.get("type") == "function_call" for item in requests[1]["input"])
+
+
+@pytest.mark.parametrize("provider", ["deepseek", "openai_compatible", "openai_responses"])
+async def test_deepseek_max_reaches_actual_http_payload_unchanged(monkeypatch, provider):
+    from openai import AsyncOpenAI
+
+    requests: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if provider == "openai_responses":
+            assert request.url.path == "/v1/responses"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "resp_max",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "deepseek-flash",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "id": "msg_max",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [
+                                {"type": "output_text", "text": "max preserved", "annotations": []}
+                            ],
+                        }
+                    ],
+                },
+            )
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(
+            200,
+            json={
+                "id": "chat_max",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "deepseek-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "max preserved"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(
+        "bbx_runtime.models.AsyncOpenAI",
+        lambda **kwargs: AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        ),
+    )
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={
+            "provider": provider,
+            "model": "deepseek-flash",
+            "base_url": "https://model.test/v1",
+            "reasoning_effort": "max",
+        }
+    )
+    client = make_client(
+        model,
+        credentials={"api_key": "test-only-key"},
+        explore_max_steps=2,
+        conclude_grace_calls=0,
+        max_duration_seconds=10,
+    )
+    try:
+        async with Agent(client=client) as agent:
+            result = await agent.run("Check max", options=model_run_options(model))
+    finally:
+        await close_model_client(client)
+    assert result.text == "max preserved"
+    assert len(requests) == 1
+    if provider == "openai_responses":
+        assert requests[0]["reasoning"]["effort"] == "max"
+        assert requests[0]["store"] is False
+    else:
+        assert requests[0]["reasoning_effort"] == "max"

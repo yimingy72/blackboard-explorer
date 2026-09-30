@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskCreateInput } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from './NewTaskPage.module.css';
+import { reasoningOptions } from '../components/reasoningOptions';
 
 type AcceptanceDraft = { key: number; desc: string };
 
@@ -25,11 +26,15 @@ export default function NewTaskPage() {
   const [maxAgents, setMaxAgents] = useState('5');
   const [allowlist, setAllowlist] = useState('');
   const [modelId, setModelId] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState('');
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState('');
 
   const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels });
+  const providers = useQuery({ queryKey: ['platform-providers'], queryFn: api.listProviders });
   const selectedModel = models.data?.find((item) => item.name === modelId);
+  const provider = providers.data?.find((item) => item.id === selectedModel?.config.provider);
+  const efforts = reasoningOptions(provider, selectedModel?.config.model ?? '');
   const currencyLabel = '人民币元';
   const unauthorized = models.error instanceof ApiError && models.error.status === 401;
   useEffect(() => {
@@ -78,6 +83,10 @@ export default function NewTaskPage() {
       setFormError('请选择可用的平台模型。');
       return;
     }
+    if (reasoningEffort && (!provider?.supports_reasoning_effort || !['none', ...efforts].includes(reasoningEffort))) {
+      setFormError('所选模型不支持当前推理强度，请重新选择。');
+      return;
+    }
     const input: TaskCreateInput = {
       goal: goal.trim(),
       domain_context: context.trim() || null,
@@ -88,6 +97,7 @@ export default function NewTaskPage() {
       model_version: selectedModel.version,
       egress_allowlist: [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
     };
+    if (reasoningEffort) input.reasoning_effort = reasoningEffort;
     setPending(true);
     try {
       const created = await api.createTask(input);
@@ -150,7 +160,10 @@ export default function NewTaskPage() {
             <section className={styles.settingsSection} aria-labelledby="model-heading">
               <div className={styles.settingsHeading}><h2 id="model-heading">模型</h2><p>三个 Worker 共同使用所选模型。</p></div>
               <div className={styles.settingsFields}>
-                <div className={controls.field}><label className={controls.label} htmlFor="model">平台模型<span className={controls.required} aria-hidden="true">*</span></label><select id="model" className={controls.select} value={modelId} onChange={(event) => setModelId(event.target.value)} required disabled={pending || models.isLoading}><option value="">{models.isLoading ? '正在加载…' : '选择模型'}</option>{models.data?.filter((item) => item.enabled).map((item) => <option key={item.name} value={item.name}>{item.label}{item.is_default ? ' · 平台默认' : ''}</option>)}</select></div>
+                <div className={controls.field}><label className={controls.label} htmlFor="model">平台模型<span className={controls.required} aria-hidden="true">*</span></label><select id="model" className={controls.select} value={modelId} onChange={(event) => { setModelId(event.target.value); setReasoningEffort(''); }} required disabled={pending || models.isLoading}><option value="">{models.isLoading ? '正在加载…' : '选择模型'}</option>{models.data?.filter((item) => item.enabled).map((item) => <option key={item.name} value={item.name}>{item.label}{item.is_default ? ' · 平台默认' : ''}</option>)}</select></div>
+                {provider?.supports_reasoning_effort && <div className={controls.field}><label className={controls.label} htmlFor="reasoning-effort">推理强度</label><select id="reasoning-effort" className={controls.select} value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)} disabled={pending}><option value="">沿用模型配置（{selectedModel?.config.reasoning_effort === 'none' || selectedModel?.config.reasoning_effort === 'off' ? '不传参数' : selectedModel?.config.reasoning_effort}）</option><option value="none">模型默认（不传参数）</option>{efforts.map((effort) => <option value={effort} key={effort}>{effort}</option>)}</select><span className={controls.hint}>仅用于这个任务的三个 Worker，不改变模型配置。</span></div>}
+                {provider && !provider.supports_reasoning_effort && <p className={controls.hint}>该连接方式使用模型默认思考设置。</p>}
+                {providers.isError && <p className={controls.error} role="alert">推理选项加载失败，仍可沿用模型配置。<button type="button" className={styles.textButton} onClick={() => void providers.refetch()} disabled={pending}>重试</button></p>}
                 {models.isError && !unauthorized && <p className={controls.error} role="alert">模型加载失败。<button type="button" className={styles.textButton} onClick={() => void models.refetch()} disabled={pending}>重试</button></p>}
                 {!models.isLoading && !models.data?.some((item) => item.enabled) && <p className={controls.error} role="status">当前没有可用模型，请先在 Agent 配置中添加。</p>}
               </div>

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/ProfilesPage.module.css';
+import { reasoningOptions } from './reasoningOptions';
 
 const blankModel: PlatformModelInput = {
   label: '', provider: '', model: '', base_url: '', reasoning_effort: 'none',
@@ -105,6 +106,7 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
   const active = items?.find((item) => item.name === name);
   const configuredCredentials = active && 'config' in active && active.config.provider === model.provider ? active.configured_credentials ?? [] : [];
   const provider = providers.data?.find((item) => item.id === model.provider);
+  const efforts = reasoningOptions(provider, model.model);
   const showBaseUrl = Boolean(provider && (provider.base_url_required || provider.default_base_url !== 'provider-default'));
   async function setDefault() {
     if (!name || kind !== 'models' || saving) return;
@@ -148,7 +150,7 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
           </div></fieldset>
           <fieldset className={styles.formSection}><legend>上下文与能力</legend><p className={styles.sectionHint}>按模型实际能力填写，决定 Agent 何时交接上下文。</p><div className={styles.formGrid}>
             <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>上下文大小（token）</span><input className={controls.input} type="number" min="1" step="1" placeholder="留空沿用全局交接阈值" value={model.context_window ?? ''} onChange={(event) => setModel({ ...model, context_window: event.target.value === '' ? null : Number(event.target.value) })} /><span className={controls.hint}>{model.context_window != null && Number.isInteger(model.context_window) && model.context_window > 0 ? `新任务交接阈值 ${Math.max(1, Math.floor(model.context_window * 4 / 5)).toLocaleString()} token（80%），其余 20% 留给输出与黑板增量。` : '未设置时沿用全局交接阈值（默认 128,000 token）。'} 请勿超过服务商实际容量；修改不会改变已有任务。</span></label>
-            {provider?.supports_reasoning_effort ? <label className={controls.field}><span className={controls.label}>推理强度</span><select className={controls.select} value={model.reasoning_effort} onChange={(event) => setModel({ ...model, reasoning_effort: event.target.value })}><option value="none">模型默认（不传参数）</option>{model.reasoning_effort === 'off' && <option value="off">模型默认（不传参数）</option>}{['minimal', 'low', 'medium', 'high', 'xhigh'].map((value) => <option key={value} value={value}>{value}</option>)}</select>{model.provider === 'openai_compatible' && <span className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</span>}</label> : provider && <p className={`${controls.hint} ${styles.wideField}`}>该 Provider 当前使用模型默认推理设置，不提供推理强度选项。</p>}
+            {provider?.supports_reasoning_effort ? <label className={controls.field}><span className={controls.label}>推理强度</span><select className={controls.select} value={model.reasoning_effort} onChange={(event) => setModel({ ...model, reasoning_effort: event.target.value })}><option value="none">模型默认（不传参数）</option>{model.reasoning_effort !== 'none' && !efforts.includes(model.reasoning_effort) && <option value={model.reasoning_effort}>{model.reasoning_effort}（当前兼容设置）</option>}{efforts.map((value) => <option key={value} value={value}>{value}</option>)}</select><span className={controls.hint}>设置新任务的默认强度；创建任务时可以单独选择。</span>{model.provider === 'openai_compatible' && <span className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</span>}</label> : provider && <p className={`${controls.hint} ${styles.wideField}`}>该 Provider 当前使用模型默认推理设置，不提供推理强度选项。</p>}
             <label className={controls.field}><span className={controls.label}>图片输入</span><select className={controls.select} value={model.supports_vision == null ? 'auto' : String(model.supports_vision)} onChange={(event) => setModel({ ...model, supports_vision: event.target.value === 'auto' ? null : event.target.value === 'true' })}><option value="auto">由模型接口判断</option><option value="true">支持看图</option><option value="false">仅文本</option></select><span className={controls.hint}>需同时启用 Worker 的 view_image 工具；该选项不会让文本模型获得视觉能力。</span></label>
           </div></fieldset>
           <fieldset className={styles.formSection}><legend>访问凭据</legend><p className={styles.sectionHint}>凭据由平台加密保存，浏览器不会回显。留空可保留已有凭据。</p><div className={styles.formGrid}>

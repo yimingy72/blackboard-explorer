@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import bbx_blackboard.api as api
@@ -376,6 +377,103 @@ async def test_task_uses_smallest_explicit_profile_context_window() -> None:
         )
     assert response.status_code == 200, response.text
     assert row["params"]["context_threshold"] == 128000
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{}, {"reasoning_effort": None}, {"reasoning_effort": "max"}, {"reasoning_effort": "none"}],
+)
+@pytest.mark.parametrize("source", ["custom", "selected", "default"])
+async def test_task_reasoning_creates_isolated_snapshot_and_not_task_spec(override, source):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    for model in (profile.models.explore, profile.models.derive, profile.models.close):
+        model.context_window = 300000
+        model.reasoning_effort = "high"
+    row = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
+    original = deepcopy(row)
+    profiles = AsyncMock()
+    profiles.get.return_value = row
+    profiles.create.side_effect = lambda name, snapshot, actor: {
+        "name": name,
+        "version": 9,
+        **snapshot.model_dump(mode="json"),
+    }
+    service = AsyncMock()
+    service.create_task.return_value = uuid4()
+    app = api.create_app(settings())
+    app.state.profile_store = profiles
+    app.state.board_service = service
+    platform = MagicMock(spec=api.PlatformStore)
+    platform.get.return_value = {"enabled": True}
+    platform.public.return_value = {"config": row["models"]["explore"]}
+    platform.default_model_name.return_value = "selected-model"
+    app.state.platform_store = platform
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+    ) as client:
+        response = await client.post(
+            "/api/tasks",
+            headers={"Authorization": "Bearer service-test"},
+            json={
+                "goal": "Check task reasoning",
+                "acceptance": [{"id": "A1", "desc": "Done"}],
+                "budget": {"max_cost": "2", "max_minutes": 10},
+                "agent_profile": "default" if source == "default" else "custom",
+                **({"profile_version": 4} if source != "default" else {}),
+                **(
+                    {"model_id": "selected-model", "model_version": 2}
+                    if source == "selected"
+                    else {}
+                ),
+                **override,
+            },
+        )
+    assert response.status_code == 200, response.text
+    profiles.create.assert_awaited_once()
+    name, snapshot, actor = profiles.create.call_args.args
+    assert (name, actor) == ("task-settings", "task")
+    expected = override.get("reasoning_effort") or "high"
+    assert {
+        model.reasoning_effort
+        for model in (snapshot.models.explore, snapshot.models.derive, snapshot.models.close)
+    } == {expected}
+    assert snapshot.params.context_threshold == 240000
+    spec = service.create_task.call_args.args[0]
+    assert "reasoning_effort" not in spec
+    assert spec["agent_profile"] == "task-settings"
+    assert service.create_task.call_args.kwargs["profile_version"] == 9
+    assert row == original
+
+
+@pytest.mark.parametrize("effort", ["", "ultra", " ", True, 1])
+async def test_task_reasoning_validation_rejects_invalid_requests(effort):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    app = api.create_app(settings())
+    app.state.profile_store = AsyncMock()
+    app.state.profile_store.get.return_value = {
+        "name": "custom",
+        "version": 1,
+        **profile.model_dump(mode="json"),
+    }
+    app.state.board_service = AsyncMock()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+    ) as client:
+        response = await client.post(
+            "/api/tasks",
+            headers={"Authorization": "Bearer service-test"},
+            json={
+                "goal": "Reject invalid task reasoning",
+                "acceptance": [{"id": "A1", "desc": "Done"}],
+                "budget": {"max_cost": "2", "max_minutes": 10},
+                "agent_profile": "custom",
+                "profile_version": 1,
+                "reasoning_effort": effort,
+            },
+        )
+    assert response.status_code == 422, response.text
+    app.state.profile_store.create.assert_not_awaited()
+    app.state.board_service.create_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
