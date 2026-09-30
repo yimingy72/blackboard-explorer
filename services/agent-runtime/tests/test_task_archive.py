@@ -47,6 +47,18 @@ def evidence(task: UUID, name: str, path: str | None, *, size: int | None = None
     return {"uri": f"evidence/{task}/agent-1/{name}", "path": path, "size": size}
 
 
+def initial(task: UUID, body: bytes, filename: str = "source.zip") -> dict[str, Any]:
+    key = str(uuid4())
+    return {
+        "id": key,
+        "filename": filename,
+        "path": f"/workspace/shared/inputs/{key}/{filename}",
+        "uri": f"inputs/{task}/{key}/{filename}",
+        "size": len(body),
+        "sha256": hashlib.sha256(body).hexdigest(),
+    }
+
+
 def members(output: Path) -> tuple[list[str], dict[str, bytes]]:
     raw = zstandard.ZstdDecompressor().decompress(output.read_bytes(), max_output_size=10_000_000)
     with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
@@ -118,6 +130,104 @@ async def test_empty_task_has_metadata_and_shared_directory(tmp_path: Path) -> N
     names, contents = members(output)
     assert "shared" in names
     assert json.loads(contents[".bbx/manifest.json"])["attachments"] == []
+
+
+async def test_initial_original_is_archived_without_fact_and_without_expanding_uploaded_archive(
+    tmp_path,
+):
+    import zipfile
+
+    task = uuid4()
+    uploaded = io.BytesIO()
+    with zipfile.ZipFile(uploaded, "w") as archive:
+        archive.writestr("run-me.sh", "exit 1")
+    body = uploaded.getvalue()
+    attachment = initial(task, body)
+    data = snapshot(task)
+    data["state"]["task"]["initial_attachments"] = [attachment]
+    output = tmp_path / "initial.tar.zst"
+    await build_archive(cast(ObjectStore, Objects({attachment["uri"]: body})), task, data, output)
+    names, contents = members(output)
+    path = attachment["path"].removeprefix("/workspace/")
+    assert contents[path] == body
+    assert not any("run-me.sh" in name for name in names)
+    manifest = json.loads(contents[".bbx/manifest.json"])
+    assert manifest["initial_attachments"] == [attachment]
+    assert manifest["references"] == [attachment["uri"]]
+    assert manifest["restored_files"][0]["sha256"] == attachment["sha256"]
+    assert manifest["restored_files"][0]["fact_id"] is None
+
+
+async def test_fact_reference_reuses_original_without_overriding_initial_path(tmp_path):
+    task = uuid4()
+    attachment = initial(task, b"original")
+    data = snapshot(
+        task,
+        {
+            "F1": {
+                "version": 99,
+                "evidence": [
+                    {
+                        "uri": attachment["uri"],
+                        "path": attachment["path"],
+                        "size": attachment["size"],
+                    }
+                ],
+            }
+        },
+    )
+    data["state"]["task"]["initial_attachments"] = [attachment]
+    output = tmp_path / "duplicate.tar.zst"
+    await build_archive(
+        cast(ObjectStore, Objects({attachment["uri"]: b"original"})), task, data, output
+    )
+    names, contents = members(output)
+    path = attachment["path"].removeprefix("/workspace/")
+    assert names.count(path) == 1 and contents[path] == b"original"
+    manifest = json.loads(contents[".bbx/manifest.json"])
+    assert len(manifest["attachments"]) == 2 and len(manifest["restored_files"]) == 1
+    assert manifest["restored_files"][0]["fact_id"] is None
+    foreign = evidence(task, "replacement", attachment["path"], size=8)
+    data["state"]["facts"]["F1"]["evidence"] = [foreign]
+    with pytest.raises(ValueError, match="initial attachment path"):
+        await build_archive(
+            cast(
+                ObjectStore, Objects({attachment["uri"]: b"original", foreign["uri"]: b"original"})
+            ),
+            task,
+            data,
+            tmp_path / "replacement.tar.zst",
+        )
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing", "size", "sha256", "task", "path", "filename", "duplicate"]
+)
+async def test_invalid_initial_attachment_keeps_existing_archive(tmp_path, failure):
+    task = uuid4()
+    attachment = initial(task, b"original")
+    values = {attachment["uri"]: b"original"}
+    if failure == "missing":
+        values.clear()
+    elif failure == "size":
+        attachment["size"] += 1
+    elif failure == "sha256":
+        attachment["sha256"] = "0" * 64
+    elif failure == "task":
+        attachment["uri"] = attachment["uri"].replace(str(task), str(uuid4()))
+    elif failure == "path":
+        attachment["path"] = "/workspace/agents/agent-1/source.zip"
+    elif failure == "filename":
+        attachment["filename"] = "../source.zip"
+    data = snapshot(task)
+    data["state"]["task"]["initial_attachments"] = [attachment] * (
+        2 if failure == "duplicate" else 1
+    )
+    output = tmp_path / "previous.tar.zst"
+    output.write_bytes(b"previous archive")
+    with pytest.raises((ValueError, FileNotFoundError)):
+        await build_archive(cast(ObjectStore, Objects(values)), task, data, output)
+    assert output.read_bytes() == b"previous archive"
 
 
 @pytest.mark.asyncio

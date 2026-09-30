@@ -185,6 +185,45 @@ async def test_post_fact_uploads_file_and_system_toolcall_evidence(tmp_path: Pat
     assert objects.data[uri] == b"proof"
 
 
+@pytest.mark.parametrize("body", [b"proof", b"other", b"longer proof"])
+async def test_initial_fact_path_uses_verified_original_uri_or_requires_working_copy(
+    tmp_path, body
+):
+    fake, objects, board = FakeEnvd(tmp_path), MemoryObjects(), Board()
+    key = "22222222-2222-4222-8222-222222222222"
+    path = f"/workspace/shared/inputs/{key}/initial.txt"
+    uri = f"inputs/{TASK}/{key}/initial.txt"
+    original = {
+        "id": key,
+        "filename": "initial.txt",
+        "path": path,
+        "uri": uri,
+        "size": 5,
+        "sha256": hashlib.sha256(b"proof").hexdigest(),
+    }
+    objects.data[uri] = b"proof"
+    async with fake:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=fake.app), trust_env=False
+        ) as http:
+            envd = EnvdClient("http://envd.test", fake.token, http)
+            fake.put_file(path, body)
+            ctx = context(board, objects, envd)
+            ctx.state["task"]["initial_attachments"] = [original]
+            result = await call(
+                named(ctx)["post_fact"],
+                kind="observation",
+                statement="Read source",
+                evidence=[{"type": "text", "path": path, "summary": "Source"}],
+            )
+    assert objects.put_calls == 0 and objects.data[uri] == b"proof"
+    if body == b"proof":
+        assert result == "已提交事实 F1。" and board.fact.evidence[0].uri == uri
+        assert board.fact.evidence[0].size == 5 and board.fact.evidence[0].path == path
+    else:
+        assert "先复制" in result and board.post_fact_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_post_fact_missing_evidence_type_reports_field_and_can_retry(tmp_path: Path) -> None:
     fake = FakeEnvd(tmp_path)
@@ -400,3 +439,40 @@ async def test_parallel_final_close_cannot_overwrite_accepted_report() -> None:
     assert objects.put_calls == 1
     accepted = "# 第一份报告" if "终结报告与验收裁定已提交" in results[0] else "# 第二份报告"
     assert objects.data[f"reports/{TASK}.md"] == accepted.encode()
+
+
+@pytest.mark.parametrize("alias", ["dot", "slash", "parent"])
+async def test_initial_fact_path_alias_cannot_bypass_original_integrity(tmp_path, alias):
+    fake, objects, board = FakeEnvd(tmp_path), MemoryObjects(), Board()
+    key = "22222222-2222-4222-8222-222222222222"
+    path = f"/workspace/shared/inputs/{key}/initial.txt"
+    uri = f"inputs/{TASK}/{key}/initial.txt"
+    original = {
+        "id": key,
+        "filename": "initial.txt",
+        "path": path,
+        "uri": uri,
+        "size": 5,
+        "sha256": hashlib.sha256(b"proof").hexdigest(),
+    }
+    requested = {
+        "dot": f"/workspace/shared/inputs/{key}/./initial.txt",
+        "slash": f"/workspace/shared//inputs/{key}/initial.txt",
+        "parent": f"/workspace/shared/inputs/{key}/../{key}/initial.txt",
+    }[alias]
+    async with fake:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=fake.app), trust_env=False
+        ) as http:
+            envd = EnvdClient("http://envd.test", fake.token, http)
+            fake.put_file(path, b"other")
+            ctx = context(board, objects, envd)
+            ctx.state["task"]["initial_attachments"] = [original]
+            result = await call(
+                named(ctx)["post_fact"],
+                kind="observation",
+                statement="Changed input",
+                evidence=[{"type": "text", "path": requested, "summary": "Alias"}],
+            )
+    assert "登记路径" in result and "先复制" in result
+    assert board.post_fact_calls == 0 and objects.put_calls == 0

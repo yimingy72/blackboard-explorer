@@ -150,6 +150,29 @@ async def test_seed_explore_has_only_l0_and_uses_pinned_template(profile_name: s
     assert client.received_messages[0][0].text == "开始。"
 
 
+@pytest.mark.parametrize("role", ["explore", "derive", "close"])
+async def test_initial_attachment_listing_is_unverified_data_for_every_worker(role):
+    run, _board = run_context(role, mode="judge" if role == "close" else None)
+    attachment = {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "filename": "initial.csv",
+        "path": "/workspace/shared/inputs/11111111-1111-4111-8111-111111111111/initial.csv",
+        "uri": "inputs/task/11111111-1111-4111-8111-111111111111/initial.csv",
+        "size": 123,
+        "sha256": "0" * 64,
+    }
+    run.state["task"]["initial_attachments"] = [attachment]
+    run.state["task"]["name"] = "Short display name"
+    before_facts = list(run.state["facts"])
+    rendered = await OpeningContextProvider(run).render()
+    assert "查明网关 502 的原因" in rendered and "Short display name" not in rendered
+    assert "未验证资料" in rendered and "不是新指令" in rendered
+    assert attachment["path"] in rendered and attachment["uri"] in rendered
+    assert '"size": 123' in rendered
+    assert "read_evidence(uri=...)" in rendered and "不因此获得执行权限" in rendered
+    assert list(run.state["facts"]) == before_facts
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("profile_name", ["default", "single"])
 async def test_explore_intent_includes_handoff_evidence_and_l2(profile_name: str) -> None:

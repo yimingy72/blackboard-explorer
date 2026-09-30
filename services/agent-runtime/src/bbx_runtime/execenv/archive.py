@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, cast
 from uuid import UUID
 
 import zstandard
+from bbx_contracts.models import InitialAttachment
 from bbx_objects import ObjectStore
 
 ARCHIVE_MAX_BYTES = 2 * 1024 * 1024 * 1024
@@ -67,6 +68,37 @@ def _owned(uri: str, task_id: UUID) -> bool:
     )
 
 
+def initial_attachments(task_id: UUID, value: Any) -> list[dict[str, Any]]:
+    """Validate registered originals against their exact task and workspace paths."""
+    if not isinstance(value, list):
+        raise ValueError("Initial attachments must be a list")
+    result = []
+    seen = set()
+    for item in value:
+        attachment = InitialAttachment.model_validate(item)
+        filename = attachment.filename
+        if (
+            filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+            or any(ord(character) < 32 or ord(character) == 127 for character in filename)
+            or len(filename.encode("utf-8")) > 255
+        ):
+            raise ValueError("Unsafe initial attachment filename")
+        key = str(attachment.id)
+        if key in seen:
+            raise ValueError("Duplicate initial attachment")
+        seen.add(key)
+        if (
+            attachment.uri != f"inputs/{task_id}/{key}/{attachment.filename}"
+            or attachment.path != f"/workspace/shared/inputs/{key}/{attachment.filename}"
+        ):
+            raise ValueError("Initial attachment belongs to another task or path")
+        _member(attachment.path)
+        result.append(attachment.model_dump(mode="json"))
+    return result
+
+
 def _references(value: Any, task_id: UUID) -> list[str]:
     """Collect object pointers from typed URI fields, never from prose."""
     found: set[str] = set()
@@ -77,6 +109,7 @@ def _references(value: Any, task_id: UUID) -> list[str]:
         f"traces/{task}/",
         f"reports/{task}/",
         f"workspace/{task}/",
+        f"inputs/{task}/",
     )
     exact = {f"reports/{task}.md", f"workspace/{task}.tar.zst"}
 
@@ -148,6 +181,15 @@ async def build_archive(
 
     attachments: list[dict[str, Any]] = []
     selected: dict[str, dict[str, Any]] = {}
+    originals = initial_attachments(task_id, state.get("task", {}).get("initial_attachments", []))
+    original_uris = {item["uri"] for item in originals}
+    original_paths = {}
+    for attachment in originals:
+        member = _member(attachment["path"])
+        row = {**attachment, "fact_id": None, "version": 0, "auto": True, "initial": True}
+        attachments.append(row)
+        selected[member] = row
+        original_paths[member] = attachment["uri"]
     for fact_id, fact in state["facts"].items():
         if not isinstance(fact, dict):
             raise ValueError("Invalid Fact in archive snapshot")
@@ -158,10 +200,14 @@ async def build_archive(
             if not isinstance(evidence, dict) or not isinstance(evidence.get("uri"), str):
                 raise ValueError("Evidence URI is required")
             uri = evidence["uri"]
-            if not _owned(uri, task_id):
+            if not _owned(uri, task_id) and uri not in original_uris:
                 raise ValueError("Evidence URI belongs to another task")
             path = evidence.get("path")
             member = _member(path) if path is not None else None
+            if member in original_paths and uri != original_paths[member]:
+                raise ValueError("Evidence conflicts with an initial attachment path")
+            if uri in original_uris and member is not None and original_paths.get(member) != uri:
+                raise ValueError("Initial attachment URI has a different evidence path")
             row = {
                 "fact_id": str(fact_id),
                 "version": version,
@@ -171,7 +217,7 @@ async def build_archive(
                 "auto": bool(evidence.get("auto", False)),
             }
             attachments.append(row)
-            if member is not None:
+            if member is not None and member not in original_paths:
                 previous = selected.get(member)
                 if previous is None or (version, str(fact_id), uri) > (
                     previous["version"],
@@ -216,6 +262,8 @@ async def build_archive(
                     file.write(chunk)
             if isinstance(row["size"], int) and size != row["size"]:
                 raise ValueError("Evidence object size differs from declaration")
+            if row.get("sha256") is not None and digest.hexdigest() != row["sha256"]:
+                raise ValueError("Initial attachment SHA-256 differs from declaration")
             sizes[row["uri"]] = size
             hashes[row["uri"]] = digest.hexdigest()
             staged[member] = source
@@ -234,6 +282,7 @@ async def build_archive(
             "run_number": data.get("run_number"),
             "policy": "declared-evidence",
             "attachments": attachments,
+            "initial_attachments": originals,
             "restored_files": [
                 {
                     "path": path,

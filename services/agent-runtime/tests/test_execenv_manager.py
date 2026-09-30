@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import builtins
 import hmac
+import io
 import json
+import tarfile
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -13,6 +15,7 @@ from uuid import uuid4
 
 import docker
 import pytest
+import zstandard
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.execenv import ExecEnvManager, task_token
@@ -325,3 +328,144 @@ async def test_missing_and_legacy_runtimes_do_not_invent_audit_records(monkeypat
     }
     client.audit.assert_not_awaited()
     objects.put.assert_not_awaited()
+
+
+class InputObjects:
+    def __init__(self, values):
+        self.values = values
+        self.reads = []
+
+    async def exists(self, uri):
+        return uri in self.values
+
+    async def stream(self, uri):
+        self.reads.append(uri)
+        yield self.values[uri]
+
+
+class InputRestore:
+    def __init__(self):
+        self.ready = False
+        self.calls = 0
+        self.files = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        pass
+
+    async def restore_status(self):
+        return {"restored": self.ready}
+
+    async def restore(self, content):
+        self.calls += 1
+        chunks = [chunk async for chunk in content]
+        raw = zstandard.ZstdDecompressor().decompress(b"".join(chunks), max_output_size=1000000)
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for member in archive:
+                if member.isfile():
+                    file = archive.extractfile(member)
+                    assert file is not None
+                    self.files[member.name] = file.read()
+                    assert member.mode == 0o644
+        self.ready = True
+        return {"restored": True}
+
+
+def input_attachment(task_id, body):
+    key = str(uuid4())
+    return {
+        "id": key,
+        "filename": "initial.txt",
+        "path": f"/workspace/shared/inputs/{key}/initial.txt",
+        "uri": f"inputs/{task_id}/{key}/initial.txt",
+        "size": len(body),
+        "sha256": sha256(body).hexdigest(),
+    }
+
+
+async def test_initial_input_restore_is_idempotent_and_keeps_existing_work(monkeypatch):
+    task_id, body = uuid4(), b"user bytes\x00\xff"
+    attachment = input_attachment(task_id, body)
+    objects = InputObjects({attachment["uri"]: body})
+    manager = ExecEnvManager(
+        settings(), docker_client=cast(Any, Docker()), objects=cast(ObjectStore, objects)
+    )
+    handle = manager_module.ExecEnvHandle(task_id, "container", "envd", "http://envd", "token")
+    restore = InputRestore()
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: restore)
+    await manager.ensure_initial_inputs(handle, [attachment])
+    member = attachment["path"].removeprefix("/workspace/")
+    assert restore.files[member] == body and objects.reads == [attachment["uri"]]
+    restore.files["agents/agent-1/work.txt"] = b"agent result"
+    restore.files[member] = b"existing recovered work"
+    await manager.ensure_initial_inputs(handle, [attachment])
+    assert restore.calls == 1 and objects.reads == [attachment["uri"]]
+    assert restore.files[member] == b"existing recovered work"
+    assert restore.files["agents/agent-1/work.txt"] == b"agent result"
+
+
+async def test_resumed_restore_takes_priority_over_original_materialization(monkeypatch, tmp_path):
+    from bbx_runtime.execenv.archive import build_archive
+
+    task_id, body = uuid4(), b"original"
+    attachment = input_attachment(task_id, body)
+    evidence_uri = f"evidence/{task_id}/agent-1/proof"
+    objects = InputObjects({attachment["uri"]: body, evidence_uri: b"agent result"})
+    output = tmp_path / "run.tar.zst"
+    await build_archive(
+        cast(ObjectStore, objects),
+        task_id,
+        {
+            "format": "bbx.task-archive.v1",
+            "task_id": str(task_id),
+            "run_number": 1,
+            "state": {
+                "task": {"initial_attachments": [attachment]},
+                "facts": {
+                    "F1": {
+                        "version": 1,
+                        "evidence": [
+                            {"uri": evidence_uri, "path": "/workspace/agents/agent-1/proof.txt"}
+                        ],
+                    }
+                },
+            },
+        },
+        output,
+    )
+    archive_uri = f"workspace/{task_id}.tar.zst"
+    objects.values[archive_uri] = output.read_bytes()
+    objects.reads.clear()
+    restore = InputRestore()
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: restore)
+    manager = ExecEnvManager(
+        settings(), docker_client=cast(Any, Docker()), objects=cast(ObjectStore, objects)
+    )
+    monkeypatch.setattr(manager, "wait_healthy", AsyncMock())
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    handle = await manager.provision(task_id, profile, archive_uri)
+    await manager.ensure_initial_inputs(handle, [attachment])
+    assert objects.reads == [archive_uri] and restore.calls == 1
+    assert restore.files[attachment["path"].removeprefix("/workspace/")] == body
+    assert restore.files["agents/agent-1/proof.txt"] == b"agent result"
+
+
+@pytest.mark.parametrize("failure", ["missing", "sha256"])
+async def test_failed_initial_input_does_not_restore_or_touch_old_files(monkeypatch, failure):
+    task_id, body = uuid4(), b"original"
+    attachment = input_attachment(task_id, body)
+    values = {} if failure == "missing" else {attachment["uri"]: b"modified"}
+    objects = InputObjects(values)
+    restore = InputRestore()
+    restore.files["agents/agent-1/proof.txt"] = b"existing work"
+    manager = ExecEnvManager(
+        settings(), docker_client=cast(Any, Docker()), objects=cast(ObjectStore, objects)
+    )
+    handle = manager_module.ExecEnvHandle(task_id, "container", "envd", "http://envd", "token")
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: restore)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        await manager.ensure_initial_inputs(handle, [attachment])
+    assert restore.calls == 0 and not restore.ready
+    assert restore.files == {"agents/agent-1/proof.txt": b"existing work"}

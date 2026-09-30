@@ -21,7 +21,12 @@ from bbx_objects import ObjectStore
 from docker.errors import NotFound
 
 from bbx_runtime.clients import EnvdClient, RemoteError, object_store
-from bbx_runtime.execenv.archive import ARCHIVE_MAX_BYTES, ArchiveCapacityError, build_archive
+from bbx_runtime.execenv.archive import (
+    ARCHIVE_MAX_BYTES,
+    ArchiveCapacityError,
+    build_archive,
+    initial_attachments,
+)
 from bbx_runtime.settings import Settings
 
 MANAGED = "bbx.managed"
@@ -306,6 +311,37 @@ class ExecEnvManager:
     async def create_user(self, handle: ExecEnvHandle, agent_id: str) -> dict[str, str]:
         async with EnvdClient(handle.base_url, handle.token) as envd:
             return await envd.create_user(agent_id)
+
+    async def ensure_initial_inputs(
+        self, handle: ExecEnvHandle, attachments: list[dict[str, Any]]
+    ) -> None:
+        """Materialize registered originals once through the existing safe restore."""
+        if not attachments:
+            return
+        originals = initial_attachments(handle.task_id, attachments)
+        async with EnvdClient(handle.base_url, handle.token) as envd:
+            if (await envd.restore_status())["restored"]:
+                return
+            data = {
+                "format": "bbx.task-archive.v1",
+                "task_id": str(handle.task_id),
+                "run_number": 1,
+                "state": {"task": {"initial_attachments": originals}, "facts": {}},
+            }
+            with tempfile.TemporaryDirectory(prefix="bbx-task-inputs-") as temporary:
+                output = Path(temporary) / "inputs.tar.zst"
+                await build_archive(self.objects, handle.task_id, data, output)
+                if output.stat().st_size > ARCHIVE_MAX_BYTES:
+                    raise ArchiveCapacityError("Compressed input archive exceeds restore limit")
+
+                async def chunks():
+                    with output.open("rb") as file:
+                        while chunk := await asyncio.to_thread(file.read, 65536):
+                            yield chunk
+
+                result = await envd.restore(chunks())
+                if result.get("restored") is not True:
+                    raise RuntimeError("Initial attachment restore did not complete")
 
     async def archive_to_store(self, handle: ExecEnvHandle, run_number: int = 1) -> ArchiveResult:
         uri = (

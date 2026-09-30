@@ -56,6 +56,11 @@ class TaskSupervisor:
         tid = str(state["task"]["id"])
         if tid in self.loops or self.stopping.is_set():
             return
+        attachments = state["task"].get("initial_attachments", [])
+        if attachments:
+            await self.manager.ensure_initial_inputs(handle, attachments)
+        if self.stopping.is_set():
+            return
         executor = ActionExecutor(tid, self.service, self.manager, self.runner, handle)
         loop = SchedulerLoop(executor, self.service, Params.model_validate(state["task"]["params"]))
         self.loops[tid] = loop
@@ -254,6 +259,9 @@ class TaskSupervisor:
                 fresh = await self.service.state(tid)
                 if fresh["task"]["status"] != "provisioning":
                     continue
+                attachments = fresh["task"].get("initial_attachments", [])
+                if attachments:
+                    await self.manager.ensure_initial_inputs(handle, attachments)
                 await self.service.transition(tid, "running")
                 self.cleaned.discard(tid)
                 await self._start(await self.service.state(tid), handle)

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from agent_framework import (
     AgentSession,
@@ -58,12 +58,17 @@ def _media_type(data: bytes) -> tuple[str, str] | None:
 
 def _task_evidence_uri(uri: str, task_id: str) -> bool:
     parts = PurePosixPath(uri).parts
+    input_uri = False
+    if len(parts) == 4 and parts[:2] == ("inputs", task_id):
+        try:
+            input_uri = str(UUID(parts[2])) == parts[2]
+        except ValueError:
+            pass
     return (
-        len(parts) >= 4
-        and parts[:2] == ("evidence", task_id)
+        ((len(parts) >= 4 and parts[:2] == ("evidence", task_id)) or input_uri)
         and all(part not in {"", ".", ".."} for part in uri.split("/"))
         and "\\" not in uri
-        and ":" not in uri
+        and (input_uri or ":" not in uri)
     )
 
 
@@ -112,7 +117,7 @@ def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> Functio
 
     @tool(approval_mode="never_require")
     async def view_image(path_or_uri: str) -> str:
-        """查看本任务 evidence 图片；仅 Explore 可读 /workspace。图片进入下一次模型调用。"""
+        """查看本任务已保存的资料/证据图片；仅 Explore 可读 /workspace。"""
         model = getattr(ctx.profile.models, ctx.task_type)
         if getattr(model, "supports_vision", None) is False:
             return "当前模型配置明确不支持看图，未读取图片。请改用支持视觉的模型。"
@@ -130,7 +135,7 @@ def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> Functio
             return "已有过多待看的图片，请先处理当前图片。"
         if path_or_uri.startswith("/workspace/"):
             if read_only:
-                return "推导、裁定和复盘只能查看本任务已保存的 evidence 图片。"
+                return "推导、裁定和复盘只能查看本任务已保存的图片。"
             path = PurePosixPath(path_or_uri)
             if ".." in path.parts or ctx.envd is None:
                 return "图片路径无效，请使用本任务 /workspace 下的文件。"
@@ -149,7 +154,7 @@ def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> Functio
             except RemoteError as exc:
                 return f"无法读取证据图片：{exc.message}"
         else:
-            return "图片引用无效，请使用本任务 /workspace 路径或 evidence URI。"
+            return "图片引用无效，请使用本任务 /workspace 路径或已登记的资料/证据 URI。"
         if len(data) > IMAGE_MAX_BYTES:
             return "图片超过 10 MiB 上限，请先缩小图片。"
         detected = _media_type(data)

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import html
 import json
+import posixpath
 import re
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -85,6 +86,16 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
                 or "\\" in basename
             ):
                 return f"证据路径 {path} 无效，请使用执行环境内 /workspace 下的文件。"
+            original = next(
+                (
+                    attachment
+                    for attachment in ctx.state["task"].get("initial_attachments", [])
+                    if attachment["path"] == posixpath.normpath(path)
+                ),
+                None,
+            )
+            if original is not None and path != original["path"]:
+                return "初始附件路径不是登记路径，请使用原始 path；修改后先复制到工作目录再提交。"
             tool_uri: str | None = None
             if item.call_id is not None:
                 if not CALL_ID.fullmatch(item.call_id):
@@ -111,14 +122,19 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
                 return exc.message
             if len(data) > EVIDENCE_MAX_BYTES:
                 return "证据文件过大，请截取相关部分另存后再提交。"
-            uri = (
-                f"evidence/{ctx.task_id}/{ctx.agent_id}/"
-                f"{hashlib.sha256(data).hexdigest()[:12]}-{basename}"
-            )
-            try:
-                await ctx.objects.put(uri, data)
-            except Exception:
-                return "证据上传失败，请稍后重试。"
+            digest = hashlib.sha256(data).hexdigest()
+            if original is not None:
+                if len(data) != original["size"] or digest != original["sha256"]:
+                    return (
+                        "初始附件原件已改变，请先复制到 Agent 工作目录或其他 shared 路径后再提交。"
+                    )
+                uri = original["uri"]
+            else:
+                uri = f"evidence/{ctx.task_id}/{ctx.agent_id}/{digest[:12]}-{basename}"
+                try:
+                    await ctx.objects.put(uri, data)
+                except Exception:
+                    return "证据上传失败，请稍后重试。"
             stored.append(
                 Evidence(
                     type=item.type,

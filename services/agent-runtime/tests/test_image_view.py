@@ -179,6 +179,35 @@ async def test_derive_view_stays_read_only_even_if_an_envd_client_is_present() -
     assert list(objects.data) == [source]
 
 
+@pytest.mark.parametrize("role", ["derive", "close"])
+@pytest.mark.parametrize("filename", ["source.png", "chart:红.png"])
+async def test_registered_initial_image_is_read_only_and_native_for_derive_and_close(
+    role, filename
+):
+    ctx, objects = context()
+    key = "22222222-2222-4222-8222-222222222222"
+    uri = f"inputs/{TASK}/{key}/{filename}"
+    objects.data[uri] = png()
+    ctx.task_type = role
+    setattr(ctx.profile.models, role, ctx.profile.models.explore)
+    assert "下一次模型调用" in await invoke(ctx, uri)
+    assert "只能查看" in await invoke(ctx, f"/workspace/shared/inputs/{key}/source.png")
+    messages = []
+    injection = await append_pending_images(ctx, messages)
+    assert len(injection.new) == 1 and injection.new[0].contents[1].type == "data"
+    finish_pending_images(messages, injection, sent=True)
+    assert list(objects.data) == [uri]
+    assert ctx.checkpoint is not None
+    assert "data:image" not in str(ctx.checkpoint.session.to_dict())
+    for denied in (
+        f"inputs/{'3' * 36}/{key}/source.png",
+        f"inputs/{TASK}/not-a-file-id/source.png",
+        f"inputs/{TASK}/{key}/../source.png",
+        f"inputs/{TASK}/{key}/sub/source.png",
+    ):
+        assert "无效" in await invoke(ctx, denied)
+
+
 async def test_read_only_view_never_reads_workspace_or_writes_objects() -> None:
     ctx, objects = context()
     source = f"evidence/{TASK}/other-agent/proof.png"

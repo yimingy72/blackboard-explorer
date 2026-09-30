@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from bbx_contracts.profile import load_profile
 from bbx_runtime.clients import BlackboardClient, RemoteError
-from bbx_runtime.execenv import ArchiveResult, ExecEnvManager
+from bbx_runtime.execenv import ArchiveResult, ExecEnvHandle, ExecEnvManager
 from bbx_runtime.execenv.archive import ArchiveCapacityError
 from bbx_runtime.scheduler.loop import SchedulerLoop
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
@@ -98,6 +98,7 @@ class Manager:
         self.calls: list[tuple] = []
         self.archive_gate: asyncio.Event | None = None
         self.archive_errors: list[Exception] = []
+        self.ensure_initial_inputs = AsyncMock()
 
     async def find(self, tid: str) -> SimpleNamespace | None:
         self.calls.append(("find", tid))
@@ -183,6 +184,82 @@ async def test_fifo_queue_respects_max_running_tasks(monkeypatch: pytest.MonkeyP
     started.assert_awaited_once()
     await owner.tick()
     assert [call for call in manager.calls if call[0] == "provision"] == [("provision", "old")]
+
+
+@pytest.mark.parametrize("status", ["provisioning", "running"])
+async def test_initial_inputs_are_ready_before_running_or_agent_start(monkeypatch, status):
+    service = Service([task("with-inputs", status)])
+    service.states["with-inputs"]["task"]["initial_attachments"] = [{"id": "source"}]
+    manager = Manager()
+    handle = SimpleNamespace(task_id="with-inputs")
+    manager.handles["with-inputs"] = handle
+    owner = supervisor(service, manager)
+    order = []
+
+    async def ready(*_args):
+        order.append("inputs")
+        expected = status if len(order) == 1 else "running"
+        assert service.states["with-inputs"]["task"]["status"] == expected
+
+    async def launch():
+        order.append("agents")
+        assert order[0] == "inputs"
+        assert service.states["with-inputs"]["task"]["status"] == "running"
+
+    manager.ensure_initial_inputs = AsyncMock(side_effect=ready)
+    monkeypatch.setattr(
+        "bbx_runtime.scheduler.supervisor.SchedulerLoop.run", lambda _self: launch()
+    )
+    if status == "provisioning":
+        # _start performs a second, idempotent readiness check after transition.
+        await owner.tick()
+    else:
+        await owner.recover()
+    await owner.loop_tasks["with-inputs"]
+    assert order[-1] == "agents" and order[0] == "inputs"
+    await owner.stop()
+
+
+async def test_failed_initial_materialization_cannot_start_agents_or_change_old_archive(
+    monkeypatch,
+):
+    service = Service([task("with-inputs", "provisioning")])
+    service.states["with-inputs"]["task"].update(
+        initial_attachments=[{"id": "source"}], workspace_uri="old-archive"
+    )
+    manager = Manager()
+    manager.ensure_initial_inputs = AsyncMock(side_effect=ValueError("input hash mismatch"))
+    owner = supervisor(service, manager)
+    started = AsyncMock()
+    monkeypatch.setattr(owner, "_start", started)
+    await owner.tick()
+    assert service.states["with-inputs"]["task"]["status"] == "failed"
+    assert service.states["with-inputs"]["task"]["workspace_uri"] == "old-archive"
+    assert not any(call[0] == "transition" and call[2] == "running" for call in service.calls)
+    started.assert_not_awaited()
+
+
+async def test_shutdown_during_input_restore_does_not_start_scheduler():
+    service = Service([task("with-inputs", "running")])
+    state = service.states["with-inputs"]
+    state["task"]["initial_attachments"] = [{"id": "source"}]
+    manager = Manager()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def restoring(*_args):
+        entered.set()
+        await release.wait()
+
+    manager.ensure_initial_inputs.side_effect = restoring
+    owner = supervisor(service, manager)
+    starting = asyncio.create_task(
+        owner._start(state, cast(ExecEnvHandle, SimpleNamespace(task_id="with-inputs")))
+    )
+    await asyncio.wait_for(entered.wait(), 1)
+    owner.stopping.set()
+    release.set()
+    await starting
+    assert owner.loops == {} and owner.loop_tasks == {}
 
 
 @pytest.mark.asyncio
