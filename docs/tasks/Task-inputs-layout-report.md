@@ -64,4 +64,10 @@ PLAYWRIGHT_BROWSERS_PATH="$PWD/.data/playwright" pnpm --dir web e2e
 
 ## 本地部署
 
-部署结果完成后追加；当前已核对部署前schema0011、8任务/268会话、active_tasks=0、pending_messages=0、Worker revision10、3条平台配置版本记录。
+- 设计daa093a、服务9ecb659、runtime06a2fc9、测试fixture f99342b、前端602a636、说明200a925已快进合并main，未推送远程。
+- 部署前再次确认active_tasks=0、pending_messages=0。先停止旧runtime，完成34MiB PostgreSQL自定义格式备份（权限600，忽略目录postgres-before-0012.dump），再重建blackboard自动迁移0011→0012，最后启动新runtime。
+- 登录端点HTTP200；两服务running、restart_count=0。平台模型/工具、Worker revision10及完整配置与部署前完全一致；8任务、268会话保持，原任务历史与Session内容散列一致，没有自动续跑。
+- 正式容器内创建中性输入组/文件和一个created烟测任务；同请求重试返回同UUID，任务名与附件清单正确，原件下载字节和SHA一致，bound文件删除409。仅删除烟测UUID，后台purge后Task/组404、MinIO输入前缀空。前后Agent/Session/模型账本计数相同，无start、真实模型或目标调用。烟测记录为lifecycle-smoke.log。
+- 最终再次核对active_tasks=0、pending_messages=0、platform_versions=3、schema0012。blackboard与runtime中96个生产文件的SHA256均与main一致，前端index SHA一致。
+- 镜像为bbx-blackboard:latest/bbx-task-inputs-blackboard:latest（4e44209d211b），bbx-agent-runtime:latest/bbx-task-inputs-agent-runtime:latest（c27b02a6a17f）；静态资源、最终日志、截图及不含凭据的部署元数据保存在主仓库.data/checkpoints/task-inputs-layout。
+- 刷新http://127.0.0.1:58000即可使用。无需用户执行额外部署命令；备份含真实任务/会话内容，应仅作为本地恢复资料保存，不提交或分享。
