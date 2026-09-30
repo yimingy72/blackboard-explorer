@@ -113,8 +113,10 @@ def run_context(task_type: str, *, intent_id: str | None = None, mode: str | Non
 
 
 @pytest.mark.asyncio
-async def test_seed_explore_has_only_l0_and_uses_pinned_template() -> None:
+@pytest.mark.parametrize("profile_name", ["default", "single"])
+async def test_seed_explore_has_only_l0_and_uses_pinned_template(profile_name: str) -> None:
     run, board = run_context("explore")
+    run.profile, _ = load_profile(ROOT / "profiles" / profile_name)
     provider = OpeningContextProvider(run)
     rendered = await provider.render()
     assert "查明网关 502 的原因" in rendered
@@ -126,6 +128,16 @@ async def test_seed_explore_has_only_l0_and_uses_pinned_template() -> None:
     assert "# 任务图快照" not in rendered
     assert "检查慢查询" not in rendered
     assert board.snapshots == []
+    preparation = rendered.index("1. 先核实")
+    publication = rendered.index("立即用 post_fact 发布")
+    directions = rendered.index("2. 拿到 fact id 后")
+    claim = rendered.index("用 post_intent(claim=true) 认领它")
+    continuation = rendered.index("3. 发布和认领后")
+    assert preparation < publication < directions < claim < continuation
+    assert "不把全部准备或完整调查做完作为发布前提" in rendered
+    assert "不为凑上述阶段伪造 fact 或 intent" in rendered
+    assert "conclude 指令的优先级高于本说明的一切探索要求" in rendered
+    assert "至多 2 次工具调用，且只能是 release、post_fact、post_intent" in rendered
 
     context = SessionContext(input_messages=[Message(role="user", contents=["开始。"])])
     await provider.before_run(agent=None, session=None, context=context, state={})
@@ -139,12 +151,15 @@ async def test_seed_explore_has_only_l0_and_uses_pinned_template() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explore_intent_includes_handoff_evidence_and_l2() -> None:
+@pytest.mark.parametrize("profile_name", ["default", "single"])
+async def test_explore_intent_includes_handoff_evidence_and_l2(profile_name: str) -> None:
     run, board = run_context("explore", intent_id="I1")
+    run.profile, _ = load_profile(ROOT / "profiles" / profile_name)
     rendered = await OpeningContextProvider(run).render()
     for value in ("检查慢查询", "读取 trace", "上轮已经排除网络重试", "连接池日志", "id: F1"):
         assert value in rendered
     assert "黑板为空，你是第一个探索者" not in rendered
+    assert "启动时按以下顺序推进" not in rendered
     assert board.snapshots == [("test-task", 25)]
 
 
