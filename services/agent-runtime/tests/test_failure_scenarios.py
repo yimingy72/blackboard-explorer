@@ -187,10 +187,25 @@ async def test_parallel_transient_model_failures_count_as_one_window(
         runtime_infrastructure,
         tmp_path,
         factory,
-        spec_overrides={"budget": {"max_concurrent_agents": 5}},
+        spec_overrides={
+            "budget": {"max_concurrent_agents": 5},
+            "params": {"derive_enabled": False},
+        },
     ) as s:
         await s.start()
         await asyncio.wait_for(failures.ready.wait(), 20)
+        # Isolate four failing requests from background Derive and late seed
+        # success, which can correctly release the shared recovery gate.
+        await s.wait(
+            lambda st: any(
+                agent.get("is_seed")
+                and agent["status"] == "finished"
+                and agent.get("end_reason") == "normal"
+                for agent in st["agents"].values()
+            ),
+            seconds=20,
+        )
+        assert len(model_calls) == 4
         failures.release.set()
         settled = await s.wait(
             lambda st: (
@@ -203,10 +218,19 @@ async def test_parallel_transient_model_failures_count_as_one_window(
         assert settled["task"]["failure_streak"] == 1
         assert settled["task"]["failure_window_kind"] == "model_transient"
         assert all(intent["attempts"] == 0 for intent in settled["intents"].values())
+        assert len(settled["agents"]) == 5
+        assert all(agent["task_type"] == "explore" for agent in settled["agents"].values())
         failed_agents = {
             aid for aid, agent in settled["agents"].items() if agent["status"] == "failed"
         }
-        assert failed_agents == set(assigned) and len(failed_agents) == 4
+        assert failed_agents == set(assigned) and len(failed_agents) == 4, "; ".join(
+            f"{aid}: role={settled['agents'][aid]['task_type']}, "
+            f"provider_calls={getattr(s.runner.clients.get(aid), 'calls', None)}, "
+            f"reason={settled['agents'][aid].get('receipt', {}).get('reason')}, "
+            f"started={settled['agents'][aid].get('started_at')}, "
+            f"finished={settled['agents'][aid].get('finished_at')}"
+            for aid in failed_agents - set(assigned)
+        )
         assert all(settled["agents"][aid]["end_reason"] == "runtime_error" for aid in failed_agents)
         calls_by_agent = Counter(model_calls)
         assert set(calls_by_agent) == failed_agents
