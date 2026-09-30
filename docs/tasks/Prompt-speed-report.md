@@ -75,3 +75,12 @@ git diff --check
 - 修复了审查中发现的冷却final重复登记、preflight开始/准入竞态及恢复trace步数，不回避失败测试。
 - 96a94a0为设计及任务合同；bc7aa36为种子提示/分支回归；2f93389为任务强度后端+前端/协议回归；89afb78为运行时有界恢复/回归；使用说明及本报告独立提交。检查通过后按既有授权合并main，不推送远程。
 - 部署结果在本报告末尾补充，确认无活动任务后更新本地服务，保留用户模型/Worker设置，不自动重跑旧任务。
+
+## 本地部署补充
+
+- 设计96a94a0、种子bc7aa36、强度2f93389、恢复89afb78、报告/使用说明4433678已快进合并main，未推送远程。
+- 部署前实际核对active_tasks=0、pending_messages=0，先停止旧runtime，再更新blackboard，确认Worker配置后启动新runtime。两服务running、重启计数0；登录端点HTTP200。
+- Worker revision9→10，完整对比确认仅Explore模板变化，其他模板、工具、参数、资源与模型设置保持，不需要修复回写。平台模型3条历史版本记录保持；任务8个、Session268个，部署后仍无活动任务或待处理消息，未自动续跑。
+- 正式服务内部GET确认DeepSeek目录low/high/max；不调用模型地核对Chat max与Responses store:false/reasoning.effort=max选项，恢复120秒/累计2次代码已安装。
+- 持久镜像标签为bbx-blackboard:latest/bbx-prompt-speed-blackboard:latest（b512c9d5bbda），bbx-agent-runtime:latest/bbx-prompt-speed-agent-runtime:latest（8b080823d833）。容器内生产Python文件、Explore模板与前端index的SHA256均与main一致。
+- 校验后的静态资源、两张模拟截图及六份全量日志保存在主仓库`.data/checkpoints/prompt-speed/`；部署前公共Worker/模型元数据快照为deployment-before.json，不含凭据。无需用户补跑沙箱外命令，刷新页面即可选择任务推理强度及max。
