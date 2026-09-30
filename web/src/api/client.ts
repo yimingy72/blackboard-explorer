@@ -1,6 +1,8 @@
 import type { components } from './schema';
 
 export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'> & {
+  name?: string | null;
+  initial_attachments?: InitialAttachment[];
   budget: { max_cost: string | number; max_minutes: number; max_concurrent_agents: number };
   run_number: number;
   active_seconds: number;
@@ -8,7 +10,9 @@ export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'
   cleanup_ready: boolean;
   runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
 };
-export type TaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number };
+export type TaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
+export type InitialAttachment = { id: string; filename: string; path: string; uri: string; size: number; sha256: string };
+export type TaskInputGroup = { id: string; expires_at: string; files: InitialAttachment[] };
 export type TaskCreated = components['schemas']['TaskCreated'];
 export type ProfileName = components['schemas']['ProfileName'];
 export type ProfileVersion = components['schemas']['ProfileVersion'];
@@ -156,6 +160,11 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
   listTasks: () => request<TaskView[]>('/tasks'),
+  createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
+  getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
+  uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),
+  deleteInput: (group: string, id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(group)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string) => request<TaskView>(taskPath(id)),

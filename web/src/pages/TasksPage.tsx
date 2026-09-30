@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError, type TaskView } from '../api/client';
 import controls from '../styles/controls.module.css';
-import { formatMoney, formatDate, taskStatusLabel } from './format';
+import { formatMoney, formatDate, taskStatusLabel, taskTitle } from './format';
 import styles from './TasksPage.module.css';
 
 function statusClass(status: string) {
@@ -51,14 +51,13 @@ export default function TasksPage() {
   }
 
   const tasks = query.data ?? [];
-  const visible = tasks.filter((task) => task.goal.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const visible = tasks.filter((task) => `${task.name ?? ''} ${task.goal} ${task.id}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
 
   return (
     <div className={styles.page}>
       <div className={styles.heading}>
         <div>
           <h1>任务</h1>
-          <p>查看当前探索任务及其验收进度。</p>
         </div>
         {query.data && <span className={styles.headingCount}>{tasks.length} 项任务</span>}
       </div>
@@ -84,23 +83,23 @@ export default function TasksPage() {
         <>
           <div className={styles.toolbar}>
             <label htmlFor="task-search" className={styles.searchLabel}>查找任务</label>
-            <input id="task-search" className={`${controls.input} ${styles.search}`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="按目标筛选" type="search" />
-            <span className={styles.count}>显示 {visible.length} 项任务</span>
+            <input id="task-search" className={`${controls.input} ${styles.search}`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、目标或 ID" type="search" />
+            {search.trim() && <span className={styles.count}>{visible.length} 个匹配</span>}
           </div>
           {visible.length === 0 ? (
             <div className={styles.noMatches} role="status">没有匹配“{search}”的任务。<button type="button" onClick={() => setSearch('')}>清除筛选</button></div>
           ) : (
             <div className={styles.tableWrap}>
               <table className={styles.table}>
-                <thead><tr><th scope="col">目标</th><th scope="col">状态</th><th scope="col">验收满足</th><th scope="col">已用金额</th><th scope="col">创建时间</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
+                <thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">验收</th><th scope="col">已用金额</th><th scope="col">创建时间</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
                 <tbody>{visible.map((task) => (
                   <tr key={task.id}>
-                    <td className={styles.goal}><Link to={`/tasks/${task.id}`} title={task.goal}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
+                    <td className={styles.goal}><div className={styles.identity}><span className={styles.taskId} title={task.id}>{task.id.slice(0, 8)}</span><Link to={`/tasks/${task.id}`} title={taskTitle(task)}>{taskTitle(task)}</Link></div></td>
                     <td data-label="状态"><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
                     <td data-label="验收满足">{metCount(task)}</td>
                     <td data-label="已用金额">{formatMoney(task.usage?.cost, task.cost_currency)}</td>
                     <td data-label="创建时间">{formatDate(task.created_at)}</td>
-                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${task.goal}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
+                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${taskTitle(task)}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${taskTitle(task)}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -109,7 +108,7 @@ export default function TasksPage() {
         </>
       )}
       <dialog ref={dialog} className={styles.deleteDialog} aria-label="删除任务" onCancel={(event) => { if (deleting) event.preventDefault(); else setDeleteTarget(null); }} onClose={() => setDeleteTarget(null)}>
-        <h2>删除这个任务？</h2><p>{deleteTarget?.goal}</p><p>黑板、证据、报告、归档及所有 Agent 会话将一起删除，无法恢复。</p>
+        <h2>删除这个任务？</h2><p>{deleteTarget ? taskTitle(deleteTarget) : ''}</p><p>黑板、证据、报告、归档及所有 Agent 会话将一起删除，无法恢复。</p>
         {deleteError && <p className={controls.error} role="alert">{deleteError}</p>}
         <div><button type="button" className={controls.button} disabled={deleting} onClick={() => setDeleteTarget(null)}>取消</button><button type="button" className={`${controls.button} ${controls.danger}`} disabled={deleting} onClick={() => void removeTask()}>{deleting ? '正在提交…' : '确认删除'}</button></div>
       </dialog>

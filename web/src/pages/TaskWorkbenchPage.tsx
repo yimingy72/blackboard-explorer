@@ -1,3 +1,4 @@
+import { taskTitle } from './format';
 import { TaskCurrency } from './currency';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -151,8 +152,8 @@ export default function TaskWorkbenchPage() {
       <header className={styles.header}>
         <div className={styles.topline}><Link to="/tasks" className={styles.back}>← 返回任务</Link><span className={styles.taskId}>{taskId.slice(0, 8)}</span></div>
         <div className={styles.titleRow}>
-          <div className={styles.titleGroup}><h1 title={boardTask?.goal ?? task?.goal}>{boardTask?.goal ?? task?.goal ?? '探索任务'}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>第 {boardTask?.runNumber ?? task?.run_number ?? 1} 轮</span><span>累计运行 {duration}</span><span>估算费用 {formatMoney(usedCost, task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost, task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
-          <div className={styles.actions}><button type="button" className={controls.button} onClick={() => setRecordsOpen(true)}>复盘记录</button>
+          <div className={styles.titleGroup}><h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>第 {boardTask?.runNumber ?? task?.run_number ?? 1} 轮</span><span>累计运行 {duration}</span><span>估算费用 {formatMoney(usedCost, task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost, task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
+          <div className={styles.actions}><button type="button" className={controls.button} onClick={() => setSelectedId('goal')}>任务内容</button><button type="button" className={controls.button} onClick={() => setRecordsOpen(true)}>复盘记录</button>
             {reportUri && <Link to={`/tasks/${encodeURIComponent(taskId)}/report`} className={controls.button}>查看报告</Link>}
             {(boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) && <a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`} className={controls.button}>下载归档</a>}
             {['finished', 'failed', 'stopped'].includes(status) && <button type="button" className={`${controls.button} ${controls.primary}`} disabled={version !== null} onClick={() => { resumeRequest.current = crypto.randomUUID(); setResumeError(''); resumeDialog.current?.showModal(); }}>续跑任务</button>}
@@ -186,7 +187,7 @@ export default function TaskWorkbenchPage() {
       <dialog ref={resumeDialog} className={styles.resumeDialog} aria-label="续跑任务" onCancel={(event) => { if (resuming) event.preventDefault(); }}>
         <form onSubmit={(event) => void resume(event)}>
           <h2>续跑同一任务</h2>
-          <p>保留黑板和 Agent 会话，在新 Ubuntu 容器中只恢复通过 Fact 附件登记的必要文件。未登记的临时文件不保留；运行依赖和进程需重新建立。旧版全量归档仍可查看。</p>
+          <p>保留黑板和 Agent 会话，以及初始附件；恢复已登记文件，重新建立运行依赖。</p>
           <label className={controls.field}><span className={controls.label}>追加金额（{task?.cost_currency ?? '任务币种'}）</span><input className={controls.input} type="number" min="0" step="any" required value={resumeCost} onChange={(event) => setResumeCost(event.target.value)} /></label>
           <label className={controls.field}><span className={controls.label}>追加运行分钟</span><input className={controls.input} type="number" min="0" step="1" required value={resumeMinutes} onChange={(event) => setResumeMinutes(event.target.value)} /></label>
           <label className={styles.refreshTools}><input type="checkbox" checked={refreshTools} onChange={(event) => setRefreshTools(event.target.checked)} />采用当前 Worker 工具设置</label>

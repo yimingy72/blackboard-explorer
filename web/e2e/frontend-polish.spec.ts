@@ -224,12 +224,17 @@ test('长任务目标保留全文且不挤走画布', async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/tasks/${TASK_ID}`);
     const heading = page.getByRole('heading', { level: 1 });
-    await expect(heading).toHaveText(goal);
-    await expect(heading).toHaveAttribute('title', goal);
+    await expect(heading).toHaveText(goal.slice(0, 100));
+    await expect(heading).toHaveAttribute('title', goal.slice(0, 100));
     expect((await heading.boundingBox())?.height).toBeLessThanOrEqual(73);
     const canvas = page.getByRole('region', { name: '黑板关系图' }).first();
     expect((await canvas.boundingBox())?.height).toBeGreaterThanOrEqual(180);
     await noOverflow(page);
+    await page.getByRole('button', { name: '任务内容', exact: true }).click();
+    const details = page.getByRole('complementary', { name: '对象详情' });
+    await details.getByRole('button', { name: '展开目标全文' }).click();
+    await details.getByRole('button', { name: '原文', exact: true }).first().click();
+    await expect(details.locator('pre').first()).toHaveText(goal);
   }
   expect(mock.unexpected).toEqual([]);
 });

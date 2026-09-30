@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 export const TASK_ID = '11111111-1111-4111-8111-111111111111';
 export const GOAL = '查明订单服务延迟的原因';
@@ -144,6 +145,8 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     runs: [{ run_number: 1, report_uri: `reports/${TASK_ID}/final.md`, workspace_uri: `archives/${TASK_ID}/workspace.tar.zst` }],
   };
   const resumeSaves: Record<string, unknown>[] = [];
+  const inputGroups = new Map<string, { id: string; expires_at: string; files: Array<{ id: string; filename: string; uri: string; path: string; size: number; sha256: string }> }>();
+  let inputSequence = 0;
 
   await page.addInitScript(() => {
     class MockEventSource extends EventTarget {
@@ -167,6 +170,29 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     const method = request.method();
     if (path === '/api/login' && method === 'POST') return json(route, { username: 'tester' });
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
+    if (path === '/api/task-input-groups' && method === 'POST') {
+      const id = `33333333-3333-4333-8333-${String(++inputSequence).padStart(12, '0')}`;
+      const group = { id, expires_at: '2026-10-01T00:00:00Z', files: [] };
+      inputGroups.set(id, group); return json(route, group);
+    }
+    const inputs = /^\/api\/task-input-groups\/([^/]+)(?:\/files(?:\/([^/]+))?)?$/.exec(path);
+    if (inputs) {
+      const group = inputGroups.get(inputs[1]);
+      if (!group) return json(route, { detail: 'Not found' }, 404);
+      if (method === 'GET' && !inputs[2]) return json(route, group);
+      if (method === 'POST' && path.endsWith('/files')) {
+        const id = `44444444-4444-4444-8444-${String(++inputSequence).padStart(12, '0')}`;
+        const filename = url.searchParams.get('filename')!;
+        const bytes = request.postDataBuffer() ?? Buffer.alloc(0);
+        const file = { id, filename, uri: `inputs/${group.id}/${id}/${filename}`, path: `/workspace/shared/inputs/${id}/${filename}`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+        group.files.push(file); return json(route, file);
+      }
+      if (method === 'DELETE') {
+        if (inputs[2]) group.files = group.files.filter((file) => file.id !== inputs[2]);
+        else inputGroups.delete(group.id);
+        return json(route, { deleted: true });
+      }
+    }
     if (path === '/api/tasks' && method === 'GET') return json(route, [task]);
     if (path === `/api/tasks/${TASK_ID}` && method === 'GET') return json(route, task);
     if (path === `/api/tasks/${TASK_ID}/resume` && method === 'POST') {

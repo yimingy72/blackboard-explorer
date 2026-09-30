@@ -6,6 +6,8 @@
 .placeholder h2 { margin: 0 0 8px; font-size: 1rem; }
 .placeholder p { max-width: 26ch; margin: 0; color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
 .body { min-width: 0; padding: 24px 24px 40px; }
+.goalPreview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; font-size: var(--text-base); line-height: 1.75; white-space: pre-wrap; }
+.goalFull { max-height: 55vh; overflow: auto; overscroll-behavior: contain; }
 .titleBlock h2 { margin: 8px 0 13px; color: var(--color-ink); font-size: 1.05rem; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; text-wrap: pretty; }
 .titleBlock h2:focus { outline: none; }
 .type { color: var(--color-muted); font-size: 0.75rem; font-weight: 650; }

@@ -62,6 +62,8 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           Partial<BoardAcceptance>
         >;
         state.task = {
+          name: nullableText(p.name),
+          initialAttachments: (p.initial_attachments ?? []) as import('../api/client').InitialAttachment[],
           goal: text(p.goal),
           status: 'created',
           domain_context: nullableText(p.domain_context),

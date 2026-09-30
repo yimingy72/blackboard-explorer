@@ -51,6 +51,15 @@ function printable(value: unknown): string {
   try { return JSON.stringify(value, null, 2) ?? '—'; } catch { return '—'; }
 }
 
+function GoalBody({ goal }: { goal: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = goal.length > 280 || goal.split('\n').length > 5;
+  return <>
+    {long && !expanded ? <p className={styles.goalPreview}>{goal.slice(0, 280)}…</p> : <div className={long ? styles.goalFull : undefined}><MarkdownBody sourceToggle>{goal}</MarkdownBody></div>}
+    {long && <button type="button" className={`${controls.button} ${controls.quiet}`} onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>{expanded ? '收起目标全文' : '展开目标全文'}</button>}
+  </>;
+}
+
 function Meta({ label, value }: { label: string; value: unknown }) {
   const numbers = useContext(AgentNumbers);
   return <div className={styles.meta}><dt>{label}</dt><dd>{typeof value === 'string' && numbers[value] ? agentLabel(value, numbers) : printable(value)}</dd></div>;
@@ -122,7 +131,8 @@ export default function DetailPanel({ taskId, state, selectedId, onSelect, histo
     <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}</div>
     {!selectedId ? <div className={styles.placeholder}><h2>选择图上的节点</h2><p>查看任务目标、事实、意图或 Agent 的详细信息。</p></div> :
       <div ref={body} className={styles.body}>{selectedId === 'goal' ? <>
-        <div className={styles.titleBlock}><h2 tabIndex={-1}>任务目标</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div><MarkdownBody>{state.task?.goal ?? ''}</MarkdownBody>
+        <div className={styles.titleBlock}><h2 tabIndex={-1}>{state.task?.name || '任务目标'}</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div><GoalBody goal={state.task?.goal ?? ''} />
+        {Boolean(state.task?.initialAttachments?.length) && <section className={styles.section}><h3>初始附件</h3><ul className={styles.related}>{state.task?.initialAttachments?.map((file) => <li key={file.id}><a href={`/api/task-input-groups/${encodeURIComponent(taskId)}/files/${encodeURIComponent(file.id)}`}>{file.filename}</a><small>{file.path}</small></li>)}</ul></section>}
         <section className={styles.section}><h3>任务状态</h3><dl className={styles.metaList}><Meta label="结束原因" value={state.task?.fail_reason ?? state.task?.closingReason} /><Meta label="开始时间" value={state.task?.startedAt} /><Meta label="结束时间" value={state.task?.finishedAt} /><Meta label="版本" value={state.task?.version} /></dl></section>
         {state.task?.domain_context && <section className={styles.section}><h3>领域背景</h3><MarkdownBody>{state.task.domain_context}</MarkdownBody></section>}
         <section className={styles.section}><h3>验收条件</h3><ul className={styles.acceptance}>{(state.task?.acceptance ?? []).map(({ id, desc }) => { const item = state.acceptance[id]; return <li key={id}><strong>{id} · {desc}</strong><span className={`${controls.badge} ${item?.status === 'met' ? controls.badgeSuccess : controls.badgeWarning}`}>{item?.status === 'met' ? '已满足' : '未满足'}</span>{item?.reason && <small>裁定：{item.reason}</small>}{item?.missing && <small>缺口：{item.missing}</small>}{item?.status === 'met' && <small>完成依据：{item.completion_basis === 'explicit' ? '明确达成，可免推导复核' : '需结合独立复核'}{item.completion_reason ? ` · ${item.completion_reason}` : ''}</small>}{item?.evidence_facts.length ? <ObjectLinks ids={item.evidence_facts} state={state} onSelect={onSelect} /> : null}</li>; })}</ul></section>

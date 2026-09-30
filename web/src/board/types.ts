@@ -25,6 +25,8 @@ export interface BoardAcceptance {
 }
 
 export interface BoardTask {
+  name?: string | null;
+  initialAttachments?: import('../api/client').InitialAttachment[];
   goal: string;
   status: TaskStatus;
   domain_context: string | null;

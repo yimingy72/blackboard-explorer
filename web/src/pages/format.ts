@@ -28,3 +28,7 @@ export function formatCost(value: unknown): string {
 export function formatMoney(value: unknown, currency?: string | null): string {
   return `${currency === 'CNY' ? '¥' : currency === 'USD' ? 'US$' : currency ? `${currency} ` : '币种未配置 '}${formatCost(value)}`;
 }
+
+export function taskTitle(task: { name?: string | null; goal?: string | null }): string {
+  return task.name?.trim() || task.goal?.trim().replace(/\s+/g, ' ').slice(0, 100) || '探索任务';
+}
