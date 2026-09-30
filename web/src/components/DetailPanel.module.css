@@ -1,33 +1,33 @@
-.panel { min-width: 0; min-height: 0; height: 100%; overflow-y: auto; border-left: 1px solid var(--color-line); background: var(--color-bg); }
-.top { position: sticky; top: 0; z-index: 1; height: 49px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--color-line); background: var(--color-bg); }
+.panel { min-width: 0; min-height: 0; height: 100%; overflow-y: auto; overscroll-behavior: contain; border-left: 1px solid var(--color-line); background: var(--color-bg); }
+.top { position: sticky; top: 0; z-index: 1; min-height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; border-bottom: 1px solid var(--color-line); background: var(--color-bg); }
 .panelLabel { color: var(--color-muted); font-size: 0.78rem; font-weight: 650; }
-.close { min-height: 30px; width: 30px; padding: 0; font-size: 1.35rem; line-height: 1; }
+.close { min-height: 36px; width: 36px; padding: 0; font-size: 1.35rem; line-height: 1; }
 .placeholder { display: grid; justify-items: center; padding: 18vh 24px 24px; text-align: center; }
 .placeholder h2 { margin: 0 0 8px; font-size: 1rem; }
 .placeholder p { max-width: 26ch; margin: 0; color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
-.body { min-width: 0; padding: 22px 21px 42px; }
+.body { min-width: 0; padding: 24px 24px 40px; }
 .titleBlock h2 { margin: 8px 0 13px; color: var(--color-ink); font-size: 1.05rem; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; text-wrap: pretty; }
 .titleBlock h2:focus { outline: none; }
 .type { color: var(--color-muted); font-size: 0.75rem; font-weight: 650; }
 .section { min-width: 0; margin-top: 28px; padding-top: 21px; border-top: 1px solid var(--color-line); }
-.section h3 { margin: 0 0 14px; font-size: 0.82rem; font-weight: 700; }
-.markdown { min-width: 0; margin-top: 16px; font-size: 0.875rem; font-weight: 400; line-height: 1.75; overflow-wrap: anywhere; }
+.section h3 { margin: 0 0 14px; font-size: var(--text-base); font-weight: var(--weight-strong); }
+.markdown { min-width: 0; margin-top: 16px; font-size: 15px; font-weight: 400; line-height: 1.85; overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
-.markdown p { margin: 0 0 12px; white-space: pre-wrap; }
+.markdown p { margin: 0 0 16px; white-space: pre-wrap; }
 .markdown :is(h3, h4, h5, h6) { margin: 20px 0 10px; font-size: .92rem; line-height: 1.5; font-weight: 650; }
 .markdown :is(ul, ol) { padding-left: 22px; margin: 10px 0 14px; }
-.markdown li { padding-left: 3px; margin: 6px 0; }
+.markdown li { padding-left: 5px; margin: 10px 0; }
 .markdown li > p { margin-bottom: 6px; }
 .markdown a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 3px; }
 .markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8rem; padding: 2px 5px; border-radius: 4px; background: var(--color-surface); }
 .markdown pre { min-width: 0; max-width: 100%; max-height: 380px; overflow: auto; padding: 14px; margin: 12px 0; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); white-space: pre; overflow-wrap: normal; line-height: 1.6; }
-.markdown pre code { padding: 0; background: none; border-radius: 0; font-size: .78rem; }
+.markdown pre code { padding: 0; background: none; border-radius: 0; font-size: var(--text-sm); }
 .markdown blockquote { margin: 14px 0; padding: 10px 14px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-muted); }
 .markdown hr { margin: 20px 0; border: 0; border-top: 1px solid var(--color-line); }
 .section > .markdown { margin-top: 0; }
 .metaList { display: grid; gap: 10px; margin: 0; }
-.meta { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 12px; font-size: 0.79rem; line-height: 1.5; }
+.meta { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 12px; font-size: var(--text-sm); line-height: 1.65; }
 .meta dt { color: var(--color-muted); }
 .meta dd { margin: 0; color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .acceptance, .evidence, .related, .calls { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
@@ -56,14 +56,12 @@
 .message h2 { margin: 0 0 9px; font-size: 1rem; }
 .message p { color: var(--color-muted); font-size: 0.82rem; line-height: 1.6; }
 @media (max-width: 900px) { .panel { border-left: 0; border-top: 1px solid var(--color-line); } .placeholder { padding: 30px 20px; } }
-@media (max-width: 480px) { .body { padding: 18px 16px 32px; } .meta { grid-template-columns: 82px minmax(0, 1fr); gap: 8px; } }
+@media (max-width: 480px) { .body { padding: 20px 18px 32px; } .meta { grid-template-columns: 82px minmax(0, 1fr); gap: 8px; } .close { min-height: 44px; width: 44px; } }
 
-.readingTools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 18px; font-size: .72rem; }
-.readingTools button { border: 1px solid var(--color-line); border-radius: 4px; color: var(--color-muted); padding: 4px 7px; background: var(--color-bg); }
+.readingTools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 18px; font-size: var(--text-xs); }
+.readingTools button { min-height: 32px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-muted); padding: 5px 9px; background: var(--color-bg); }
+.readingTools button:hover { background: var(--color-surface); color: var(--color-ink); }
 .readingTools button[aria-pressed=true] { color: var(--color-ink); background: var(--color-surface); border-color: var(--color-line-strong); }
 .readingTools span { color: var(--color-muted); }
-.markdown { font-size: .9rem; line-height: 1.85; }
-.markdown p { margin-bottom: 16px; }
-.markdown li { margin: 10px 0; padding-left: 6px; }
-.markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .markdown .rawText { max-height: none; white-space: pre-wrap; }
+@media (max-width: 650px) { .readingTools button { min-height: 44px; } }

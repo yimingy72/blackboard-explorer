@@ -1,5 +1,5 @@
-import { lazy, Suspense, useState } from 'react';
-import { Link, NavLink, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api/client';
 import LoginPage from './pages/LoginPage';
 import TasksPage from './pages/TasksPage';
@@ -13,20 +13,27 @@ const ReportPage = lazy(() => import('./pages/ReportPage'));
 
 function AppShell() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const workbench = /^\/tasks\/[^/]+$/.test(pathname) && pathname !== '/tasks/new';
   const [logoutError, setLogoutError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
+  useEffect(() => { document.getElementById('main-content')?.focus({ preventScroll: true }); }, [pathname]);
 
   async function logout() {
+    if (loggingOut) return;
     setLogoutError('');
+    setLoggingOut(true);
     try {
       await api.logout();
       navigate('/login', { replace: true });
     } catch {
       setLogoutError('退出失败，请重试。');
-    }
+    } finally { setLoggingOut(false); }
   }
 
   return (
-    <div className={styles.app}>
+    <div className={`${styles.app} ${workbench ? styles.workbench : ''}`}>
+      <a href="#main-content" className={styles.skipLink}>跳到主要内容</a>
       <header className={styles.topbar}>
         <div className={styles.topbarInner}>
           <Link to="/tasks" className={styles.brand} aria-label="黑板探索，前往任务列表">
@@ -34,17 +41,17 @@ function AppShell() {
             <span>黑板探索</span>
           </Link>
           <nav className={styles.nav} aria-label="主导航">
-            <NavLink to="/tasks" end className={({ isActive }) => `${styles.navLink} ${isActive ? styles.navActive : ''}`}>任务</NavLink>
+            <NavLink to="/tasks" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.navActive : ''}`}>任务</NavLink>
             <NavLink to="/profiles" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.navActive : ''}`}>Agent 配置</NavLink>
           </nav>
           <div className={styles.actions}>
             <Link to="/tasks/new" className={`${controls.button} ${controls.primary}`}>新建任务</Link>
-            <button type="button" className={`${controls.button} ${controls.quiet} ${styles.logout}`} onClick={logout}>退出</button>
+            <button type="button" className={`${controls.button} ${controls.quiet} ${styles.logout}`} disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? '正在退出…' : '退出'}</button>
           </div>
         </div>
         {logoutError && <p className={styles.topbarError} role="alert">{logoutError}</p>}
       </header>
-      <main className={styles.main}><Outlet /></main>
+      <main id="main-content" tabIndex={-1} className={styles.main}><Outlet /></main>
     </div>
   );
 }

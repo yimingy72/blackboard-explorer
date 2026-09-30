@@ -19,7 +19,7 @@ type MockEvent = {
   created_at: string;
 };
 
-type MockProfile = Record<string, unknown>;
+type MockProfile = Record<string, unknown> & { models: Record<string, Record<string, unknown>> };
 
 function event(version: number, type: string, payload: Record<string, unknown>, object_id: string | null = null, actor = 'system'): MockEvent {
   return { version, task_id: TASK_ID, type, actor, object_id, payload, addressed_to: null, created_at: AT };
@@ -115,7 +115,7 @@ async function json(route: Route, value: unknown, status = 200) {
 }
 
 /** Installs fixtures before navigation. Every /api request is handled here, including failures. */
-export async function installMockApi(page: Page, options: { largeGraph?: boolean } = {}) {
+export async function installMockApi(page: Page, options: { largeGraph?: boolean; workerPrompt?: string } = {}) {
   const unexpected: string[] = [];
   const events = options.largeGraph ? largeGraphEvents() : ordinaryEvents();
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
@@ -123,7 +123,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   const workerSaves: Record<string, unknown>[] = [];
   const runtimeSaves: Record<string, unknown>[] = [];
   let revision = 2;
-  let settingsProfile = profile('新版探索模板');
+  let settingsProfile = profile(options.workerPrompt ?? '新版探索模板');
   const mcpSaves: Record<string, unknown>[] = [];
   const platformModels = [{ name: 'review-model', version: 1, label: '审查模型',
     config: { ...profile('x').models.explore, platform_id: 'review-model', platform_version: 1 },

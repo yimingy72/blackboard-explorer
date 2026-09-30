@@ -16,7 +16,7 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   }
   await expect(conversation.locator('pre').filter({ hasText: INITIAL_CONTEXT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: BOARD_UPDATE })).toBeVisible();
-  await expect(conversation.locator('pre').filter({ hasText: MODEL_OUTPUT })).toBeVisible();
+  await expect(conversation.locator('p').filter({ hasText: MODEL_OUTPUT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_ERROR })).toBeVisible();
   await conversation.locator('summary').filter({ hasText: '实际返回的推理' }).click();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_REASONING })).toBeVisible();

@@ -8,6 +8,7 @@ import { formatMoney } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
 import type { BoardAgent, BoardEvent, BoardState, BoardToolCall } from '../board/types';
 import EvidenceViewer from './EvidenceViewer';
+import { readableProse } from './readable';
 import styles from './AgentConversation.module.css';
 
 type Props = {
@@ -21,11 +22,22 @@ type Props = {
 const traceLabels = { initial_context: '初始上下文', board_update: '黑板同步注入', model_output: '模型回复', model_error: '模型请求失败' };
 const messageStatus = { queued: '等待送达', processing: '处理中', delivered: '已送达', completed: '已回复', failed: '发送或回复失败' };
 
+function MessageBody({ text }: { text: string }) {
+  return <div className={styles.chatText}><ReactMarkdown skipHtml remarkPlugins={[readableProse]} components={{
+    h1: ({ children }) => <h3>{children}</h3>,
+    h2: ({ children }) => <h3>{children}</h3>,
+    h3: ({ children }) => <h4>{children}</h4>,
+    pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
+    img: ({ alt }) => <span>{alt || '图片未自动加载'}</span>,
+    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
+  }}>{text}</ReactMarkdown></div>;
+}
+
 function ChatMessage({ message, onRetry }: { message: AgentMessage; onRetry: (text: string) => void }) {
   const currency = useContext(TaskCurrency);
   return <article className={`${styles.entry} ${message.role === 'user' ? styles.userMessage : styles.assistantMessage}`}>
     <div className={styles.entryHead}><strong>{message.role === 'user' ? '你' : 'Agent 回复'}</strong><time dateTime={message.created_at}>{formatTime(message.created_at)}</time></div>
-    <div className={styles.chatText}><ReactMarkdown components={{ img: ({ alt }) => <span>{alt || '图片未加载'}</span>, a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> }}>{message.content}</ReactMarkdown></div>
+    <MessageBody text={message.content} />
     {message.role === 'user' && <p className={styles.recordNote}>{messageStatus[message.status]}{message.status === 'failed' && <> · {message.error || '请稍后重试'} <button type="button" onClick={() => onRetry(message.content)}>重新编辑</button></>}</p>}
     {message.role === 'assistant' && message.usage?.cost != null && <p className={styles.recordNote}>本次复盘费用 {formatMoney(message.usage.cost, currency)}</p>}
     {message.role === 'assistant' && message.usage?.unavailable === true && <p className={styles.recordNote}>回复已恢复，但本轮用量未能恢复。</p>}
@@ -68,6 +80,7 @@ function TraceBody({ entry }: { entry: TraceEntry }) {
     try { await navigator.clipboard.writeText(visibleText); } catch { setError('复制失败，请选中文本后复制。'); }
   }
   return <div className={styles.traceBody}>
+    {!open && <p className={styles.entrySummary}>{entry.summary || `第 ${entry.step} 步`}</p>}
     <button type="button" className={styles.load} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '收起正文' : '查看正文'}</button>
     {open && <div className={styles.loaded}>
       <div className={styles.contentActions}><a href={api.evidenceUrl(entry.uri)} download>下载完整记录</a>{visibleText && <button type="button" onClick={() => void copy()}>复制正文</button>}</div>
@@ -75,7 +88,10 @@ function TraceBody({ entry }: { entry: TraceEntry }) {
       {error && <p role="alert">{error} <button type="button" onClick={() => { setError(''); setPreview(null); setRetry((value) => value + 1); }}>重试</button></p>}
       {preview?.binary && <p>记录不是可显示的文本，请下载查看。</p>}
       {preview?.truncated && <p>正文过长，仅显示文件开头和结尾。下载可查看完整记录。</p>}
-      {visibleText !== null && <pre>{visibleText}</pre>}
+      {visibleText !== null && (entry.kind === 'model_output' && body ? <>
+        {visibleText.trim() ? <MessageBody text={visibleText} /> : <p className={styles.recordNote}>本轮未返回正文。</p>}
+        <details className={styles.rawSource}><summary>原始文本</summary><pre tabIndex={0}>{visibleText}</pre></details>
+      </> : <pre tabIndex={0}>{visibleText}</pre>)}
       {body?.reasoning && <details className={styles.reasoning}><summary>实际返回的推理</summary><pre>{body.reasoning}</pre></details>}
       {body && !body.reasoning && entry.kind === 'model_output' && <p className={styles.recordNote}>本轮模型未返回推理文本。</p>}
       {preview && !preview.binary && !preview.truncated && !body && <p role="alert">记录格式无法解析，请下载原始记录查看。</p>}
@@ -137,7 +153,6 @@ export default function AgentConversation({ taskId, agent, label, events, state,
       {entries.length > 0 && <ol className={styles.entries}>{entries.map((entry) => <li key={entry.type === 'chat' ? entry.message.id : `${entry.type}-${entry.version}`}>{entry.type === 'chat' ? <ChatMessage message={entry.message} onRetry={(text) => { setDraft(text); setSendError(''); }} /> : entry.type === 'tool' ? <ToolCall call={entry.call} /> :
         <article className={styles.entry}>
           <div className={styles.entryHead}><span className={styles.kind}>{traceLabels[entry.kind]}{entry.kind === 'initial_context' && entry.deriveRound ? ` · 第 ${entry.deriveRound} 轮` : ''}</span><span>v{entry.version} · <time dateTime={entry.at}>{formatTime(entry.at)}</time></span></div>
-          <p className={styles.entrySummary}>{entry.summary || `第 ${entry.step} 步`}</p>
           <TraceBody entry={entry} />
         </article>}</li>)}</ol>}
       <div ref={end} />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type WorkerRole, type WorkerTools } from '../api/client';
 import { builtin, required, workers } from './workerOptions';
@@ -12,6 +12,8 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
   const [inspected, setInspected] = useState('');
   const [toolError, setToolError] = useState('');
   const [toolList, setToolList] = useState<{ name: string; description: string }[] | null>(null);
+  const [loadingTools, setLoadingTools] = useState(false);
+  const inspectSequence = useRef(0);
   const servers = useQuery({ queryKey: ['mcp-servers'], queryFn: api.listMcpServers, enabled: role === 'explore' });
   const info = workers.find((item) => item.id === role)!;
   const selected = tools.mcp_servers ?? [];
@@ -19,12 +21,15 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
     onToolsChange({ ...tools, mcp_servers: checked
       ? [...selected.filter((entry) => entry.name !== name), { name, version, allowed_tools: null }]
       : selected.filter((entry) => entry.name !== name || entry.version !== version) });
-    setInspected(''); setToolList(null); setToolError('');
+    inspectSequence.current += 1;
+    setInspected(''); setToolList(null); setToolError(''); setLoadingTools(false);
   }
   async function inspect(name: string, version: number) {
-    setInspected(`${name}@${version}`); setToolList(null); setToolError('');
-    try { setToolList((await api.listMcpTools(name, version)).tools); }
-    catch (cause) { setToolError(cause instanceof Error ? cause.message : '工具读取失败。'); }
+    const sequence = ++inspectSequence.current;
+    setInspected(`${name}@${version}`); setToolList(null); setToolError(''); setLoadingTools(true);
+    try { const result = await api.listMcpTools(name, version); if (inspectSequence.current === sequence) setToolList(result.tools); }
+    catch (cause) { if (inspectSequence.current === sequence) setToolError(cause instanceof Error ? cause.message : '工具读取失败。'); }
+    finally { if (inspectSequence.current === sequence) setLoadingTools(false); }
   }
   return <div className={styles.workerContent}>
     <div className={styles.workerHeading}><div><h2>{info.title}<span className={styles.headingCode}>{role[0].toUpperCase() + role.slice(1)}</span></h2><p>{info.description}</p></div></div>
@@ -38,7 +43,8 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
         const key = `${server.name}@${server.version}`;
         return <div key={key} className={styles.mcpChoice}>
           <label className={styles.checkRow}><input type="checkbox" checked={Boolean(bound)} disabled={disabled || (!server.enabled && !bound)} onChange={(event) => changeServer(server.name, server.version, event.target.checked)} />{server.label}{!server.enabled && <small>已停用</small>}</label>
-          {bound && <><button type="button" className={controls.button} onClick={() => void inspect(server.name, server.version)}>读取 {server.label} 工具清单</button>
+          {bound && <><button type="button" className={controls.button} disabled={disabled || inspected === key && loadingTools} onClick={() => void inspect(server.name, server.version)}>{inspected === key && loadingTools ? `正在读取 ${server.label} 工具…` : `读取 ${server.label} 工具清单`}</button>
+            {inspected === key && loadingTools && <p className={controls.hint} role="status">正在连接服务并读取工具清单…</p>}
             {inspected === key && toolError && <p className={controls.error} role="alert">{toolError}</p>}
             {inspected === key && toolList && <div className={styles.toolChecks}>{toolList.map((tool) => <label key={tool.name} className={styles.checkRow}><input type="checkbox" checked={bound.allowed_tools == null || bound.allowed_tools.includes(tool.name)} disabled={disabled} onChange={(event) => {
               const current = bound.allowed_tools ?? toolList.map((item) => item.name);

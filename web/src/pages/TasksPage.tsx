@@ -28,7 +28,7 @@ export default function TasksPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
-  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks, refetchInterval: (query) => query.state.data?.some((task) => 'deleting' in task && task.deleting) ? 2000 : false });
+  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks, refetchInterval: (query) => query.state.data?.some((task) => ['provisioning', 'running', 'closing'].includes(task.status) || Boolean('deleting' in task && task.deleting)) ? 2000 : false });
   const unauthorized = query.error instanceof ApiError && query.error.status === 401;
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export default function TasksPage() {
           <h1>任务</h1>
           <p>查看当前探索任务及其验收进度。</p>
         </div>
-        <Link to="/tasks/new" className={`${controls.button} ${controls.primary} ${styles.newButton}`}>新建任务</Link>
+        {query.data && <span className={styles.headingCount}>{tasks.length} 项任务</span>}
       </div>
 
       {query.isLoading ? (
@@ -95,11 +95,11 @@ export default function TasksPage() {
                 <thead><tr><th scope="col">目标</th><th scope="col">状态</th><th scope="col">验收满足</th><th scope="col">已用金额</th><th scope="col">创建时间</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
                 <tbody>{visible.map((task) => (
                   <tr key={task.id}>
-                    <td className={styles.goal}><Link to={`/tasks/${task.id}`}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
-                    <td><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
-                    <td>{metCount(task)}</td>
-                    <td>{formatMoney(task.usage?.cost, task.cost_currency)}</td>
-                    <td>{formatDate(task.created_at)}</td>
+                    <td className={styles.goal}><Link to={`/tasks/${task.id}`} title={task.goal}>{task.goal}</Link><span className={styles.taskId}>{task.id.slice(0, 8)}</span></td>
+                    <td data-label="状态"><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
+                    <td data-label="验收满足">{metCount(task)}</td>
+                    <td data-label="已用金额">{formatMoney(task.usage?.cost, task.cost_currency)}</td>
+                    <td data-label="创建时间">{formatDate(task.created_at)}</td>
                     <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${task.goal}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${task.goal}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
                   </tr>
                 ))}</tbody>

@@ -6,7 +6,7 @@ test('终态任务填写追加额度后续跑同一任务并保留旧报告入�
   await page.goto(`/tasks/${TASK_ID}`);
   await page.getByRole('button', { name: '续跑任务' }).click();
   const dialog = page.getByRole('dialog', { name: '续跑任务' });
-  await expect(dialog).toContainText('保留黑板、Agent 会话');
+  await expect(dialog).toContainText('保留黑板和 Agent 会话');
   await dialog.getByLabel('追加金额（CNY）').fill('2.50');
   await dialog.getByLabel('追加运行分钟').fill('30');
   await dialog.getByLabel('采用当前 Worker 工具设置').check();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput } from '../api/client';
 import controls from '../styles/controls.module.css';
@@ -29,6 +29,7 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
   const [notice, setNotice] = useState('');
   const [tools, setTools] = useState<McpTool[] | null>(null);
   const [loadingTools, setLoadingTools] = useState(false);
+  const inspectSequence = useRef(0);
   const draft = kind === 'models' ? model : server;
   const dirty = Boolean(original) && (JSON.stringify(draft) !== original || name !== originalName);
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
@@ -36,7 +37,9 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
 
   function canLeave() { return !dirty || window.confirm('当前配置尚未保存，确定放弃本次修改吗？'); }
   function choose(item: PlatformModel | McpServer, force = false) {
-    if (!force && !canLeave()) return;
+    if (!force && (saving || !canLeave())) return;
+    inspectSequence.current += 1;
+    setLoadingTools(false);
     setName(item.name);
     setOriginalName(item.name);
     if ('config' in item) {
@@ -55,12 +58,15 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
     setTools(null); setError(''); setNotice('');
   }
   function create() {
-    if (!canLeave()) return;
+    if (saving || !canLeave()) return;
+    inspectSequence.current += 1;
+    setLoadingTools(false);
     setName(''); setOriginalName(''); setModel(blankModel); setServer(blankServer);
     setOriginal(JSON.stringify(kind === 'models' ? blankModel : blankServer));
     setTools(null); setError(''); setNotice('');
   }
   async function save() {
+    if (saving) return;
     setSaving(true); setError(''); setNotice('');
     try {
       const saved = kind === 'models'
@@ -73,23 +79,26 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
     finally { setSaving(false); }
   }
   async function inspect(item: McpServer) {
+    const sequence = ++inspectSequence.current;
     setLoadingTools(true); setTools(null); setError('');
-    try { setTools((await api.listMcpTools(item.name, item.version)).tools); }
-    catch (cause) { setError(`工具清单读取失败：${errorText(cause)}`); }
-    finally { setLoadingTools(false); }
+    try { const result = await api.listMcpTools(item.name, item.version); if (inspectSequence.current === sequence) setTools(result.tools); }
+    catch (cause) { if (inspectSequence.current === sequence) setError(`工具清单读取失败：${errorText(cause)}`); }
+    finally { if (inspectSequence.current === sequence) setLoadingTools(false); }
   }
   const active = items?.find((item) => item.name === name);
   const configuredCredentials = active && 'config' in active && active.config.provider === model.provider ? active.configured_credentials ?? [] : [];
   const provider = providers.data?.find((item) => item.id === model.provider);
   const showBaseUrl = Boolean(provider && (provider.base_url_required || provider.default_base_url !== 'provider-default'));
   async function setDefault() {
-    if (!name || kind !== 'models') return;
+    if (!name || kind !== 'models' || saving) return;
+    setSaving(true);
     setError('');
     try {
       await api.setDefaultPlatformModel(name);
       await queryClient.invalidateQueries({ queryKey: ['platform-models'] });
       setNotice('已设为平台默认模型，新建任务会自动选中。');
     } catch (cause) { setError(errorText(cause)); }
+    finally { setSaving(false); }
   }
   const setPrice = (key: 'cache_hit_per_m' | 'cache_miss_per_m' | 'output_per_m', value: string) =>
     setModel({ ...model, price: { ...model.price, [key]: value === '' ? '' : Number(value) } });
@@ -99,8 +108,8 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
       <div className={styles.columnHeading}><h2>{kind === 'models' ? '模型配置' : 'MCP 服务'}</h2><span>{items?.length ?? 0}</span></div>
       {(kind === 'models' ? models.isLoading : servers.isLoading) ? <p className={styles.emptyColumn}>正在加载…</p>
         : (kind === 'models' ? models.error : servers.error) ? <p className={controls.error} role="alert">加载失败：{errorText(kind === 'models' ? models.error : servers.error)}</p>
-          : <ul className={styles.list}>{items?.map((item) => <li key={item.name}><button type="button" className={`${styles.listButton} ${item.name === name ? styles.selected : ''}`} onClick={() => choose(item)}><strong>{item.label}</strong>{'config' in item && <span className={styles.modelId}>{item.config.model}</span>}<span>{'is_default' in item && item.is_default ? '平台默认模型' : item.enabled ? '已启用' : '已停用'}</span></button></li>)}</ul>}
-      <button type="button" className={`${controls.button} ${styles.newProfile}`} onClick={create}>＋ 新增{kind === 'models' ? '模型' : 'MCP 服务'}</button>
+          : <ul className={styles.list}>{items?.map((item) => <li key={item.name}><button type="button" disabled={saving} className={`${styles.listButton} ${item.name === name ? styles.selected : ''}`} onClick={() => choose(item)}><strong>{item.label}</strong>{'config' in item && <span className={styles.modelId}>{item.config.model}</span>}<span>{'is_default' in item && item.is_default ? '平台默认模型' : item.enabled ? '已启用' : '已停用'}</span></button></li>)}</ul>}
+      <button type="button" className={`${controls.button} ${styles.newProfile}`} disabled={saving} onClick={create}>＋ 新增{kind === 'models' ? '模型' : 'MCP 服务'}</button>
     </section>
     <section className={styles.catalogEditor} aria-label={kind === 'models' ? '模型配置编辑' : 'MCP 服务编辑'}>
       {!original ? <div className={styles.emptyDetail}><h2>{kind === 'models' ? '选择任务使用的模型' : '连接外部工具'}</h2><p>{kind === 'models' ? '在左侧选择模型，管理连接、上下文容量和计费。默认模型会在创建任务时自动选中。' : '选择服务管理连接和认证，保存后可读取工具清单，再到 Worker 配置中启用。'}</p><button type="button" className={controls.button} onClick={create}>{kind === 'models' ? '添加模型' : '添加 MCP 服务'}</button></div> : <>
@@ -108,6 +117,9 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
         {error && <p className={styles.errorBanner} role="alert">{error}</p>}
         {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
         <form className={styles.catalogForm} onSubmit={(event) => { event.preventDefault(); void save(); }}>
+          <fieldset className={styles.catalogFields} disabled={saving} aria-label={kind === 'models' ? '模型连接设置' : 'MCP 连接设置'}>
+          <div className={styles.catalogFooter}><label className={`${styles.checkRow} ${styles.wideField}`}><input type="checkbox" checked={draft.enabled} onChange={(event) => kind === 'models' ? setModel({ ...model, enabled: event.target.checked }) : setServer({ ...server, enabled: event.target.checked })} />启用此{kind === 'models' ? '模型' : '服务'}</label>
+          <div className={`${styles.editorActions} ${styles.wideField}`}>{kind === 'models' && active && 'is_default' in active && !active.is_default && <button className={controls.button} type="button" disabled={saving || dirty || !active.enabled} onClick={() => void setDefault()}>设为默认模型</button>}<button className={`${controls.button} ${controls.primary}`} type="submit" disabled={saving || !dirty}>{saving ? '正在保存…' : '保存'}</button></div></div>
           {kind === 'models' ? <>
           <fieldset className={styles.formSection}><legend>基本连接</legend><div className={styles.formGrid}>
           <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>显示名称</span><input className={controls.input} value={draft.label} onChange={(event) => setModel({ ...model, label: event.target.value })} required /></label>
@@ -144,8 +156,8 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
             {active && 'has_secret' in active && active.has_secret && <label className={`${styles.checkRow} ${styles.wideField}`}><input type="checkbox" checked={Boolean(server.clear_secret)} onChange={(event) => setServer({ ...server, clear_secret: event.target.checked })} />清除当前密钥</label>}
           </div></fieldset>
           </>}
-          <div className={styles.catalogFooter}><label className={`${styles.checkRow} ${styles.wideField}`}><input type="checkbox" checked={draft.enabled} onChange={(event) => kind === 'models' ? setModel({ ...model, enabled: event.target.checked }) : setServer({ ...server, enabled: event.target.checked })} />启用此{kind === 'models' ? '模型' : '服务'}</label>
-          <div className={`${styles.editorActions} ${styles.wideField}`}>{kind === 'models' && active && 'is_default' in active && !active.is_default && <button className={controls.button} type="button" disabled={saving || dirty || !active.enabled} onClick={() => void setDefault()}>设为默认模型</button>}<button className={`${controls.button} ${controls.primary}`} type="submit" disabled={saving || !dirty}>{saving ? '正在保存…' : '保存'}</button></div></div>
+
+          </fieldset>
         </form>
         {kind === 'mcp' && active && 'url' in active && <div className={styles.toolList}><button type="button" className={controls.button} disabled={loadingTools} onClick={() => void inspect(active)}>{loadingTools ? '正在读取…' : '查看工具清单'}</button>{tools && (tools.length ? <ul>{tools.map((tool) => <li key={tool.name}><strong>{tool.name}</strong><p>{tool.description}</p></li>)}</ul> : <p>该服务没有公开工具。</p>)}</div>}
       </>}
