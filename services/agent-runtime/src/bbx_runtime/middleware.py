@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import secrets
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, cast
@@ -31,6 +34,13 @@ from bbx_runtime.context import RunContext
 from bbx_runtime.image_view import append_pending_images, finish_pending_images
 from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.recovery import (
+    ModelCallPermit,
+    ModelRecoveryGate,
+    RecoveryEpisode,
+    RecoveryExhausted,
+    recoverable_transport,
+)
 from bbx_runtime.trace import model_content, record_trace
 
 DIGEST_TYPES = {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
@@ -235,8 +245,16 @@ def _render_events(events: Sequence[Mapping[str, Any]], aid: str, max_lines: int
     return lines
 
 
+@dataclass
+class ModelCallFailure:
+    metadata: dict[str, Any]
+    inputs: list[Message]
+    episode: RecoveryEpisode | None
+    step: int
+
+
 class BoardSyncMiddleware(ChatMiddleware):
-    def __init__(self, ctx: RunContext) -> None:
+    def __init__(self, ctx: RunContext, recovery: ModelRecoveryGate | None = None) -> None:
         self.ctx = ctx
         self.conclude_injected = False
         self.last_appended_version = 0
@@ -244,6 +262,47 @@ class BoardSyncMiddleware(ChatMiddleware):
         self._warned_missing_price = False
         self.last_publication_check_version = int(ctx.state["task"].get("version") or 0)
         self.prompt_provider = OpeningContextProvider(ctx, ctx.checkpoint)
+        self.recovery = recovery
+        self.failure: ModelCallFailure | None = None
+        self.recovery_deadline: float | None = None
+        self.recovery_metadata: dict[str, Any] = {}
+        self._recovery_agent: dict[str, Any] = {}
+
+    async def check_recovery_control(self) -> None:
+        board = await self.ctx.service.state(self.ctx.task_id)
+        agent = board["agents"].get(self.ctx.agent_id)
+        if (
+            agent is None
+            or agent["status"] not in {"running", "concluding"}
+            or board.get("task", {}).get("status") in {"finished", "failed", "stopped"}
+        ):
+            raise asyncio.CancelledError("grace_timeout")
+        self._recovery_agent = agent
+        if (
+            self.ctx.expected_derive_round is not None
+            and int(agent.get("derive_round") or 1) != self.ctx.expected_derive_round
+        ):
+            raise asyncio.CancelledError("runtime_restart")
+        requested = agent.get("conclude_requested_at")
+        if requested:
+            stamp = (
+                datetime.fromisoformat(requested.replace("Z", "+00:00"))
+                if isinstance(requested, str)
+                else requested
+            )
+            if (datetime.now(UTC) - stamp).total_seconds() >= self.ctx.params.grace_timeout * 60:
+                raise asyncio.CancelledError("grace_timeout")
+
+    def reset_failed_injections(self) -> None:
+        # Failed inputs were never acknowledged by the model heartbeat. The next
+        # call must load the board's committed watermark and re-inject controls.
+        self.last_appended_version = 0
+        self.last_publication_check_version = 0
+        self.conclude_injected = False
+
+    def take_failure(self) -> ModelCallFailure | None:
+        failure, self.failure = self.failure, None
+        return failure
 
     async def _inject_user_messages(self, context: ChatContext) -> None:
         checkpoint = self.ctx.checkpoint
@@ -294,6 +353,8 @@ class BoardSyncMiddleware(ChatMiddleware):
         )
 
     async def process(self, context: ChatContext, call_next) -> None:
+        if self.recovery_deadline is not None and monotonic() >= self.recovery_deadline:
+            raise RecoveryExhausted(self.recovery_metadata)
         board = await self.ctx.service.state(self.ctx.task_id)
         agent = board["agents"].get(self.ctx.agent_id)
         if agent is None:
@@ -301,6 +362,23 @@ class BoardSyncMiddleware(ChatMiddleware):
         last_seen = int(agent["last_seen_version"])
         step = int(agent.get("steps") or 0) + 1
         checkpoint = self.ctx.checkpoint
+        persisted = (
+            {
+                message.message_id
+                for message in checkpoint.session.state.get("in_memory", {}).get("messages", [])
+            }
+            if checkpoint
+            else set()
+        )
+        # Capture inputs before appending board deltas. Re-sending a failed input
+        # must keep its id and claim token without duplicating those deltas.
+        inputs = deepcopy(
+            [
+                message
+                for message in context.messages
+                if message.role == "user" and message.message_id not in persisted
+            ]
+        )
         if checkpoint is not None:
             self.prompt_provider.current_instructions = checkpoint.opening_instructions
             self.prompt_provider.prompt_revision = checkpoint.prompt_revision
@@ -343,14 +421,63 @@ class BoardSyncMiddleware(ChatMiddleware):
                 await record_trace(self.ctx, "board_update", step, update + "\n[黑板更新结束]")
                 self.last_appended_version = last_seen
         await self._inject_user_messages(context)
+        input_ids = {message.message_id for message in inputs}
+        inputs.extend(
+            deepcopy(message)
+            for message in context.messages
+            if message.role == "user"
+            and message.message_id not in persisted
+            and message.message_id not in input_ids
+        )
         context.messages = list(context.messages)
         messages = context.messages
         injection = await append_pending_images(self.ctx, messages)
         requested_at = datetime.now(UTC)
         started_at = monotonic()
         model = getattr(self.ctx.profile.models, self.ctx.task_type)
+        permit: ModelCallPermit | None = None
+        deadline = self.recovery_deadline
+        deadline_metadata = self.recovery_metadata
+
+        async def before_model() -> None:
+            nonlocal permit, deadline, deadline_metadata, requested_at, started_at
+            if self.recovery:
+                delayed = self.recovery.paused and (
+                    permit is None or permit.episode is not self.recovery.episode
+                )
+                # Control preflight and lazy stream construction are not an
+                # in-flight model request. Re-check admission immediately before
+                # both call setup and consumption, retaining a probe reservation.
+                if permit is None or permit.episode is not self.recovery.episode:
+                    if permit:
+                        self.recovery.release(permit)
+                    permit = await self.recovery.acquire(
+                        self.check_recovery_control, deadline=self.recovery_deadline
+                    )
+                if delayed and self.ctx.task_type == "explore" and not self.conclude_injected:
+                    current = self._recovery_agent
+                    if current.get("conclude_requested_at"):
+                        note = (
+                            f"[结束指令] 原因：{current.get('conclude_reason') or 'closing'}。"
+                            "立即停止探索；仅完成允许的交接，然后返回回执 JSON。"
+                        )
+                        append_board_update(context.messages, note)
+                        self.conclude_injected = True
+                self.recovery.started(permit)
+                deadline = self.recovery_deadline
+                if permit.episode:
+                    deadline = (
+                        min(deadline, permit.episode.deadline)
+                        if deadline is not None
+                        else permit.episode.deadline
+                    )
+                    deadline_metadata = self.recovery_metadata or permit.episode.metadata
+            requested_at = datetime.now(UTC)
+            started_at = monotonic()
 
         async def record_error(error: Exception) -> None:
+            if isinstance(error, RecoveryExhausted):
+                return
             metadata = model_error_metadata(
                 error,
                 elapsed_ms=int((monotonic() - started_at) * 1000),
@@ -361,9 +488,18 @@ class BoardSyncMiddleware(ChatMiddleware):
                 vars(error)["bbx_model_error"] = metadata
             except Exception:
                 pass
+            if self.recovery and permit:
+                if recoverable_transport(metadata):
+                    episode = self.recovery.failed(permit, metadata)
+                    self.failure = ModelCallFailure(metadata, inputs, episode, step)
+                else:
+                    self.recovery.abort(permit, metadata)
             await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
 
         async def record(response: ChatResponse) -> ChatResponse:
+            if self.recovery and permit:
+                self.recovery.succeeded(permit)
+                self.recovery_deadline = None
             output, reasoning = model_content(response)
             await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
             details = response.usage_details
@@ -391,9 +527,22 @@ class BoardSyncMiddleware(ChatMiddleware):
             return response
 
         try:
-            await call_next()
+            await before_model()
+        except BaseException:
+            finish_pending_images(messages, injection, sent=False)
+            if self.recovery and permit:
+                self.recovery.release(permit)
+            raise
+        timeout = asyncio.timeout(max(0, deadline - monotonic()) if deadline else None)
+        try:
+            async with timeout:
+                await call_next()
         except BaseException as error:
             finish_pending_images(messages, injection, sent=False)
+            if self.recovery and permit:
+                self.recovery.release(permit)
+            if isinstance(error, TimeoutError) and timeout.expired():
+                raise RecoveryExhausted(deadline_metadata) from None
             if isinstance(error, Exception):
                 await record_error(error)
             raise
@@ -404,11 +553,24 @@ class BoardSyncMiddleware(ChatMiddleware):
             async def updates():
                 sent = False
                 try:
-                    async for update in inner:
-                        yield update
-                    result = await inner.get_final_response()
+                    await before_model()
+                except BaseException:
+                    finish_pending_images(messages, injection, sent=False)
+                    if self.recovery and permit:
+                        self.recovery.release(permit)
+                    raise
+                read_timeout = asyncio.timeout(max(0, deadline - monotonic()) if deadline else None)
+                try:
+                    async with read_timeout:
+                        async for update in inner:
+                            yield update
+                        result = await inner.get_final_response()
                     sent = True
                 except BaseException as error:
+                    if self.recovery and permit:
+                        self.recovery.release(permit)
+                    if isinstance(error, TimeoutError) and read_timeout.expired():
+                        raise RecoveryExhausted(deadline_metadata) from None
                     if isinstance(error, Exception):
                         await record_error(error)
                     raise

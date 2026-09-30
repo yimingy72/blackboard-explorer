@@ -6,12 +6,23 @@ from typing import cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import pytest
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
+from bbx_runtime.recovery import ModelRecoveryGate
 from bbx_runtime.runner import AgentRunner, RunResult
-from bbx_runtime.scheduler.actions import EnterClosing, Fail, SpawnDerive, SpawnExplore, SystemClose
+from bbx_runtime.scheduler.actions import (
+    Conclude,
+    EnterClosing,
+    Fail,
+    SpawnClose,
+    SpawnDerive,
+    SpawnExplore,
+    SystemClose,
+)
 from bbx_runtime.scheduler.executor import ActionExecutor
+from bbx_runtime.settings import Settings
 
 
 class WaitingRunner:
@@ -233,3 +244,67 @@ async def test_request_stop_skips_remaining_actions():
     await executor.execute([SystemClose("I1"), SpawnExplore(seed=True)])
     service.system_close.assert_awaited_once_with("task", "I1")
     service.register_agent.assert_not_awaited()
+
+
+def pause_model_dispatch(executor, runner):
+    real = AgentRunner(Settings.model_construct(), executor.service, None, executor.manager)  # type: ignore[arg-type]
+    gate = ModelRecoveryGate()
+    real._recovery_gates[("task", "pinned-model")] = gate
+    runner.dispatch_paused = real.dispatch_paused
+    runner.mark_final_dispatch = real.mark_final_dispatch
+    return gate, real
+
+
+async def test_model_cooldown_keeps_control_actions_and_limits_final_to_one_registration(
+    monkeypatch,
+):
+    now = [0.0]
+    monkeypatch.setattr("bbx_runtime.recovery.monotonic", lambda: now[0])
+    executor, service, _, runner, history = setup_executor()
+    gate, real = pause_model_dispatch(executor, runner)
+    permit = await gate.acquire(AsyncMock())
+    gate.started(permit)
+    episode = gate.failed(permit, {"category": "connection", "transient": True})
+    assert episode is not None
+    episode.probes = 2
+    await executor.execute(
+        [
+            SpawnExplore(seed=True),
+            SpawnDerive(),
+            SpawnClose("judge"),
+            Conclude("agent-1", "limit"),
+            SystemClose("I1"),
+            EnterClosing("terminated"),
+        ]
+    )
+    service.register_agent.assert_not_awaited()
+    service.system_close.assert_awaited_once_with("task", "I1")
+    assert ("transition", "closing:terminated") in history
+    assert ("conclude", "agent-1:limit") in history
+    await executor.execute([SpawnClose("final")])
+    await asyncio.wait_for(runner.started.wait(), 1)
+    await executor.cancel("agent-1", "heartbeat")
+    assert episode.final_dispatched and real.dispatch_paused("task", final=True)
+    for _ in range(10):
+        await executor.execute([SpawnClose("final")])
+    assert service.register_agent.await_count == 1
+    now[0] = 120
+    await executor.execute([SpawnClose("final")])
+    assert service.register_agent.await_count == 2
+    await executor.shutdown()
+
+
+async def test_final_recovery_registration_failure_does_not_consume_dispatch_exception():
+    executor, service, _, runner, _ = setup_executor()
+    gate, real = pause_model_dispatch(executor, runner)
+    permit = await gate.acquire(AsyncMock())
+    gate.started(permit)
+    gate.failed(permit, {"category": "connection", "transient": True})
+    service.register_agent.side_effect = httpx.ReadError("control connection dropped")
+    with pytest.raises(httpx.ReadError):
+        await executor.execute([SpawnClose("final")])
+    assert not real.dispatch_paused("task", final=True)
+    service.register_agent.side_effect = None
+    await executor.execute([SpawnClose("final")])
+    assert real.dispatch_paused("task", final=True)
+    await executor.shutdown()

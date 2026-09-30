@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -149,6 +150,7 @@ async def test_parallel_transient_model_failures_count_as_one_window(
     failures = Gate(4)
     idle = Gate(1000)
     assigned: list[str] = []
+    model_calls: list[str] = []
 
     class ConnectionFailureClient(ScriptedChatClient):
         def __init__(self, aid: str) -> None:
@@ -156,6 +158,7 @@ async def test_parallel_transient_model_failures_count_as_one_window(
             self.aid = aid
 
         def _inner_get_response(self, **_kwargs):
+            model_calls.append(self.aid)
             failures.enter(self.aid)
 
             async def fail_after_parallel_start():
@@ -200,12 +203,32 @@ async def test_parallel_transient_model_failures_count_as_one_window(
         assert settled["task"]["failure_streak"] == 1
         assert settled["task"]["failure_window_kind"] == "model_transient"
         assert all(intent["attempts"] == 0 for intent in settled["intents"].values())
+        failed_agents = {
+            aid for aid, agent in settled["agents"].items() if agent["status"] == "failed"
+        }
+        assert failed_agents == set(assigned) and len(failed_agents) == 4
+        assert all(settled["agents"][aid]["end_reason"] == "runtime_error" for aid in failed_agents)
+        calls_by_agent = Counter(model_calls)
+        assert set(calls_by_agent) == failed_agents
+        assert len(model_calls) == 6  # Four initial calls and two shared recovery probes.
+        assert all(1 <= count <= 3 for count in calls_by_agent.values())
+        assert sum(count - 1 for count in calls_by_agent.values()) == 2
+        events = await s.events()
         error_traces = [
             event
-            for event in await s.events()
+            for event in events
             if event["type"] == "agent.trace.recorded" and event["payload"]["kind"] == "model_error"
         ]
-        assert len(error_traces) == 4
+        assert len(error_traces) == 6
+        assert Counter(event["actor"] for event in error_traces) == calls_by_agent
+        finished = [
+            event["payload"]
+            for event in events
+            if event["type"] == "agent.finished" and event["payload"]["agent_id"] in failed_agents
+        ]
+        assert len(finished) == 4
+        assert sum(payload["failure_increment"] for payload in finished) == 1
+        assert len({payload["failure_window_started_at"] for payload in finished}) == 1
 
 
 async def test_07_atomic_claim_race_finishes_losing_scheduler_agent(

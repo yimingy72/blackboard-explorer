@@ -6,6 +6,7 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -21,7 +22,7 @@ from agent_framework import (
 )
 from bbx_objects import ObjectStore
 
-from bbx_runtime.clients import BlackboardClient, EnvdClient
+from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
 from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
@@ -36,6 +37,12 @@ from bbx_runtime.models import (
 )
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.receipts import parse_receipt
+from bbx_runtime.recovery import (
+    MAX_AGENT_RECOVERIES,
+    RECOVERY_BACKOFF,
+    RECOVERY_SECONDS,
+    ModelRecoveryGate,
+)
 from bbx_runtime.scheduler.decision import _ever_claimed
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
@@ -104,6 +111,27 @@ class AgentRunner:
         self.service = service
         self.objects = objects
         self.manager = manager
+        self._recovery_gates: dict[tuple[str, str], ModelRecoveryGate] = {}
+
+    def dispatch_paused(self, task_id: str, *, final: bool = False) -> bool:
+        gates = [
+            gate
+            for (tid, _model), gate in self._recovery_gates.items()
+            if tid == task_id and gate.paused
+        ]
+        return bool(gates) and (
+            not final or any(gate.episode and gate.episode.final_dispatched for gate in gates)
+        )
+
+    def mark_final_dispatch(self, task_id: str) -> None:
+        for (tid, _model), gate in self._recovery_gates.items():
+            if tid == task_id and gate.paused and gate.episode:
+                gate.episode.final_dispatched = True
+
+    def forget_recovery(self, task_id: str) -> None:
+        self._recovery_gates = {
+            key: gate for key, gate in self._recovery_gates.items() if key[0] != task_id
+        }
 
     async def run_agent(
         self,
@@ -228,6 +256,14 @@ class AgentRunner:
                 tools.extend(
                     await external_mcp_tools(self.service, worker.mcp_servers, external_mcp_http)
                 )
+            recovery = (
+                self._recovery_gates.setdefault(
+                    (task_id, model.model_dump_json()), ModelRecoveryGate()
+                )
+                if checkpoint is not None
+                else None
+            )
+            sync = BoardSyncMiddleware(ctx, recovery)
             async with Agent(
                 client=client,
                 name=agent_id,
@@ -245,13 +281,17 @@ class AgentRunner:
                 middleware=[
                     ToolLogMiddleware(ctx),
                     GraceGateMiddleware(ctx),
-                    BoardSyncMiddleware(ctx),
+                    sync,
                 ],
                 require_per_service_call_history_persistence=checkpoint is not None,
             ) as agent:
                 async with asyncio.timeout(run_limit):
                     session = checkpoint.session if checkpoint else agent.create_session()
-                    prompt: str | Message = "开始。"
+                    prompt: str | Message | list[Message] = Message(
+                        role="user",
+                        message_id=f"bbx-start-{agent_id}",
+                        contents=[Content.from_text("开始。")],
+                    )
                     if task_type == "derive":
                         round_number = int(run.get("derive_round") or 1)
                         mode_name = (
@@ -287,22 +327,93 @@ class AgentRunner:
                             message_id=f"bbx-derive-round-{round_number}",
                             contents=[Content.from_text(note)],
                         )
+                    recoveries = 0
                     while True:
                         confirmed_before = (
                             set(checkpoint.delivered_message_ids) if checkpoint else set()
                         )
-                        if model.provider in OPENAI_PROVIDERS:
-                            stream = agent.run(
-                                prompt,
-                                stream=True,
-                                session=session,
-                                options=model_run_options(model),
+                        try:
+                            if model.provider in OPENAI_PROVIDERS:
+                                stream = agent.run(
+                                    prompt,
+                                    stream=True,
+                                    session=session,
+                                    options=model_run_options(model),
+                                )
+                                response = await stream.get_final_response()
+                            else:
+                                response = await agent.run(
+                                    prompt, session=session, options=model_run_options(model)
+                                )
+                        except Exception:
+                            failure = sync.take_failure()
+                            if (
+                                checkpoint is None
+                                or failure is None
+                                or recoveries >= MAX_AGENT_RECOVERIES
+                            ):
+                                raise
+                            recoveries += 1
+                            await record_trace(
+                                ctx,
+                                "board_update",
+                                failure.step,
+                                "[连接恢复] 模型连接暂断，等待有界恢复；"
+                                "沿用同一 Agent、Intent 与已保存会话。"
+                                f"本次运行累计恢复 {recoveries}/{MAX_AGENT_RECOVERIES}，"
+                                "等待仍计入任务活动时间。",
                             )
-                            response = await stream.get_final_response()
-                        else:
-                            response = await agent.run(
-                                prompt, session=session, options=model_run_options(model)
+                            await sync.check_recovery_control()
+                            restored = await SessionCheckpoint.load(self.service, task_id, agent_id)
+                            if (
+                                restored is None
+                                or restored.revision != checkpoint.revision
+                                or restored.session.session_id != checkpoint.session.session_id
+                            ):
+                                raise RemoteError(409, "Recovery checkpoint changed") from None
+                            # Providers keep the checkpoint object; replace only its
+                            # session with the confirmed snapshot. Unconfirmed delivery
+                            # ids and claim tokens remain on that same checkpoint.
+                            checkpoint.session = session = restored.session
+                            checkpoint.opening_instructions = restored.opening_instructions
+                            repair_unpaired_tool_calls(session, include_interrupted=True)
+                            sync.reset_failed_injections()
+                            sync.recovery_metadata = failure.metadata
+                            sync.recovery_deadline = (
+                                failure.episode.deadline
+                                if failure.episode is not None
+                                else monotonic() + RECOVERY_SECONDS
                             )
+                            if failure.episode is None:
+                                await asyncio.sleep(RECOVERY_BACKOFF[recoveries - 1])
+                            await sync.check_recovery_control()
+                            persisted = {
+                                message.message_id
+                                for message in session.state.get("in_memory", {}).get(
+                                    "messages", []
+                                )
+                            }
+                            prompt = [
+                                *(
+                                    message
+                                    for message in failure.inputs
+                                    if message.message_id not in persisted
+                                ),
+                                Message(
+                                    role="user",
+                                    message_id=f"bbx-recovery-{agent_id}-{recoveries}",
+                                    contents=[
+                                        Content.from_text(
+                                            "此前模型连接中断。请沿用已保存会话继续当前任务，"
+                                            "遵守最新结束指令与原回执格式。"
+                                            "已执行或结果未知的旧工具调用不得重新执行。"
+                                        )
+                                    ],
+                                ),
+                            ]
+                            # A new MAF run owns a fresh stream aggregator. Never
+                            # retry inside a stream whose fragments have been yielded.
+                            continue
                         receipt = parse_receipt(response.text, task_type)
                         if not (
                             "raw_text" in receipt

@@ -102,6 +102,10 @@ class ActionExecutor:
         derive_parallel: bool | None = None,
         derive_review: bool | None = None,
     ) -> None:
+        paused = getattr(self.runner, "dispatch_paused", None)
+        final = task_type == "close" and mode == "final"
+        if paused is not None and paused(self.task_id, final=final):
+            return
         try:
             registration = await self.service.register_agent(
                 self.task_id,
@@ -116,6 +120,9 @@ class ActionExecutor:
                 return
             raise
         aid, token = registration["agent_id"], registration["token"]
+        mark_final = getattr(self.runner, "mark_final_dispatch", None)
+        if final and mark_final is not None:
+            mark_final(self.task_id)
         raw_round = registration.get("derive_round") if task_type == "derive" else None
         derive_round = int(raw_round) if raw_round is not None else None
         try:
@@ -236,3 +243,6 @@ class ActionExecutor:
     async def shutdown(self, reason: str = "runtime_restart") -> None:
         self.request_stop(reason)
         await asyncio.gather(*(self.cancel(aid, self._stop_reason) for aid in tuple(self.tasks)))
+        forget = getattr(self.runner, "forget_recovery", None)
+        if forget is not None:
+            forget(self.task_id)
