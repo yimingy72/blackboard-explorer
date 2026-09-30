@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from bbx_contracts.billing import add_usage
+from bbx_contracts.billing import add_usage, token_cost
 from bbx_contracts.completion import (
     all_met,
     can_accept,
@@ -97,17 +97,7 @@ def pending_claims(state: BoardState) -> bool:
 
 
 def calculate_cost(usage: Usage, price: Price) -> tuple[Decimal, str | None]:
-    if any(x is None for x in (price.cache_hit_per_m, price.cache_miss_per_m, price.output_per_m)):
-        return Decimal(0), "价格未配置"
-    assert price.cache_hit_per_m is not None
-    assert price.cache_miss_per_m is not None
-    assert price.output_per_m is not None
-    cost = (
-        Decimal(usage.cache_hit_tokens) * price.cache_hit_per_m
-        + Decimal(usage.cache_miss_tokens) * price.cache_miss_per_m
-        + Decimal(usage.output_tokens) * price.output_per_m
-    ) / Decimal(1_000_000)
-    return cost, None
+    return token_cost(usage, price)
 
 
 def _id(state: BoardState, kind: str) -> str:
@@ -491,11 +481,15 @@ def decide(
                     )
                 if (not review and not params.derive_enabled) or closing_due or not valid_phase:
                     fail("stale_derive", "推导派发条件已变化，请重新调度。")
+            if review:
+                derive_parallel = False
+            elif expected is None:
+                derive_parallel = explore_active
+            else:
+                derive_parallel = expected
             derive_fields = {
                 "derive_from_version": task["last_change_version"] if review else latest_fact,
-                "derive_parallel": (
-                    False if review else explore_active if expected is None else expected
-                ),
+                "derive_parallel": derive_parallel,
                 "derive_review": review,
                 "derive_round": int(previous_derive.get("derive_round") or 1) + 1
                 if previous_derive

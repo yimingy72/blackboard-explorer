@@ -506,14 +506,10 @@ def create_app(
 
     @app.exception_handler(RuleViolation)
     async def rule_error(_request: Request, exc: RuleViolation) -> Response:
-        from fastapi.responses import JSONResponse
-
         return JSONResponse({"code": exc.code, "message": str(exc)}, status_code=422)
 
     @app.exception_handler(KeyError)
     async def missing_error(_request: Request, _exc: KeyError) -> Response:
-        from fastapi.responses import JSONResponse
-
         return JSONResponse({"code": "not_found", "message": "Object not found"}, status_code=404)
 
     @app.post("/api/login", tags=["auth"])
