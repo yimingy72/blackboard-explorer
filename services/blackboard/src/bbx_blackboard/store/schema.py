@@ -37,7 +37,9 @@ tasks = Table(
     "tasks",
     metadata,
     col("id", UUID(as_uuid=True), primary_key=True),
+    col("name", Text),
     col("goal", Text, nullable=False),
+    col("initial_attachments", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
     col("domain_context", Text),
     col("egress_allowlist", ARRAY(Text), nullable=False),
     col("acceptance", JSONB, nullable=False),
@@ -70,6 +72,19 @@ tasks = Table(
     col("started_at", DateTime(timezone=True)),
     col("finished_at", DateTime(timezone=True)),
 )
+
+task_input_groups = Table(
+    "task_input_groups",
+    metadata,
+    col("id", UUID(as_uuid=True), primary_key=True),
+    col("owner", Text, nullable=False),
+    col("expires_at", DateTime(timezone=True), nullable=False),
+    col("files", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("bound_task_id", UUID(as_uuid=True), ForeignKey("tasks.id")),
+    col("deleting", Boolean, nullable=False, server_default=text("false")),
+    col("create_request_hash", Text),
+)
+
 
 task_runs = Table(
     "task_runs",

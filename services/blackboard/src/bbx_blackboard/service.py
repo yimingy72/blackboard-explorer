@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -20,6 +21,7 @@ from bbx_contracts.models import (
     TaskSpec,
     Usage,
 )
+from fastapi import HTTPException
 from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,6 +33,7 @@ from bbx_blackboard.domain import (
     pending_claims,
 )
 from bbx_blackboard.domain.rules import event
+from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
@@ -46,12 +49,19 @@ class BoardService:
         self.objects = objects
 
     async def create_task(
-        self, spec: TaskSpec | dict[str, Any], *, profile_version: int = 1
+        self,
+        spec: TaskSpec | dict[str, Any],
+        *,
+        profile_version: int = 1,
+        input_group_id: UUID | None = None,
+        input_file_ids: list[UUID] | None = None,
+        input_owner: str | None = None,
+        create_request_hash: str | None = None,
     ) -> UUID:
         spec = TaskSpec.model_validate(spec)
         if len({x.id for x in spec.acceptance}) != len(spec.acceptance):
             raise RuleViolation("duplicate_acceptance", "验收项编号重复，请为每项使用唯一 id。")
-        tid = uuid4()
+        tid = input_group_id or uuid4()
         acceptance = {
             x.id: {
                 "status": "unmet",
@@ -66,7 +76,9 @@ class BoardService:
         }
         fields = spec.model_dump(mode="json")
         payload = {
+            "name": fields["name"],
             "goal": fields["goal"],
+            "initial_attachments": [],
             "domain_context": fields["domain_context"],
             "egress_allowlist": fields["egress_allowlist"],
             "acceptance": fields["acceptance"],
@@ -86,6 +98,33 @@ class BoardService:
             "seed_empty_count": 0,
         }
         async with self.repo.engine.begin() as conn:
+            if input_group_id is not None:
+                group = await InputGroups.row(conn, input_group_id, lock=True)
+                check_owner(group, input_owner or "")
+                if not create_request_hash:
+                    raise ValueError("A grouped task requires its original request hash")
+                if group["bound_task_id"] is not None:
+                    if group["create_request_hash"] != create_request_hash:
+                        raise HTTPException(409, "附件组已用于不同的任务请求。")
+                    task = (
+                        (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid)))
+                        .mappings()
+                        .one()
+                    )
+                    if task["deleting"]:
+                        raise RuleViolation("task_deleting", "任务正在删除。")
+                    return tid
+                check_mutable(group, input_owner or "")
+                files = group["files"]
+                if input_file_ids is not None:
+                    selected = {str(file_id) for file_id in input_file_ids}
+                    if not selected <= {item["id"] for item in files}:
+                        raise HTTPException(422, "所选附件尚未在本组就绪，请检查上传状态")
+                    files = [item for item in files if item["id"] in selected]
+                for item in files:
+                    if not await self.objects.exists(item["uri"]):
+                        raise RuleViolation("input_missing", "初始附件尚未保存，请重新上传。")
+                payload["initial_attachments"] = files
             await conn.execute(insert(s.tasks).values(id=tid, **payload))
             written = await self.repo.append(
                 conn,
@@ -100,6 +139,16 @@ class BoardService:
                     }
                 ],
             )
+            if input_group_id is not None:
+                await conn.execute(
+                    update(s.task_input_groups)
+                    .where(s.task_input_groups.c.id == input_group_id)
+                    .values(
+                        bound_task_id=tid,
+                        files=payload["initial_attachments"],
+                        create_request_hash=create_request_hash,
+                    )
+                )
         await self.repo.notify(tid, written[-1]["version"])
         return tid
 
@@ -327,6 +376,34 @@ class BoardService:
             self._check_derive_round(state.agents.get(agent_id), expected_derive_round)
             for evidence in data["evidence"]:
                 uri = evidence.get("uri")
+                inputs = state.task.get("initial_attachments") or []
+                path = evidence.get("path")
+                canonical = (
+                    "/" + posixpath.normpath(path).lstrip("/")
+                    if path and path.startswith("/")
+                    else path
+                )
+                original = next((item for item in inputs if item["path"] == canonical), None)
+                registered = next((item for item in inputs if item["uri"] == uri), None)
+                if original is not None and (original["uri"] != uri or original["path"] != path):
+                    raise RuleViolation(
+                        "input_path_conflict", "初始原件路径不能被其他证据覆盖，请先复制。"
+                    )
+                if uri and uri.startswith("inputs/"):
+                    if (
+                        registered is None
+                        or (
+                            evidence.get("path") is not None
+                            and evidence["path"] != registered["path"]
+                        )
+                        or (
+                            evidence.get("size") is not None
+                            and evidence["size"] != registered["size"]
+                        )
+                    ):
+                        raise RuleViolation(
+                            "input_reference_invalid", "初始附件必须引用本任务登记的原件及元数据。"
+                        )
                 if not uri or not await self.objects.exists(uri):
                     raise RuleViolation(
                         "evidence_missing", f"证据 {uri or '(无 uri)'} 未持久化，请先上传再提交。"

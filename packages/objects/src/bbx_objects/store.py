@@ -52,6 +52,7 @@ class ObjectStore:
         data: bytes | BinaryIO,
         length: int = -1,
         content_type: str = "application/octet-stream",
+        part_size: int | None = None,
     ) -> None:
         if isinstance(data, bytes):
             length = len(data)
@@ -66,7 +67,9 @@ class ObjectStore:
                 data=data,
                 length=length,
                 content_type=content_type,
-                part_size=10 * 1024 * 1024 if length == -1 else 0,
+                part_size=part_size
+                if part_size is not None
+                else (10 * 1024 * 1024 if length == -1 else 0),
             )
 
         await anyio.to_thread.run_sync(upload)

@@ -1,6 +1,8 @@
 """Database behavior against an isolated pgvector PostgreSQL container."""
 
 import asyncio
+import hashlib
+import io
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -14,6 +16,7 @@ from alembic import command
 from alembic.config import Config
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.domain import RuleViolation
+from bbx_blackboard.input_groups import InputGroups
 from bbx_blackboard.service import BoardService
 from bbx_blackboard.store import schema as s
 from fastapi import HTTPException
@@ -260,6 +263,404 @@ async def test_old_initial_trace_without_round_counts_as_first_derive_round(boar
             expected_derive_round=1,
         )
     assert duplicate.value.code == "duplicate_trace"
+
+
+class InputObjects:
+    def __init__(self):
+        self.files = {}
+        self.fail_remove = False
+        self.started: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
+
+    async def exists(self, key):
+        return key in self.files
+
+    async def put(self, key, content, **_kwargs):
+        if self.started is not None:
+            self.started.set()
+            assert self.release is not None
+            await self.release.wait()
+        self.files[key] = content.read()
+
+    async def list(self, prefix):
+        return [key for key in self.files if key.startswith(prefix)]
+
+    async def remove(self, key):
+        if self.fail_remove:
+            raise OSError("S3 unavailable")
+        self.files.pop(key, None)
+
+    async def stream(self, key):
+        yield self.files[key]
+
+
+def input_spec(name=None):
+    return {
+        "name": name,
+        "goal": "Full unchanged goal",
+        "acceptance": [{"id": "A1", "desc": "Done"}],
+        "budget": {"max_cost": "2", "max_minutes": 10},
+        "agent_profile": "default",
+    }
+
+
+async def input_upload(store, gid, data=b"original", filename="data.bin", owner="user:alice"):
+    return await store.upload(
+        gid, owner, filename, io.BytesIO(data), len(data), hashlib.sha256(data).hexdigest()
+    )
+
+
+async def test_inputs_atomic_creation_retry_and_new_and_legacy_event_replay(board_service):
+    objects = InputObjects()
+    board_service.objects = objects
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    attachment = await input_upload(store, group["id"])
+    request = dict(
+        input_group_id=group["id"], input_owner="user:alice", create_request_hash="same-body"
+    )
+    first, retry = await asyncio.gather(
+        board_service.create_task(input_spec("Short name"), profile_version=6, **request),
+        board_service.create_task(input_spec("Short name"), profile_version=6, **request),
+    )
+    assert first == retry == group["id"]
+    await board_service.create_task(input_spec("Short name"), profile_version=99, **request)
+    state = await board_service.state(first)
+    assert state["task"]["status"] == "created"
+    assert state["task"]["name"] == "Short name" and state["task"]["goal"] == "Full unchanged goal"
+    assert state["task"]["initial_attachments"] == [attachment.model_dump(mode="json")]
+    assert state["task"]["agent_profile_version"] == 6
+    async with board_service.repo.engine.connect() as conn:
+        events = list(
+            (await conn.execute(select(s.events).where(s.events.c.task_id == first))).mappings()
+        )
+    assert len(events) == 1 and events[0]["type"] == "task.created"
+    await board_service.replay(first)
+    assert (await board_service.state(first))["task"]["initial_attachments"] == state["task"][
+        "initial_attachments"
+    ]
+    with pytest.raises(HTTPException) as changed:
+        await board_service.create_task(
+            input_spec("Other"), **{**request, "create_request_hash": "changed-body"}
+        )
+    assert changed.value.status_code == 409
+    with pytest.raises(HTTPException) as cross_user:
+        await board_service.create_task(input_spec(), **{**request, "input_owner": "user:bob"})
+    assert cross_user.value.status_code == 403
+    legacy = await board_service.create_task(input_spec())
+    async with board_service.repo.engine.begin() as conn:
+        event = (
+            (await conn.execute(select(s.events).where(s.events.c.task_id == legacy)))
+            .mappings()
+            .one()
+        )
+        payload = {
+            key: value
+            for key, value in event["payload"].items()
+            if key not in {"name", "initial_attachments"}
+        }
+        await conn.execute(
+            update(s.events).where(s.events.c.version == event["version"]).values(payload=payload)
+        )
+        await conn.execute(
+            update(s.tasks)
+            .where(s.tasks.c.id == legacy)
+            .values(name="stale", initial_attachments=[attachment.model_dump(mode="json")])
+        )
+    await board_service.replay(legacy)
+    assert (await board_service.state(legacy))["task"]["name"] is None
+    assert (await board_service.state(legacy))["task"]["initial_attachments"] == []
+
+
+async def test_input_upload_lock_serializes_binding_and_cleaner_skips_inflight(board_service):
+    objects = InputObjects()
+    objects.started, objects.release = asyncio.Event(), asyncio.Event()
+    board_service.objects = objects
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    uploading = asyncio.create_task(input_upload(store, group["id"]))
+    await asyncio.wait_for(objects.started.wait(), 1)
+    binding = asyncio.create_task(
+        board_service.create_task(
+            input_spec(),
+            input_group_id=group["id"],
+            input_owner="user:alice",
+            create_request_hash="body",
+        )
+    )
+    try:
+        await asyncio.sleep(0.03)
+        assert not binding.done()
+        await store.cleanup_group(group["id"])
+        assert await store.get(group["id"])
+        objects.release.set()
+        attachment = await asyncio.wait_for(uploading, 2)
+        tid = await asyncio.wait_for(binding, 2)
+    finally:
+        objects.release.set()
+        await asyncio.gather(uploading, binding, return_exceptions=True)
+    assert (await board_service.state(tid))["task"]["initial_attachments"] == [
+        attachment.model_dump(mode="json")
+    ]
+    with pytest.raises(HTTPException) as bound:
+        await input_upload(store, tid)
+    assert bound.value.status_code == 409
+    assert list(objects.files) == [attachment.uri]
+
+
+@pytest.mark.parametrize("limit", ["file", "total", "count"])
+async def test_input_size_and_count_limits_under_real_group_lock(board_service, monkeypatch, limit):
+    objects = InputObjects()
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    if limit == "file":
+        monkeypatch.setattr("bbx_blackboard.input_groups.FILE_LIMIT", 3)
+        data = b"four"
+    elif limit == "total":
+        monkeypatch.setattr("bbx_blackboard.input_groups.TOTAL_LIMIT", 3)
+        await input_upload(store, group["id"], b"aa")
+        data = b"bb"
+    else:
+        monkeypatch.setattr("bbx_blackboard.input_groups.FILE_COUNT", 2)
+        await input_upload(store, group["id"], b"")
+        await input_upload(store, group["id"], b"")
+        data = b""
+    before = dict(objects.files)
+    with pytest.raises(HTTPException) as error:
+        await input_upload(store, group["id"], data)
+    assert error.value.status_code == 413 and objects.files == before
+
+
+async def test_cancelled_minio_put_keeps_group_lock_until_writer_finishes(board_service):
+    objects = InputObjects()
+    objects.started, objects.release = asyncio.Event(), asyncio.Event()
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    uploading = asyncio.create_task(input_upload(store, group["id"]))
+    await asyncio.wait_for(objects.started.wait(), 1)
+    uploading.cancel()
+    await asyncio.sleep(0.03)
+    assert not uploading.done()
+    await store.cleanup_group(group["id"])
+    objects.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(uploading, 2)
+    assert (await store.get(group["id"]))["files"] == []
+    assert len(objects.files) == 1
+    await store.cleanup_group(group["id"])
+    assert objects.files == {} and await store.get(group["id"])
+
+
+async def test_failed_put_does_not_register_bytes_and_orphan_cleanup_retries(
+    board_service, monkeypatch
+):
+    objects = InputObjects()
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+
+    async def interrupted_put(key, content, **_kwargs):
+        objects.files[key] = content.read()
+        raise OSError("upload response lost")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(objects, "put", interrupted_put)
+        with pytest.raises(OSError):
+            await input_upload(store, group["id"])
+    assert (await store.get(group["id"]))["files"] == [] and len(objects.files) == 1
+    await store.cleanup_group(group["id"])
+    assert objects.files == {}
+    assert (await input_upload(store, group["id"])).size == len(b"original")
+
+
+async def test_concurrent_different_creation_bodies_conflict_without_duplicate_task(board_service):
+    store = InputGroups(board_service.repo.engine, InputObjects())
+    group = await store.create("user:alice")
+    results = await asyncio.gather(
+        *(
+            board_service.create_task(
+                input_spec(name),
+                input_group_id=group["id"],
+                input_owner="user:alice",
+                create_request_hash=name,
+            )
+            for name in ("first body", "second body")
+        ),
+        return_exceptions=True,
+    )
+    assert sum(result == group["id"] for result in results) == 1
+    errors = [result for result in results if isinstance(result, HTTPException)]
+    assert len(errors) == 1 and errors[0].status_code == 409
+    async with board_service.repo.engine.connect() as conn:
+        events = list(
+            (
+                await conn.execute(select(s.events).where(s.events.c.task_id == group["id"]))
+            ).mappings()
+        )
+    assert len(events) == 1
+
+
+async def test_input_cancel_expiry_orphans_and_task_purge_are_retryable_and_scoped(board_service):
+    objects = InputObjects()
+    board_service.objects = objects
+    store = InputGroups(board_service.repo.engine, objects)
+    cancelled = await store.create("user:alice")
+    removed = await input_upload(store, cancelled["id"])
+    objects.fail_remove = True
+    await store.delete_file(cancelled["id"], "user:alice", removed.id)
+    assert (await store.get(cancelled["id"]))["files"] == [] and removed.uri in objects.files
+    objects.fail_remove = False
+    await store.delete_file(cancelled["id"], "user:alice", removed.id)
+    assert removed.uri not in objects.files
+    await input_upload(store, cancelled["id"])
+    objects.fail_remove = True
+    with pytest.raises(HTTPException) as pending:
+        await store.delete_group(cancelled["id"], "user:alice")
+    assert pending.value.status_code == 503 and (await store.get(cancelled["id"]))["deleting"]
+    objects.fail_remove = False
+    await store.delete_group(cancelled["id"], "user:alice")
+    await store.delete_group(cancelled["id"], "user:alice")
+    expired = await store.create("user:alice")
+    await input_upload(store, expired["id"])
+    bound = await store.create("user:alice")
+    attachment = await input_upload(store, bound["id"])
+    tid = await board_service.create_task(
+        input_spec(),
+        input_group_id=bound["id"],
+        input_owner="user:alice",
+        create_request_hash="body",
+    )
+    async with board_service.repo.engine.begin() as conn:
+        await conn.execute(
+            update(s.task_input_groups)
+            .where(s.task_input_groups.c.id.in_([expired["id"], bound["id"]]))
+            .values(expires_at=datetime.now(UTC) - timedelta(hours=1))
+        )
+    objects.files[f"inputs/{expired['id']}/orphan"] = b"failed upload"
+    objects.files[f"inputs/{bound['id']}/orphan"] = b"failed upload"
+    await store.cleanup_once()
+    assert list(objects.files) == [attachment.uri]
+    with pytest.raises(HTTPException) as gone:
+        await store.get(expired["id"])
+    assert gone.value.status_code == 404
+    assert (await store.get(bound["id"]))["files"]
+    other = await store.create("user:bob")
+    other_file = await input_upload(store, other["id"], owner="user:bob")
+    conversations = Conversations(board_service.repo.engine)
+    await conversations.request_delete(tid)
+    objects.fail_remove = True
+    with pytest.raises(OSError):
+        await conversations.purge(tid, objects)
+    assert (await board_service.state(tid))["task"]["deleting"]
+    objects.fail_remove = False
+    await conversations.purge(tid, objects)
+    await conversations.purge(tid, objects)
+    assert list(objects.files) == [other_file.uri]
+    with pytest.raises(HTTPException):
+        await store.get(bound["id"])
+    assert await store.get(other["id"])
+
+
+async def test_input_fact_reference_preserves_registered_path_and_metadata(board_service):
+    objects = InputObjects()
+    board_service.objects = objects
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    attachment = await input_upload(store, group["id"])
+    tid = await board_service.create_task(
+        input_spec(),
+        input_group_id=group["id"],
+        input_owner="user:alice",
+        create_request_hash="body",
+    )
+    await board_service.transition(tid, "provisioning")
+    await board_service.transition(tid, "running")
+    aid = await board_service.register_agent(tid, "explore")
+    evidence = {
+        "type": "file",
+        "path": attachment.path,
+        "uri": attachment.uri,
+        "size": attachment.size,
+        "summary": "Read input",
+    }
+    fact = {"kind": "observation", "statement": "Verified input", "evidence": [evidence]}
+    assert (await board_service.post_fact(tid, aid, fact))["id"]
+    wrong_uri = f"evidence/{tid}/{aid}/changed.bin"
+    objects.files[wrong_uri] = b"replacement"
+    with pytest.raises(RuleViolation) as path_conflict:
+        await board_service.post_fact(
+            tid, aid, {**fact, "evidence": [{**evidence, "uri": wrong_uri}]}
+        )
+    assert path_conflict.value.code == "input_path_conflict"
+    for alias in (
+        attachment.path.replace("/data.bin", "/./data.bin"),
+        attachment.path.replace("/data.bin", "//data.bin"),
+        attachment.path.replace("/data.bin", "/sub/../data.bin"),
+    ):
+        for uri in (attachment.uri, wrong_uri):
+            with pytest.raises(RuleViolation) as conflict:
+                await board_service.post_fact(
+                    tid, aid, {**fact, "evidence": [{**evidence, "path": alias, "uri": uri}]}
+                )
+            assert conflict.value.code == "input_path_conflict"
+    for changed in (
+        {"path": "/workspace/shared/other.bin"},
+        {"size": 1},
+        {"uri": f"inputs/{uuid4()}/file/source.bin", "path": None},
+    ):
+        with pytest.raises(RuleViolation) as invalid:
+            await board_service.post_fact(tid, aid, {**fact, "evidence": [{**evidence, **changed}]})
+        assert invalid.value.code == "input_reference_invalid"
+
+
+@pytest.mark.parametrize("selection", ["subset", "empty", "foreign"])
+async def test_input_selection_cannot_retain_failed_removed_or_foreign_files(
+    board_service, selection
+):
+    objects = InputObjects()
+    board_service.objects = objects
+    store = InputGroups(board_service.repo.engine, objects)
+    group = await store.create("user:alice")
+    lost_response = await input_upload(store, group["id"], b"response lost", filename="first.bin")
+    confirmed = await input_upload(store, group["id"], b"confirmed", filename="second.bin")
+    other = await store.create("user:bob")
+    foreign = await input_upload(store, other["id"], owner="user:bob")
+    selected = (
+        [confirmed.id, confirmed.id]
+        if selection == "subset"
+        else []
+        if selection == "empty"
+        else [foreign.id]
+    )
+    if selection == "foreign":
+        with pytest.raises(HTTPException) as error:
+            await board_service.create_task(
+                input_spec(),
+                input_group_id=group["id"],
+                input_file_ids=selected,
+                input_owner="user:alice",
+                create_request_hash="selection",
+            )
+        assert error.value.status_code == 422
+        assert (await store.get(group["id"]))["bound_task_id"] is None
+        assert len((await store.get(group["id"]))["files"]) == 2
+        return
+    tid = await board_service.create_task(
+        input_spec(),
+        input_group_id=group["id"],
+        input_file_ids=selected,
+        input_owner="user:alice",
+        create_request_hash="selection",
+    )
+    expected = [confirmed.model_dump(mode="json")] if selected else []
+    assert (await board_service.state(tid))["task"]["initial_attachments"] == expected
+    assert (await store.get(group["id"]))["files"] == expected
+    assert lost_response.uri in objects.files
+    await store.cleanup_group(group["id"])
+    assert lost_response.uri not in objects.files
+    assert (confirmed.uri in objects.files) == bool(selected)
+    assert foreign.uri in objects.files
+    await board_service.replay(tid)
+    assert (await board_service.state(tid))["task"]["initial_attachments"] == expected
 
 
 @pytest.fixture(scope="module")

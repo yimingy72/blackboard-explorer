@@ -56,7 +56,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     tid, kind, p, version = evt["task_id"], evt["type"], evt["payload"], evt["version"]
     stamp = evt["created_at"]
     if kind == "task.created":
-        await patch(conn, s.tasks, tid, p)
+        await patch(conn, s.tasks, tid, {"name": None, "initial_attachments": [], **p})
     elif kind == "task.resumed":
         task = await row(conn, s.tasks, tid)
         await conn.execute(

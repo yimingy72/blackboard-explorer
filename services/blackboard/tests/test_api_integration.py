@@ -1,6 +1,7 @@
 """Full HTTP blackboard scenario against isolated PostgreSQL and MinIO."""
 
 import asyncio
+import hashlib
 import io
 import os
 import socket
@@ -10,7 +11,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -19,7 +20,7 @@ import zstandard
 from alembic import command
 from alembic.config import Config
 from bbx_blackboard.api import create_app
-from bbx_blackboard.auth import issue_agent_token
+from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.simulator import run_demo
 from bbx_objects import ObjectStore
@@ -84,6 +85,126 @@ async def next_sse(lines: AsyncIterator[str]) -> dict[str, str]:
         key, _, value = line.partition(":")
         event[key] = value.lstrip(" ")
     raise AssertionError("SSE stream ended before an event")
+
+
+async def test_initial_inputs_http_minio_retry_ownership_and_task_view(infrastructure):
+    database_url, endpoint = infrastructure
+    engine = create_async_engine(database_url)
+    config = Settings.model_construct(
+        postgres_password=SecretStr("fixture"),
+        minio_root_password=SecretStr("fixture"),
+        service_token=SecretStr("input-service"),
+        agent_token_secret=SecretStr("input-signing-key-at-least-thirty-two"),
+        admin_users=SecretStr("alice:pass,bob:pass"),
+    )
+    objects = ObjectStore(endpoint, "bbxm1buser", "bbxm1b-test-password", "task-inputs")
+    await objects.ensure_bucket()
+    app = create_app(config, engine=engine, objects=objects)
+    await app.state.profile_store.ensure_bundled(
+        ROOT / "profiles/default", app.state.platform_store
+    )
+    alice = {"Authorization": f"Bearer {issue_user_token(config, 'alice')}"}
+    bob = {"Authorization": f"Bearer {issue_user_token(config, 'bob')}"}
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            group = (await client.post("/api/task-input-groups", headers=alice)).json()
+            gid = group["id"]
+            base = f"/api/task-input-groups/{gid}"
+            assert (await client.get(base, headers=bob)).status_code == 403
+            source = b"<script>input is data</script>\x00"
+            uploaded = await client.post(
+                f"{base}/files", params={"filename": "资料.html"}, content=source, headers=alice
+            )
+            assert uploaded.status_code == 200, uploaded.text
+            item = uploaded.json()
+            unconfirmed = (
+                await client.post(
+                    f"{base}/files?filename=response-lost.bin",
+                    content=b"unconfirmed bytes",
+                    headers=alice,
+                )
+            ).json()
+            assert (
+                item["size"] == len(source) and item["sha256"] == hashlib.sha256(source).hexdigest()
+            )
+            assert await objects.get(item["uri"]) == source
+            file_url = f"{base}/files/{item['id']}"
+            assert (await client.get(file_url, headers=bob)).status_code == 403
+            download = await client.get(file_url, headers=alice)
+            assert download.content == source
+            assert download.headers["content-type"] == "application/octet-stream"
+            assert download.headers["x-content-type-options"] == "nosniff"
+            assert download.headers["content-disposition"].startswith("attachment;")
+            body = {
+                "input_group_id": gid,
+                "input_file_ids": [item["id"]],
+                "name": "Short task name",
+                "goal": "Full goal " * 1000,
+                "acceptance": [{"id": "A1", "desc": "Done"}],
+                "budget": {"max_cost": "2", "max_minutes": 10},
+                "agent_profile": "default",
+            }
+            bad_selection = await client.post(
+                "/api/tasks", json={**body, "input_file_ids": [str(uuid4())]}, headers=alice
+            )
+            assert bad_selection.status_code == 422
+            assert (await client.get(f"/api/tasks/{gid}", headers=alice)).status_code == 404
+            created, concurrent = await asyncio.gather(
+                client.post("/api/tasks", json=body, headers=alice),
+                client.post("/api/tasks", json=body, headers=alice),
+            )
+            assert created.status_code == concurrent.status_code == 200
+            assert created.json() == concurrent.json() and created.json()["id"] == gid
+            repeated = await client.post(
+                "/api/tasks",
+                json={
+                    **body,
+                    "budget": {"max_cost": "2.00", "max_minutes": 10},
+                    "input_file_ids": [item["id"], item["id"]],
+                },
+                headers=alice,
+            )
+            assert repeated.status_code == 200 and repeated.json() == created.json()
+            assert (
+                await client.post("/api/tasks", json={**body, "name": "Other"}, headers=alice)
+            ).status_code == 409
+            assert (await client.post("/api/tasks", json=body, headers=bob)).status_code == 403
+            assert (
+                await client.post("/api/tasks", json={**body, "input_file_ids": []}, headers=alice)
+            ).status_code == 409
+            view = (await client.get(f"/api/tasks/{gid}", headers=alice)).json()
+            assert view["name"] == body["name"] and view["goal"] == body["goal"]
+            assert view["initial_attachments"] == [item] and view["status"] == "created"
+            rows = (await client.get("/api/tasks", headers=alice)).json()
+            assert next(row for row in rows if row["id"] == gid)["initial_attachments"] == [item]
+            agent = {"Authorization": f"Bearer {issue_agent_token(config, UUID(gid), 'agent-1')}"}
+            wrong_agent = {
+                "Authorization": f"Bearer {issue_agent_token(config, uuid4(), 'agent-1')}"
+            }
+            assert (
+                await client.get("/api/evidence", params={"uri": item["uri"]}, headers=agent)
+            ).content == source
+            assert (
+                await client.get("/api/evidence", params={"uri": item["uri"]}, headers=wrong_agent)
+            ).status_code == 403
+            assert (await client.get(file_url, headers=bob)).content == source
+            assert (await client.get(base, headers=alice)).json()["files"] == [item]
+            assert await objects.exists(unconfirmed["uri"])
+            assert (
+                await client.get("/api/evidence", params={"uri": unconfirmed["uri"]}, headers=agent)
+            ).status_code == 404
+            await app.state.input_groups.cleanup_group(UUID(gid))
+            assert not await objects.exists(unconfirmed["uri"]) and await objects.exists(
+                item["uri"]
+            )
+            assert (await client.delete(file_url, headers=alice)).status_code == 409
+            assert (
+                await client.post(f"{base}/files?filename=late", content=b"late", headers=alice)
+            ).status_code == 409
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

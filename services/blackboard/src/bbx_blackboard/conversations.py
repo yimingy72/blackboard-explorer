@@ -687,7 +687,7 @@ class Conversations:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
-        for prefix in (f"evidence/{tid}/", f"toolcalls/{tid}/", f"traces/{tid}/"):
+        for prefix in (f"evidence/{tid}/", f"toolcalls/{tid}/", f"traces/{tid}/", f"inputs/{tid}/"):
             for key in await objects.list(prefix):
                 await objects.remove(key)
         for key in [f"reports/{tid}.md", f"workspace/{tid}.tar.zst"]:
@@ -713,5 +713,8 @@ class Conversations:
                 s.events,
             ):
                 await conn.execute(delete(table).where(table.c.task_id == tid))
+            await conn.execute(
+                delete(s.task_input_groups).where(s.task_input_groups.c.bound_task_id == tid)
+            )
             await conn.execute(delete(s.tasks).where(s.tasks.c.id == tid))
         return {"purged": True}

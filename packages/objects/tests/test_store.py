@@ -2,6 +2,7 @@
 
 import io
 import threading
+from urllib.parse import urlsplit
 
 import pytest
 from bbx_objects import ObjectStore
@@ -103,3 +104,34 @@ async def test_invalid_lengths(monkeypatch):
         await store.put("one", io.BytesIO(b"a"), length=-2)
     with pytest.raises(ValueError, match="chunk_size"):
         await anext(store.stream("one", chunk_size=0))
+
+
+async def test_known_small_attachment_uses_single_sdk_put_without_multipart(monkeypatch):
+    import urllib3
+    from minio import Minio
+
+    class Transport(urllib3.PoolManager):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def urlopen(self, method, url, redirect=True, **kwargs):
+            body = kwargs["body"]
+            assert isinstance(body, bytes)
+            self.calls.append((method, url, len(body)))
+            return urllib3.HTTPResponse(status=200, headers={"ETag": '"fixture"'}, body=b"")
+
+    transport = Transport()
+    monkeypatch.setattr(
+        "bbx_objects.store.Minio",
+        lambda *args, **kwargs: Minio(*args, **kwargs, http_client=transport, region="us-east-1"),
+    )
+    store = ObjectStore("localhost:9000", "user", "fixture-secret", "test")
+    content = b"x" * (6 * 1024 * 1024)
+    await store.put(
+        "inputs/source.bin", io.BytesIO(content), length=len(content), part_size=50 * 1024 * 1024
+    )
+    assert len(transport.calls) == 1
+    method, url, size = transport.calls[0]
+    assert method == "PUT" and size == len(content)
+    assert urlsplit(url).path == "/test/inputs/source.bin" and urlsplit(url).query == ""

@@ -274,7 +274,17 @@ class Params(ContractModel):
     dispute_notify_depth: int = Field(default=2, ge=0, description="争议点名最大深度")
 
 
+class InitialAttachment(ContractModel):
+    id: UUID
+    filename: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    uri: str = Field(min_length=1)
+    size: int = Field(ge=0, le=50 * 1024 * 1024)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TaskSpec(ContractModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100, description="任务名称")
     goal: str = Field(min_length=1, description="任务目标")
     domain_context: str | None = Field(default=None, description="领域提示")
     acceptance: list[AcceptanceItem] = Field(min_length=1, description="文字验收条件")
@@ -289,6 +299,8 @@ class TaskSpec(ContractModel):
 
     @model_validator(mode="after")
     def check_params(self) -> TaskSpec:
+        if self.name is not None and "\x00" in self.name:
+            raise ValueError("Task name cannot contain NUL")
         Params.model_validate({**Params().model_dump(), **self.params})
         return self
 

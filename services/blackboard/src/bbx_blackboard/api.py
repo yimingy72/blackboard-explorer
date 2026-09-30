@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +17,7 @@ import anyio
 from bbx_contracts.models import (
     AgentProfile,
     Event,
+    InitialAttachment,
     ModelConfig,
     PostFactRequest,
     PostIntentRequest,
@@ -46,6 +48,8 @@ from bbx_blackboard.auth import (
 from bbx_blackboard.billing import router as billing_router
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.domain import RuleViolation
+from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
+from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore
@@ -73,12 +77,22 @@ class LoginBody(BaseModel):
 
 
 class TaskCreateBody(TaskSpec):
+    input_group_id: UUID | None = None
+    input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
     model_id: str | None = Field(default=None, min_length=1)
     model_version: int | None = Field(default=None, ge=1)
     profile_version: int | None = Field(default=None, ge=1)
     reasoning_effort: str | None = Field(
         default=None, min_length=1, description="任务思考强度；省略或 null 沿用模型配置"
     )
+
+    @model_validator(mode="after")
+    def check_input_selection(self) -> TaskCreateBody:
+        if self.input_file_ids is not None:
+            if self.input_group_id is None:
+                raise ValueError("Input file selection requires an input group")
+            self.input_file_ids = sorted(set(self.input_file_ids), key=str)
+        return self
 
 
 class TaskCreated(BaseModel):
@@ -88,6 +102,8 @@ class TaskCreated(BaseModel):
 
 
 class TaskView(BaseModel):
+    name: str | None = None
+    initial_attachments: list[InitialAttachment] = Field(default_factory=list)
     cost_currency: str | None = None
     id: UUID
     goal: str
@@ -395,11 +411,12 @@ def _key_task(uri: str) -> UUID | None:
     if (
         any(part in {"", ".", ".."} for part in parts)
         or (parts[0] == "evidence" and len(parts) != 4)
+        or (parts[0] == "inputs" and len(parts) != 4)
         or (parts[0] == "toolcalls" and (len(parts) != 3 or not parts[2].endswith(".txt")))
         or (
             parts[0] == "traces" and (len(parts) != 4 or not re.fullmatch(r"[^/]+\.json", parts[3]))
         )
-        or parts[0] not in {"evidence", "toolcalls", "traces"}
+        or parts[0] not in {"evidence", "toolcalls", "traces", "inputs"}
     ):
         return None
     try:
@@ -461,6 +478,7 @@ def create_app(
             )
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
         app.state.conversations = Conversations(app.state.engine)
+        app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
         app.state.platform_store = PlatformStore(
             app.state.engine, settings.agent_token_secret.get_secret_value()
@@ -473,9 +491,13 @@ def create_app(
 
             app.state.dispatcher = SSEDispatcher(settings)
         await app.state.dispatcher.start()
+        cleanup = asyncio.create_task(app.state.input_groups.run_cleanup())
         try:
             yield
         finally:
+            cleanup.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup
             await app.state.workspace_cache.close()
             await app.state.dispatcher.stop()
             if own_engine:
@@ -483,6 +505,7 @@ def create_app(
 
     app = FastAPI(title="Blackboard API", version="1.0.0", lifespan=lifespan)
     app.include_router(billing_router)
+    app.include_router(inputs_router)
     app.state.settings = settings
     app.state.engine = engine
     app.state.objects = objects
@@ -491,6 +514,9 @@ def create_app(
         BoardService(engine, objects) if engine is not None and objects is not None else None
     )
     app.state.conversations = Conversations(engine) if engine is not None else None
+    app.state.input_groups = (
+        InputGroups(engine, objects) if engine is not None and objects is not None else None
+    )
     app.state.profile_store = ProfileStore(engine) if engine is not None else None
     app.state.platform_store = (
         PlatformStore(engine, settings.agent_token_secret.get_secret_value())
@@ -540,7 +566,19 @@ def create_app(
 
     @app.post("/api/tasks", response_model=TaskCreated, tags=["tasks"])
     async def create_task(request: Request, body: TaskCreateBody) -> TaskCreated:
-        require_user_or_service(request)
+        identity = require_user_or_service(request)
+        digest = request_hash(body.model_dump())
+        if body.input_group_id is not None:
+            store: InputGroups = request.app.state.input_groups
+            if store is None:
+                raise HTTPException(503, "Blackboard is starting")
+            prior = await store.prior_task(body.input_group_id, owner_key(identity), digest)
+            if prior is not None:
+                return TaskCreated(
+                    id=prior["id"],
+                    agent_profile=prior["agent_profile"],
+                    agent_profile_version=prior["agent_profile_version"],
+                )
         profiles = _profiles(request)
         if body.model_version is not None and body.model_id is None:
             raise HTTPException(422, "模型版本需要同时指定模型")
@@ -574,13 +612,42 @@ def create_app(
                 "task-settings", AgentProfile.model_validate(content), "task"
             )
         spec = body.model_dump(
-            exclude={"profile_version", "model_id", "model_version", "reasoning_effort"}
+            exclude={
+                "profile_version",
+                "model_id",
+                "model_version",
+                "reasoning_effort",
+                "input_group_id",
+                "input_file_ids",
+            }
         )
         spec["agent_profile"] = row["name"]
         spec["params"] = {**row["params"], **body.params}
         if threshold is not None:
             spec["params"]["context_threshold"] = threshold
-        task_id = await _service(request).create_task(spec, profile_version=row["version"])
+        task_id = await _service(request).create_task(
+            spec,
+            profile_version=row["version"],
+            **(
+                {
+                    "input_group_id": body.input_group_id,
+                    "input_file_ids": body.input_file_ids,
+                    "input_owner": owner_key(identity),
+                    "create_request_hash": digest,
+                }
+                if body.input_group_id is not None
+                else {}
+            ),
+        )
+        if body.input_group_id is not None:
+            # A concurrent retry may have bound this group with an earlier model
+            # snapshot. Return the task's real profile, not the retry's new choice.
+            row = await _task(request, task_id)
+            return TaskCreated(
+                id=task_id,
+                agent_profile=row["agent_profile"],
+                agent_profile_version=row["agent_profile_version"],
+            )
         return TaskCreated(
             id=task_id,
             agent_profile=row["name"],
@@ -628,6 +695,8 @@ def create_app(
         }
         currency = currencies.pop() if len(currencies) == 1 else None
         return TaskView(
+            name=task.get("name"),
+            initial_attachments=task.get("initial_attachments") or [],
             cost_currency=currency,
             id=task_id,
             goal=task["goal"],
@@ -1004,7 +1073,20 @@ def create_app(
         if task_id is None:
             raise HTTPException(422, "Invalid evidence URI")
         require_task_reader(request, task_id)
-        await _task(request, task_id)
+        task = await _task(request, task_id)
+        if uri.startswith("inputs/"):
+            item = next(
+                (item for item in task.get("initial_attachments", []) if item["uri"] == uri), None
+            )
+            if item is None or task["deleting"]:
+                raise HTTPException(404, "Input not found")
+            if not await request.app.state.objects.exists(uri):
+                raise HTTPException(404, "Input not found")
+            return StreamingResponse(
+                request.app.state.objects.stream(uri),
+                media_type="application/octet-stream",
+                headers=download_headers(item["filename"]),
+            )
         if not await request.app.state.objects.exists(uri):
             raise HTTPException(404, "Evidence not found")
         return StreamingResponse(request.app.state.objects.stream(uri))

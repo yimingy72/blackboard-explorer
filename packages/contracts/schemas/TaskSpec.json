@@ -64,6 +64,21 @@
   },
   "additionalProperties": false,
   "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "任务名称",
+      "title": "Name"
+    },
     "goal": {
       "description": "任务目标",
       "minLength": 1,
