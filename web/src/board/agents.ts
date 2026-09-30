@@ -59,6 +59,12 @@ export function orderedAgents(state: BoardState, numbers: Record<string, number>
     (numbers[a.id] ?? Number.MAX_SAFE_INTEGER) - (numbers[b.id] ?? Number.MAX_SAFE_INTEGER));
 }
 
+function durationLabel(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours > 0 ? `${hours} 小时 ` : ''}${minutes} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
+}
+
 export function taskDuration(startedAt: string | null | undefined, finishedAt: string | null | undefined, cutoffAt: string | null | undefined, now: number): string {
   if (!startedAt) return '待启动';
   const start = Date.parse(startedAt);
@@ -69,15 +75,11 @@ export function taskDuration(startedAt: string | null | undefined, finishedAt: s
   );
   if (!Number.isFinite(start) || !Number.isFinite(end)) return '—';
   const seconds = Math.max(0, Math.floor((end - start) / 1000));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours > 0 ? `${hours} 小时 ` : ''}${minutes} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
+  return durationLabel(seconds);
 }
 
 export function activeDuration(completedSeconds: number, activeSince: string | null | undefined, now: number): string {
   const elapsed = activeSince ? Math.max(0, Math.floor((now - Date.parse(activeSince)) / 1000)) : 0;
   const seconds = Math.max(0, completedSeconds + elapsed);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours > 0 ? `${hours} 小时 ` : ''}${minutes} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
+  return durationLabel(seconds);
 }

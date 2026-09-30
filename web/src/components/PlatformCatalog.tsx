@@ -14,6 +14,17 @@ const blankServer: McpServerInput = { label: '', url: '', auth_header: 'Authoriz
 
 function errorText(error: unknown) { return error instanceof Error ? error.message : '操作失败。'; }
 
+function modelPayload(model: PlatformModelInput): PlatformModelInput {
+  return {
+    ...model,
+    credentials: Object.fromEntries(Object.entries(model.credentials ?? {}).filter(([, value]) => value)),
+  };
+}
+
+function serverPayload(server: McpServerInput): McpServerInput {
+  return { ...server, secret: server.secret || undefined };
+}
+
 export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models' | 'mcp'; onDirtyChange: (dirty: boolean) => void }) {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels, enabled: kind === 'models' });
@@ -69,9 +80,15 @@ export default function PlatformCatalog({ kind, onDirtyChange }: { kind: 'models
     if (saving) return;
     setSaving(true); setError(''); setNotice('');
     try {
-      const saved = kind === 'models'
-        ? await (name ? api.savePlatformModel(name, { ...model, credentials: Object.fromEntries(Object.entries(model.credentials ?? {}).filter(([, value]) => value)) }) : api.createPlatformModel({ ...model, credentials: Object.fromEntries(Object.entries(model.credentials ?? {}).filter(([, value]) => value)) }))
-        : await (name ? api.saveMcpServer(name, { ...server, secret: server.secret || undefined }) : api.createMcpServer({ ...server, secret: server.secret || undefined }));
+      let saved: PlatformModel | McpServer;
+      if (kind === 'models') {
+        if (name) saved = await api.savePlatformModel(name, modelPayload(model));
+        else saved = await api.createPlatformModel(modelPayload(model));
+      } else if (name) {
+        saved = await api.saveMcpServer(name, serverPayload(server));
+      } else {
+        saved = await api.createMcpServer(serverPayload(server));
+      }
       await queryClient.invalidateQueries({ queryKey: kind === 'models' ? ['platform-models'] : ['mcp-servers'] });
       choose(saved, true);
       setNotice(`已保存 ${saved.label}。已有任务保持创建时的配置。`);

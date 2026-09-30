@@ -41,7 +41,11 @@ export function conversationEntries(agentId: string, events: readonly BoardEvent
     if (historical) {
       const progress = events.filter((item) => String(item.type).startsWith('agent.message.') && (item.payload?.id === message.id || item.payload?.reply_to === message.id)).at(-1);
       const type = String(progress?.type);
-      shown = { ...message, status: type.endsWith('.failed') ? 'failed' : type.endsWith('.replied') ? 'completed' : type.endsWith('.delivered') ? 'delivered' : 'queued', error: type.endsWith('.failed') ? String(progress?.payload?.error ?? '回复失败') : null };
+      shown = { ...message, status: 'queued', error: null };
+      if (type.endsWith('.failed')) shown.status = 'failed';
+      else if (type.endsWith('.replied')) shown.status = 'completed';
+      else if (type.endsWith('.delivered')) shown.status = 'delivered';
+      shown.error = type.endsWith('.failed') ? String(progress?.payload?.error ?? '回复失败') : null;
     }
     chats.push({ type: 'chat', version: event?.version ?? Number.MAX_SAFE_INTEGER, at: message.created_at, message: shown });
   }
