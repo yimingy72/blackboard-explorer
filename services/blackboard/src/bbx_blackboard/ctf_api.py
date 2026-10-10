@@ -53,6 +53,10 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     public["task"]["ctf_cleanup"] = data["task"].get("ctf_control", {}).get("cleanup", {})
     public["task"]["ctf_review_usage"] = data["task"].get("ctf_control", {}).get("review_usage", {})
     if identity.kind == "user":
+        requirements = data["task"].get("ctf_control", {}).get("completion_requirements")
+        public["task"]["completion_requirements"] = (
+            requirements if isinstance(requirements, str) else None
+        )
         public["task"]["ctf_conclusion_history"] = (
             data["task"].get("ctf_control", {}).get("conclusion_history", [])
         )

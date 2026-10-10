@@ -186,6 +186,68 @@ async def test_ctf_http_boundaries_and_token_authority(monkeypatch):
         ).status_code == 409
 
 
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"completion_requirements": "完成全部目标\n保留原文 {{ task_id }}"},
+        {"completion_requirements": None},
+        {},
+        {"completion_requirements": {"secret": "private-marker"}},
+    ],
+)
+async def test_human_ctf_state_exposes_only_completion_requirement_text(monkeypatch, control):
+    tid, turn = uuid4(), uuid4()
+    config = settings()
+    app = api.create_app(config)
+    task = {
+        "id": tid,
+        "mode": "ctf",
+        "domain_context": "Existing background",
+        "ctf_control": {"phase": "running", "secret": "private-marker", **control},
+    }
+    data = {
+        "task": task,
+        "members": [],
+        "turns": [{"private": "private-marker"}],
+        "messages": [{"body": "private-marker"}],
+        "sessions": [{"state": "private-marker"}],
+    }
+    backend = SimpleNamespace(state=AsyncMock(return_value=data), authorize_reader=AsyncMock())
+    app.state.ctf_service = backend
+    monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
+    user = {"Authorization": f"Bearer {issue_user_token(config, 'alice')}"}
+    agent_token = issue_agent_token(config, tid, "lead", generation=1, turn_id=turn)
+    agent = {"Authorization": f"Bearer {agent_token}"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        path = f"/api/tasks/{tid}/ctf/state"
+        assert (await client.get(path)).status_code == 401
+        backend.state.assert_not_awaited()
+        response = await client.get(path, headers=user)
+        assert response.status_code == 200
+        public = response.json()
+        expected = control.get("completion_requirements")
+        assert public["task"]["completion_requirements"] == (
+            expected if isinstance(expected, str) else None
+        )
+        assert public["task"]["domain_context"] == task["domain_context"]
+        assert public["task"]["ctf_phase"] == "running"
+        assert not {"turns", "messages", "sessions"} & public.keys()
+        assert "ctf_control" not in public["task"]
+        assert "private-marker" not in response.text
+        agent_view = await client.get(path, headers=agent)
+        assert agent_view.status_code == 200
+        assert "completion_requirements" not in agent_view.json()["task"]
+        assert (
+            await client.get(f"/api/tasks/{uuid4()}/ctf/state", headers=agent)
+        ).status_code == 403
+        service_view = await client.get(path, headers={"Authorization": "Bearer service-test"})
+        assert service_view.status_code == 200
+        assert service_view.json()["task"]["ctf_control"] == task["ctf_control"]
+    assert backend.state.await_count == 3
+
+
 def test_ctf_profile_roundtrip_and_public_document():
     profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
     row = {
