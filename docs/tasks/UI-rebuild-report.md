@@ -91,12 +91,28 @@ Compose 对历史恢复卷的标签发出命名差异警告，本轮没有对PG/
 - 当前对话使用服务保存的完整响应 checkpoint，不是逐token流；未增加模型传输协议或虚假思考动画。
 - 既有CTF预算准入重复唤醒问题保持独立待修，本UI任务没有将其标为解决；候选也不会由UI变成已通过。
 - Vite仍有大型chunk提示；本轮未做生产性能测量或为压数字更换架构。静态产物与响应式功能已检查，真实设备和真实登录后的业务验收由用户执行。
-- Git变更仍位于本任务工作树，未提交、合并或推送。本地镜像与页面部署不等于main/GitHub已更新。
+- 最初本地验收检查点尚未提交；用户随后明确要求提交、合并main并推送GitHub，本次已完成代码发布。实际提交记录见第7节。
 
-## 6. 建议提交划分与用户验收
+## 6. 提交划分与用户验收
 
 1. `Expose public CTF completion requirements`：后端只读字段及其参数化授权/隐私测试。
 2. `Rebuild frontend with the B2 component system`：web源码、依赖锁、公开语义样式、会话与面板状态保持、全部浏览器适配/新增回归和隔离下载runner。
 3. `Document B2 frontend behavior and verification`：README、web/README、DESIGN、使用与部署、任务说明及本报告。
 
 用户现在可登录正式58000入口，重点试：画布默认全屏→点Agent/题目→拖动详情宽度→查看目标/附件→继续写草稿→配置提示词/模型/MCP→历史回放和报告。无需用户执行镜像构建或服务恢复命令。真实登录后的视觉偏好与业务动作属于人工验收，本轮不通过新任务、模型调用或靶机探索验证样式。
+
+## 7. Git发布记录
+
+用户明确授权本次前端重构提交、合并main及推送GitHub，已按上述三组创建提交：
+
+| 提交 | 内容 |
+| --- | --- |
+| `b759792` | `Expose public CTF completion requirements`：4行人类只读投影及参数化权限/隐私回归。 |
+| `c0e50e4` | `Rebuild frontend with the B2 component system`：正式UI、依赖、全部浏览器适配/新增回归与隔离下载runner。 |
+| `a9bc8a4` | `Document B2 frontend behavior and verification`：规范、使用文档、任务说明及实现检查点报告。 |
+
+main与origin/main均从af1fd56出发，使用 `git merge --ff-only feature/ui-rebuild` 合入三项提交，没有冲突或历史改写；`git push origin main` 已成功发布至[GitHub仓库](https://github.com/yimingy72/blackboard-explorer)，首次远端核对main与origin/main均为a9bc8a4。后续交接进度与本节发布记录另以文档提交同步main。
+
+此前1090普通、120集成、48前端、80浏览器的全绿快照与所提交代码一致；本次发布仅复核范围、检查日志、差异和Git状态，没有重复调用模型或重启本地服务。密钥、数据库备份、诊断/截图和web/dist构建产物不纳入本次提交。
+
+正式源码现已位于 `/Users/yym/blackboard-explorer` 的main。保留 `/Users/yym/bbx-wt/ui-rebuild` 工作树以维护数据库恢复备份和当前本地部署路径；本次Git发布不删除运行数据、工作树或分支。最终GitHub引用以本次发布回执和 `git ls-remote origin refs/heads/main` 核对为准。
