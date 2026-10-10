@@ -1,0 +1,10 @@
+services:
+  blackboard:
+    image: bbx-ctf-blackboard:latest
+  agent-runtime:
+    environment:
+      EXEC_NETWORK: bbx-ctf-team-mode_exec
+
+networks:
+  exec:
+    name: bbx-ctf-team-mode_exec
