@@ -17,7 +17,7 @@
 
 CTF工作台默认完整画布，点击Agent查看连续对话、模型实际返回的推理/摘要和工具结果；点击题目查看概览、原始记录与文件。侧栏可拖动调宽并关闭，长目标按需展开。界面不提供人工确认或手动更改验证要求；旧验证记录只读保留。结束后可以复盘问答，重新执行需显式续跑，删除任务才清理会话与存档。
 
-CTF设计与边界见[团队模式提案](docs/proposals/CTF-team-mode-design.md)，实现/真实测试及待修项见[任务报告](docs/tasks/CTF-team-mode-report.md)，正式界面和交互验证见[前端报告](docs/tasks/UI-unification-report.md)。当前预算准入重复唤醒问题仍待独立修复；尚未证明团队模式比单Agent更快或完成整套Cybench。
+CTF设计与边界见[团队模式提案](docs/proposals/CTF-team-mode-design.md)，实现/真实测试及待修项见[任务报告](docs/tasks/CTF-team-mode-report.md)，正式界面和交互验证见[前端报告](docs/tasks/UI-rebuild-report.md)。当前预算准入重复唤醒问题仍待独立修复；尚未证明团队模式比单Agent更快或完成整套Cybench。
 
 ## 黑板模式的探索如何运转
 
