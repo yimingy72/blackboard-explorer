@@ -1,0 +1,9 @@
+.stage { position: relative; flex: 1; min-width: 0; min-height: 280px; overflow: hidden; display: flex; }
+.group { flex: 1; min-height: 0; }
+.canvas { display: flex; flex-direction: column; min-height: 0; }
+.inspector { display: flex; flex-direction: column; flex: 1; width: 100%; height: 100%; min-height: 0; min-width: 0; background: #fff; }
+.separator { width: 6px; flex: none; cursor: col-resize; background: var(--color-canvas); border-left: 1px solid var(--color-line); border-right: 1px solid var(--color-line); }
+.separator:hover, .separator:focus-visible { background: var(--color-primary-soft); }
+.actions { display:flex; align-items:center; flex:none; gap:2px; padding:2px; border:1px solid #e6eaf0; border-radius:6px; background:#fafbfd; }
+.actions > button { width:28px; min-width:28px; height:28px; }
+@media(max-width:899px) { .actions > button { width:44px; min-width:44px; height:44px; } }

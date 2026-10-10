@@ -5,8 +5,9 @@ export const CTF_ID = '55555555-5555-4555-8555-555555555555';
 export const SECOND_ID = '66666666-6666-4666-8666-666666666666';
 const at = '2026-10-08T08:00:00Z';
 export async function openCtfMenu(page: Page) {
-  const summary = page.locator('summary[aria-label="更多任务操作"]');
-  if (!await summary.evaluate((element) => (element.parentElement as HTMLDetailsElement).open)) await summary.click();
+  if (!await page.getByRole('menuitem', { name: '刷新', exact: true }).isVisible()) {
+    await page.getByRole('button', { name: '更多任务操作', exact: true }).click();
+  }
 }
 
 export async function installCtfApi(page: Page, options: { evidenceText?: string } = {}) {
@@ -48,7 +49,7 @@ export async function installCtfApi(page: Page, options: { evidenceText?: string
   let failures = 0;
   let hold: Promise<void> | null = null;
   let release: (() => void) | null = null;
-  await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+  await page.context().route((url) => url.pathname.startsWith('/api/'), async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, '');
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });

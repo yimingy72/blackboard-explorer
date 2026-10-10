@@ -9,7 +9,7 @@
 .handle { width: 8px; height: 8px; border: 2px solid var(--color-bg); background: var(--color-line-strong); opacity: .8; }
 .agent { min-height: 70px; }
 .agent .nodeButton { display: flex; align-items: center; gap: 10px; }
-.lead .nodeButton { border-color: oklch(0.54 0.17 36 / .45); }
+.lead .nodeButton { border-color: var(--color-primary); }
 .agentMark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: var(--color-info-soft); color: var(--color-info); font-size: 14px; font-weight: 700; }
 .lead .agentMark { background: var(--color-primary-soft); color: var(--color-primary); }
 .nodeCopy { min-width: 0; flex: 1; }

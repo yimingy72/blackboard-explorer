@@ -1,3 +1,4 @@
+import { taskAction, closeRecords, expandSection } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { TASK_ID, installMockApi } from './fixtures';
@@ -11,15 +12,15 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   const conversation = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
   await expect(conversation).toBeVisible();
   for (const kind of ['初始上下文', '黑板同步注入', '模型回复', '模型请求失败']) {
-    const entry = conversation.getByRole('article').filter({ hasText: kind });
-    await entry.getByRole('button', { name: '查看正文' }).click();
+    const entry = conversation.getByRole('article', { name: new RegExp(`^${kind} v\\d+$`) });
+    await expandSection(entry.getByRole('button', { name: /查看正文|收起正文/ }));
   }
   await expect(conversation.locator('pre').filter({ hasText: INITIAL_CONTEXT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: BOARD_UPDATE })).toBeVisible();
   await expect(conversation.locator('p').filter({ hasText: MODEL_OUTPUT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_ERROR })).toBeVisible();
-  await conversation.locator('summary').filter({ hasText: '实际返回的推理' }).click();
-  await expect(conversation.locator('pre').filter({ hasText: MODEL_REASONING })).toBeVisible();
+  await conversation.getByRole('button', { name: '实际返回的推理', exact: true }).press('Enter');
+  await expect(conversation.getByText(MODEL_REASONING, { exact: true })).toBeVisible();
   await expect(conversation).toContainText('工具调用');
   const graph = page.getByRole('region', { name: '黑板关系图' }).first();
   const rect = await graph.boundingBox();
@@ -29,13 +30,13 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   await mkdir('../.data/qa', { recursive: true });
   await page.screenshot({ path: '../.data/qa/workbench-desktop.png', fullPage: true });
 
-  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
+  await taskAction(page, '复盘记录');
   await page.getByRole('tab', { name: '时间轴' }).click();
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus();
   await slider.press('Home');
   for (let index = 0; index < 3; index += 1) await slider.press('ArrowRight');
-  await page.getByRole('button', { name: '关闭复盘记录' }).click();
+  await closeRecords(page);
   await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   await expect(conversation).not.toContainText(BOARD_UPDATE);
   await expect(conversation).not.toContainText(MODEL_OUTPUT);
@@ -84,7 +85,7 @@ test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对�
   await expect(page.getByRole('complementary', { name: 'Agent 1 对话记录' })).toBeVisible();
   await page.getByRole('button', { name: '关闭对话' }).click();
   await expect(page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ })).toBeFocused();
-  await page.getByRole('link', { name: '返回任务' }).click();
+  await page.getByRole('button', { name: '返回任务', exact: true }).click();
   await page.getByRole('link', { name: '查看任务：第二个任务' }).click();
   const agents = page.getByRole('group', { name: '全部 Agent' });
   await expect(agents).toContainText('Agent 1');

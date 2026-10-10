@@ -1,3 +1,4 @@
+import { selectOption, taskAction, expandSection, settleModal } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { GOAL, TASK_ID, installMockApi } from './fixtures';
@@ -35,8 +36,8 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     }
     await page.goto('/profiles');
     for (const [name, label, item] of [['models', '模型配置', /审查模型/], ['mcp', 'MCP 工具', /资料检索/]] as const) {
-      await page.getByRole('button', { name: label, exact: true }).click();
-      await page.getByRole('button', { name: item }).click();
+      await page.getByRole('tab', { name: label, exact: true }).click();
+      await selectOption(page, page.getByRole('combobox', { name: label === '模型配置' ? '模型连接' : 'MCP 服务', exact: true }), item);
       await noOverflow(page);
       await page.screenshot({ animations: 'disabled', path: `${output}/${name}-${width}.png`, fullPage: true });
     }
@@ -54,11 +55,11 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     expect(bounds?.x).toBeGreaterThanOrEqual(0);
     expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(width > 900 ? 1001 : 845);
     await page.screenshot({ animations: 'disabled', path: `${output}/detail-${width}.png` });
-    await page.getByRole('button', { name: '复盘记录', exact: true }).click();
+    await taskAction(page, '复盘记录');
     const records = page.getByRole('dialog', { name: '复盘记录' });
     await expect(records).toBeVisible();
     await page.screenshot({ animations: 'disabled', path: `${output}/records-${width}.png` });
-    await page.keyboard.press('Escape');
+    await settleModal(records); await records.focus(); await records.press('Escape');
     await expect(records).not.toBeVisible();
   }
   expect(mock.unexpected).toEqual([]);
@@ -78,11 +79,11 @@ test('登录错误可恢复、密码可核对、键盘可以跳过导航且基�
   await expect(password).toHaveAttribute('type', 'text');
   await page.getByRole('button', { name: '隐藏', exact: true }).click();
   await expect(password).toHaveAttribute('type', 'password');
-  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('button', { name: /登录$/ }).click();
   await expect(page.getByRole('alert')).toContainText('账号或密码不正确');
   await expect(password).toHaveAttribute('aria-invalid', 'true');
   fail = false;
-  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('button', { name: /登录$/ }).click();
   await expect(page.getByRole('heading', { name: '任务', exact: true })).toBeVisible();
   const skip = page.getByRole('link', { name: '跳到主要内容' });
   await skip.focus();
@@ -149,8 +150,8 @@ test('Agent回复按Markdown阅读且保留原文，窄屏输入和桌面长页�
   await page.goto(`/tasks/${TASK_ID}`);
   await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   const pane = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
-  const entry = pane.locator('li').filter({ hasText: '模型回复' });
-  await entry.getByRole('button', { name: '查看正文' }).click();
+  const entry = pane.getByRole('article', { name: /^模型回复 v\d+$/ });
+  await expandSection(entry.getByRole('button', { name: /查看正文|收起正文/ }));
   await expect(entry.getByRole('heading', { name: '发现' })).toBeVisible();
   await expect(entry.locator('ol > li')).toHaveCount(2);
   await expect(entry.locator('pre code')).toContainText('    print(row["date"])');
@@ -159,7 +160,7 @@ test('Agent回复按Markdown阅读且保留原文，窄屏输入和桌面长页�
   await mkdir(output, { recursive: true });
   await entry.getByRole('heading', { name: '发现' }).scrollIntoViewIfNeeded();
   await page.screenshot({ animations: 'disabled', path: `${output}/agent-markdown-390.png` });
-  await entry.locator('summary').filter({ hasText: '原始文本' }).click();
+  await entry.getByRole('button').filter({ hasText: '原始文本' }).click();
   await expect(entry.locator('pre').filter({ hasText: '<script>' })).toHaveText(source);
   await expect(pane.getByRole('textbox')).toBeVisible();
   await expect(pane.getByRole('button', { name: '发送', exact: true })).toBeInViewport({ ratio: 1 });
@@ -187,9 +188,12 @@ test('中等断点保存栏不被导航遮挡，短屏Agent发送按钮能完整
   const reached = await save.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-    return hit === element || hit !== null && element.contains(hit);
+    return { reached: hit === element || hit !== null && element.contains(hit), rect: rect.toJSON(),
+      hit: hit ? { tag: hit.tagName, className: hit.className, text: hit.textContent?.slice(0,80) } : null,
+      scrollY, mainScrollTop: document.getElementById('main-content')?.scrollTop };
   });
-  expect(reached).toBe(true);
+  await test.info().attach('worker-save-hit-test', { body: JSON.stringify(reached), contentType: 'application/json' });
+  expect(reached.reached).toBe(true);
   await save.click();
   await expect(page.getByRole('status')).toContainText('已保存并应用');
   await page.goto('/tasks/new');
@@ -230,9 +234,9 @@ test('长任务目标保留全文且不挤走画布', async ({ page }) => {
     const canvas = page.getByRole('region', { name: '黑板关系图' }).first();
     expect((await canvas.boundingBox())?.height).toBeGreaterThanOrEqual(180);
     await noOverflow(page);
-    await page.getByRole('button', { name: '任务内容', exact: true }).click();
-    const details = page.getByRole('complementary', { name: '对象详情' });
-    await details.getByRole('button', { name: '展开目标全文' }).click();
+    await page.getByRole('button', { name: '查看任务目标', exact: true }).click();
+    const details = page.getByRole('region', { name: '任务目标', exact: true });
+    await details.getByRole('button', { name: '展开全文' }).click();
     await details.getByRole('button', { name: '原文', exact: true }).first().click();
     await expect(details.locator('pre').first()).toHaveText(goal);
   }

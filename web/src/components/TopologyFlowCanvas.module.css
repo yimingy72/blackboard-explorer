@@ -220,20 +220,11 @@
   white-space: nowrap;
 }
 
-.running { animation: breathing 2.4s ease-in-out infinite; }
+.running { border-color:var(--color-info); }
 .concluding {
   border-color: var(--color-warning);
-  animation: concluding 1.2s ease-in-out infinite;
 }
 .concluding .agentDot { background: var(--color-warning); }
-
-@keyframes breathing {
-  50% { box-shadow: 0 0 0 4px var(--color-info-soft); }
-}
-
-@keyframes concluding {
-  50% { background: var(--color-warning-soft); }
-}
 
 .controls {
   overflow: hidden;

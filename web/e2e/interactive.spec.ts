@@ -1,3 +1,4 @@
+import { taskAction, closeRecords } from './ui';
 import { expect, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { installMockApi, TASK_ID, GOAL } from './fixtures';
@@ -27,7 +28,7 @@ test('运行中的消息可发送并显示投递状态，网络重试沿用同�
   await pane.getByRole('textbox').fill('优先核对日期口径，已有中间发现请及时共享。');
   await pane.getByRole('button', { name: '发送', exact: true }).click();
   await expect(pane.getByRole('alert')).toBeVisible();
-  await pane.getByRole('button', { name: '发送', exact: true }).click();
+  await pane.getByRole('button', { name: '重试发送', exact: true }).click();
   await expect(pane.getByText('已送达', { exact: true })).toBeVisible();
   expect(ids).toHaveLength(2);
   expect(ids[0]).toBe(ids[1]);
@@ -60,12 +61,12 @@ test('结束后继续复盘问答并在刷新后保留，历史回放不可发�
   await page.reload();
   await expect(pane).toContainText('请解释这次结论的依据。');
   await expect(pane).toContainText('此复盘会话基于旧任务记录初始化');
-  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
+  await taskAction(page, '复盘记录');
   await page.getByRole('tab', { name: '时间轴' }).click();
   const slider = page.getByRole('slider', { name: '回放版本' });
   await slider.focus(); await slider.press('Home');
   for (let index = 0; index < 2; index++) await slider.press('ArrowRight');
-  await page.getByRole('button', { name: '关闭复盘记录' }).click();
+  await closeRecords(page);
   await page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ }).click();
   await expect(pane.getByRole('textbox')).toBeDisabled();
   await expect(pane).not.toContainText('结论依据来自 F1');
@@ -85,11 +86,11 @@ test('删除任务须确认清除所有会话，取消不发请求', async ({ pa
   await page.getByRole('button', { name: `删除任务：${GOAL}` }).click();
   const dialog = page.getByRole('dialog', { name: '删除任务' });
   await expect(dialog).toContainText('所有 Agent 会话');
-  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await dialog.getByRole('button', { name: /^取\s*消$/ }).click();
   expect(removed).toBe(false);
   await page.getByRole('button', { name: `删除任务：${GOAL}` }).click();
   await dialog.getByRole('button', { name: '确认删除' }).click();
-  await expect(page.getByRole('heading', { name: '还没有任务' })).toBeVisible();
+  await expect(page.getByText('还没有任务', { exact: true })).toBeVisible();
   expect(removed).toBe(true);
   expect(mock.unexpected).toEqual([]);
 });

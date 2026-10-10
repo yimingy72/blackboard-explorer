@@ -1,16 +1,18 @@
+import { selectMode, taskAction, settleModal } from './ui';
 import { expect, test } from '@playwright/test';
 import { GOAL, TASK_ID, installMockApi } from './fixtures';
 
 test('主要页面共享按钮反馈、动画时长和可见键盘焦点', async ({ page }) => {
   const mock = await installMockApi(page);
   let expectedTokens: { duration: string; easing: string } | undefined;
+  let expectedDurations: number[] | undefined;
   for (const url of ['/login', '/tasks', '/tasks/new', '/profiles', `/tasks/${TASK_ID}/report`]) {
     await page.goto(url);
     if (url === '/login') {
       await page.getByLabel('账号', { exact: true }).fill('tester');
       await page.getByLabel('密码', { exact: true }).fill('fixture-password');
     }
-    const control = url === '/login' ? page.getByRole('button', { name: '登录', exact: true }) : page.getByRole('link', { name: '新建任务', exact: true });
+    const control = url === '/login' ? page.getByRole('button', { name: /登录$/ }) : page.getByRole('button', { name: /新建任务/ });
     await expect(control).toBeVisible();
     await page.mouse.move(0, 0);
     const style = await control.evaluate((element) => {
@@ -26,7 +28,10 @@ test('主要页面共享按钮反馈、动画时长和可见键盘焦点', async
     expect(style.tokens.easing).toContain('cubic-bezier');
     expectedTokens ??= style.tokens;
     expect(style.tokens).toEqual(expectedTokens);
-    expect(style.durations).toContain(milliseconds / 1000);
+    expect(Math.max(...style.durations)).toBeGreaterThan(0);
+    expect(Math.max(...style.durations)).toBeLessThanOrEqual(0.3);
+    expectedDurations ??= style.durations;
+    expect(style.durations).toEqual(expectedDurations);
     await control.focus();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
@@ -70,16 +75,18 @@ test('减少动态偏好关闭主要页面控件与面板的过渡', async ({ pa
 test('跨页面导航、配置保存、折叠和复盘键盘操作保留业务行为', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto('/tasks');
-  await page.getByRole('link', { name: '新建任务', exact: true }).click();
+  await page.getByRole('button', { name: /新建任务/ }).click();
   await expect(page.locator('#main-content')).toBeFocused();
-  await page.getByRole('radio', { name: /CTF 团队/ }).check();
+  await selectMode(page, 'CTF 团队');
   await expect(page.getByLabel('队友上限（不含 Lead）')).toHaveValue('4');
-  await page.getByRole('radio', { name: /黑板探索/ }).check();
-  const help = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: '填写背景的建议' }) });
-  await help.locator('summary').press('Enter');
-  await expect(help).toHaveAttribute('open', '');
-  await help.locator('summary').press('Enter');
-  await expect(help).not.toHaveAttribute('open', '');
+  await selectMode(page, '黑板探索');
+  const help = page.getByRole('button', { name: '目标域名（可选）', exact: true });
+  await help.press('Enter');
+  await expect(help).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByLabel('任务所需域名（记录）')).toBeVisible();
+  await help.press('Enter');
+  await expect(help).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByLabel('任务所需域名（记录）')).not.toBeVisible();
   await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: 'Agent 配置', exact: true }).click();
   await expect(page.locator('#main-content')).toBeFocused();
   await page.getByLabel('完整系统提示词').fill('Consistency fixture prompt');
@@ -88,20 +95,25 @@ test('跨页面导航、配置保存、折叠和复盘键盘操作保留业务�
   expect(mock.workerSaves).toHaveLength(1);
   await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '任务', exact: true }).click();
   await page.getByRole('link', { name: `查看任务：${GOAL}` }).click();
-  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
+  await taskAction(page, '复盘记录');
   const drawer = page.getByRole('dialog', { name: '复盘记录' });
-  const firstTab = drawer.getByRole('tab', { name: '事件流', exact: true });
+  await settleModal(drawer);
+  const firstTab = drawer.getByRole('tab', { name: /事件流$/ });
   await firstTab.focus();
   await firstTab.press('ArrowRight');
-  await expect(drawer.getByRole('tab', { name: '裁定历史', exact: true })).toBeFocused();
+  await expect(drawer.getByRole('tab', { name: /裁定历史$/ })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(drawer.getByRole('tab', { name: /裁定历史$/ })).toHaveAttribute('aria-selected', 'true');
   await expect(drawer.getByRole('tabpanel')).toContainText('连接池证据充分');
   await page.keyboard.press('Home');
-  await drawer.locator('summary').first().press('Enter');
-  await expect(drawer.locator('details').first()).toHaveAttribute('open', '');
-  await drawer.locator('summary').first().press('Enter');
-  await expect(drawer.locator('details').first()).not.toHaveAttribute('open', '');
+  await page.keyboard.press('Enter');
+  const event = drawer.getByRole('button').filter({ hasText: /^v\d+/ }).first();
+  await event.press('Enter');
+  await expect(event).toHaveAttribute('aria-expanded', 'true');
+  await event.press('Enter');
+  await expect(event).toHaveAttribute('aria-expanded', 'false');
   await page.keyboard.press('Escape');
   await expect(drawer).not.toBeVisible();
-  await expect(page.getByRole('button', { name: '复盘记录', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '更多任务操作', exact: true })).toBeFocused();
   expect(mock.unexpected).toEqual([]);
 });

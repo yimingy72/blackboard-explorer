@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { CTF_ID, SECOND_ID, installCtfApi, openCtfMenu } from './ctf-fixtures';
 
-const screenshots = '../docs/tasks/ctf-t6-screenshots';
+const screenshots = '../.data/ui-rebuild/e2e/ctf';
 
 test('结论、归档与外部目标分开展示，桌面及窄屏保留历史', async ({ page }) => {
   const mock = await installCtfApi(page);
@@ -10,7 +10,7 @@ test('结论、归档与外部目标分开展示，桌面及窄屏保留历史',
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/tasks/${CTF_ID}`);
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '收尾与恢复' }).click();
+  await page.getByRole('menuitem', { name: '收尾与恢复', exact: true }).click();
   const recovery = page.getByRole('region', { name: '收尾与恢复' });
   await expect(recovery.getByRole('heading', { name: '本轮结论' })).toBeVisible();
   await expect(recovery).toContainText('模拟 Web 题仍需验证');
@@ -29,7 +29,7 @@ test('结论、归档与外部目标分开展示，桌面及窄屏保留历史',
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.reload();
   await page.getByRole('button', { name: 'Agent：历史队友' }).click();
-  await expect(page.getByRole('region', { name: '历史队友 会话' })).toContainText('member-3 的历史工作记录');
+  await expect(page.getByRole('complementary', { name: '历史队友 会话' })).toContainText('member-3 的历史工作记录');
   expect(mock.resumes).toEqual([]);
   expect(mock.deletions).toEqual([]);
   expect(mock.unexpected).toEqual([]);
@@ -40,7 +40,7 @@ test('归档未完成时阻止续跑，保存完成后显式申请且双击与�
   mock.finish('failed', false);
   await page.goto(`/tasks/${CTF_ID}`);
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '收尾与恢复' }).click();
+  await page.getByRole('menuitem', { name: '收尾与恢复', exact: true }).click();
   const recovery = page.getByRole('region', { name: '收尾与恢复' });
   await expect(recovery).toContainText('系统执行失败');
   await expect(recovery).toContainText('失败诊断');
@@ -50,14 +50,16 @@ test('归档未完成时阻止续跑，保存完成后显式申请且双击与�
   await recovery.getByRole('button', { name: '续跑任务' }).click();
   const dialog = page.getByRole('dialog', { name: '续跑 CTF 任务' });
   await expect(dialog.getByRole('button', { name: '确认续跑' })).toBeDisabled();
-  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await dialog.getByRole('button', { name: /^取\s*消$/ }).click();
+  await expect(dialog).toBeHidden();
   expect(mock.resumes).toEqual([]);
   await recovery.getByRole('button', { name: '关闭', exact: true }).click();
   mock.finish('failed', true);
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '刷新', exact: true }).click();
-  if (await page.getByRole('button', { name: '收尾与恢复' }).count() === 0) await openCtfMenu(page);
-  await page.getByRole('button', { name: '收尾与恢复' }).click();
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: '刷新', exact: true })).toBeHidden();
+  await openCtfMenu(page);
+  await page.getByRole('menuitem', { name: '收尾与恢复', exact: true }).click();
   const refreshedRecovery = page.getByRole('region', { name: '收尾与恢复' });
   await expect(refreshedRecovery).toContainText('本机清理已完成');
   await refreshedRecovery.getByRole('button', { name: '续跑任务' }).click();
@@ -92,7 +94,7 @@ test('离开正在续跑的任务后，迟到响应不会改变另一任务', as
   await page.goto('/tasks');
   await page.getByRole('link', { name: '查看任务：模拟验收 · 团队协作' }).click();
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '收尾与恢复' }).click();
+  await page.getByRole('menuitem', { name: '收尾与恢复', exact: true }).click();
   await page.getByRole('button', { name: '续跑任务', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '续跑 CTF 任务' });
   await dialog.getByLabel('追加金额（CNY）').fill('1');
@@ -103,7 +105,7 @@ test('离开正在续跑的任务后，迟到响应不会改变另一任务', as
   await page.goBack();
   await page.getByRole('link', { name: '查看任务：另一个模拟任务' }).click();
   await page.getByRole('button', { name: 'Agent：Lead' }).click();
-  const next = page.getByRole('region', { name: 'Lead 会话' });
+  const next = page.getByRole('complementary', { name: 'Lead 会话' });
   await expect(next).toContainText('第二任务会话');
   await next.getByRole('textbox').fill('第二任务保留自己的草稿');
   mock.releaseResume();
@@ -124,7 +126,7 @@ test('删除终态任务必须确认，取消不发送，确认只删除指定�
   await page.getByRole('button', { name: '删除任务：模拟验收 · 团队协作' }).click();
   const dialog = page.getByRole('dialog', { name: '删除任务', exact: true });
   await expect(dialog).toContainText('无法恢复');
-  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await dialog.getByRole('button', { name: /^取\s*消$/ }).click();
   expect(mock.deletions).toEqual([]);
   await page.getByRole('button', { name: '删除任务：模拟验收 · 团队协作' }).click();
   await dialog.getByRole('button', { name: '确认删除' }).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
@@ -134,7 +136,7 @@ test('删除终态任务必须确认，取消不发送，确认只删除指定�
   expect([...mock.tasks.keys()]).toEqual([SECOND_ID]);
   await page.getByRole('link', { name: '查看任务：另一个模拟任务' }).click();
   await page.getByRole('button', { name: 'Agent：Lead' }).click();
-  await expect(page.getByRole('region', { name: 'Lead 会话' })).toContainText('第二任务会话');
+  await expect(page.getByRole('complementary', { name: 'Lead 会话' })).toContainText('第二任务会话');
   expect(mock.unexpected).toEqual([]);
 });
 
@@ -143,13 +145,13 @@ test('终态与已移除成员只读复盘不会触发续跑或恢复成员', as
   mock.finish('stopped');
   await page.goto(`/tasks/${CTF_ID}`);
   await page.getByRole('button', { name: 'Agent：Lead' }).click();
-  const lead = page.getByRole('region', { name: 'Lead 会话' });
+  const lead = page.getByRole('complementary', { name: 'Lead 会话' });
   await expect(lead).toContainText('复盘问答');
   await lead.getByRole('textbox').fill('请解释未完成题的失败条件，不继续执行');
   await lead.getByRole('button', { name: '发送复盘消息' }).click();
   await expect(lead.getByRole('textbox')).toHaveValue('');
   await page.getByRole('button', { name: 'Agent：历史队友' }).click();
-  const removed = page.getByRole('region', { name: '历史队友 会话' });
+  const removed = page.getByRole('complementary', { name: '历史队友 会话' });
   await expect(removed).toContainText('member-3 的历史工作记录');
   await removed.getByRole('textbox').fill('复盘你保存的证据来源');
   await removed.getByRole('button', { name: '发送复盘消息' }).click();

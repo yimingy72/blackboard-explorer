@@ -42,17 +42,25 @@ test('详情用 Markdown 展示正文和代码，缩略图紧凑且筛选全部�
   expect(imageRequests).toEqual([]);
   await expect(page.getByRole('combobox')).toHaveCount(0);
   await expect(page.getByRole('checkbox')).toHaveCount(0);
-  await expect(page.locator('summary').filter({ hasText: /^验收/ })).toHaveCount(0);
+  await expect(page.getByRole('button').filter({ hasText: /^验收/ })).toHaveCount(0);
   const reason = await page.getByText(/^结束原因：/).boundingBox();
   const stats = await page.getByLabel('运行统计', { exact: true }).boundingBox();
   expect(Math.abs((reason?.y ?? 0) - (stats?.y ?? 0))).toBeLessThanOrEqual(2);
-  const divider = await page.getByRole('separator').boundingBox();
   const status = await page.getByText('已完成', { exact: true }).boundingBox();
-  expect(divider?.y).toBeGreaterThan((status?.y ?? 0) + (status?.height ?? 0));
-  expect(divider?.y).toBeLessThan(reason?.y ?? 0);
+  expect(reason?.y).toBeGreaterThan((status?.y ?? 0) + (status?.height ?? 0));
+  const boardBounds = await canvas.boundingBox();
+  expect(boardBounds?.y).toBeGreaterThan((reason?.y ?? 0) + (reason?.height ?? 0));
   const minimap = await page.locator('.react-flow__minimap').boundingBox();
   expect(minimap?.width).toBeLessThanOrEqual(130);
   expect(minimap?.height).toBeLessThanOrEqual(86);
+  for (const node of await canvas.locator('.react-flow__node button').all()) {
+    const fits = await node.evaluate((button) => {
+      const bounds = button.getBoundingClientRect();
+      return button.scrollHeight <= button.clientHeight + 1 && [...button.querySelectorAll<HTMLElement>('strong, p, small')]
+        .every((element) => { const rect = element.getBoundingClientRect(); return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 && rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1; });
+    });
+    expect(fits).toBe(true);
+  }
   await mkdir('../.data/qa', { recursive: true });
   await page.screenshot({ path: '../.data/qa/markdown-detail-desktop.png', fullPage: true });
   await canvas.getByRole('button', { name: /意图 I1/ }).click();

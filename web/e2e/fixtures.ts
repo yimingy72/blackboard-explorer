@@ -163,7 +163,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     Object.defineProperty(window, 'EventSource', { value: MockEventSource });
   });
 
-  await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+  await page.context().route((url) => url.pathname.startsWith('/api/'), async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;

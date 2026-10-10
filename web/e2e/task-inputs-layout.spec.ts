@@ -1,3 +1,4 @@
+import { selectOption } from './ui';
 import { expect, test } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { TASK_ID, installMockApi } from './fixtures';
@@ -6,23 +7,35 @@ test('模型标题、启用与保存同行，表单紧凑且手机可用', async
   const mock = await installMockApi(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/profiles');
-  await page.getByRole('button', { name: '模型配置', exact: true }).click();
-  await page.getByRole('button', { name: /审查模型/ }).click();
+  await page.getByRole('tab', { name: /模型配置$/ }).click();
+  await selectOption(page, page.getByRole('combobox', { name: '模型连接', exact: true }), '审查模型');
   const editor = page.getByRole('region', { name: '模型配置编辑' });
-  const title = await editor.getByRole('heading', { name: '编辑 审查模型' }).boundingBox();
+  const title = await editor.getByRole('combobox', { name: '模型连接', exact: true }).boundingBox();
+  const connectionLayout = await editor.getByRole('combobox', { name: '模型连接', exact: true }).evaluate((input) => {
+    const picker = input.closest<HTMLElement>('[class*="connectionPicker"]');
+    const select = input.closest<HTMLElement>('[class*="resourceSelect"]');
+    if (!picker || !select) throw new Error('Missing application-owned connection picker');
+    const style = getComputedStyle(picker);
+    return { display: style.display, flexWrap: style.flexWrap, picker: picker.getBoundingClientRect().toJSON(),
+      select: select.getBoundingClientRect().toJSON(), actions: [...picker.querySelectorAll('button')].map(button => ({text:button.innerText,rect:button.getBoundingClientRect().toJSON()})) };
+  });
+  await test.info().attach('model-connection-layout', { body: JSON.stringify(connectionLayout), contentType: 'application/json' });
+  if (process.env.BBX_E2E_LAYOUT_REPORT === '1') console.log('model-connection-layout', JSON.stringify(connectionLayout));
   const enabled = await editor.getByLabel('启用此模型').boundingBox();
-  const save = await editor.getByRole('button', { name: '保存', exact: true }).boundingBox();
+  const save = await editor.getByRole('button', { name: /保存$/ }).boundingBox();
   expect(Math.abs((title?.y ?? 0) - (enabled?.y ?? 0))).toBeLessThan(20);
   expect(Math.abs((title?.y ?? 0) - (save?.y ?? 0))).toBeLessThan(20);
   const label = await editor.getByLabel('显示名称').boundingBox();
   const provider = await editor.getByLabel('Provider').boundingBox();
   const model = await editor.getByLabel('模型 ID', { exact: true }).boundingBox();
-  expect(label?.y).toBe(provider?.y); expect(provider?.y).toBe(model?.y);
+  const middle = (bounds: typeof label) => bounds ? bounds.y + bounds.height / 2 : NaN;
+  expect(Math.abs(middle(label) - middle(provider))).toBeLessThanOrEqual(1);
+  expect(Math.abs(middle(provider) - middle(model))).toBeLessThanOrEqual(1);
   await page.screenshot({ path: test.info().outputPath('compact-model-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await editor.getByLabel('显示名称').fill('紧凑模型');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await editor.getByRole('button', { name: /保存$/ }).click();
   expect(mock.modelSaves[0].label).toBe('紧凑模型');
   expect(mock.unexpected).toEqual([]);
 });
@@ -45,12 +58,12 @@ test('列表仅一次总数，名称与ID同行，完整长目标按需展开', 
   await expect(page.getByRole('row')).toHaveCount(2);
   await row.getByRole('link', { name: task.name, exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(task.name);
-  await page.getByRole('button', { name: '任务内容', exact: true }).click();
-  const detail = page.getByRole('complementary', { name: '对象详情' });
+  await page.getByRole('button', { name: '查看任务目标', exact: true }).click();
+  const detail = page.getByRole('region', { name: '任务目标', exact: true });
   await expect(detail).not.toContainText('目标末尾标记');
-  await detail.getByRole('button', { name: '展开目标全文' }).click();
+  await detail.getByRole('button', { name: '展开全文' }).click();
   await expect(detail).toContainText('目标末尾标记');
-  await detail.getByRole('button', { name: '收起目标全文' }).click();
+  await detail.getByRole('button', { name: '收起全文' }).click();
   await expect(detail).not.toContainText('目标末尾标记');
   expect(mock.unexpected).toEqual([]);
 });
@@ -68,7 +81,7 @@ test('文件上传、移除和命名创建，只绑定明确选中的文件', as
   await page.getByLabel('任务名', { exact: true }).fill('初始资料核对');
   await page.getByLabel('任务目标').fill('核对附件中的数字，说明资料差异');
   await page.getByLabel('验收条件 1', { exact: true }).fill('给出可复核结果');
-  await page.getByLabel('添加初始附件').setInputFiles([
+  await page.locator('input[type="file"]').setInputFiles([
     { name: '资料.csv', mimeType: 'text/csv', buffer: Buffer.from('value\n10') },
     { name: '不要保留.txt', mimeType: 'text/plain', buffer: Buffer.from('remove') },
   ]);
@@ -77,7 +90,7 @@ test('文件上传、移除和命名创建，只绑定明确选中的文件', as
   await expect(page.getByText('不要保留.txt', { exact: true })).toHaveCount(0);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: test.info().outputPath('create-inputs-mobile.png'), fullPage: true });
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: /创建任务/ }).click();
   await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
   expect(submitted?.name).toBe('初始资料核对');
   expect(submitted?.input_group_id).toMatch(/^33333333/);
@@ -100,7 +113,7 @@ test('同名同大小同修改时间但内容不同的附件全部保留并绑�
   await page.goto('/tasks/new');
   await page.getByLabel('任务目标').fill('核对两份同名资料');
   await page.getByLabel('验收条件 1', { exact: true }).fill('分别核对两份文件');
-  await page.getByLabel('添加初始附件').evaluate((input: HTMLInputElement) => {
+  await page.locator('input[type="file"]').evaluate((input: HTMLInputElement) => {
     const files = new DataTransfer();
     files.items.add(new File(['first'], 'same.txt', { lastModified: 123 }));
     files.items.add(new File(['other'], 'same.txt', { lastModified: 123 }));
@@ -109,7 +122,7 @@ test('同名同大小同修改时间但内容不同的附件全部保留并绑�
   });
   await expect(page.getByText(/已上传/)).toHaveCount(2);
   await expect(page.getByText('same.txt', { exact: true })).toHaveCount(2);
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: /创建任务/ }).click();
   await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
   expect(uploads).toEqual(['first', 'other']);
   expect(submitted?.input_file_ids).toHaveLength(2);
@@ -130,9 +143,9 @@ test('创建响应丢失后冻结原请求，模型停用也能重试且验收�
   await page.getByLabel('任务名', { exact: true }).fill('不重复创建');
   await page.getByLabel('任务目标').fill('核对');
   await page.getByLabel('验收条件 1', { exact: true }).fill('结果可检查');
-  await page.getByRole('button', { name: '＋ 添加验收条件', exact: true }).click();
+  await page.getByRole('button', { name: /添加验收条件/ }).click();
   await page.getByLabel('验收条件 2', { exact: true }).fill('全部附件已核对');
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: /创建任务/ }).click();
   await expect(page.getByRole('alert')).toContainText('创建结果未确认');
   await expect(page.getByLabel('任务目标')).toBeDisabled();
   await expect(page.getByRole('button', { name: '删除验收条件 2', exact: true })).toBeDisabled();
@@ -142,8 +155,8 @@ test('创建响应丢失后冻结原请求，模型停用也能重试且验收�
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await refreshed;
   await expect(page.getByText(/当前没有可用模型/)).toBeVisible();
-  await expect(page.getByRole('button', { name: '创建任务', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: /创建任务/ })).toBeEnabled();
+  await page.getByRole('button', { name: /创建任务/ }).click();
   await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
   expect(attempts).toHaveLength(2); expect(attempts[0]).toEqual(attempts[1]);
   expect(mock.unexpected).toEqual([]);
@@ -171,9 +184,9 @@ test('取消离页后已绑定组保持保护，延迟创建响应不把页面�
   await page.goto('/tasks/new');
   await page.getByLabel('任务目标').fill('核对');
   await page.getByLabel('验收条件 1', { exact: true }).fill('可复核');
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: /创建任务/ }).click();
   await expect.poll(() => bound).toBe(true);
-  await page.getByRole('link', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: /^取\s*消$/ }).click();
   await expect(page).toHaveURL('/tasks');
   await expect.poll(() => deletions).toBe(1);
   const response = page.waitForResponse((reply) => reply.request().method() === 'POST' && reply.url().endsWith('/api/tasks'));
@@ -225,10 +238,10 @@ for (const status of [404, 410]) {
     await page.getByLabel('领域背景').fill('原始领域资料');
     await page.getByLabel('验收条件 1', { exact: true }).fill('核对附件并给出结果');
     await page.getByLabel('金额上限（人民币元）').fill('12.5');
-    await page.getByLabel('添加初始附件').setInputFiles({ name: 'source.txt', mimeType: 'text/plain', buffer: Buffer.from('original input') });
+    await page.locator('input[type="file"]').setInputFiles({ name: 'source.txt', mimeType: 'text/plain', buffer: Buffer.from('original input') });
     await expect(page.getByText(/已上传/)).toBeVisible();
     expired = true;
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
+    await page.getByRole('button', { name: /创建任务/ }).click();
     await page.getByRole('button', { name: '重新上传附件', exact: true }).click();
     await expect.poll(() => uploaded.length).toBe(2);
     await expect(page.getByText(/已上传/)).toBeVisible();
@@ -237,7 +250,7 @@ for (const status of [404, 410]) {
     await expect(page.getByLabel('领域背景')).toHaveValue('原始领域资料');
     await expect(page.getByLabel('验收条件 1', { exact: true })).toHaveValue('核对附件并给出结果');
     await expect(page.getByLabel('金额上限（人民币元）')).toHaveValue('12.5');
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
+    await page.getByRole('button', { name: /创建任务/ }).click();
     await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
     expect(groups).toHaveLength(2);
     expect(uploaded).toEqual(['original input', 'original input']);
@@ -272,14 +285,14 @@ for (const retry of [true, false]) {
     await page.goto('/tasks/new');
     await page.getByLabel('任务目标').fill('核对');
     await page.getByLabel('验收条件 1', { exact: true }).fill('可复核');
-    await page.getByLabel('添加初始附件').setInputFiles({ name: '资料.txt', mimeType: 'text/plain', buffer: Buffer.from('original input') });
+    await page.locator('input[type="file"]').setInputFiles({ name: '资料.txt', mimeType: 'text/plain', buffer: Buffer.from('original input') });
     await expect(page.getByRole('button', { name: '重试上传' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '创建任务', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /创建任务/ })).toBeDisabled();
     if (retry) {
       await page.getByRole('button', { name: '重试上传' }).click();
       await expect(page.getByText(/已上传/)).toBeVisible();
     } else await page.getByRole('button', { name: '移除附件 资料.txt' }).click();
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
+    await page.getByRole('button', { name: /创建任务/ }).click();
     await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
     expect(uploads).toBe(1);
     expect(submitted?.input_file_ids).toEqual(retry ? [group.files[0].id] : []);
@@ -292,14 +305,24 @@ test('任务内容展示初始附件路径并可下载完整原件', async ({ pa
   const bytes = Buffer.from('source,value\noriginal,42\n');
   const id = '44444444-4444-4444-8444-888888888888';
   const file = { id, filename: 'input.csv', path: `/workspace/shared/inputs/${id}/input.csv`, uri: `inputs/${TASK_ID}/${id}/input.csv`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  const mockApi = process.env.BBX_E2E_MOCK_API_URL;
+  if (!mockApi) throw new Error('Run E2E through node e2e/run.cjs to isolate native browser downloads.');
+  const registered = await page.request.post(`${mockApi}/__e2e/download`, { data: {
+    uri: file.uri, filename: file.filename, contentType: 'text/csv', body: bytes.toString('base64'),
+  } });
+  expect(registered.status()).toBe(204);
   mock.events[0].payload = { ...mock.events[0].payload, initial_attachments: [file] };
-  await page.route(`**/api/task-input-groups/${TASK_ID}/files/${id}`, (route) => route.fulfill({ body: bytes, headers: { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="input.csv"', 'X-Content-Type-Options': 'nosniff' } }));
+  await page.context().route('**/api/evidence?*', (route) => new URL(route.request().url()).searchParams.get('uri') === file.uri
+    ? route.fulfill({ body: bytes, headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="input.csv"', 'X-Content-Type-Options': 'nosniff' } })
+    : route.fallback());
   await page.goto(`/tasks/${TASK_ID}`);
-  await page.getByRole('button', { name: '任务内容', exact: true }).click();
-  const detail = page.getByRole('complementary', { name: '对象详情' });
-  await expect(detail.getByText(file.path, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '查看任务目标', exact: true }).click();
+  const detail = page.getByRole('region', { name: '任务目标', exact: true });
+  await detail.getByRole('button', { name: `预览附件 ${file.filename}`, exact: true }).click();
+  const attachment = page.getByRole('dialog', { name: file.filename, exact: true });
+  await expect(attachment.getByText(`路径：${file.path}`, { exact: true })).toBeVisible();
   const downloaded = page.waitForEvent('download');
-  await detail.getByRole('link', { name: file.filename, exact: true }).click();
+  await attachment.getByRole('link', { name: '下载完整证据', exact: true }).click();
   const download = await downloaded;
   expect(download.suggestedFilename()).toBe(file.filename);
   const { readFile } = await import('node:fs/promises');

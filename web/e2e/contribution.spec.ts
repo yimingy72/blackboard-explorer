@@ -1,3 +1,4 @@
+import { taskAction, conversationAction, settleModal } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { installMockApi, TASK_ID } from './fixtures';
@@ -38,8 +39,10 @@ test('Agent 颜色对应创建对象，贡献可定位，旧正文分段且原�
   await expect(page.getByRole('tab', { name: '事件流' })).not.toBeVisible();
   await first.click();
   const conversation = page.getByRole('complementary', { name: 'Agent 1 对话记录' });
-  await conversation.locator('summary').filter({ hasText: '产出' }).click();
-  await conversation.getByRole('button', { name: 'F1', exact: true }).click();
+  await conversationAction(page, conversation, '运行信息');
+  const info = page.getByRole('dialog', { name: 'Agent 1 · 运行信息', exact: true });
+  await expect(info).toContainText('1 Fact · 1 Intent');
+  await info.getByRole('button', { name: 'F1', exact: true }).click();
   const detail = page.getByRole('complementary', { name: '对象详情' });
   await expect(detail.locator('ol').first().locator('li')).toHaveCount(2);
   await expect(detail.locator('code').filter({ hasText: 'python verify.py --input source.csv' })).toBeVisible();
@@ -48,10 +51,10 @@ test('Agent 颜色对应创建对象，贡献可定位，旧正文分段且原�
   await detail.getByRole('button', { name: '阅读排版', exact: true }).click();
   await mkdir('../.data/qa', { recursive: true });
   await page.screenshot({ path: '../.data/qa/contribution-desktop.png', fullPage: true });
-  await page.getByRole('button', { name: '复盘记录', exact: true }).click();
+  await taskAction(page, '复盘记录');
   const dialog = page.getByRole('dialog', { name: '复盘记录' });
   await expect(dialog).toBeVisible();
-  await page.keyboard.press('Escape');
+  await settleModal(dialog); await dialog.focus(); await dialog.press('Escape');
   await expect(dialog).not.toBeVisible();
   const bounds = await canvas.boundingBox();
   expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeGreaterThan(980);

@@ -1,3 +1,4 @@
+import { selectOption, expectSelectedOption, expectOption } from './ui';
 import { expect, test, type Page } from '@playwright/test';
 import { TASK_ID, installMockApi } from './fixtures';
 
@@ -30,15 +31,14 @@ for (const effort of ['', 'max', 'none']) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/tasks/new');
     const strength = page.getByLabel('推理强度');
-    await expect(strength).toHaveValue('');
-    await expect(strength).toContainText('沿用模型配置（xhigh）');
-    await expect(strength.locator('option[value="max"]')).toHaveCount(1);
-    if (effort) await strength.selectOption(effort);
+    await expectSelectedOption(page, strength, '沿用模型配置（xhigh）');
+    await expectOption(page, strength, 'max');
+    if (effort) await selectOption(page, strength, effort === 'none' ? '模型默认（不传参数）' : effort);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
     await page.getByLabel('任务目标').fill('核对两份统计资料');
     await page.getByLabel('验收条件 1', { exact: true }).fill('列出可复核的差异');
     if (effort === 'max') await page.screenshot({ path: test.info().outputPath('create-max-mobile.png'), fullPage: true });
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
+    await page.getByRole('button', { name: /创建任务/ }).click();
     await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
     if (effort) expect(submitted?.reasoning_effort).toBe(effort);
     else expect(submitted).not.toHaveProperty('reasoning_effort');
@@ -52,12 +52,11 @@ for (const effort of ['', 'max', 'none']) {
 test('切换模型重置任务覆盖，DeepSeek原生支持max，不支持的Provider不显示强度', async ({ page }) => {
   const mock = await setupModels(page);
   await page.goto('/tasks/new');
-  await page.getByLabel('推理强度').selectOption('max');
-  await page.getByLabel('平台模型').selectOption('native');
-  await expect(page.getByLabel('推理强度')).toHaveValue('');
-  await expect(page.getByLabel('推理强度')).toContainText('沿用模型配置（low）');
-  await page.getByLabel('推理强度').selectOption('max');
-  await page.getByLabel('平台模型').selectOption('local');
+  await selectOption(page, page.getByLabel('推理强度'), 'max');
+  await selectOption(page, page.getByLabel('平台模型'), 'DeepSeek 官方');
+  await expectSelectedOption(page, page.getByLabel('推理强度'), '沿用模型配置（low）');
+  await selectOption(page, page.getByLabel('推理强度'), 'max');
+  await selectOption(page, page.getByLabel('平台模型'), '本地模型');
   await expect(page.getByLabel('推理强度')).toHaveCount(0);
   await expect(page.getByText('该连接方式使用模型默认思考设置。')).toBeVisible();
   expect(mock.unexpected).toEqual([]);
@@ -66,14 +65,13 @@ test('切换模型重置任务覆盖，DeepSeek原生支持max，不支持的Pro
 test('模型配置保留既有兼容值，DeepSeek Responses可保存max', async ({ page }) => {
   const mock = await setupModels(page);
   await page.goto('/profiles');
-  await page.getByRole('button', { name: '模型配置', exact: true }).click();
-  await page.getByRole('button', { name: /审查模型/ }).click();
+  await page.getByRole('tab', { name: /模型配置$/ }).click();
+  await selectOption(page, page.getByRole('combobox', { name: '模型连接', exact: true }), '审查模型');
   const editor = page.getByRole('region', { name: '模型配置编辑' });
-  await expect(editor.getByLabel('推理强度')).toHaveValue('xhigh');
-  await expect(editor.getByLabel('推理强度')).toContainText('当前兼容设置');
-  await editor.getByLabel('推理强度').selectOption('max');
+  await expectSelectedOption(page, editor.getByLabel('推理强度'), 'xhigh（当前兼容设置）');
+  await selectOption(page, editor.getByLabel('推理强度'), 'max');
   await page.screenshot({ path: test.info().outputPath('model-max-desktop.png'), fullPage: true });
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await editor.getByRole('button', { name: /保存$/ }).click();
   await expect(page.getByRole('status')).toContainText('已保存');
   expect(mock.modelSaves[0]).toMatchObject({ provider: 'openai_responses', model: 'deepseek-flash', reasoning_effort: 'max' });
   expect(mock.modelSaves[0]).not.toHaveProperty('credentials.api_key');

@@ -6,19 +6,19 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  --color-bg: oklch(1 0 0);
-  --color-canvas: oklch(0.977 0.003 260);
-  --color-surface: oklch(0.973 0.002 260);
+  --color-bg: #fff;
+  --color-canvas: #f2f4f7;
+  --color-surface: #f5f7fa;
   --color-surface-hover: oklch(0.953 0.003 260);
-  --color-line: oklch(0.91 0.004 260);
+  --color-line: #dce1e8;
   --color-line-strong: oklch(0.82 0.007 260);
   --color-control-line: oklch(0.63 0.012 260);
-  --color-ink: oklch(0.24 0.012 260);
-  --color-muted: oklch(0.43 0.012 260);
+  --color-ink: #242a33;
+  --color-muted: #647082;
   --color-subtle: oklch(0.54 0.01 260);
-  --color-primary: oklch(0.54 0.17 36);
-  --color-primary-hover: oklch(0.46 0.17 36);
-  --color-primary-soft: oklch(0.96 0.021 36);
+  --color-primary: #386ac0;
+  --color-primary-hover: #2558a5;
+  --color-primary-soft: #eaf0fb;
   --color-success: oklch(0.43 0.105 155);
   --color-success-soft: oklch(0.955 0.025 155);
   --color-warning: oklch(0.45 0.115 75);
@@ -31,7 +31,7 @@
   --shadow-raised: 0 6px 24px oklch(0.2 0.01 260 / 0.06);
   --shadow-dialog: 0 24px 80px oklch(0.2 0.01 260 / 0.2);
   --color-overlay: oklch(0.2 0.01 260 / 0.38);
-  --focus-ring: 0 0 0 3px oklch(0.54 0.17 36 / 0.16);
+  --focus-ring: 0 0 0 3px rgb(56 106 192 / 0.16);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
@@ -55,7 +55,7 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --z-sticky: 20;
   --z-panel: 30;
-  --app-bar-height: 57px;
+  --app-bar-height: 44px;
 }
 
 * { box-sizing: border-box; }
@@ -68,36 +68,13 @@ input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color:
 input, textarea, select { scroll-margin-top: 100px; }
 button, a, summary { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 a { color: inherit; }
-img, svg { display: block; }
-:where(a:has(svg[data-ui-icon]), button:has(svg[data-ui-icon])) { display: inline-flex; align-items: center; gap: 8px; }
-svg[data-ui-icon] { width: 18px; height: 18px; flex: none; }
-:where(button, a, summary, input, select, textarea) {
-  transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-}
-:where(button, a[role='button']):active:not(:disabled):not([aria-disabled='true']) { transform: translateY(1px); }
-details > summary { cursor: pointer; list-style: none; }
-details > summary::-webkit-details-marker { display: none; }
-details > summary:not([data-no-chevron])::before {
-  content: ''; display: inline-block; width: 6px; height: 6px; flex: none; margin-right: 9px;
-  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg); transition: transform var(--duration-fast) var(--ease-out);
-}
-details[open] > summary:not([data-no-chevron])::before { transform: rotate(45deg); }
-@keyframes panel-enter { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes panel-exit { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(8px); } }
-@keyframes content-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-details[open] > :not(summary) { animation: content-enter var(--duration-fast) var(--ease-out); }
+img { display: block; }
 ::selection { background: var(--color-primary-soft); }
 h1, h2, h3 { text-wrap: balance; }
 p { text-wrap: pretty; }
 pre, code { font-family: var(--font-mono); }
 pre { text-wrap: initial; }
-@media (max-width: 650px) { :root { --app-bar-height: 101px; } }
-dialog { max-height: calc(100dvh - 40px); box-shadow: var(--shadow-dialog); opacity: 0; transform: translateY(8px); transition: opacity var(--duration-panel) var(--ease-out), transform var(--duration-panel) var(--ease-out), display var(--duration-panel) allow-discrete, overlay var(--duration-panel) allow-discrete; }
-dialog[open] { opacity: 1; transform: translateY(0); }
-dialog::backdrop { background: var(--color-overlay); opacity: 0; transition: opacity var(--duration-panel) var(--ease-out), display var(--duration-panel) allow-discrete, overlay var(--duration-panel) allow-discrete; }
-dialog[open]::backdrop { opacity: 1; }
-@starting-style { dialog[open] { opacity: 0; transform: translateY(8px); } dialog[open]::backdrop { opacity: 0; } }
+
 [hidden] { display: none !important; }
 
 :focus-visible {

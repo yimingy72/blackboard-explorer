@@ -1,19 +1,29 @@
 import { expect, test, type Page } from '@playwright/test';
 import { CTF_ID, installCtfApi, openCtfMenu } from './ctf-fixtures';
 
-const screenshots = '../docs/tasks/ctf-t6-screenshots';
+const screenshots = '../.data/ui-rebuild/e2e/ctf';
 
 async function layoutMetrics(page: Page) {
   return page.evaluate(() => {
     const nodes = [...document.querySelectorAll('.react-flow__node')].map((node) => node.getBoundingClientRect());
     const minimap = document.querySelector('.react-flow__minimap')?.getBoundingClientRect();
     const overlapsMinimap = minimap ? nodes.some((node) => node.right > minimap.left && node.left < minimap.right && node.bottom > minimap.top && node.top < minimap.bottom) : false;
+    const cardOverflow = [...document.querySelectorAll<HTMLElement>('.react-flow__node button')].filter((button) => {
+      const bounds = button.getBoundingClientRect();
+      const text = [...button.querySelectorAll<HTMLElement>('*')].filter((element) =>
+        element.children.length === 0 && element.textContent?.trim() && element.getClientRects().length > 0);
+      return button.scrollHeight > button.clientHeight + 1 || text.some((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1;
+      });
+    }).length;
     return {
       viewport: { width: window.innerWidth, height: window.innerHeight },
       overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       overflowY: document.documentElement.scrollHeight - document.documentElement.clientHeight,
       nodeCount: nodes.length,
       overlapsMinimap,
+      cardOverflow,
       nestedScrollers: [...document.querySelectorAll<HTMLElement>('*')].filter((element) => {
         const style = getComputedStyle(element);
         return (style.overflowY === 'auto' || style.overflowY === 'scroll') && element.scrollHeight > element.clientHeight + 1;
@@ -27,35 +37,37 @@ test('CTF desktop 1920/1440 keeps the board readable and the inspector reversibl
   await page.setViewportSize({ width: 1920, height: 1100 });
   await page.goto(`/tasks/${CTF_ID}`);
   await expect(page.getByRole('main', { name: 'CTF 团队协作画布' })).toBeVisible();
-  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: /^题目详情：| 会话$/ })).toHaveCount(0);
   const default1920 = await layoutMetrics(page);
   expect(default1920.overflowX).toBeLessThanOrEqual(1);
   expect(default1920.overlapsMinimap).toBe(false);
   expect(default1920.nodeCount).toBe(6);
+  expect(default1920.cardOverflow).toBe(0);
   await page.screenshot({ path: `${screenshots}/visual-1920-default.png`, fullPage: true });
 
   await page.getByRole('button', { name: 'Agent：Web 分析员' }).click();
-  await expect(page.getByRole('complementary', { name: 'Web 分析员 会话详情' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Web 分析员 会话' })).toBeVisible();
   const agentOpen = await layoutMetrics(page);
   expect(agentOpen.overflowX).toBeLessThanOrEqual(1);
   await page.screenshot({ path: `${screenshots}/visual-1920-agent-open.png`, fullPage: true });
 
   await page.getByRole('button', { name: '关闭详情' }).click();
-  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: /^题目详情：| 会话$/ })).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 900 });
   const default1440 = await layoutMetrics(page);
   expect(default1440.overflowX).toBeLessThanOrEqual(1);
   expect(default1440.overlapsMinimap).toBe(false);
+  expect(default1440.cardOverflow).toBe(0);
   await page.screenshot({ path: `${screenshots}/visual-1440-closed.png`, fullPage: true });
 
   await page.getByRole('button', { name: '任务：模拟 Web 题' }).click();
-  const detail = page.getByRole('complementary', { name: '题目详情' });
+  const detail = page.getByRole('complementary', { name: /^题目详情：/ });
   await detail.getByRole('tab', { name: /记录/ }).click();
   await expect(detail).toContainText('候选记录');
   await expect(detail).toContainText('FLAG{mock-second}');
   await page.screenshot({ path: `${screenshots}/visual-1440-task-open.png`, fullPage: true });
   await detail.getByRole('button', { name: '关闭详情' }).click();
-  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: /^题目详情：| 会话$/ })).toHaveCount(0);
   expect(mock.unexpected).toEqual([]);
 });
 
@@ -76,7 +88,8 @@ test('CTF long content, empty task, history and failure metadata remain readable
   await expect(page.getByRole('heading', { name: /一个非常长的团队协作验收任务名称/ })).toBeVisible();
   await expect(page.getByRole('button', { name: '任务：空任务（无说明）' })).toBeVisible();
   await page.getByRole('button', { name: '任务：空任务（无说明）' }).click();
-  const empty = page.getByRole('complementary', { name: '题目详情' });
+  expect((await layoutMetrics(page)).cardOverflow).toBe(0);
+  const empty = page.getByRole('complementary', { name: /^题目详情：/ });
   await expect(empty).toContainText('尚未分派');
   await empty.getByRole('tab', { name: /记录/ }).click();
   await expect(empty).toContainText('还没有共享记录');
@@ -93,11 +106,11 @@ test('CTF long content, empty task, history and failure metadata remain readable
   await page.screenshot({ path: `${screenshots}/visual-long-history.png`, fullPage: true });
 
   await page.getByRole('button', { name: /Web 分析员/ }).click();
-  const activity = page.getByRole('complementary', { name: 'Web 分析员 会话详情' });
+  const activity = page.getByRole('complementary', { name: 'Web 分析员 会话' });
   await expect(activity).toContainText('read_artifact');
   await expect(activity).toContainText('已完成');
-  await activity.locator('summary').filter({ hasText: 'read_artifact' }).click();
-  const toolResult = activity.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'read_artifact' }) }).locator('pre').last();
+  await activity.getByRole('button', { name: /^read_artifact/ }).click();
+  const toolResult = activity.getByRole('region', { name: 'read_artifact 参数与结果', exact: true }).locator('pre').last();
   await expect(toolResult).toContainText('仅用于布局验收');
   await expect(toolResult).not.toContainText('Full payload in linked observation.');
   await page.screenshot({ path: `${screenshots}/visual-long-tool-result.png`, fullPage: true });
@@ -105,9 +118,10 @@ test('CTF long content, empty task, history and failure metadata remain readable
   mock.finish('failed', true);
   await page.getByRole('button', { name: '关闭详情' }).click();
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: '刷新', exact: true })).toBeHidden();
   await openCtfMenu(page);
-  await page.getByRole('button', { name: '收尾与恢复' }).click();
+  await page.getByRole('menuitem', { name: '收尾与恢复', exact: true }).click();
   const recovery = page.getByRole('region', { name: '收尾与恢复' });
   await expect(recovery).toContainText('失败诊断');
   await expect(recovery).toContainText('RuntimeError');
