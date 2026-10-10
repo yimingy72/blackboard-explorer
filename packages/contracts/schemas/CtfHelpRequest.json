@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "body": {
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    },
+    "artifact_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Artifact Ids",
+      "type": "array"
+    },
+    "attempted_routes": {
+      "minLength": 1,
+      "title": "Attempted Routes",
+      "type": "string"
+    },
+    "observations_and_basis": {
+      "minLength": 1,
+      "title": "Observations And Basis",
+      "type": "string"
+    },
+    "failure_conditions": {
+      "minLength": 1,
+      "title": "Failure Conditions",
+      "type": "string"
+    },
+    "current_blocker": {
+      "minLength": 1,
+      "title": "Current Blocker",
+      "type": "string"
+    },
+    "help_needed": {
+      "minLength": 1,
+      "title": "Help Needed",
+      "type": "string"
+    },
+    "no_artifacts_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "No Artifacts Reason"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "body",
+    "attempted_routes",
+    "observations_and_basis",
+    "failure_conditions",
+    "current_blocker",
+    "help_needed"
+  ],
+  "title": "CtfHelpRequest",
+  "type": "object"
+}

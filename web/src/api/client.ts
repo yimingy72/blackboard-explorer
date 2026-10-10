@@ -10,7 +10,11 @@ export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'
   cleanup_ready: boolean;
   runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
 };
-export type TaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
+export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
+export type CtfTaskCreateInput = Omit<components['schemas']['CtfTaskCreate'], 'ctf_options'> & {
+  ctf_options?: Partial<components['schemas']['CtfOptions']>;
+};
+export type TaskCreateInput = BlackboardTaskCreateInput | CtfTaskCreateInput;
 export type InitialAttachment = { id: string; filename: string; path: string; uri: string; size: number; sha256: string };
 export type TaskInputGroup = { id: string; expires_at: string; files: InitialAttachment[] };
 export type TaskCreated = components['schemas']['TaskCreated'];
@@ -21,6 +25,16 @@ export type ProfileInput = components['schemas']['AgentProfile-Input'];
 export type WorkerRole = 'explore' | 'derive' | 'close';
 export type WorkerTools = components['schemas']['WorkerTools'];
 export type WorkerSettings = { revision: number; profile: ProfileInput };
+export type CtfPlatformToolBinding = {
+  server_name: string; server_version: number; tool_name: string;
+  purpose: 'management' | 'connect' | 'submit' | 'status' | 'unknown';
+  result_adapter: 'none' | 'fake_ctf_v1'; read_only: boolean;
+};
+export type CtfWorkerSettings = { revision: number; profile: {
+  prompt_templates: Record<'lead' | 'teammate', string>;
+  worker_tools: Record<'lead' | 'teammate', WorkerTools>;
+  platform_tools?: CtfPlatformToolBinding[];
+} };
 export type RuntimeInput = Pick<ProfileInput, 'params' | 'exec_image' | 'exec_resources' | 'privileged_allowlist'>;
 export type ProviderField = { name: string; label?: string; required: boolean };
 export type ProviderSpec = {
@@ -77,7 +91,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
     credentials: 'include',
@@ -191,6 +205,9 @@ export const api = {
   createProfileVersion: (name: string, profile: ProfileInput) =>
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
   getWorkerSettings: () => request<WorkerSettings>('/settings/workers'),
+  getCtfWorkerSettings: () => request<CtfWorkerSettings>('/settings/ctf/workers'),
+  saveCtfWorkerSettings: (role: 'lead' | 'teammate', expected_revision: number, prompt: string, tools: WorkerTools, platform_tools?: CtfPlatformToolBinding[]) =>
+    request<CtfWorkerSettings>(`/settings/ctf/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools, platform_tools }) }),
   saveWorkerSettings: (role: WorkerRole, expected_revision: number, prompt: string, tools: WorkerTools) =>
     request<WorkerSettings>(`/settings/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools }) }),
   saveRuntimeSettings: (expected_revision: number, input: RuntimeInput) =>

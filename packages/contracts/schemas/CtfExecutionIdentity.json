@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "boot_id": {
+      "minLength": 1,
+      "title": "Boot Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "drained": {
+      "default": false,
+      "title": "Drained",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "boot_id",
+    "generation"
+  ],
+  "title": "CtfExecutionIdentity",
+  "type": "object"
+}

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from bbx_contracts.ctf import CtfAgentProfile, load_ctf_profile
 from bbx_contracts.models import AgentProfile
 from bbx_contracts.profile import load_profile
 from fastapi import HTTPException
@@ -17,8 +18,37 @@ from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.store import schema as s
 
 
-def _content(profile: AgentProfile) -> dict[str, Any]:
-    return profile.model_dump(mode="json")
+def _content(profile: AgentProfile | CtfAgentProfile) -> dict[str, Any]:
+    data = profile.model_dump(mode="json")
+    if isinstance(profile, CtfAgentProfile):
+        data.pop("mode")
+        data["prompts"] = {"mode": "ctf", "platform_tools": data.pop("platform_tools", [])}
+        model = data.pop("model")
+        data["models"] = {"lead": model, "teammate": model}
+        data["params"] = data.pop("options")
+    return data
+
+
+def ctf_profile(row: dict[str, Any]) -> CtfAgentProfile:
+    if row["prompts"].get("mode") != "ctf":
+        raise HTTPException(409, "mode_mismatch")
+    return CtfAgentProfile.model_validate(
+        {
+            "model": row["models"]["lead"],
+            "platform_tools": row["prompts"].get("platform_tools", []),
+            "options": row["params"],
+            **{
+                key: row[key]
+                for key in (
+                    "prompt_templates",
+                    "worker_tools",
+                    "exec_image",
+                    "exec_resources",
+                    "privileged_allowlist",
+                )
+            },
+        }
+    )
 
 
 def _digest(content: dict[str, Any]) -> str:
@@ -71,7 +101,7 @@ class ProfileStore:
     async def create(
         self,
         name: str,
-        profile: AgentProfile,
+        profile: AgentProfile | CtfAgentProfile,
         created_by: str,
         *,
         expected_version: int | None = None,
@@ -85,10 +115,11 @@ class ProfileStore:
         self,
         conn: AsyncConnection,
         name: str,
-        profile: AgentProfile,
+        profile: AgentProfile | CtfAgentProfile,
         created_by: str,
         *,
         expected_version: int | None = None,
+        only_if_missing: bool = False,
     ) -> dict[str, Any]:
         content = _content(profile)
         # Serialize version assignment for concurrent app startups or editors.
@@ -110,6 +141,8 @@ class ProfileStore:
             current is None or current["version"] != expected_version
         ):
             raise HTTPException(409, "设置已被其他操作更新，请重新加载后再保存，当前草稿未被覆盖")
+        if only_if_missing and current is not None:
+            return dict(current)
         if current is not None and _digest(_row_content(dict(current))) == _digest(content):
             return dict(current)
         version = current["version"] + 1 if current is not None else 1
@@ -120,28 +153,13 @@ class ProfileStore:
         )
         return dict(result.mappings().one())
 
-    async def _ensure_bundled_profile(self, name: str, profile: AgentProfile) -> dict[str, Any]:
-        async with self.engine.connect() as conn:
-            previous = (
-                (
-                    await conn.execute(
-                        select(s.agent_profiles)
-                        .where(
-                            s.agent_profiles.c.name == name,
-                            s.agent_profiles.c.created_by == "system",
-                        )
-                        .order_by(s.agent_profiles.c.version.desc())
-                        .limit(1)
-                    )
-                )
-                .mappings()
-                .first()
+    async def _ensure_bundled_profile(
+        self, name: str, profile: AgentProfile | CtfAgentProfile
+    ) -> dict[str, Any]:
+        async with self.engine.begin() as conn:
+            return await self.create_in_connection(
+                conn, name, profile, "system", only_if_missing=True
             )
-        if previous is not None and _digest(_row_content(dict(previous))) == _digest(
-            _content(profile)
-        ):
-            return dict(previous)
-        return await self.create(name, profile, "system")
 
     async def ensure_default(self, directory: Path) -> dict[str, Any]:
         profile, _ = load_profile(directory)
@@ -150,6 +168,7 @@ class ProfileStore:
     async def ensure_bundled(self, directory: Path, platform: PlatformStore | None = None) -> None:
         default, _ = load_profile(directory)
         single, _ = load_profile(directory.parent / "single")
+        model = default.models.explore
         if platform is not None:
             model = await platform.ensure_default_model(default.models.explore)
             for profile in (default, single):
@@ -157,3 +176,9 @@ class ProfileStore:
                     setattr(profile.models, role, model.model_copy(deep=True))
         await self._ensure_bundled_profile("default", default)
         await self._ensure_bundled_profile("single", single)
+        ctf_directory = directory.parent / "ctf"
+        if ctf_directory.is_dir():
+            ctf = load_ctf_profile(ctf_directory)
+            if platform is not None:
+                ctf.model = model.model_copy(deep=True)
+            await self._ensure_bundled_profile("ctf", ctf)

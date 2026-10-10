@@ -10,6 +10,8 @@ import signal
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from bbx_envd.settings import Settings
 WORKSPACE = Path("/workspace")
 AGENT_ID = re.compile(r"agent-[0-9]{1,6}\Z")
 OUTPUT_LIMIT = 64 * 1024
+CTF_DRAIN_WAIT_SECONDS = 2.0
 _sequence = itertools.count(1)
 AUDIT_DIR = Path("/var/log/bbx")
 COMMAND_LOG = AUDIT_DIR / "commands.jsonl"
@@ -135,6 +138,9 @@ async def execute_command(
     timeout_sec: int,
     privileged: bool,
     settings: Settings,
+    *,
+    command_id: str | None = None,
+    process_started: Callable[[asyncio.subprocess.Process], None] | None = None,
 ) -> dict[str, object]:
     home = agent_home(agent_id)
     if not 1 <= timeout_sec <= settings.command_timeout_max:
@@ -144,7 +150,7 @@ async def execute_command(
         raise ValueError("cwd is not a directory")
     started = time.monotonic()
     execution: dict[str, object] = {
-        "command_id": str(uuid.uuid4()),
+        "command_id": command_id or str(uuid.uuid4()),
         "agent_id": agent_id,
         "command": command,
         "cwd": str(directory),
@@ -188,8 +194,12 @@ async def execute_command(
                 except Exception:
                     pass
                 else:
+                    if process_started is not None:
+                        process_started(process)
                     await finish_process_group(process)
                 raise
+            if process_started is not None:
+                process_started(process)
             try:
                 await asyncio.wait_for(process.wait(), timeout_sec)
             except TimeoutError:
@@ -199,6 +209,8 @@ async def execute_command(
                 status = "cancelled"
                 await finish_process_group(process)
                 raise
+            if process_started is not None:
+                await finish_process_group(process)
             exit_code = 124 if status == "timed_out" else process.returncode
             out.seek(0)
             err.seek(0)
@@ -254,3 +266,180 @@ async def execute_command(
         "full_output_path": full_output_path,
         "execution": {key: value for key, value in execution.items() if key != "command"},
     }
+
+
+@dataclass
+class CtfRegistration:
+    member_id: str
+    generation: int
+    stopping: bool = False
+    commands: dict[str, tuple[str, asyncio.Task[dict[str, object]]]] = field(default_factory=dict)
+    processes: dict[str, asyncio.subprocess.Process] = field(default_factory=dict)
+
+
+class CtfCommandRegistry:
+    """Fence one daemon boot and retain command outcomes until container removal."""
+
+    def __init__(self, task_id: str, marker: Path) -> None:
+        self.task_id = str(uuid.UUID(task_id))
+        self.boot_id = str(uuid.uuid4())
+        self.registrations: dict[str, CtfRegistration] = {}
+        self.commands: dict[tuple[str, str], tuple[int, str, asyncio.Task[dict[str, object]]]] = {}
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            self.unknown = True
+        else:
+            self.unknown = False
+            with os.fdopen(fd, "w") as stream:
+                stream.write(self.boot_id)
+                stream.flush()
+                os.fsync(stream.fileno())
+
+    def identity(self, body: dict[str, object]) -> tuple[str, str, int]:
+        if self.unknown:
+            raise ValueError("Previous boot process state unknown; replace the container")
+        if body.get("boot_id") != self.boot_id or body.get("task_id") != self.task_id:
+            raise ValueError("Stale boot or wrong task")
+        agent_id = body.get("agent_id")
+        member_id = body.get("member_id")
+        generation = body.get("generation")
+        if not isinstance(agent_id, str) or not valid_agent_id(agent_id):
+            raise ValueError("Invalid execution agent")
+        if not isinstance(member_id, str) or not member_id:
+            raise ValueError("Missing semantic member")
+        if type(generation) is not int or generation < 0:
+            raise ValueError("Invalid generation")
+        return agent_id, member_id, generation
+
+    def register(self, body: dict[str, object]) -> dict[str, object]:
+        agent_id, member_id, generation = self.identity(body)
+        previous = self.registrations.get(agent_id)
+        if previous is not None:
+            if previous.member_id != member_id or generation < previous.generation:
+                raise ValueError("Stale generation or changed member")
+            if generation == previous.generation:
+                if previous.stopping:
+                    raise ValueError("Generation stopped")
+                return self.status(agent_id)
+            if not previous.stopping or not self._drained(previous):
+                raise ValueError("Previous generation is not drained")
+        self.registrations[agent_id] = CtfRegistration(member_id, generation)
+        return self.status(agent_id)
+
+    @staticmethod
+    def _drained(registration: CtfRegistration) -> bool:
+        if any(not task.done() for _, task in registration.commands.values()):
+            return False
+        for process in registration.processes.values():
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                return False
+            return False
+        return True
+
+    def status(self, agent_id: str | None = None) -> dict[str, object]:
+        base: dict[str, object] = {"boot_id": self.boot_id, "task_id": self.task_id}
+        if self.unknown:
+            return {**base, "state": "unknown", "drained": False}
+        if agent_id is None:
+            return {**base, "state": "ready", "drained": False}
+        registration = self.registrations.get(agent_id)
+        if registration is None:
+            return {**base, "agent_id": agent_id, "state": "unregistered", "drained": False}
+        drained = registration.stopping and self._drained(registration)
+        running = any(not task.done() for _, task in registration.commands.values())
+        state = (
+            "drained"
+            if drained
+            else "stopping"
+            if registration.stopping
+            else "running"
+            if running
+            else "registered"
+        )
+        return {
+            **base,
+            "agent_id": agent_id,
+            "member_id": registration.member_id,
+            "generation": registration.generation,
+            "state": state,
+            "drained": drained,
+        }
+
+    def registered(self, body: dict[str, object]) -> CtfRegistration:
+        agent_id, member_id, generation = self.identity(body)
+        registration = self.registrations.get(agent_id)
+        if registration is None or (registration.member_id, registration.generation) != (
+            member_id,
+            generation,
+        ):
+            raise ValueError("Unregistered generation")
+        return registration
+
+    async def stop(self, body: dict[str, object]) -> dict[str, object]:
+        registration = self.registered(body)
+        registration.stopping = True
+        tasks = [task for _, task in registration.commands.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        # Container PID 1 reaps orphaned children asynchronously after SIGKILL.
+        deadline = asyncio.get_running_loop().time() + CTF_DRAIN_WAIT_SECONDS
+        while not self._drained(registration):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.02, remaining))
+        return self.status(str(body["agent_id"]))
+
+    async def execute(
+        self,
+        agent_id: str,
+        metadata: dict[str, object],
+        command: str,
+        cwd: str | None,
+        timeout_sec: int,
+        privileged: bool,
+        settings: Settings,
+    ) -> dict[str, object]:
+        body = {**metadata, "agent_id": agent_id}
+        registration = self.registered(body)
+        if registration.stopping:
+            raise ValueError("Generation stopping")
+        if registration.generation == 0:
+            raise ValueError("Generation zero cannot execute commands")
+        command_id = str(uuid.UUID(str(metadata.get("command_id", ""))))
+        digest = json.dumps([command, cwd, timeout_sec, privileged], separators=(",", ":"))
+        previous = self.commands.get((agent_id, command_id))
+        if previous:
+            if previous[1] != digest:
+                raise ValueError("Command ID reused with different arguments")
+            if previous[0] != registration.generation:
+                raise ValueError("Command belongs to a previous generation; reconcile its outcome")
+            task = previous[2]
+        else:
+            task = asyncio.create_task(
+                execute_command(
+                    agent_id,
+                    command,
+                    cwd,
+                    timeout_sec,
+                    privileged,
+                    settings,
+                    command_id=command_id,
+                    process_started=lambda process: registration.processes.__setitem__(
+                        command_id, process
+                    ),
+                )
+            )
+            registration.commands[command_id] = (digest, task)
+            self.commands[(agent_id, command_id)] = (registration.generation, digest, task)
+            # Consume errors even when the original MCP client disconnects.
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        return await asyncio.shield(task)

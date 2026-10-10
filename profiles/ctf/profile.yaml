@@ -1,0 +1,32 @@
+mode: ctf
+model:
+  provider: deepseek
+  model: deepseek-flash
+  base_url: https://api.deepseek.com
+  reasoning_effort: high
+  price:
+    billing_mode: deepseek_schedule
+    currency: CNY
+    cache_hit_per_m: 0.04
+    cache_miss_per_m: 2.00
+    output_per_m: 8.00
+    off_peak: false
+options:
+  max_teammates: 4
+  max_steps: 60
+  context_threshold: 128000
+prompts:
+  lead: prompts/lead.md.j2
+  teammate: prompts/teammate.md.j2
+worker_tools:
+  lead:
+    builtin: [list_members, send_message, create_teammate, stop_teammate, resume_teammate, remove_teammate, finish_task, set_verification_required, confirm_messages, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate]
+  teammate:
+    builtin: [list_members, send_message, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate]
+exec_image: bbx-exec-env:latest
+exec_resources:
+  cpus: 2
+  mem: 4g
+  pids: 256
+privileged_allowlist: []
+platform_tools: []

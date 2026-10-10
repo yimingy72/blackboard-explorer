@@ -167,6 +167,34 @@
       "title": "Derive Review",
       "type": "boolean"
     },
+    "derive_round": {
+      "default": 1,
+      "description": "推导轮次",
+      "minimum": 1,
+      "title": "Derive Round",
+      "type": "integer"
+    },
+    "round_start_version": {
+      "default": 0,
+      "description": "本轮开始前的黑板版本",
+      "minimum": 0,
+      "title": "Round Start Version",
+      "type": "integer"
+    },
+    "previous_receipt": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "上一轮推导回执",
+      "title": "Previous Receipt"
+    },
     "finished_version": {
       "anyOf": [
         {

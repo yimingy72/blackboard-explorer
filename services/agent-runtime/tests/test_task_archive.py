@@ -336,3 +336,115 @@ async def test_cancel_waits_for_background_writer_before_staging_cleanup(
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(work, 1)
     assert not staged_directory[0].exists()
+
+
+def ctf_artifact(task: UUID, body: bytes, version: int) -> dict:
+    aid = str(uuid4())
+    return {
+        "id": aid,
+        "task_id": str(task),
+        "uri": f"evidence/{task}/{aid}/replay.py",
+        "path": "/workspace/shared/ctf/challenge/replay.py",
+        "filename": "replay.py",
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size": len(body),
+        "created_version": version,
+    }
+
+
+async def test_ctf_latest_registered_artifact_restores_without_facts_and_retains_history(tmp_path):
+    task = uuid4()
+    old, latest = ctf_artifact(task, b"old-script", 4), ctf_artifact(task, b"new-script", 9)
+    data = snapshot(task)
+    del data["state"]["facts"]
+    data["state"]["task"]["mode"] = "ctf"
+    # Catalog order does not dictate recovery; registration version does.
+    data["state"]["artifacts"] = [latest, old]
+    data["state"]["records"] = [
+        {"body": "Original failed route", "artifact_refs": [old]},
+        {"body": "Undeclared file /workspace/shared/scratch.txt is not recoverable"},
+    ]
+    output = tmp_path / "ctf.tar.zst"
+    values = {old["uri"]: b"old-script", latest["uri"]: b"new-script"}
+    values[f"evidence/{task}/{uuid4()}/scratch.txt"] = b"not declared"
+    await build_archive(cast(ObjectStore, Objects(values)), task, data, output)
+    names, contents = members(output)
+    assert contents[latest["path"].removeprefix("/workspace/")] == b"new-script"
+    assert not any("scratch.txt" in name for name in names)
+    manifest = json.loads(contents[".bbx/manifest.json"])
+    assert manifest["policy"] == "registered-ctf-artifacts"
+    assert {item["uri"] for item in manifest["attachments"]} == {old["uri"], latest["uri"]}
+    assert {item["sha256"] for item in manifest["attachments"]} == {old["sha256"], latest["sha256"]}
+    assert manifest["restored_files"][0]["artifact_id"] == latest["id"]
+    assert manifest["restored_files"][0]["version"] == 9
+    saved = json.loads(contents[".bbx/task.json"])
+    assert saved["state"]["records"][0]["artifact_refs"] == [old]
+
+
+@pytest.mark.parametrize("failure", ["task", "uri", "path", "version", "hash", "missing_old"])
+async def test_ctf_rejects_invalid_or_damaged_historical_artifact(tmp_path, failure):
+    task = uuid4()
+    old, latest = ctf_artifact(task, b"old", 4), ctf_artifact(task, b"new", 9)
+    data = snapshot(task)
+    data["state"]["task"]["mode"] = "ctf"
+    data["state"]["artifacts"] = [old, latest]
+    values = {old["uri"]: b"old", latest["uri"]: b"new"}
+    if failure == "task":
+        old["task_id"] = str(uuid4())
+    elif failure == "uri":
+        old["uri"] = f"evidence/{uuid4()}/{uuid4()}/replay.py"
+    elif failure == "path":
+        old["path"] = "/workspace/shared/../replay.py"
+    elif failure == "version":
+        old["created_version"] = None
+    elif failure == "hash":
+        old["sha256"] = "0" * 64
+    else:
+        del values[old["uri"]]
+    output = tmp_path / "existing.tar.zst"
+    output.write_bytes(b"previous archive")
+    with pytest.raises((ValueError, FileNotFoundError)):
+        await build_archive(cast(ObjectStore, Objects(values)), task, data, output)
+    assert output.read_bytes() == b"previous archive"
+
+
+async def test_ctf_archive_exports_sessions_mailbox_conclusion_and_platform_references(tmp_path):
+    task = uuid4()
+    data = snapshot(task)
+    data["state"]["task"].update(
+        mode="ctf",
+        ctf_control={
+            "phase": "closed",
+            "conclusion": {
+                "summary": "partial result",
+                "unresolved_items": ["external target close unknown"],
+            },
+        },
+    )
+    data["state"]["members"] = [{"id": "member-1", "status": "removed"}]
+    data["state"]["messages"] = [
+        {"id": "delivered", "status": "delivered"},
+        {"id": "deferred", "status": "queued", "deferred": True},
+    ]
+    data["sessions"] = [
+        {
+            "agent_id": "member-1",
+            "session": {
+                "state": {
+                    "in_memory": {
+                        "messages": [
+                            {"role": "user", "message_id": "delivered", "text": "prior instruction"}
+                        ]
+                    }
+                }
+            },
+        }
+    ]
+    response_uri = f"evidence/{task}/{uuid4()}/platform.json"
+    data["state"]["records"] = [{"platform_call": {"response_uri": response_uri}}]
+    output = tmp_path / "complete-ctf.tar.zst"
+    await build_archive(cast(ObjectStore, Objects({})), task, data, output)
+    _, contents = members(output)
+    saved = json.loads(contents[".bbx/task.json"])
+    assert saved == data
+    assert response_uri in json.loads(contents[".bbx/manifest.json"])["references"]

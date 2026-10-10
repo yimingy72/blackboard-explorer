@@ -15,7 +15,9 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
+from agent_framework.exceptions import ChatClientContentFilterException
 from agent_framework.openai import OpenAIChatClient
+from bbx_contracts.ctf import load_ctf_profile
 from bbx_runtime.model_errors import (
     IncompleteModelStreamError,
     ModelStreamError,
@@ -24,6 +26,7 @@ from bbx_runtime.model_errors import (
 from bbx_runtime.models import (
     CompleteResponsesClient,
     close_model_client,
+    ctf_model_run_options,
     load_runtime_profile,
     make_client,
     model_run_options,
@@ -32,6 +35,15 @@ from bbx_runtime.trace import model_content
 from openai import AsyncOpenAI
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles/default"
+
+
+@pytest.mark.parametrize("provider", ["deepseek", "openai_chat", "openai_responses"])
+def test_ctf_profile_uses_deepseek_maximum_without_changing_ordinary_options(provider):
+    profile = load_ctf_profile(PROFILE_DIR.parent / "ctf")
+    model = profile.model.model_copy(update={"provider": provider})
+    assert model.model == "deepseek-flash"
+    assert ctf_model_run_options(model).get("max_tokens") == 393216
+    assert "max_tokens" not in model_run_options(model)
 
 
 @pytest.mark.parametrize("call_count", [1, 2])
@@ -175,7 +187,11 @@ def chat_chunk(index: int, delta: dict[str, Any], finish: str | None = None, usa
 
 
 @pytest.mark.parametrize("provider", ["deepseek", "openai_chat", "openai_compatible"])
-async def test_chat_sse_tool_loop_usage_reasoning_and_history(monkeypatch, provider):
+@pytest.mark.parametrize("ctf", [False, True])
+@pytest.mark.parametrize("model_name", ["test-model", "deepseek-flash"])
+async def test_chat_sse_tool_loop_usage_reasoning_and_history(
+    monkeypatch, provider, ctf, model_name
+):
     requests: list[dict[str, Any]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -183,6 +199,8 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(monkeypatch, provi
         requests.append(body)
         assert body["stream"] is True
         assert body["stream_options"] == {"include_usage": True}
+        cap = 393216 if model_name == "deepseek-flash" else 8192
+        assert body.get("max_completion_tokens") == (cap if ctf else None)
         if len(requests) == 1:
             return sse(
                 chat_chunk(1, {"role": "assistant", "reasoning_content": "part-A"}),
@@ -241,7 +259,7 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(monkeypatch, provi
         lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
     )
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
-        update={"provider": provider, "model": "test-model", "base_url": "https://model.test/v1"}
+        update={"provider": provider, "model": model_name, "base_url": "https://model.test/v1"}
     )
     client = make_client(
         model,
@@ -265,7 +283,8 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(monkeypatch, provi
 
     try:
         async with Agent(client=client, tools=[lookup], middleware=[Capture()]) as agent:
-            stream = agent.run("Find a", stream=True, options=model_run_options(model))
+            options = ctf_model_run_options(model) if ctf else model_run_options(model)
+            stream = agent.run("Find a", stream=True, options=options)
             result = await stream.get_final_response()
         assert result.text == "found a"
         assert calls == ["a"]
@@ -340,7 +359,11 @@ def responses_body(index: int, output: list[dict[str, Any]], status: str = "comp
 
 
 @pytest.mark.parametrize("mixed_text", [False, True])
-async def test_responses_sse_replays_local_function_history(monkeypatch, mixed_text):
+@pytest.mark.parametrize("ctf", [False, True])
+@pytest.mark.parametrize("model_name", ["test-model", "deepseek-flash"])
+async def test_responses_sse_replays_local_function_history(
+    monkeypatch, mixed_text, ctf, model_name
+):
     requests: list[dict[str, Any]] = []
     function = {
         "type": "function_call",
@@ -369,6 +392,8 @@ async def test_responses_sse_replays_local_function_history(monkeypatch, mixed_t
         body = json.loads(request.content)
         requests.append(body)
         assert body["stream"] is True and body["store"] is False
+        cap = 393216 if model_name == "deepseek-flash" else 8192
+        assert body.get("max_output_tokens") == (cap if ctf else None)
         if len(requests) == 1:
             first_events = (
                 [
@@ -478,7 +503,7 @@ async def test_responses_sse_replays_local_function_history(monkeypatch, mixed_t
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={
             "provider": "openai_responses",
-            "model": "test-model",
+            "model": model_name,
             "base_url": "https://model.test/v1",
         }
     )
@@ -497,9 +522,8 @@ async def test_responses_sse_replays_local_function_history(monkeypatch, mixed_t
 
     try:
         async with Agent(client=client, tools=[lookup]) as agent:
-            result = await agent.run(
-                "Find a", stream=True, options=model_run_options(model)
-            ).get_final_response()
+            options = ctf_model_run_options(model) if ctf else model_run_options(model)
+            result = await agent.run("Find a", stream=True, options=options).get_final_response()
         assert result.text.endswith("found a")
         assert calls == ["a"]
         assert len(requests) == 2
@@ -509,8 +533,17 @@ async def test_responses_sse_replays_local_function_history(monkeypatch, mixed_t
         await close_model_client(client)
 
 
-@pytest.mark.parametrize("status", ["failed", "incomplete", "missing"])
-async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status):
+@pytest.mark.parametrize(
+    ("status", "reason", "category"),
+    [
+        ("failed", None, "unknown"),
+        ("incomplete", None, "invalid_response"),
+        ("incomplete", "max_output_tokens", "invalid_response"),
+        ("incomplete", "content_filter", "content_filter"),
+        ("missing", None, "connection"),
+    ],
+)
+async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status, reason, category):
     message = {
         "type": "message",
         "id": "msg_1",
@@ -522,20 +555,43 @@ async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status):
     def respond(_request: httpx.Request) -> httpx.Response:
         events = [
             {
-                "type": "response.output_text.delta",
+                "type": "response.output_item.added",
                 "sequence_number": 1,
                 "output_index": 0,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "",
+                    "status": "in_progress",
+                },
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 2,
+                "output_index": 0,
+                "item_id": "fc_1",
+                "delta": '{"name":"a"}',
+            },
+            {
+                "type": "response.output_text.delta",
+                "sequence_number": 3,
+                "output_index": 1,
                 "content_index": 0,
                 "item_id": "msg_1",
                 "delta": '{"accepted":true}',
-            }
+            },
         ]
         if status != "missing":
             events.append(
                 {
                     "type": f"response.{status}",
-                    "sequence_number": 2,
-                    "response": responses_body(1, [message], status),
+                    "sequence_number": 4,
+                    "response": {
+                        **responses_body(1, [message], status),
+                        "incomplete_details": {"reason": reason} if reason else None,
+                    },
                 }
             )
         return sse(*events)
@@ -559,24 +615,30 @@ async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status):
         conclude_grace_calls=0,
         max_duration_seconds=10,
     )
+    calls: list[str] = []
+
+    def lookup(name: str) -> str:
+        calls.append(name)
+        return f"found {name}"
+
     try:
-        async with Agent(client=client) as agent:
-            with pytest.raises((httpx.RemoteProtocolError, ModelStreamError)) as failure:
+        async with Agent(client=client, tools=[lookup]) as agent:
+            with pytest.raises(
+                (httpx.RemoteProtocolError, ModelStreamError, ChatClientContentFilterException)
+            ) as failure:
                 await agent.run(
                     "Start", stream=True, options=model_run_options(model)
                 ).get_final_response()
         metadata = model_error_metadata(failure.value)
-        assert metadata["category"] == (
-            "connection"
-            if status == "missing"
-            else "invalid_response"
-            if status == "incomplete"
-            else "unknown"
+        assert calls == []
+        assert metadata["category"] == category
+        assert metadata["incomplete_reason"] == (reason if reason == "max_output_tokens" else None)
+        assert metadata["failure_phase"] == (
+            "unknown" if category == "content_filter" else "stream_completion"
         )
-        assert metadata["failure_phase"] == "stream_completion"
         if status == "missing":
             assert isinstance(failure.value, IncompleteModelStreamError)
-        else:
+        elif category != "content_filter":
             assert metadata["event_type"] == f"response.{status}"
     finally:
         await close_model_client(client)

@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "lead": {
+      "minLength": 1,
+      "title": "Lead",
+      "type": "string"
+    },
+    "teammate": {
+      "minLength": 1,
+      "title": "Teammate",
+      "type": "string"
+    }
+  },
+  "required": [
+    "lead",
+    "teammate"
+  ],
+  "title": "CtfPromptTemplates",
+  "type": "object"
+}

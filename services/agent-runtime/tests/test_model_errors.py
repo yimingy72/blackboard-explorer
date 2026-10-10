@@ -52,6 +52,7 @@ def test_status_error_category_and_safe_metadata(status, code, category, transie
         "transport_type": None,
         "failure_phase": "http_response",
         "event_type": None,
+        "incomplete_reason": None,
         "transient": transient,
         "http_status": status,
         "provider_code": code,
@@ -120,13 +121,34 @@ def test_unknown_and_stream_codes_cannot_expose_exception_or_provider_text():
     assert metadata["failure_phase"] == "unknown"
 
     stream = ModelStreamError(
-        "unknown", event_type="error", provider_code="secret code with spaces"
+        "unknown",
+        event_type="error",
+        provider_code="secret code with spaces",
+        incomplete_reason="secret reason with spaces",
     )
     metadata = model_error_metadata(stream)
     assert metadata["category"] == "unknown"
     assert metadata["event_type"] == "error"
     assert metadata["provider_code"] is None
+    assert metadata["incomplete_reason"] is None
     assert "secret" not in json.dumps(metadata)
+
+
+@pytest.mark.parametrize("reason", [None, "max_output_tokens", "x" * 65])
+def test_wrapped_stream_incomplete_reason_is_bounded_and_separate_from_error_code(reason):
+    error = ModelStreamError(
+        "invalid_response",
+        event_type="response.incomplete",
+        provider_code="safe_code",
+        incomplete_reason=reason,
+    )
+    wrapped = ChatClientException("secret wrapper", inner_exception=error)
+    metadata = model_error_metadata(wrapped)
+    assert metadata["category"] == "invalid_response"
+    assert metadata["transient"] is False
+    assert metadata["event_type"] == "response.incomplete"
+    assert metadata["provider_code"] == "safe_code"
+    assert metadata["incomplete_reason"] == (reason if reason != "x" * 65 else None)
 
 
 def test_wrapped_local_type_error_and_sdk_error_keep_only_safe_cause_classes():

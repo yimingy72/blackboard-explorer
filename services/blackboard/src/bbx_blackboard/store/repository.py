@@ -51,12 +51,107 @@ async def counter(conn: AsyncConnection, task_id: UUID, kind: str, value: int) -
     )
 
 
+async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
+    """Refresh display columns without touching ownership, claims or checkpoint state."""
+    tid, kind, p = evt["task_id"], evt["type"], evt["payload"]
+    if kind in {"ctf.challenge.created", "ctf.challenge.updated"}:
+        result = p["result"]
+        await conn.execute(
+            insert(s.ctf_challenges)
+            .values(task_id=tid, id=result["id"], data=result, revision=result["revision"])
+            .on_conflict_do_update(
+                index_elements=["task_id", "id"],
+                set_={"data": result, "revision": result["revision"]},
+            )
+        )
+    elif kind == "ctf.record.appended":
+        result = {
+            **p["result"],
+            "created_version": evt["version"],
+            "created_at": evt["created_at"].isoformat(),
+        }
+        if result.get("kind") == "artifact_registration":
+            result["artifact"] = {**result["artifact"], "created_version": evt["version"]}
+        await conn.execute(
+            insert(s.ctf_records)
+            .values(task_id=tid, id=result["id"], data=result, version=evt["version"])
+            .on_conflict_do_update(
+                index_elements=["task_id", "id"], set_={"data": result, "version": evt["version"]}
+            )
+        )
+    elif kind == "task.created":
+        keys = ("name", "goal", "domain_context", "initial_attachments", "mode", "ctf_options")
+        await patch(conn, s.tasks, tid, {key: p[key] for key in keys if key in p})
+    elif kind == "task.report":
+        await patch(conn, s.tasks, tid, {"report_uri": p["uri"]})
+    elif kind == "task.archived":
+        await patch(conn, s.tasks, tid, {"workspace_uri": p["uri"]})
+    elif kind == "task.resumed":
+        # Rebuild the current run's presentation, never its execution ownership,
+        # budget, cleanup gate, leases, generation or confirmed Session.
+        await patch(
+            conn,
+            s.tasks,
+            tid,
+            {
+                "ctf_conclusion": None,
+                "report_uri": None,
+                "workspace_uri": None,
+            },
+        )
+    elif kind == "task.cleanup_ready":
+        # Cleanup readiness is an authoritative resource-safety gate.
+        pass
+    elif kind in {"ctf.conclusion.requested", "ctf.conclusion.finalized"}:
+        await patch(conn, s.tasks, tid, {"ctf_conclusion": p["conclusion"]})
+    elif kind == "ctf.member.created":
+        await patch(
+            conn,
+            s.ctf_members,
+            tid,
+            {key: p[key] for key in ("display_name", "normalized_name", "role")},
+            p["id"],
+        )
+    elif kind == "ctf.turn.finished":
+        await patch(
+            conn, s.ctf_turns, tid, {key: p[key] for key in ("end_reason", "final_answer")}, p["id"]
+        )
+    elif kind == "ctf.message.posted":
+        await patch(
+            conn,
+            s.ctf_messages,
+            tid,
+            {
+                key: p[key]
+                for key in ("sender_kind", "sender_id", "recipient_id", "body", "kind", "reply_to")
+            },
+            p["id"],
+        )
+    elif kind in {
+        "ctf.platform.dispatched",
+        "ctf.member.state_changed",
+        "ctf.member.removed",
+        "ctf.started",
+        "ctf.turn.started",
+        "ctf.message.delivered",
+        "agent.trace.recorded",
+        "tool_call.recorded",
+    }:
+        pass
+    else:
+        raise ValueError(f"unhandled CTF projection event: {kind}")
+
+
 async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     """Project one durable event into folded tables."""
     tid, kind, p, version = evt["task_id"], evt["type"], evt["payload"], evt["version"]
     stamp = evt["created_at"]
-    if kind == "task.created":
-        await patch(conn, s.tasks, tid, {"name": None, "initial_attachments": [], **p})
+    if kind.startswith("ctf."):
+        await apply_ctf_view(conn, evt)
+    elif kind == "task.created":
+        await patch(
+            conn, s.tasks, tid, {"name": None, "initial_attachments": [], "mode": "blackboard", **p}
+        )
     elif kind == "task.resumed":
         task = await row(conn, s.tasks, tid)
         await conn.execute(
@@ -570,6 +665,7 @@ class Repository:
     async def replay(self, tid: UUID) -> None:
         async with self.engine.begin() as conn:
             await self.lock(conn, tid)
+            task = await row(conn, s.tasks, tid)
             log = [
                 dict(x)
                 for x in (
@@ -580,6 +676,10 @@ class Repository:
                     )
                 ).mappings()
             ]
+            if task["mode"] == "ctf":
+                for evt in log:
+                    await apply_ctf_view(conn, evt)
+                return
             for table in (
                 s.facts,
                 s.intents,

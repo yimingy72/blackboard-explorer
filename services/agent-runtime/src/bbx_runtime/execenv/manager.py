@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import socket
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from uuid import UUID
 
 import docker
 import httpx
+from bbx_contracts.ctf import CtfAgentProfile
 from bbx_contracts.models import AgentProfile
 from bbx_objects import ObjectStore
 from docker.errors import NotFound
@@ -87,6 +89,13 @@ class ArchiveResult:
     fallback: str
 
 
+def runtime_container_id() -> str | None:
+    """Return the local Docker container ID when running inside a container."""
+    if not Path("/.dockerenv").exists():
+        return None
+    return socket.gethostname()
+
+
 class ExecEnvManager:
     def __init__(
         self,
@@ -122,6 +131,23 @@ class ExecEnvManager:
         if network.attrs.get("Internal") is not required_internal:
             expected = "internal" if required_internal else "non-internal"
             raise RuntimeError(f"Execution network {self.settings.exec_network} must be {expected}")
+        if self.settings.exec_access_mode == "network":
+            runtime_id = runtime_container_id()
+            containers = network.attrs.get("Containers")
+            if (
+                runtime_id
+                and containers is not None
+                and not any(
+                    runtime_id == container_id
+                    or runtime_id.startswith(container_id)
+                    or container_id.startswith(runtime_id)
+                    for container_id in containers
+                )
+            ):
+                raise RuntimeError(
+                    f"Execution network {self.settings.exec_network} is not attached to "
+                    "agent-runtime; set EXEC_NETWORK to the shared Compose exec network"
+                )
         return network
 
     async def _role(self, task_id: UUID, role: str) -> Any | None:
@@ -152,14 +178,17 @@ class ExecEnvManager:
         if container.status != "running":
             await asyncio.to_thread(container.start)
 
-    async def _create_envd(self, task_id: UUID, profile: AgentProfile) -> Any:
+    async def _create_envd(self, task_id: UUID, profile: AgentProfile | CtfAgentProfile) -> Any:
         name = self._name(task_id)
         await self._check_name(name, task_id, "envd")
+        network = await self._execution_network()
         token = task_token(self.settings.envd_token_secret.get_secret_value(), task_id)
         environment = {
             "ENVD_TOKEN": token,
             "PRIVILEGED_PREFIXES": ",".join(profile.privileged_allowlist),
         }
+        if isinstance(profile, CtfAgentProfile):
+            environment.update(ENVD_MODE="ctf", ENVD_TASK_ID=str(task_id))
         if self.settings.exec_egress_mode == "proxy":
             proxy = self.settings.egress_proxy_url
             if not proxy:
@@ -172,7 +201,7 @@ class ExecEnvManager:
             profile.exec_image,
             name=name,
             detach=True,
-            network=self.settings.exec_network,
+            network=getattr(network, "name", self.settings.exec_network),
             labels=self._labels(task_id, "envd"),
             environment=environment,
             cap_add=["NET_ADMIN"],
@@ -251,7 +280,10 @@ class ExecEnvManager:
                 await asyncio.sleep(0.25)
 
     async def provision(
-        self, task_id: UUID | str, profile: AgentProfile, restore_uri: str | None = None
+        self,
+        task_id: UUID | str,
+        profile: AgentProfile | CtfAgentProfile,
+        restore_uri: str | None = None,
     ) -> ExecEnvHandle:
         task = self._task(task_id)
         await self._execution_network()
@@ -280,6 +312,8 @@ class ExecEnvManager:
                         result = await client.restore(self.objects.stream(restore_uri))
                     else:
                         result = status
+                    if result.get("restored") is not True:
+                        raise RuntimeError("Task archive restore did not complete")
                     if result.get("skipped_links"):
                         LOGGER.warning(
                             "Task %s restored without %s archive links",
@@ -343,8 +377,10 @@ class ExecEnvManager:
                 if result.get("restored") is not True:
                     raise RuntimeError("Initial attachment restore did not complete")
 
-    async def archive_to_store(self, handle: ExecEnvHandle, run_number: int = 1) -> ArchiveResult:
-        uri = (
+    async def archive_to_store(
+        self, handle: ExecEnvHandle, run_number: int = 1, *, uri: str | None = None
+    ) -> ArchiveResult:
+        uri = uri or (
             f"workspace/{handle.task_id}.tar.zst"
             if run_number == 1
             else f"workspace/{handle.task_id}/run-{run_number}.tar.zst"
@@ -421,3 +457,19 @@ class ExecEnvManager:
             container = await self._role(task, role)
             if container is not None:
                 await asyncio.to_thread(container.remove, force=True)
+
+    async def destroy_confirmed(self, task_id: str, container_id: str) -> None:
+        """Remove exactly the recorded execution container, then verify its absence."""
+        task = self._task(task_id)
+        try:
+            container = await asyncio.to_thread(self.docker.containers.get, container_id)
+        except NotFound:
+            return
+        if any(container.labels.get(k) != v for k, v in self._labels(task, "envd").items()):
+            raise RuntimeError("CTF replacement container ownership mismatch")
+        await asyncio.to_thread(container.remove, force=True)
+        try:
+            await asyncio.to_thread(self.docker.containers.get, container_id)
+        except NotFound:
+            return
+        raise RuntimeError("CTF execution container destruction is unconfirmed")

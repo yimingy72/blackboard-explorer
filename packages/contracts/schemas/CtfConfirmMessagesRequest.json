@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "message_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Message Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "message_ids"
+  ],
+  "title": "CtfConfirmMessagesRequest",
+  "type": "object"
+}

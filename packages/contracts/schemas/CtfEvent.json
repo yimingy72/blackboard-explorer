@@ -1,0 +1,91 @@
+{
+  "additionalProperties": false,
+  "description": "CTF event envelope, including version-only redacted cursor events.",
+  "properties": {
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "ctf.member.created",
+        "ctf.member.state_changed",
+        "ctf.member.removed",
+        "ctf.started",
+        "ctf.challenge.created",
+        "ctf.challenge.updated",
+        "ctf.record.appended",
+        "ctf.artifact.registered",
+        "ctf.verification.updated",
+        "ctf.target.updated",
+        "ctf.platform.dispatched",
+        "ctf.message.posted",
+        "ctf.message.delivered",
+        "ctf.turn.started",
+        "ctf.turn.finished",
+        "ctf.conclusion.requested",
+        "ctf.conclusion.finalized",
+        "ctf.cursor"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "actor": {
+      "minLength": 1,
+      "title": "Actor",
+      "type": "string"
+    },
+    "object_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Object Id"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "addressed_to": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Addressed To"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "task_id",
+    "type",
+    "actor",
+    "created_at"
+  ],
+  "title": "CtfEvent",
+  "type": "object"
+}

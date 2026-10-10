@@ -100,7 +100,7 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_BUCKET: ${MINIO_BUCKET}
       ENVD_TOKEN_SECRET: ${ENVD_TOKEN_SECRET}
-      EXEC_NETWORK: ${EXEC_NETWORK:-blackboard-explorer_exec}
+      EXEC_NETWORK: ${EXEC_NETWORK:-${COMPOSE_PROJECT_NAME:-blackboard-explorer}_exec}
       EXEC_ACCESS_MODE: network
       EXEC_EGRESS_MODE: ${EXEC_EGRESS_MODE:-direct}
       EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8888}

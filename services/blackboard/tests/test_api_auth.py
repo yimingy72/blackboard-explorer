@@ -193,7 +193,7 @@ async def test_invalid_audience_and_expired_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> None:
+async def test_conversation_endpoints_keep_user_and_service_roles_separate(monkeypatch) -> None:
     config = settings()
     app = api.create_app(config)
     tid, mid = uuid4(), uuid4()
@@ -220,6 +220,11 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate() -> 
             assert task_id == tid
             return {"format": "bbx.task-archive.v1", "task_id": str(tid)}
 
+    async def fake_task(request, task_id):
+        assert task_id == tid
+        return {"id": tid, "mode": "blackboard"}
+
+    monkeypatch.setattr(api, "_task", fake_task)
     app.state.conversations = FakeConversations()
     agent = {"Authorization": f"Bearer {issue_agent_token(config, tid, 'agent-1')}"}
     service = {"Authorization": "Bearer service-test"}

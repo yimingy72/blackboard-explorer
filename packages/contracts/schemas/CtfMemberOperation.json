@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "stop",
+        "resume",
+        "remove"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "target_generation": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Generation"
+    },
+    "boot_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Boot Id"
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Phase"
+    }
+  },
+  "required": [
+    "request_id",
+    "kind"
+  ],
+  "title": "CtfMemberOperation",
+  "type": "object"
+}

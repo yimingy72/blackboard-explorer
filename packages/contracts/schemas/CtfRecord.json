@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "CtfArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "created_version": {
+          "minimum": 1,
+          "title": "Created Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "task_id",
+        "path",
+        "uri",
+        "sha256",
+        "size",
+        "filename",
+        "created_version"
+      ],
+      "title": "CtfArtifactRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "author_id": {
+      "minLength": 1,
+      "title": "Author Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "note",
+        "correction",
+        "help_request",
+        "artifact",
+        "verification",
+        "target"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "body": {
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    },
+    "created_version": {
+      "minimum": 1,
+      "title": "Created Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "artifact_refs": {
+      "items": {
+        "$ref": "#/$defs/CtfArtifactRef"
+      },
+      "title": "Artifact Refs",
+      "type": "array"
+    },
+    "attempted_routes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attempted Routes"
+    },
+    "observations_and_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observations And Basis"
+    },
+    "failure_conditions": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Conditions"
+    },
+    "current_blocker": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Blocker"
+    },
+    "help_needed": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Help Needed"
+    },
+    "no_artifacts_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "No Artifacts Reason"
+    },
+    "verification": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verification"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target"
+    },
+    "platform_call": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform Call"
+    },
+    "summary_applied": {
+      "default": true,
+      "title": "Summary Applied",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "task_id",
+    "challenge_id",
+    "author_id",
+    "kind",
+    "body",
+    "created_version",
+    "created_at"
+  ],
+  "title": "CtfRecord",
+  "type": "object"
+}

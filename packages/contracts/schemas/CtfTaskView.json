@@ -1,0 +1,605 @@
+{
+  "$defs": {
+    "CtfBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_cost": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Max Cost"
+        },
+        "max_minutes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_cost",
+        "max_minutes"
+      ],
+      "title": "CtfBudget",
+      "type": "object"
+    },
+    "CtfConclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "end_reason": {
+          "enum": [
+            "goal_claimed",
+            "user_stop",
+            "budget_exhausted",
+            "system_failure",
+            "partial"
+          ],
+          "title": "End Reason",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "unresolved_items": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Items",
+          "type": "array"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "lead_claim": {
+          "default": false,
+          "title": "Lead Claim",
+          "type": "boolean"
+        },
+        "verification_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verification Refs",
+          "type": "array"
+        },
+        "run_number": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Run Number",
+          "type": "integer"
+        },
+        "requested_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested By"
+        },
+        "requested_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested At"
+        },
+        "finalized_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finalized At"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CtfFailureDiagnostic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "end_reason",
+        "summary"
+      ],
+      "title": "CtfConclusion",
+      "type": "object"
+    },
+    "CtfExecutionIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "boot_id": {
+          "minLength": 1,
+          "title": "Boot Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "drained": {
+          "default": false,
+          "title": "Drained",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "boot_id",
+        "generation"
+      ],
+      "title": "CtfExecutionIdentity",
+      "type": "object"
+    },
+    "CtfFailureDiagnostic": {
+      "additionalProperties": false,
+      "description": "Safe coordinator failure metadata; never contains request or tool payloads.",
+      "properties": {
+        "error_type": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,99}$",
+          "title": "Error Type",
+          "type": "string"
+        },
+        "phase": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$",
+          "title": "Phase",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_type",
+        "phase",
+        "occurred_at",
+        "correlation_id",
+        "summary"
+      ],
+      "title": "CtfFailureDiagnostic",
+      "type": "object"
+    },
+    "CtfMember": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "lead",
+            "teammate"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "lifecycle": {
+          "default": "active",
+          "enum": [
+            "active",
+            "stopped",
+            "removed"
+          ],
+          "title": "Lifecycle",
+          "type": "string"
+        },
+        "run_state": {
+          "default": "idle",
+          "enum": [
+            "provisioning",
+            "idle",
+            "running",
+            "stopping",
+            "interrupted",
+            "failed"
+          ],
+          "title": "Run State",
+          "type": "string"
+        },
+        "generation": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "current_turn_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Turn Id"
+        },
+        "create_request_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Create Request Id"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "pending_operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CtfMemberOperation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CtfExecutionIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "operation_history": {
+          "items": {
+            "$ref": "#/$defs/CtfMemberOperation"
+          },
+          "title": "Operation History",
+          "type": "array"
+        },
+        "removed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Removed At"
+        }
+      },
+      "required": [
+        "task_id",
+        "agent_id",
+        "role",
+        "display_name"
+      ],
+      "title": "CtfMember",
+      "type": "object"
+    },
+    "CtfMemberOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "stop",
+            "resume",
+            "remove"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_generation": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Generation"
+        },
+        "boot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boot Id"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind"
+      ],
+      "title": "CtfMemberOperation",
+      "type": "object"
+    },
+    "CtfOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "max_teammates": {
+          "default": 4,
+          "minimum": 0,
+          "title": "Max Teammates",
+          "type": "integer"
+        },
+        "max_steps": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "context_threshold": {
+          "default": 128000,
+          "minimum": 1,
+          "title": "Context Threshold",
+          "type": "integer"
+        }
+      },
+      "title": "CtfOptions",
+      "type": "object"
+    },
+    "TaskStatus": {
+      "enum": [
+        "created",
+        "provisioning",
+        "running",
+        "closing",
+        "finished",
+        "failed",
+        "stopped"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "const": "ctf",
+      "title": "Mode",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "domain_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Domain Context"
+    },
+    "completion_requirements": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completion Requirements"
+    },
+    "budget": {
+      "$ref": "#/$defs/CtfBudget"
+    },
+    "ctf_options": {
+      "$ref": "#/$defs/CtfOptions"
+    },
+    "agent_profile": {
+      "default": "ctf",
+      "minLength": 1,
+      "title": "Agent Profile",
+      "type": "string"
+    },
+    "egress_allowlist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress Allowlist",
+      "type": "array"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/TaskStatus"
+    },
+    "version": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Version",
+      "type": "integer"
+    },
+    "members": {
+      "items": {
+        "$ref": "#/$defs/CtfMember"
+      },
+      "title": "Members",
+      "type": "array"
+    },
+    "conclusion": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfConclusion"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "mode",
+    "goal",
+    "budget",
+    "id",
+    "status"
+  ],
+  "title": "CtfTaskView",
+  "type": "object"
+}

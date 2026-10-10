@@ -1,6 +1,16 @@
 {
   "additionalProperties": false,
   "properties": {
+    "billing_mode": {
+      "default": "fixed",
+      "description": "固定费率或官方 DeepSeek 峰谷时段估算",
+      "enum": [
+        "fixed",
+        "deepseek_schedule"
+      ],
+      "title": "Billing Mode",
+      "type": "string"
+    },
     "currency": {
       "anyOf": [
         {

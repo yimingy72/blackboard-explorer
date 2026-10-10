@@ -1,0 +1,70 @@
+{
+  "additionalProperties": false,
+  "description": "Structured test-adapter result; never evidence of a real platform call.",
+  "properties": {
+    "status": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "unknown"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "target_id": {
+      "minLength": 1,
+      "title": "Target Id",
+      "type": "string"
+    },
+    "submission_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Submission Id"
+    },
+    "target_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "unknown",
+            "starting",
+            "running",
+            "stopping",
+            "stopped",
+            "error"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Status"
+    },
+    "connection": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Connection"
+    }
+  },
+  "required": [
+    "status",
+    "target_id"
+  ],
+  "title": "CtfFakePlatformResult",
+  "type": "object"
+}

@@ -533,6 +533,843 @@
         "title": "ConcludeBody",
         "type": "object"
       },
+      "CtfAgentProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "exec_image": {
+            "minLength": 1,
+            "title": "Exec Image",
+            "type": "string"
+          },
+          "exec_resources": {
+            "$ref": "#/components/schemas/ExecResources"
+          },
+          "mode": {
+            "const": "ctf",
+            "default": "ctf",
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelConfig-Output"
+          },
+          "options": {
+            "$ref": "#/components/schemas/CtfOptions"
+          },
+          "platform_tools": {
+            "items": {
+              "$ref": "#/components/schemas/CtfPlatformToolBinding"
+            },
+            "title": "Platform Tools",
+            "type": "array"
+          },
+          "privileged_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Privileged Allowlist",
+            "type": "array"
+          },
+          "prompt_templates": {
+            "$ref": "#/components/schemas/CtfPromptTemplates"
+          },
+          "worker_tools": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/WorkerTools"
+            },
+            "propertyNames": {
+              "enum": [
+                "lead",
+                "teammate"
+              ]
+            },
+            "title": "Worker Tools",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model",
+          "prompt_templates",
+          "worker_tools",
+          "exec_image",
+          "exec_resources"
+        ],
+        "title": "CtfAgentProfile",
+        "type": "object"
+      },
+      "CtfBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "max_cost": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Max Cost"
+          },
+          "max_minutes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Max Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_cost",
+          "max_minutes"
+        ],
+        "title": "CtfBudget",
+        "type": "object"
+      },
+      "CtfChallengeClaimRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision"
+        ],
+        "title": "CtfChallengeClaimRequest",
+        "type": "object"
+      },
+      "CtfChallengeCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requirements": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirements"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "title"
+        ],
+        "title": "CtfChallengeCreateRequest",
+        "type": "object"
+      },
+      "CtfChallengeUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "claim",
+              "assign",
+              "set_status",
+              "release",
+              "reopen",
+              "collaborators",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "collaborator_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collaborator Ids"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "work_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "in_progress",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Status"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "CtfChallengeUpdateRequest",
+        "type": "object"
+      },
+      "CtfEvent": {
+        "additionalProperties": false,
+        "description": "CTF event envelope, including version-only redacted cursor events.",
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "addressed_to": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Addressed To"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "object_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Id"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "ctf.member.created",
+              "ctf.member.state_changed",
+              "ctf.member.removed",
+              "ctf.started",
+              "ctf.challenge.created",
+              "ctf.challenge.updated",
+              "ctf.record.appended",
+              "ctf.artifact.registered",
+              "ctf.verification.updated",
+              "ctf.target.updated",
+              "ctf.platform.dispatched",
+              "ctf.message.posted",
+              "ctf.message.delivered",
+              "ctf.turn.started",
+              "ctf.turn.finished",
+              "ctf.conclusion.requested",
+              "ctf.conclusion.finalized",
+              "ctf.cursor"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "task_id",
+          "type",
+          "actor",
+          "created_at"
+        ],
+        "title": "CtfEvent",
+        "type": "object"
+      },
+      "CtfHelpRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "attempted_routes": {
+            "minLength": 1,
+            "title": "Attempted Routes",
+            "type": "string"
+          },
+          "body": {
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "current_blocker": {
+            "minLength": 1,
+            "title": "Current Blocker",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "failure_conditions": {
+            "minLength": 1,
+            "title": "Failure Conditions",
+            "type": "string"
+          },
+          "help_needed": {
+            "minLength": 1,
+            "title": "Help Needed",
+            "type": "string"
+          },
+          "no_artifacts_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Artifacts Reason"
+          },
+          "observations_and_basis": {
+            "minLength": 1,
+            "title": "Observations And Basis",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "body",
+          "attempted_routes",
+          "observations_and_basis",
+          "failure_conditions",
+          "current_blocker",
+          "help_needed"
+        ],
+        "title": "CtfHelpRequest",
+        "type": "object"
+      },
+      "CtfManualVerificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_refs": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "rejected",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "status",
+          "summary"
+        ],
+        "title": "CtfManualVerificationRequest",
+        "type": "object"
+      },
+      "CtfMemberOperationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "CtfMemberOperationRequest",
+        "type": "object"
+      },
+      "CtfOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "context_threshold": {
+            "default": 128000,
+            "minimum": 1.0,
+            "title": "Context Threshold",
+            "type": "integer"
+          },
+          "max_steps": {
+            "default": 60,
+            "minimum": 1.0,
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "max_teammates": {
+            "default": 4,
+            "minimum": 0.0,
+            "title": "Max Teammates",
+            "type": "integer"
+          }
+        },
+        "title": "CtfOptions",
+        "type": "object"
+      },
+      "CtfPlatformToolBinding": {
+        "additionalProperties": false,
+        "description": "Purpose metadata for one exact tool in the existing MCP registry.",
+        "properties": {
+          "purpose": {
+            "default": "unknown",
+            "enum": [
+              "management",
+              "connect",
+              "submit",
+              "status",
+              "unknown"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          },
+          "read_only": {
+            "default": false,
+            "title": "Read Only",
+            "type": "boolean"
+          },
+          "result_adapter": {
+            "default": "none",
+            "enum": [
+              "none",
+              "fake_ctf_v1"
+            ],
+            "title": "Result Adapter",
+            "type": "string"
+          },
+          "server_name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Server Name",
+            "type": "string"
+          },
+          "server_version": {
+            "minimum": 1.0,
+            "title": "Server Version",
+            "type": "integer"
+          },
+          "tool_name": {
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_name",
+          "server_version",
+          "tool_name"
+        ],
+        "title": "CtfPlatformToolBinding",
+        "type": "object"
+      },
+      "CtfPromptTemplates": {
+        "additionalProperties": false,
+        "properties": {
+          "lead": {
+            "minLength": 1,
+            "title": "Lead",
+            "type": "string"
+          },
+          "teammate": {
+            "minLength": 1,
+            "title": "Teammate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lead",
+          "teammate"
+        ],
+        "title": "CtfPromptTemplates",
+        "type": "object"
+      },
+      "CtfRecordAppendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "body": {
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "kind": {
+            "default": "note",
+            "enum": [
+              "note",
+              "correction"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "body"
+        ],
+        "title": "CtfRecordAppendRequest",
+        "type": "object"
+      },
+      "CtfTaskCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_profile": {
+            "default": "ctf",
+            "minLength": 1,
+            "title": "Agent Profile",
+            "type": "string"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/CtfBudget"
+          },
+          "completion_requirements": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Requirements"
+          },
+          "ctf_options": {
+            "$ref": "#/components/schemas/CtfOptions"
+          },
+          "domain_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Context"
+          },
+          "egress_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Egress Allowlist",
+            "type": "array"
+          },
+          "goal": {
+            "minLength": 1,
+            "title": "Goal",
+            "type": "string"
+          },
+          "input_file_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input File Ids"
+          },
+          "input_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Group Id"
+          },
+          "mode": {
+            "const": "ctf",
+            "title": "Mode",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "profile_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Version"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          }
+        },
+        "required": [
+          "mode",
+          "goal",
+          "budget"
+        ],
+        "title": "CtfTaskCreate",
+        "type": "object"
+      },
+      "CtfVerificationRequiredRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "minLength": 1,
+            "title": "Basis",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "required",
+          "basis"
+        ],
+        "title": "CtfVerificationRequiredRequest",
+        "type": "object"
+      },
+      "CtfWorkerUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "platform_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CtfPlatformToolBinding"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Tools"
+          },
+          "prompt": {
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/WorkerTools"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "prompt",
+          "tools"
+        ],
+        "title": "CtfWorkerUpdate",
+        "type": "object"
+      },
       "DeliveryBody": {
         "properties": {
           "claim_token": {
@@ -2034,7 +2871,15 @@
             "type": "string"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfile-Output"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentProfile-Output"
+              },
+              {
+                "$ref": "#/components/schemas/CtfAgentProfile"
+              }
+            ],
+            "title": "Profile"
           },
           "version": {
             "title": "Version",
@@ -2671,6 +3516,41 @@
             "title": "Created At",
             "type": "string"
           },
+          "ctf_conclusion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ctf Conclusion"
+          },
+          "ctf_options": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ctf Options"
+          },
+          "ctf_phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ctf Phase"
+          },
           "deleting": {
             "title": "Deleting",
             "type": "boolean"
@@ -2690,6 +3570,23 @@
             },
             "title": "Initial Attachments",
             "type": "array"
+          },
+          "members": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "mode": {
+            "default": "blackboard",
+            "enum": [
+              "blackboard",
+              "ctf"
+            ],
+            "title": "Mode",
+            "type": "string"
           },
           "name": {
             "anyOf": [
@@ -4046,6 +4943,135 @@
         ]
       }
     },
+    "/api/settings/ctf/prompts/{role}": {
+      "get": {
+        "operationId": "ctf_prompt_api_settings_ctf_prompts__role__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "lead",
+                "teammate"
+              ],
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ctf Prompt Api Settings Ctf Prompts  Role  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ctf Prompt",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/ctf/workers": {
+      "get": {
+        "operationId": "ctf_workers_api_settings_ctf_workers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ctf Workers Api Settings Ctf Workers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ctf Workers",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/ctf/workers/{role}": {
+      "put": {
+        "operationId": "update_ctf_worker_api_settings_ctf_workers__role__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "lead",
+                "teammate"
+              ],
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfWorkerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Ctf Worker Api Settings Ctf Workers  Role  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Ctf Worker",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/prompts/{role}": {
       "get": {
         "operationId": "prompt_api_settings_prompts__role__get",
@@ -4575,7 +5601,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TaskCreateBody"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TaskCreateBody"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CtfTaskCreate"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -5946,6 +6980,993 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/ctf/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "artifact_api_tasks__task_id__ctf_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Artifact Api Tasks  Task Id  Ctf Artifacts  Artifact Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Artifact",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges": {
+      "get": {
+        "operationId": "challenges_api_tasks__task_id__ctf_challenges_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Challenges Api Tasks  Task Id  Ctf Challenges Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Challenges",
+        "tags": [
+          "ctf"
+        ]
+      },
+      "post": {
+        "operationId": "create_challenge_api_tasks__task_id__ctf_challenges_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfChallengeCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Create Challenge Api Tasks  Task Id  Ctf Challenges Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Challenge",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}": {
+      "get": {
+        "operationId": "challenge_api_tasks__task_id__ctf_challenges__challenge_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Challenge Api Tasks  Task Id  Ctf Challenges  Challenge Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Challenge",
+        "tags": [
+          "ctf"
+        ]
+      },
+      "patch": {
+        "operationId": "update_challenge_api_tasks__task_id__ctf_challenges__challenge_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfChallengeUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Update Challenge Api Tasks  Task Id  Ctf Challenges  Challenge Id  Patch"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Challenge",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/claim": {
+      "post": {
+        "operationId": "claim_challenge_api_tasks__task_id__ctf_challenges__challenge_id__claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfChallengeClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Claim Challenge Api Tasks  Task Id  Ctf Challenges  Challenge Id  Claim Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Challenge",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/help": {
+      "post": {
+        "operationId": "request_help_api_tasks__task_id__ctf_challenges__challenge_id__help_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfHelpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Request Help Api Tasks  Task Id  Ctf Challenges  Challenge Id  Help Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Help",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/records": {
+      "get": {
+        "operationId": "records_api_tasks__task_id__ctf_challenges__challenge_id__records_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Records Api Tasks  Task Id  Ctf Challenges  Challenge Id  Records Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Records",
+        "tags": [
+          "ctf"
+        ]
+      },
+      "post": {
+        "operationId": "append_record_api_tasks__task_id__ctf_challenges__challenge_id__records_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfRecordAppendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Append Record Api Tasks  Task Id  Ctf Challenges  Challenge Id  Records Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Append Record",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/verification/manual": {
+      "post": {
+        "operationId": "manual_verification_api_tasks__task_id__ctf_challenges__challenge_id__verification_manual_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfManualVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Manual Verification Api Tasks  Task Id  Ctf Challenges  Challenge Id  Verification Manual Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Manual Verification",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/verification/required": {
+      "post": {
+        "operationId": "verification_required_api_tasks__task_id__ctf_challenges__challenge_id__verification_required_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfVerificationRequiredRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Verification Required Api Tasks  Task Id  Ctf Challenges  Challenge Id  Verification Required Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verification Required",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/members/{member_id}/{operation}": {
+      "post": {
+        "operationId": "member_operation_api_tasks__task_id__ctf_members__member_id___operation__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "enum": [
+                "stop",
+                "resume",
+                "remove"
+              ],
+              "title": "Operation",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CtfMemberOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Member Operation Api Tasks  Task Id  Ctf Members  Member Id   Operation  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Member Operation",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/{operation}": {
+      "post": {
+        "operationId": "runtime_api_tasks__task_id__ctf_runtime__operation__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "title": "Operation",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Runtime Api Tasks  Task Id  Ctf Runtime  Operation  Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/state": {
+      "get": {
+        "operationId": "state_api_tasks__task_id__ctf_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response State Api Tasks  Task Id  Ctf State Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "State",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/tools/{operation}": {
+      "post": {
+        "operationId": "tool_api_tasks__task_id__ctf_tools__operation__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "title": "Operation",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Tool Api Tasks  Task Id  Ctf Tools  Operation  Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tool",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/turns/{turn_id}/result": {
+      "get": {
+        "operationId": "turn_result_api_tasks__task_id__ctf_turns__turn_id__result_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Turn Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Turn Result Api Tasks  Task Id  Ctf Turns  Turn Id  Result Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Turn Result",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/events": {
       "get": {
         "operationId": "events_api_tasks__task_id__events_get",
@@ -5994,7 +8015,14 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/Event"
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Event"
+                      },
+                      {
+                        "$ref": "#/components/schemas/CtfEvent"
+                      }
+                    ]
                   },
                   "title": "Response Events Api Tasks  Task Id  Events Get",
                   "type": "array"

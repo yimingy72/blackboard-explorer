@@ -252,3 +252,50 @@ async def test_archive_fallback_keeps_exclusions(service, monkeypatch) -> None:
         )
         for name in names
     )
+
+
+@pytest.mark.asyncio
+async def test_scoped_files_and_stat_reject_other_members_and_symlink_aliases(service):
+    module, root = service
+    own = root / "agents/agent-2"
+    other = root / "agents/agent-3"
+    shared = root / "shared"
+    for directory in (own, other, shared):
+        directory.mkdir(parents=True)
+        (directory / "proof.txt").write_bytes(b"data")
+    (own / "alias.txt").symlink_to(other / "proof.txt")
+    (shared / "alias.txt").symlink_to(other / "proof.txt")
+    app = Starlette(routes=[Route("/files", module.files), Route("/stat", module.stat)])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for endpoint in ("/files", "/stat"):
+            for path in (own / "proof.txt", shared / "proof.txt"):
+                response = await client.get(
+                    endpoint,
+                    params={
+                        "path": str(path),
+                        "scope_agent_id": "agent-2",
+                    },
+                )
+                assert response.status_code == 200
+            for path in (other / "proof.txt", own / "alias.txt", shared / "alias.txt"):
+                response = await client.get(
+                    endpoint,
+                    params={
+                        "path": str(path),
+                        "scope_agent_id": "agent-2",
+                    },
+                )
+                assert response.status_code == 400
+            response = await client.get(
+                endpoint,
+                params={
+                    "path": str(own / "proof.txt"),
+                    "scope_agent_id": "../agent-2",
+                },
+            )
+            assert response.status_code == 400
+        assert (
+            await client.get("/files", params={"path": str(other / "proof.txt")})
+        ).status_code == 200

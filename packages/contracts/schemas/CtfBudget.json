@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_cost": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Max Cost"
+    },
+    "max_minutes": {
+      "exclusiveMinimum": 0,
+      "title": "Max Minutes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "max_cost",
+    "max_minutes"
+  ],
+  "title": "CtfBudget",
+  "type": "object"
+}

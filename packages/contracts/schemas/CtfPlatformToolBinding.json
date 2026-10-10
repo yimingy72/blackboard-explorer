@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "description": "Purpose metadata for one exact tool in the existing MCP registry.",
+  "properties": {
+    "server_name": {
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "title": "Server Name",
+      "type": "string"
+    },
+    "server_version": {
+      "minimum": 1,
+      "title": "Server Version",
+      "type": "integer"
+    },
+    "tool_name": {
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "purpose": {
+      "default": "unknown",
+      "enum": [
+        "management",
+        "connect",
+        "submit",
+        "status",
+        "unknown"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "result_adapter": {
+      "default": "none",
+      "enum": [
+        "none",
+        "fake_ctf_v1"
+      ],
+      "title": "Result Adapter",
+      "type": "string"
+    },
+    "read_only": {
+      "default": false,
+      "title": "Read Only",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "server_name",
+    "server_version",
+    "tool_name"
+  ],
+  "title": "CtfPlatformToolBinding",
+  "type": "object"
+}

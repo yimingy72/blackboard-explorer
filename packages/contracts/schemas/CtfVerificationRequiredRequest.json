@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "required": {
+      "title": "Required",
+      "type": "boolean"
+    },
+    "basis": {
+      "minLength": 1,
+      "title": "Basis",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "required",
+    "basis"
+  ],
+  "title": "CtfVerificationRequiredRequest",
+  "type": "object"
+}

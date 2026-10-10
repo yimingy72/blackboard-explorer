@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "purpose": {
+      "default": "execution",
+      "enum": [
+        "execution",
+        "review"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "status": {
+      "default": "running",
+      "enum": [
+        "running",
+        "finished",
+        "failed",
+        "interrupted",
+        "stopped"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "assignment_message_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Assignment Message Ids",
+      "type": "array"
+    },
+    "notification_only": {
+      "default": false,
+      "title": "Notification Only",
+      "type": "boolean"
+    },
+    "end_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "End Reason"
+    },
+    "final_answer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Final Answer"
+    },
+    "checkpoint_revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Checkpoint Revision",
+      "type": "integer"
+    },
+    "runtime_instance": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Instance"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "explicit_reply_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Explicit Reply Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "task_id",
+    "id",
+    "agent_id",
+    "generation"
+  ],
+  "title": "CtfTurn",
+  "type": "object"
+}

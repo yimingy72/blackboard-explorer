@@ -65,7 +65,7 @@ class Containers:
 
     def get(self, name: str) -> Container:
         for item in self.items:
-            if item.name == name:
+            if item.name == name or item.id == name:
                 return item
         raise NotFound("not found")
 
@@ -78,7 +78,8 @@ class Containers:
 class Network:
     def __init__(self) -> None:
         self.connected: list[str] = []
-        self.attrs = {"Internal": False}
+        self.name = "bbx-test-exec"
+        self.attrs = {"Internal": False, "Containers": {}}
 
     def reload(self) -> None:
         pass
@@ -246,6 +247,22 @@ async def test_wrong_exec_network_is_rejected_before_creation(
     assert fake.containers.items == []
     with pytest.raises(RuntimeError, match=error):
         await manager.find(task_id)
+
+
+@pytest.mark.asyncio
+async def test_network_mode_fails_fast_when_runtime_is_not_attached(monkeypatch):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    fake = Docker()
+    manager = ExecEnvManager(
+        settings("network"),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+    monkeypatch.setattr(manager_module, "runtime_container_id", lambda: "runtime-container")
+    task_id = uuid4()
+    with pytest.raises(RuntimeError, match="not attached to agent-runtime"):
+        await manager.provision(task_id, profile)
+    assert fake.containers.items == []
 
 
 @pytest.mark.asyncio
@@ -469,3 +486,57 @@ async def test_failed_initial_input_does_not_restore_or_touch_old_files(monkeypa
         await manager.ensure_initial_inputs(handle, [attachment])
     assert restore.calls == 0 and not restore.ready
     assert restore.files == {"agents/agent-1/proof.txt": b"existing work"}
+
+
+@pytest.mark.asyncio
+async def test_ctf_container_has_trusted_fixed_mode_and_task_identity(monkeypatch):
+    from bbx_contracts.ctf import load_ctf_profile
+
+    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
+    fake = Docker()
+    manager = ExecEnvManager(
+        settings(),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+
+    async def healthy(_handle):
+        return None
+
+    monkeypatch.setattr(manager, "wait_healthy", healthy)
+    task_id = uuid4()
+    await manager.provision(task_id, profile)
+    env = fake.containers.items[0].kwargs["environment"]
+    assert env["ENVD_MODE"] == "ctf"
+    assert env["ENVD_TASK_ID"] == str(task_id)
+
+
+@pytest.mark.asyncio
+async def test_confirmed_destruction_checks_identity_and_post_remove_absence(monkeypatch):
+    from bbx_contracts.ctf import load_ctf_profile
+
+    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
+    fake = Docker()
+    manager = ExecEnvManager(
+        settings(),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+
+    async def healthy(_handle):
+        return None
+
+    monkeypatch.setattr(manager, "wait_healthy", healthy)
+    task_id = uuid4()
+    handle = await manager.provision(task_id, profile)
+    with pytest.raises(RuntimeError, match="ownership mismatch"):
+        await manager.destroy_confirmed(str(uuid4()), handle.container_id)
+    container = fake.containers.get(handle.container_id)
+    original_remove = container.remove
+    monkeypatch.setattr(container, "remove", lambda **kwargs: None)
+    with pytest.raises(RuntimeError, match="unconfirmed"):
+        await manager.destroy_confirmed(str(task_id), handle.container_id)
+    monkeypatch.setattr(container, "remove", original_remove)
+    await manager.destroy_confirmed(str(task_id), handle.container_id)
+    await manager.destroy_confirmed(str(task_id), handle.container_id)
+    assert all(item.id != handle.container_id for item in fake.containers.items)

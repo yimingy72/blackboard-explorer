@@ -30,16 +30,30 @@ class Principal:
     task_id: UUID | None = None
     agent_id: str | None = None
     derive_round: int | None = None
+    mode: str = "blackboard"
+    generation: int | None = None
+    turn_id: UUID | None = None
 
 
 def issue_agent_token(
-    settings: Settings, task_id: UUID, agent_id: str, derive_round: int | None = None
+    settings: Settings,
+    task_id: UUID,
+    agent_id: str,
+    derive_round: int | None = None,
+    *,
+    generation: int | None = None,
+    turn_id: UUID | None = None,
 ) -> str:
     return jwt.encode(
         {
             "aud": "agent",
             "tid": str(task_id),
             "aid": agent_id,
+            **(
+                {"mode": "ctf", "generation": generation, "turn_id": str(turn_id)}
+                if generation is not None and turn_id is not None
+                else {}
+            ),
             **({"derive_round": derive_round} if derive_round is not None else {}),
             "exp": datetime.now(UTC) + timedelta(days=7),
         },
@@ -96,6 +110,9 @@ def principal(request: Request) -> Principal:
                 task_id=UUID(claims["tid"]),
                 agent_id=claims["aid"],
                 derive_round=int(claims["derive_round"]) if "derive_round" in claims else None,
+                mode=claims.get("mode", "blackboard"),
+                generation=int(claims["generation"]) if "generation" in claims else None,
+                turn_id=UUID(claims["turn_id"]) if "turn_id" in claims else None,
             )
         if claims["aud"] == "user":
             return Principal("user", claims["sub"])

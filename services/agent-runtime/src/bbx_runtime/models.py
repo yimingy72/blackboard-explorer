@@ -45,6 +45,7 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
 
 from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.ctf.budget import ctf_max_output_tokens
 from bbx_runtime.model_errors import IncompleteModelStreamError, ModelStreamError
 
 
@@ -105,7 +106,9 @@ def _require_complete_stream(
                     if kind == "response.incomplete"
                     else "unknown"
                 )
-                raise ModelStreamError(category, event_type=kind, provider_code=code)
+                raise ModelStreamError(
+                    category, event_type=kind, provider_code=code, incomplete_reason=reason
+                )
             if kind == "response.completed":
                 completed = getattr(getattr(event, "response", None), "status", None) == "completed"
         elif update.finish_reason is not None:
@@ -502,3 +505,10 @@ def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
     }:
         return {"reasoning_effort": effort}
     return {}
+
+
+def ctf_model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
+    """Bound CTF response size while leaving ordinary profiles unchanged."""
+    options = model_run_options(model)
+    options["max_tokens"] = ctf_max_output_tokens(model)
+    return options

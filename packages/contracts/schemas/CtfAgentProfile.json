@@ -1,0 +1,455 @@
+{
+  "$defs": {
+    "CtfOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "max_teammates": {
+          "default": 4,
+          "minimum": 0,
+          "title": "Max Teammates",
+          "type": "integer"
+        },
+        "max_steps": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "context_threshold": {
+          "default": 128000,
+          "minimum": 1,
+          "title": "Context Threshold",
+          "type": "integer"
+        }
+      },
+      "title": "CtfOptions",
+      "type": "object"
+    },
+    "CtfPlatformToolBinding": {
+      "additionalProperties": false,
+      "description": "Purpose metadata for one exact tool in the existing MCP registry.",
+      "properties": {
+        "server_name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Server Name",
+          "type": "string"
+        },
+        "server_version": {
+          "minimum": 1,
+          "title": "Server Version",
+          "type": "integer"
+        },
+        "tool_name": {
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "unknown",
+          "enum": [
+            "management",
+            "connect",
+            "submit",
+            "status",
+            "unknown"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "result_adapter": {
+          "default": "none",
+          "enum": [
+            "none",
+            "fake_ctf_v1"
+          ],
+          "title": "Result Adapter",
+          "type": "string"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server_name",
+        "server_version",
+        "tool_name"
+      ],
+      "title": "CtfPlatformToolBinding",
+      "type": "object"
+    },
+    "CtfPromptTemplates": {
+      "additionalProperties": false,
+      "properties": {
+        "lead": {
+          "minLength": 1,
+          "title": "Lead",
+          "type": "string"
+        },
+        "teammate": {
+          "minLength": 1,
+          "title": "Teammate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lead",
+        "teammate"
+      ],
+      "title": "CtfPromptTemplates",
+      "type": "object"
+    },
+    "ExecResources": {
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "description": "执行环境 CPU 限额",
+          "exclusiveMinimum": 0,
+          "title": "Cpus",
+          "type": "number"
+        },
+        "mem": {
+          "description": "执行环境内存限额",
+          "minLength": 1,
+          "title": "Mem",
+          "type": "string"
+        },
+        "pids": {
+          "description": "执行环境进程限额",
+          "exclusiveMinimum": 0,
+          "title": "Pids",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpus",
+        "mem",
+        "pids"
+      ],
+      "title": "ExecResources",
+      "type": "object"
+    },
+    "McpBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Tools"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "McpBinding",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "supports_vision": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "模型是否支持图片输入",
+          "title": "Supports Vision"
+        },
+        "context_window": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "模型上下文容量，单位 token",
+          "title": "Context Window"
+        },
+        "provider_options": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Provider Options",
+          "type": "object"
+        },
+        "platform_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform Id"
+        },
+        "platform_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform Version"
+        },
+        "provider": {
+          "description": "模型供应商",
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "description": "模型名称",
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "base_url": {
+          "description": "模型接口地址",
+          "minLength": 1,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "description": "推理强度",
+          "minLength": 1,
+          "title": "Reasoning Effort",
+          "type": "string"
+        },
+        "price": {
+          "$ref": "#/$defs/Price",
+          "description": "模型价格表"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "base_url",
+        "reasoning_effort",
+        "price"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "Price": {
+      "additionalProperties": false,
+      "properties": {
+        "billing_mode": {
+          "default": "fixed",
+          "description": "固定费率或官方 DeepSeek 峰谷时段估算",
+          "enum": [
+            "fixed",
+            "deepseek_schedule"
+          ],
+          "title": "Billing Mode",
+          "type": "string"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "计价币种",
+          "title": "Currency"
+        },
+        "cache_hit_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万缓存命中输入 token 单价",
+          "title": "Cache Hit Per M"
+        },
+        "cache_miss_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万缓存未命中输入 token 单价",
+          "title": "Cache Miss Per M"
+        },
+        "output_per_m": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "每百万输出 token 单价",
+          "title": "Output Per M"
+        },
+        "off_peak": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "是否启用错峰价格",
+          "title": "Off Peak"
+        }
+      },
+      "title": "Price",
+      "type": "object"
+    },
+    "WorkerTools": {
+      "additionalProperties": false,
+      "properties": {
+        "builtin": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Builtin",
+          "type": "array"
+        },
+        "mcp_servers": {
+          "items": {
+            "$ref": "#/$defs/McpBinding"
+          },
+          "title": "Mcp Servers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "builtin"
+      ],
+      "title": "WorkerTools",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "const": "ctf",
+      "default": "ctf",
+      "title": "Mode",
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelConfig"
+    },
+    "options": {
+      "$ref": "#/$defs/CtfOptions"
+    },
+    "prompt_templates": {
+      "$ref": "#/$defs/CtfPromptTemplates"
+    },
+    "worker_tools": {
+      "additionalProperties": {
+        "$ref": "#/$defs/WorkerTools"
+      },
+      "propertyNames": {
+        "enum": [
+          "lead",
+          "teammate"
+        ]
+      },
+      "title": "Worker Tools",
+      "type": "object"
+    },
+    "platform_tools": {
+      "items": {
+        "$ref": "#/$defs/CtfPlatformToolBinding"
+      },
+      "title": "Platform Tools",
+      "type": "array"
+    },
+    "exec_image": {
+      "minLength": 1,
+      "title": "Exec Image",
+      "type": "string"
+    },
+    "exec_resources": {
+      "$ref": "#/$defs/ExecResources"
+    },
+    "privileged_allowlist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Privileged Allowlist",
+      "type": "array"
+    }
+  },
+  "required": [
+    "model",
+    "prompt_templates",
+    "worker_tools",
+    "exec_image",
+    "exec_resources"
+  ],
+  "title": "CtfAgentProfile",
+  "type": "object"
+}

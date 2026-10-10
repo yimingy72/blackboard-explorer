@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from bbx_contracts.ctf import CtfPlatformToolBinding
 from bbx_contracts.models import AgentProfile, ExecResources, Params, WorkerTools
 from bbx_contracts.providers import reasoning_efforts
 from fastapi import APIRouter, HTTPException, Request
@@ -40,6 +41,10 @@ class WorkerUpdate(BaseModel):
     expected_revision: int = Field(ge=1)
     prompt: str = Field(min_length=1)
     tools: WorkerTools
+
+
+class CtfWorkerUpdate(WorkerUpdate):
+    platform_tools: list[CtfPlatformToolBinding] | None = None
 
 
 class RuntimeUpdate(BaseModel):
@@ -164,3 +169,56 @@ async def update_runtime(request: Request, body: RuntimeUpdate) -> dict[str, Any
         "default", profile, identity.name, expected_version=body.expected_revision
     )
     return {"revision": row["version"], "profile": profile.model_dump(mode="json")}
+
+
+@router.get("/ctf/workers")
+async def ctf_workers(request: Request) -> dict[str, Any]:
+    from bbx_blackboard.profiles import ctf_profile
+
+    require_user_or_service(request)
+    row = await request.app.state.profile_store.get("ctf")
+    return {"revision": row["version"], "profile": ctf_profile(row).model_dump(mode="json")}
+
+
+@router.get("/ctf/prompts/{role}")
+async def ctf_prompt(request: Request, role: Literal["lead", "teammate"]) -> dict[str, Any]:
+    from bbx_blackboard.profiles import ctf_profile
+
+    require_user_or_service(request)
+    row = await request.app.state.profile_store.get("ctf")
+    return {"revision": row["version"], "prompt": getattr(ctf_profile(row).prompt_templates, role)}
+
+
+@router.put("/ctf/workers/{role}")
+async def update_ctf_worker(
+    request: Request,
+    role: Literal["lead", "teammate"],
+    body: CtfWorkerUpdate,
+) -> dict[str, Any]:
+    from bbx_contracts.ctf import CtfAgentProfile
+
+    from bbx_blackboard.profiles import ctf_profile
+
+    identity = require_user_or_service(request)
+    store = request.app.state.profile_store
+    row = await store.get("ctf")
+    content = ctf_profile(row).model_dump(mode="json")
+    content["prompt_templates"][role] = body.prompt
+    content["worker_tools"][role] = body.tools.model_dump(mode="json")
+    if body.platform_tools is not None:
+        content["platform_tools"] = [item.model_dump(mode="json") for item in body.platform_tools]
+    try:
+        profile = CtfAgentProfile.model_validate(content)
+    except ValueError as error:
+        raise HTTPException(422, "Invalid CTF prompt or role tools") from error
+    for tools in profile.worker_tools.values():
+        for binding in tools.mcp_servers:
+            configured = await request.app.state.platform_store.get(
+                "mcp-servers", binding.name, binding.version
+            )
+            if not configured["enabled"]:
+                raise HTTPException(422, "Selected MCP server is disabled")
+    saved = await store.create(
+        "ctf", profile, identity.name, expected_version=body.expected_revision
+    )
+    return {"revision": saved["version"], "profile": ctf_profile(saved).model_dump(mode="json")}

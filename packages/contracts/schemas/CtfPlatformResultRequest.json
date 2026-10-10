@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "description": "Service evidence pointer; the backend reads and verifies the saved result.",
+  "properties": {
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "server_name": {
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "title": "Server Name",
+      "type": "string"
+    },
+    "server_version": {
+      "minimum": 1,
+      "title": "Server Version",
+      "type": "integer"
+    },
+    "tool_name": {
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "call_id": {
+      "minLength": 1,
+      "title": "Call Id",
+      "type": "string"
+    },
+    "response_uri": {
+      "minLength": 1,
+      "title": "Response Uri",
+      "type": "string"
+    },
+    "response_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Response Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "expected_revision",
+    "server_name",
+    "server_version",
+    "tool_name",
+    "request_id",
+    "call_id",
+    "response_uri",
+    "response_sha256"
+  ],
+  "title": "CtfPlatformResultRequest",
+  "type": "object"
+}

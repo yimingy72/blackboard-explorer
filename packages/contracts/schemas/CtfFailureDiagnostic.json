@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "description": "Safe coordinator failure metadata; never contains request or tool payloads.",
+  "properties": {
+    "error_type": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,99}$",
+      "title": "Error Type",
+      "type": "string"
+    },
+    "phase": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$",
+      "title": "Phase",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "error_type",
+    "phase",
+    "occurred_at",
+    "correlation_id",
+    "summary"
+  ],
+  "title": "CtfFailureDiagnostic",
+  "type": "object"
+}

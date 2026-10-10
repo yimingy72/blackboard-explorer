@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "CtfExecutionIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "boot_id": {
+          "minLength": 1,
+          "title": "Boot Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "drained": {
+          "default": false,
+          "title": "Drained",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "boot_id",
+        "generation"
+      ],
+      "title": "CtfExecutionIdentity",
+      "type": "object"
+    },
+    "CtfMemberOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "stop",
+            "resume",
+            "remove"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_generation": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Generation"
+        },
+        "boot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boot Id"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind"
+      ],
+      "title": "CtfMemberOperation",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "lead",
+        "teammate"
+      ],
+      "title": "Role",
+      "type": "string"
+    },
+    "display_name": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "lifecycle": {
+      "default": "active",
+      "enum": [
+        "active",
+        "stopped",
+        "removed"
+      ],
+      "title": "Lifecycle",
+      "type": "string"
+    },
+    "run_state": {
+      "default": "idle",
+      "enum": [
+        "provisioning",
+        "idle",
+        "running",
+        "stopping",
+        "interrupted",
+        "failed"
+      ],
+      "title": "Run State",
+      "type": "string"
+    },
+    "generation": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "current_turn_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Turn Id"
+    },
+    "create_request_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Create Request Id"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "pending_operation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfMemberOperation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "execution": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfExecutionIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "operation_history": {
+      "items": {
+        "$ref": "#/$defs/CtfMemberOperation"
+      },
+      "title": "Operation History",
+      "type": "array"
+    },
+    "removed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Removed At"
+    }
+  },
+  "required": [
+    "task_id",
+    "agent_id",
+    "role",
+    "display_name"
+  ],
+  "title": "CtfMember",
+  "type": "object"
+}

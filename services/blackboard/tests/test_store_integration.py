@@ -1968,7 +1968,8 @@ async def test_terminal_replay(board_service):
     assert await projections(service, failed) == before_fail
 
 
-async def test_bundled_profile_restart_preserves_user_prompt_edits(board_service):
+@pytest.mark.parametrize("created_by", ["user", "system"])
+async def test_bundled_profile_restart_preserves_user_prompt_edits(board_service, created_by):
     from bbx_blackboard.profiles import ProfileStore
     from bbx_contracts.models import AgentProfile
     from bbx_contracts.profile import load_profile
@@ -1976,22 +1977,54 @@ async def test_bundled_profile_restart_preserves_user_prompt_edits(board_service
     store = ProfileStore(board_service.repo.engine)
     root = Path(__file__).resolve().parents[3] / "profiles/default"
     profile, _ = load_profile(root)
-    original = await store._ensure_bundled_profile("restart-config", profile)
+    name = f"restart-config-{created_by}"
+    original = await store._ensure_bundled_profile(name, profile)
     edited = profile.model_dump(mode="json")
     edited["prompt_templates"]["explore"] = "User-authored prompt {{ goal }}"
-    user_version = await store.create("restart-config", AgentProfile.model_validate(edited), "user")
-    await store._ensure_bundled_profile("restart-config", profile)
-    assert (await store.get("restart-config"))["version"] == user_version["version"]
+    user_version = await store.create(name, AgentProfile.model_validate(edited), created_by)
+    await store._ensure_bundled_profile(name, profile)
+    assert (await store.get(name))["version"] == user_version["version"]
     assert user_version["version"] == original["version"] + 1
     upgraded = profile.model_dump(mode="json")
     upgraded["prompt_templates"]["derive"] += "\nUpdated bundled rule"
-    new_system = await store._ensure_bundled_profile(
-        "restart-config", AgentProfile.model_validate(upgraded)
+    unchanged = await store._ensure_bundled_profile(name, AgentProfile.model_validate(upgraded))
+    assert unchanged == user_version
+    assert len(await store.versions(name)) == 2
+    new_system = await store.create(
+        name,
+        AgentProfile.model_validate(upgraded),
+        "system",
+        expected_version=user_version["version"],
     )
     assert new_system["version"] == user_version["version"] + 1
-    assert (await store.get("restart-config", user_version["version"]))["prompt_templates"][
+    assert (await store.get(name, user_version["version"]))["prompt_templates"][
         "explore"
     ] == "User-authored prompt {{ goal }}"
+    with pytest.raises(HTTPException) as stale:
+        await store.create(
+            name, AgentProfile.model_validate(upgraded), "system", expected_version=1
+        )
+    assert stale.value.status_code == 409
+    assert len(await store.versions(name)) == 3
+
+
+async def test_concurrent_bundled_profile_initialization_creates_one_version(board_service):
+    from bbx_blackboard.profiles import ProfileStore
+    from bbx_contracts.ctf import load_ctf_profile
+
+    store = ProfileStore(board_service.repo.engine)
+    profile = load_ctf_profile(ROOT / "profiles/ctf")
+    alternative = profile.model_copy(deep=True)
+    alternative.prompt_templates.lead += "\nAlternative bundled instruction."
+    snapshots = await asyncio.gather(
+        *(
+            store._ensure_bundled_profile("concurrent-bundled", item)
+            for item in [profile, alternative] * 4
+        )
+    )
+    assert all(snapshot == snapshots[0] for snapshot in snapshots)
+    assert snapshots[0]["version"] == 1
+    assert len(await store.versions("concurrent-bundled")) == 1
 
 
 async def test_platform_credentials_versions_and_profile_bindings(board_service):

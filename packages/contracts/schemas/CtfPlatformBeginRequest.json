@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "server_name": {
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "title": "Server Name",
+      "type": "string"
+    },
+    "server_version": {
+      "minimum": 1,
+      "title": "Server Version",
+      "type": "integer"
+    },
+    "tool_name": {
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "call_id": {
+      "minLength": 1,
+      "title": "Call Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "expected_revision",
+    "server_name",
+    "server_version",
+    "tool_name",
+    "call_id"
+  ],
+  "title": "CtfPlatformBeginRequest",
+  "type": "object"
+}

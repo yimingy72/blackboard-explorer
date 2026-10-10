@@ -5,13 +5,13 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from . import models
+from . import ctf, models
 
 
 def export_schemas(output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    for name, obj in vars(models).items():
+    for name, obj in {**vars(models), **vars(ctf)}.items():
         if (
             isinstance(obj, type)
             and issubclass(obj, models.ContractModel)

@@ -283,3 +283,91 @@ app_settings = Table(
     col("key", Text, primary_key=True),
     col("value", JSONB, nullable=False),
 )
+
+# CTF tables retain authoritative runtime ownership and mailbox state during replay.
+tasks.append_column(col("mode", Text, nullable=False, server_default=text("'blackboard'")))
+for field in ("ctf_options", "ctf_control", "ctf_conclusion"):
+    tasks.append_column(col(field, JSONB))
+
+ctf_members = scoped(
+    "ctf_members",
+    col("role", Text, nullable=False),
+    col("display_name", Text, nullable=False),
+    col("normalized_name", Text, nullable=False),
+    col("create_request_id", Text, nullable=False),
+    col("lifecycle", Text, nullable=False),
+    col("run_state", Text, nullable=False),
+    col("generation", Integer, nullable=False),
+    col("current_turn_id", Text),
+    col("usage", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index("ux_ctf_member_name", ctf_members.c.task_id, ctf_members.c.normalized_name, unique=True)
+Index("ux_ctf_member_request", ctf_members.c.task_id, ctf_members.c.create_request_id, unique=True)
+ctf_turns = scoped(
+    "ctf_turns",
+    col("agent_id", Text, nullable=False),
+    col("generation", Integer, nullable=False),
+    col("runtime_instance", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("purpose", Text, nullable=False),
+    col("assignment_message_ids", JSONB, nullable=False),
+    col("explicit_reply_ids", JSONB, nullable=False),
+    col("checkpoint_revision", Integer, nullable=False),
+    col("end_reason", Text),
+    col("final_answer", Text),
+    col("usage", JSONB, nullable=False),
+    col("usage_requests", JSONB, nullable=False),
+    col("started_at", DateTime(timezone=True), nullable=False),
+    col("finished_at", DateTime(timezone=True)),
+)
+Index(
+    "ux_ctf_active_turn",
+    ctf_turns.c.task_id,
+    ctf_turns.c.agent_id,
+    unique=True,
+    postgresql_where=ctf_turns.c.status == "running",
+)
+ctf_messages = scoped(
+    "ctf_messages",
+    col("sender_kind", Text, nullable=False),
+    col("sender_id", Text, nullable=False),
+    col("recipient_id", Text, nullable=False),
+    col("recipient_sequence", BigInteger, nullable=False),
+    col("kind", Text, nullable=False),
+    col("body", Text, nullable=False),
+    col("purpose", Text, nullable=False),
+    col("reply_to", Text),
+    col("status", Text, nullable=False),
+    col("deferred", Boolean, nullable=False),
+    col("claim_token", Text),
+    col("claim_turn_id", Text),
+    col("claim_generation", Integer),
+    col("lease_until", DateTime(timezone=True)),
+    col("delivered_turn_id", Text),
+    col("session_revision", Integer),
+    col("source_turn_id", Text),
+    col("notification_purpose", Text),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ux_ctf_result",
+    ctf_messages.c.task_id,
+    ctf_messages.c.source_turn_id,
+    ctf_messages.c.notification_purpose,
+    unique=True,
+)
+Index("ix_ctf_pending", ctf_messages.c.task_id, ctf_messages.c.recipient_id, ctf_messages.c.status)
+ctf_challenges = scoped(
+    "ctf_challenges", col("data", JSONB, nullable=False), col("revision", Integer, nullable=False)
+)
+ctf_records = scoped(
+    "ctf_records", col("data", JSONB, nullable=False), col("version", BigInteger, nullable=False)
+)
+
+ctf_members.append_column(col("pending_operation", JSONB))
+ctf_members.append_column(col("execution", JSONB))
+ctf_members.append_column(
+    col("operation_history", JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+)
+ctf_members.append_column(col("removed_at", DateTime(timezone=True)))

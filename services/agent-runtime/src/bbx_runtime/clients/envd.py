@@ -72,16 +72,24 @@ class EnvdClient:
         timeout = httpx.Timeout(connect=10, read=None, write=None, pool=10)
         return (await self._response("POST", "/restore", content=content, timeout=timeout)).json()
 
-    async def stat(self, path: str) -> dict[str, Any]:
-        return (await self._response("GET", "/stat", params={"path": path})).json()
+    async def stat(self, path: str, *, scope_agent_id: str | None = None) -> dict[str, Any]:
+        params = {"path": path}
+        if scope_agent_id is not None:
+            params["scope_agent_id"] = scope_agent_id
+        return (await self._response("GET", "/stat", params=params)).json()
 
     async def read_file(self, path: str) -> bytes:
         return (await self._response("GET", "/files", params={"path": path})).content
 
     @asynccontextmanager
-    async def file_stream(self, path: str) -> AsyncIterator[httpx.Response]:
+    async def file_stream(
+        self, path: str, *, scope_agent_id: str | None = None
+    ) -> AsyncIterator[httpx.Response]:
+        params = {"path": path}
+        if scope_agent_id is not None:
+            params["scope_agent_id"] = scope_agent_id
         async with self._http.stream(
-            "GET", f"{self.base_url}/files", headers=self.headers, params={"path": path}
+            "GET", f"{self.base_url}/files", headers=self.headers, params=params
         ) as response:
             yield await self._check(response)
 
@@ -92,3 +100,11 @@ class EnvdClient:
             "POST", f"{self.base_url}/archive", headers=self.headers, timeout=timeout
         ) as response:
             yield await self._check(response)
+
+    async def ctf_status(self, **identity: Any) -> dict[str, Any]:
+        return (await self._response("GET", "/ctf/status", params=identity)).json()
+
+    async def ctf_operation(self, operation: str, identity: dict[str, Any]) -> dict[str, Any]:
+        if operation not in {"register", "stop", "drain"}:
+            raise ValueError("Unknown CTF execution operation")
+        return (await self._response("POST", f"/ctf/{operation}", json=identity)).json()

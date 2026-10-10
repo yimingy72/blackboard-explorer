@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import anyio
+from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate
 from bbx_contracts.models import (
     AgentProfile,
     Event,
@@ -33,7 +34,7 @@ from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.types import Scope
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from bbx_blackboard.auth import (
     COOKIE_NAME,
@@ -47,12 +48,15 @@ from bbx_blackboard.auth import (
 )
 from bbx_blackboard.billing import router as billing_router
 from bbx_blackboard.conversations import Conversations
+from bbx_blackboard.ctf import CtfService
+from bbx_blackboard.ctf_api import public_member
+from bbx_blackboard.ctf_api import router as ctf_router
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
 from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
-from bbx_blackboard.profiles import ProfileStore
+from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
@@ -106,6 +110,7 @@ class TaskView(BaseModel):
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
     cost_currency: str | None = None
     id: UUID
+    mode: Literal["blackboard", "ctf"] = "blackboard"
     goal: str
     status: str
     deleting: bool
@@ -123,6 +128,10 @@ class TaskView(BaseModel):
     active_since: datetime | None = None
     cleanup_ready: bool = False
     runs: list[dict[str, Any]] = Field(default_factory=list)
+    members: list[dict[str, Any]] = Field(default_factory=list)
+    ctf_options: dict[str, Any] | None = None
+    ctf_phase: str | None = None
+    ctf_conclusion: dict[str, Any] | None = None
 
 
 class ResumeBody(BaseModel):
@@ -277,7 +286,7 @@ class ProfileVersion(BaseModel):
 
 
 class ProfileDocument(ProfileVersion):
-    profile: AgentProfile
+    profile: AgentProfile | CtfAgentProfile
 
 
 class UploadResult(BaseModel):
@@ -446,8 +455,27 @@ def _profile_document(row: dict[str, Any]) -> ProfileDocument:
         version=row["version"],
         created_by=row["created_by"],
         created_at=row["created_at"],
-        profile=AgentProfile.model_validate({key: row[key] for key in AgentProfile.model_fields}),
+        profile=(
+            ctf_profile(row)
+            if row.get("prompts", {}).get("mode") == "ctf"
+            else AgentProfile.model_validate({key: row[key] for key in AgentProfile.model_fields})
+        ),
     )
+
+
+class TaskBoundaryMiddleware:
+    """Check task access without wrapping request bodies or cancellation in a task group."""
+
+    def __init__(self, app: ASGIApp, check: Any) -> None:
+        self.app, self.check = app, check
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            response = await self.check(Request(scope, receive))
+            if response is not None:
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 def create_app(
@@ -477,6 +505,7 @@ def create_app(
                 secure=endpoint.scheme == "https",
             )
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
+        app.state.ctf_service = CtfService(app.state.engine, app.state.objects)
         app.state.conversations = Conversations(app.state.engine)
         app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
@@ -513,6 +542,7 @@ def create_app(
     app.state.board_service = (
         BoardService(engine, objects) if engine is not None and objects is not None else None
     )
+    app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.input_groups = (
         InputGroups(engine, objects) if engine is not None and objects is not None else None
@@ -524,6 +554,112 @@ def create_app(
         else None
     )
     app.state.workspace_cache = WorkspaceArchiveCache()
+
+    async def ctf_boundary(request: Request) -> Response | None:
+        if request.app.state.engine is None and request.app.state.ctf_service is None:
+            return None
+        match = re.match(r"^/api/tasks/([0-9a-fA-F-]{36})(/.*)?$", request.url.path)
+        evidence_tid = (
+            _key_task(request.query_params.get("uri", ""))
+            if request.url.path == "/api/evidence"
+            else None
+        )
+        if match or evidence_tid:
+            try:
+                tid = UUID(match[1]) if match else evidence_tid
+                if tid is None:
+                    return None
+                identity = require_task_reader(request, tid)
+                task = await _task(request, tid)
+                mode = task.get("mode", "blackboard")
+                request.state.task_mode = mode
+                suffix = (match[2] or "") if match else "/evidence"
+                if identity.kind == "agent" and identity.mode != mode:
+                    raise HTTPException(409, "mode_mismatch")
+                if mode != "ctf" and suffix.startswith("/ctf/"):
+                    raise HTTPException(409, "mode_mismatch")
+                if mode == "ctf":
+                    if identity.kind == "agent":
+                        if identity.generation is None:
+                            raise HTTPException(403, "CTF token required")
+                        if request.method == "GET":
+                            await request.app.state.ctf_service.authorize_reader(
+                                tid, identity.agent_id, identity.generation
+                            )
+                        elif suffix in {
+                            "/ctf/tools/list_challenges",
+                            "/ctf/tools/get_challenge",
+                            "/ctf/tools/list_records",
+                            "/ctf/tools/read_artifact",
+                        }:
+                            try:
+                                await request.app.state.ctf_service.authorize_review(
+                                    tid, identity.agent_id, identity.generation, identity.turn_id
+                                )
+                            except HTTPException:
+                                await request.app.state.ctf_service.authorize_member(
+                                    tid, identity.agent_id, identity.generation, identity.turn_id
+                                )
+                        else:
+                            await request.app.state.ctf_service.authorize_member(
+                                tid,
+                                identity.agent_id,
+                                identity.generation,
+                                identity.turn_id,
+                            )
+                        if suffix == "/evidence" and not request.query_params.get(
+                            "uri", ""
+                        ).startswith("inputs/"):
+                            owned = await request.app.state.ctf_service.authorize_object(
+                                tid,
+                                identity.agent_id,
+                                request.query_params.get("uri", ""),
+                            )
+                            if not owned:
+                                raise HTTPException(403, "Private CTF object access denied")
+                    common = {
+                        "",
+                        "/state",
+                        "/events",
+                        "/stream",
+                        "/start",
+                        "/stop",
+                        "/resume",
+                        "/evidence",
+                        "/archive-data",
+                        "/archive",
+                        "/cleanup-ready",
+                        "/purge",
+                        "/report",
+                        "/workspace",
+                        "/workspace/tree",
+                        "/workspace/file",
+                    }
+                    conversation = bool(re.fullmatch(r"/agents/[^/]+/(messages|session)", suffix))
+                    if not suffix.startswith("/ctf/") and suffix not in common and not conversation:
+                        raise HTTPException(409, "mode_mismatch")
+                    if identity.kind == "agent" and suffix in {
+                        "/archive-data",
+                        "/archive",
+                        "/cleanup-ready",
+                        "/purge",
+                        "/report",
+                        "/workspace",
+                        "/workspace/tree",
+                        "/workspace/file",
+                    }:
+                        raise HTTPException(403, "User or service access required")
+                    if conversation and request.method not in {"GET", "POST"}:
+                        raise HTTPException(
+                            409, "CTF sessions require generation-fenced checkpoint"
+                        )
+            except HTTPException as error:
+                return JSONResponse({"detail": error.detail}, status_code=error.status_code)
+            except (ValueError, TypeError):
+                return JSONResponse({"detail": "Invalid task identifier"}, status_code=422)
+        return None
+
+    app.add_middleware(TaskBoundaryMiddleware, check=ctf_boundary)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, exc: RequestValidationError) -> Response:
@@ -565,8 +701,53 @@ def create_app(
         return {"ok": True}
 
     @app.post("/api/tasks", response_model=TaskCreated, tags=["tasks"])
-    async def create_task(request: Request, body: TaskCreateBody) -> TaskCreated:
+    async def create_task(request: Request, body: TaskCreateBody | CtfTaskCreate) -> TaskCreated:
         identity = require_user_or_service(request)
+        if isinstance(body, CtfTaskCreate):
+            profiles = _profiles(request)
+            row = await profiles.get(body.agent_profile, body.profile_version)
+            profile = ctf_profile(row)
+            platform = request.app.state.platform_store
+            model_name = body.model_id or await platform.default_model_name()
+            selected = await platform.get("models", model_name, body.model_version)
+            if not selected["enabled"]:
+                raise HTTPException(422, "Selected model is disabled")
+            model = platform.public(selected)["config"]
+            if body.reasoning_effort is not None:
+                model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
+            profile.model = ModelConfig.model_validate(model)
+            row = await profiles.create("ctf-task-settings", profile, identity.name)
+            spec = body.model_dump(
+                exclude={
+                    "input_group_id",
+                    "input_file_ids",
+                    "model_id",
+                    "model_version",
+                    "profile_version",
+                    "reasoning_effort",
+                }
+            )
+            spec["agent_profile"] = row["name"]
+            tid = await request.app.state.ctf_service.create_task(
+                spec,
+                profile_version=row["version"],
+                **(
+                    {
+                        "input_group_id": body.input_group_id,
+                        "input_file_ids": body.input_file_ids,
+                        "input_owner": owner_key(identity),
+                        "create_request_hash": request_hash(body.model_dump()),
+                    }
+                    if body.input_group_id is not None
+                    else {}
+                ),
+            )
+            task = await _task(request, tid)
+            if task["status"] in {"created", "provisioning"}:
+                await request.app.state.ctf_service.provision(tid)
+            return TaskCreated(
+                id=tid, agent_profile=row["name"], agent_profile_version=row["version"]
+            )
         digest = request_hash(body.model_dump())
         if body.input_group_id is not None:
             store: InputGroups = request.app.state.input_groups
@@ -601,6 +782,8 @@ def create_app(
                     "models": override_reasoning_effort(row["models"], body.reasoning_effort),
                 }
                 custom_override = True
+        if row.get("prompts", {}).get("mode") == "ctf":
+            raise HTTPException(409, "mode_mismatch")
         threshold = model_context_threshold(row["models"])
         if custom_override or (
             threshold is not None and row["params"].get("context_threshold") != threshold
@@ -685,7 +868,10 @@ def create_app(
     async def task_detail(request: Request, task_id: UUID) -> TaskView:
         require_task_reader(request, task_id)
         await _task(request, task_id)
-        board = await _service(request).state(task_id)
+        task = await _task(request, task_id)
+        board = await (
+            request.app.state.ctf_service if task.get("mode") == "ctf" else _service(request)
+        ).state(task_id)
         task = board["task"]
         profile = await request.app.state.profile_store.get(
             task["agent_profile"], task["agent_profile_version"]
@@ -695,6 +881,7 @@ def create_app(
         }
         currency = currencies.pop() if len(currencies) == 1 else None
         return TaskView(
+            mode=task.get("mode", "blackboard"),
             name=task.get("name"),
             initial_attachments=task.get("initial_attachments") or [],
             cost_currency=currency,
@@ -706,7 +893,7 @@ def create_app(
             usage=task["usage"],
             agents=[
                 agent
-                for agent in board["agents"].values()
+                for agent in board.get("agents", {}).values()
                 if agent["status"] in {"running", "concluding"}
             ],
             report_uri=task.get("report_uri"),
@@ -720,6 +907,10 @@ def create_app(
             active_since=task["active_since"],
             cleanup_ready=task["cleanup_ready"],
             runs=await _task_runs(request, task_id),
+            members=[public_member(member) for member in board.get("members", [])],
+            ctf_options=task.get("ctf_options"),
+            ctf_phase=(task.get("ctf_control") or {}).get("phase"),
+            ctf_conclusion=task.get("ctf_conclusion"),
         )
 
     @app.post("/api/tasks/{task_id}/resume", response_model=TaskView, tags=["tasks"])
@@ -728,6 +919,16 @@ def create_app(
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
         await _task(request, task_id)
+        if (await _task(request, task_id)).get("mode") == "ctf":
+            await request.app.state.ctf_service.resume(
+                task_id,
+                body.request_id,
+                body.additional_cost,
+                body.additional_minutes,
+                body.refresh_tools,
+                identity.name,
+            )
+            return await task_detail(request, task_id)
         await _service(request).resume(
             task_id,
             body.request_id,
@@ -742,6 +943,13 @@ def create_app(
     async def start_task(request: Request, task_id: UUID) -> StatusResult:
         require_user_or_service(request)
         task = await _task(request, task_id)
+        if task.get("mode") == "ctf":
+            if task["status"] in {"created", "provisioning"}:
+                await request.app.state.ctf_service.provision(task_id)
+                return StatusResult(status="provisioning")
+            if task["status"] == "running":
+                return StatusResult(status="running")
+            raise HTTPException(409, f"CTF task cannot start from {task['status']}")
         if task["status"] != "created":
             raise HTTPException(409, "Task is not created")
         events = await _service(request).transition(task_id, "provisioning", actor="user")
@@ -752,6 +960,16 @@ def create_app(
         require_user_or_service(request)
         service = _service(request)
         task = await _task(request, task_id)
+        if task.get("mode") == "ctf":
+            from uuid import uuid4
+
+            await request.app.state.ctf_service.request_finish(
+                task_id,
+                actor="user",
+                request_id=uuid4(),
+                conclusion={"end_reason": "user_stop", "summary": "Stopped by user"},
+            )
+            return StatusResult(status="closing")
         status = task["status"]
         events: list[dict[str, Any]] = []
         if status in {"created", "provisioning"}:
@@ -796,6 +1014,8 @@ def create_app(
     @app.get("/api/tasks/{task_id}/archive-data", tags=["system"])
     async def archive_data(request: Request, task_id: UUID) -> dict[str, Any]:
         require_service(request)
+        if (await _task(request, task_id)).get("mode") == "ctf":
+            return await request.app.state.ctf_service.export_archive(task_id)
         return await _conversations(request).export_archive(task_id)
 
     @app.get("/api/conversations/pending", tags=["system"])
@@ -815,6 +1035,23 @@ def create_app(
         agent_id: str,
         status: Literal["queued"] | None = None,
     ) -> dict[str, Any]:
+        if getattr(request.state, "task_mode", "blackboard") == "ctf":
+            identity = require_task_reader(request, task_id)
+            if identity.kind == "agent" and identity.agent_id != agent_id:
+                raise HTTPException(403, "Private messages access denied")
+            data = await request.app.state.ctf_service.state(task_id)
+            return {
+                "messages": [
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if not key.startswith("claim_") and key != "lease_until"
+                    }
+                    for item in data["messages"]
+                    if (item["recipient_id"] == agent_id or item["sender_id"] == agent_id)
+                    and (status is None or item["status"] == status)
+                ]
+            }
         require_user_or_service(request)
         return await _conversations(request).list_messages(task_id, agent_id, status)
 
@@ -825,11 +1062,24 @@ def create_app(
         identity = require_user_or_service(request)
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
+        if getattr(request.state, "task_mode", "blackboard") == "ctf":
+            return await request.app.state.ctf_service.post_message(
+                task_id,
+                actor="user",
+                recipient_id=agent_id,
+                body=body.content,
+                message_id=body.id,
+            )
         return await _conversations(request).post_message(task_id, agent_id, body.id, body.content)
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
     async def get_agent_session(request: Request, task_id: UUID, agent_id: str) -> dict[str, Any]:
-        require_service(request)
+        if getattr(request.state, "task_mode", "blackboard") == "ctf":
+            identity = require_task_reader(request, task_id)
+            if identity.kind == "agent" and identity.agent_id != agent_id:
+                raise HTTPException(403, "Private session access denied")
+        else:
+            require_service(request)
         return await _conversations(request).get_session(task_id, agent_id)
 
     @app.put("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
@@ -970,6 +1220,10 @@ def create_app(
     async def state(request: Request, task_id: UUID) -> dict[str, Any]:
         require_task_reader(request, task_id)
         await _task(request, task_id)
+        if (await _task(request, task_id)).get("mode") == "ctf":
+            from bbx_blackboard.ctf_api import state as ctf_state
+
+            return await ctf_state(request, task_id)
         return await _service(request).state(task_id)
 
     @app.get("/api/tasks/{task_id}/snapshot", tags=["board"], response_class=PlainTextResponse)
@@ -987,7 +1241,7 @@ def create_app(
         limit = max_lines or int(board["task"]["params"].get("snapshot_max_lines", 150))
         return PlainTextResponse(make_snapshot(board, limit), media_type="application/yaml")
 
-    @app.get("/api/tasks/{task_id}/events", response_model=list[Event], tags=["board"])
+    @app.get("/api/tasks/{task_id}/events", response_model=list[Event | CtfEvent], tags=["board"])
     async def events(
         request: Request,
         task_id: UUID,
@@ -1015,8 +1269,13 @@ def create_app(
             since = int(last)
         from bbx_blackboard.sse import stream_response
 
+        event_service: Any = _service(request)
+        if getattr(request.state, "task_mode", "blackboard") == "ctf" and identity.kind == "agent":
+            from bbx_blackboard.ctf_api import ReaderEvents
+
+            event_service = ReaderEvents(event_service, request.app.state.ctf_service, identity)
         return stream_response(
-            _service(request),
+            event_service,
             request.app.state.dispatcher,
             task_id,
             since=since,
@@ -1181,13 +1440,23 @@ def create_app(
     ) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        return await _service(request).record_archive(task_id, body.uri, body.size, body.fallback)
+        backend = (
+            request.app.state.ctf_service
+            if (await _task(request, task_id)).get("mode") == "ctf"
+            else _service(request)
+        )
+        return await backend.record_archive(task_id, body.uri, body.size, body.fallback)
 
     @app.post("/api/tasks/{task_id}/cleanup-ready", response_model=list[Event], tags=["system"])
     async def record_cleanup(request: Request, task_id: UUID) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        return await _service(request).record_cleanup(task_id)
+        backend = (
+            request.app.state.ctf_service
+            if (await _task(request, task_id)).get("mode") == "ctf"
+            else _service(request)
+        )
+        return await backend.record_cleanup(task_id)
 
     @app.post("/api/tasks/{task_id}/agents", response_model=AgentRegistered, tags=["system"])
     async def register_agent(
@@ -1408,6 +1677,7 @@ def create_app(
         row = await _profiles(request).create(name, body, identity.name)
         return _profile_document(row)
 
+    app.include_router(ctf_router)
     app.include_router(platform_router)
     app.include_router(settings_router)
     web_dist = _web_dist()

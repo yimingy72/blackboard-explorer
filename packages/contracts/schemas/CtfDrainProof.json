@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "boot_id": {
+      "minLength": 1,
+      "title": "Boot Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "drained": {
+      "const": true,
+      "title": "Drained",
+      "type": "boolean"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Id"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "member_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Member Id"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "const": "drained",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State"
+    }
+  },
+  "required": [
+    "boot_id",
+    "generation",
+    "drained"
+  ],
+  "title": "CtfDrainProof",
+  "type": "object"
+}

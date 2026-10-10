@@ -164,6 +164,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
@@ -256,6 +258,8 @@ class BoardService:
                     )
                 return
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
             task = state.task
             if task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
@@ -371,6 +375,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             self._check_derive_round(state.agents.get(agent_id), expected_derive_round)
@@ -428,6 +434,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             self._check_derive_round(state.agents.get(agent_id), expected_derive_round)
@@ -664,6 +672,8 @@ class BoardService:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             agent = state.agents.get(agent_id)
@@ -710,6 +720,8 @@ class BoardService:
     async def state(self, tid: UUID) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:
             state = await self.repo.load(conn, tid)
+            if state.task.get("mode", "blackboard") != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
         fields = dispute_fields(state.facts)
         facts = {fid: {**fact, **fields[fid]} for fid, fact in state.facts.items()}
         return {
@@ -729,13 +741,24 @@ class BoardService:
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.connect() as conn:
             stmt = select(s.events).where(s.events.c.task_id == tid, s.events.c.version > since)
+            task_mode = None
             if for_agent is not None:
-                stmt = stmt.where(
-                    or_(s.events.c.addressed_to.is_(None), s.events.c.addressed_to.any(for_agent))
-                )
-            return [
+                task_mode = (
+                    await conn.execute(select(s.tasks.c.mode).where(s.tasks.c.id == tid))
+                ).scalar_one()
+                if task_mode != "ctf":
+                    stmt = stmt.where(
+                        or_(
+                            s.events.c.addressed_to.is_(None),
+                            s.events.c.addressed_to.any(for_agent),
+                        )
+                    )
+            result = [
                 dict(x) for x in (await conn.execute(stmt.order_by(s.events.c.version))).mappings()
             ]
+            if for_agent is not None and task_mode == "ctf":
+                result = [ctf_agent_event(item, for_agent) for item in result]
+            return result
 
     async def get_object(self, tid: UUID, oid: str, depth: int = 1) -> dict[str, Any]:
         board = await self.state(tid)
@@ -759,3 +782,65 @@ class BoardService:
 
     async def replay(self, tid: UUID) -> None:
         await self.repo.replay(tid)
+
+
+def ctf_agent_event(item: dict[str, Any], agent_id: str) -> dict[str, Any]:
+    """Retain cursors while hiding other members' messages and private turn data."""
+    kind = item["type"]
+    payload = item["payload"]
+    public = {"ctf.started", "ctf.conclusion.requested", "ctf.conclusion.finalized"}
+    if kind in public:
+        return item
+    if kind in {"ctf.challenge.created", "ctf.challenge.updated", "ctf.record.appended"}:
+        return {**item, "payload": {"result": payload["result"]}}
+    if kind in {"ctf.member.created", "ctf.member.state_changed", "ctf.member.removed"}:
+        return {
+            **item,
+            "payload": {
+                key: payload[key]
+                for key in ("id", "display_name", "role", "lifecycle", "run_state", "operation")
+                if key in payload
+            },
+        }
+    if kind == "task.created":
+        return {
+            **item,
+            "payload": {key: value for key, value in payload.items() if key != "ctf_control"},
+        }
+    if kind == "ctf.message.posted" and agent_id in {
+        payload.get("sender_id"),
+        payload.get("recipient_id"),
+    }:
+        return {
+            **item,
+            "payload": {
+                key: value
+                for key, value in payload.items()
+                if not key.startswith("claim_") and key != "lease_until"
+            },
+        }
+    if (
+        kind
+        in {
+            "ctf.platform.dispatched",
+            "ctf.message.delivered",
+            "ctf.turn.finished",
+            "agent.trace.recorded",
+            "tool_call.recorded",
+        }
+        and item["actor"] == agent_id
+    ):
+        return item
+    if kind == "ctf.turn.started" and payload.get("agent_id") == agent_id:
+        return {
+            **item,
+            "payload": {key: value for key, value in payload.items() if key != "runtime_instance"},
+        }
+    return {
+        **item,
+        "type": "ctf.cursor",
+        "actor": "system",
+        "object_id": None,
+        "payload": {},
+        "addressed_to": None,
+    }

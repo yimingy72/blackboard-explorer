@@ -38,13 +38,19 @@ class ModelStreamError(RuntimeError):
     """A provider terminal event that cannot be used as a complete model turn."""
 
     def __init__(
-        self, category: str, *, event_type: str | None = None, provider_code: str | None = None
+        self,
+        category: str,
+        *,
+        event_type: str | None = None,
+        provider_code: str | None = None,
+        incomplete_reason: str | None = None,
     ) -> None:
         self.category = category
         self.event_type = (
             event_type if isinstance(event_type, str) and event_type in _STREAM_EVENTS else None
         )
         self.provider_code = _bounded_identifier(provider_code, _IDENTIFIER)
+        self.incomplete_reason = _bounded_identifier(incomplete_reason, _IDENTIFIER)
         super().__init__("Model stream did not complete successfully")
 
 
@@ -227,6 +233,9 @@ def model_error_metadata(
         "failure_phase": failure_phase,
         "event_type": stream_error.event_type
         if stream_error and stream_error.event_type in _STREAM_EVENTS
+        else None,
+        "incomplete_reason": _bounded_identifier(stream_error.incomplete_reason, _IDENTIFIER)
+        if stream_error is not None
         else None,
         "transient": category
         in {"connection", "timeout", "rate_limit", "conflict", "server_error"},

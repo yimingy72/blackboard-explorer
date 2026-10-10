@@ -1,4 +1,4 @@
-"""Build a task archive from declared, already persisted Fact attachments."""
+"""Build a task archive from declared, already persisted task attachments."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ EXPANDED_MAX_BYTES = ARCHIVE_MAX_BYTES * 4
 REFERENCE_FIELDS = {
     "uri",
     "result_uri",
+    "response_uri",
     "report_uri",
     "workspace_uri",
     "resume_workspace_uri",
@@ -176,7 +177,11 @@ async def build_archive(
     if data.get("format") != "bbx.task-archive.v1" or str(data.get("task_id")) != str(task_id):
         raise ValueError("Invalid task archive snapshot")
     state = data.get("state")
-    if not isinstance(state, dict) or not isinstance(state.get("facts"), dict):
+    if not isinstance(state, dict):
+        raise ValueError("Task archive snapshot lacks state")
+    ctf = state.get("task", {}).get("mode") == "ctf"
+    facts = state.get("facts", {}) if ctf else state.get("facts")
+    if not isinstance(facts, dict):
         raise ValueError("Task archive snapshot lacks facts")
 
     attachments: list[dict[str, Any]] = []
@@ -190,7 +195,7 @@ async def build_archive(
         attachments.append(row)
         selected[member] = row
         original_paths[member] = attachment["uri"]
-    for fact_id, fact in state["facts"].items():
+    for fact_id, fact in facts.items():
         if not isinstance(fact, dict):
             raise ValueError("Invalid Fact in archive snapshot")
         version = fact.get("version")
@@ -225,6 +230,54 @@ async def build_archive(
                     previous["uri"],
                 ):
                     selected[member] = row
+
+    if ctf:
+        declared = state.get("artifacts", [])
+        if not isinstance(declared, list):
+            raise ValueError("CTF artifact declarations must be a list")
+        artifact_ids: set[str] = set()
+        for artifact in declared:
+            if not isinstance(artifact, dict) or str(artifact.get("task_id")) != str(task_id):
+                raise ValueError("CTF artifact belongs to another task")
+            artifact_id = str(UUID(str(artifact.get("id"))))
+            if artifact_id in artifact_ids:
+                raise ValueError("Duplicate CTF artifact declaration")
+            artifact_ids.add(artifact_id)
+            version = artifact.get("created_version")
+            if type(version) is not int or version < 1:
+                raise ValueError("CTF artifact registration version is required")
+            path, uri = artifact.get("path"), artifact.get("uri")
+            if not isinstance(path, str) or not isinstance(uri, str):
+                raise ValueError("CTF artifact path and URI are required")
+            member = _member(path)
+            filename = artifact.get("filename")
+            parts = uri.split("/")
+            if (
+                len(parts) != 4
+                or parts[:2] != ["evidence", str(task_id)]
+                or parts[3] != filename
+                or PurePosixPath(member).name != filename
+            ):
+                raise ValueError("CTF artifact URI belongs to another task or path")
+            UUID(parts[2])
+            if type(artifact.get("size")) is not int or artifact["size"] < 0:
+                raise ValueError("CTF artifact size is required")
+            if (
+                not isinstance(artifact.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]) is None
+            ):
+                raise ValueError("CTF artifact SHA-256 is required")
+            if member in original_paths:
+                raise ValueError("CTF artifact conflicts with an initial attachment path")
+            row = {**artifact, "artifact_id": artifact_id, "fact_id": None, "version": version}
+            attachments.append(row)
+            previous = selected.get(member)
+            if previous is None or (version, artifact_id, uri) > (
+                previous["version"],
+                previous.get("artifact_id", ""),
+                previous["uri"],
+            ):
+                selected[member] = row
 
     paths = sorted(selected)
     for path in paths:
@@ -263,24 +316,29 @@ async def build_archive(
             if isinstance(row["size"], int) and size != row["size"]:
                 raise ValueError("Evidence object size differs from declaration")
             if row.get("sha256") is not None and digest.hexdigest() != row["sha256"]:
-                raise ValueError("Initial attachment SHA-256 differs from declaration")
+                raise ValueError("Attachment SHA-256 differs from declaration")
             sizes[row["uri"]] = size
             hashes[row["uri"]] = digest.hexdigest()
             staged[member] = source
         for uri in sorted({row["uri"] for row in attachments} - sizes.keys()):
             size = 0
+            digest = hashlib.sha256()
             async for chunk in objects.stream(uri):
                 size += len(chunk)
+                digest.update(chunk)
             sizes[uri] = size
+            hashes[uri] = digest.hexdigest()
         for row in attachments:
             if isinstance(row["size"], int) and sizes[row["uri"]] != row["size"]:
                 raise ValueError("Evidence object size differs from declaration")
+            if row.get("sha256") is not None and hashes[row["uri"]] != row["sha256"]:
+                raise ValueError("Attachment SHA-256 differs from declaration")
 
         manifest = {
             "format": "bbx.task-archive.v1",
             "task_id": str(task_id),
             "run_number": data.get("run_number"),
-            "policy": "declared-evidence",
+            "policy": "registered-ctf-artifacts" if ctf else "declared-evidence",
             "attachments": attachments,
             "initial_attachments": originals,
             "restored_files": [
@@ -288,6 +346,7 @@ async def build_archive(
                     "path": path,
                     "uri": row["uri"],
                     "fact_id": row["fact_id"],
+                    **({"artifact_id": row["artifact_id"]} if "artifact_id" in row else {}),
                     "version": row["version"],
                     "size": sizes[row["uri"]],
                     "sha256": hashes[row["uri"]],

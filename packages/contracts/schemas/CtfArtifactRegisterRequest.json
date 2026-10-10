@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "description": "Trusted service output; never an Agent-authored artifact reference.",
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "path": {
+      "minLength": 1,
+      "title": "Path",
+      "type": "string"
+    },
+    "uri": {
+      "minLength": 1,
+      "title": "Uri",
+      "type": "string"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "size": {
+      "maximum": 52428800,
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    },
+    "filename": {
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "path",
+    "uri",
+    "sha256",
+    "size",
+    "filename"
+  ],
+  "title": "CtfArtifactRegisterRequest",
+  "type": "object"
+}

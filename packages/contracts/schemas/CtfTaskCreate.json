@@ -1,0 +1,217 @@
+{
+  "$defs": {
+    "CtfBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_cost": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Max Cost"
+        },
+        "max_minutes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_cost",
+        "max_minutes"
+      ],
+      "title": "CtfBudget",
+      "type": "object"
+    },
+    "CtfOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "max_teammates": {
+          "default": 4,
+          "minimum": 0,
+          "title": "Max Teammates",
+          "type": "integer"
+        },
+        "max_steps": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "context_threshold": {
+          "default": 128000,
+          "minimum": 1,
+          "title": "Context Threshold",
+          "type": "integer"
+        }
+      },
+      "title": "CtfOptions",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "const": "ctf",
+      "title": "Mode",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "domain_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Domain Context"
+    },
+    "completion_requirements": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completion Requirements"
+    },
+    "budget": {
+      "$ref": "#/$defs/CtfBudget"
+    },
+    "ctf_options": {
+      "$ref": "#/$defs/CtfOptions"
+    },
+    "agent_profile": {
+      "default": "ctf",
+      "minLength": 1,
+      "title": "Agent Profile",
+      "type": "string"
+    },
+    "egress_allowlist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress Allowlist",
+      "type": "array"
+    },
+    "input_group_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Group Id"
+    },
+    "input_file_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input File Ids"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "model_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Version"
+    },
+    "profile_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile Version"
+    },
+    "reasoning_effort": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reasoning Effort"
+    }
+  },
+  "required": [
+    "mode",
+    "goal",
+    "budget"
+  ],
+  "title": "CtfTaskCreate",
+  "type": "object"
+}

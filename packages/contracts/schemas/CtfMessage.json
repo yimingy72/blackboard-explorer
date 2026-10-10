@@ -1,0 +1,223 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "sender_kind": {
+      "enum": [
+        "user",
+        "agent",
+        "system"
+      ],
+      "title": "Sender Kind",
+      "type": "string"
+    },
+    "sender_id": {
+      "title": "Sender Id",
+      "type": "string"
+    },
+    "recipient_id": {
+      "title": "Recipient Id",
+      "type": "string"
+    },
+    "purpose": {
+      "default": "execution",
+      "enum": [
+        "execution",
+        "review"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "kind": {
+      "default": "message",
+      "enum": [
+        "instruction",
+        "message",
+        "assignment_result",
+        "notification",
+        "help_request",
+        "turn_finished",
+        "review",
+        "review_result"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "body": {
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    },
+    "status": {
+      "default": "queued",
+      "enum": [
+        "queued",
+        "leased",
+        "delivered",
+        "cancelled",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "reply_to": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reply To"
+    },
+    "assignment_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Assignment Id"
+    },
+    "source_turn_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Turn Id"
+    },
+    "recipient_sequence": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Recipient Sequence",
+      "type": "integer"
+    },
+    "deferred": {
+      "default": false,
+      "title": "Deferred",
+      "type": "boolean"
+    },
+    "claim_token": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Claim Token"
+    },
+    "claim_turn_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Claim Turn Id"
+    },
+    "claim_generation": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Claim Generation"
+    },
+    "lease_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lease Until"
+    },
+    "delivered_turn_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivered Turn Id"
+    },
+    "session_revision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Revision"
+    },
+    "notification_purpose": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notification Purpose"
+    }
+  },
+  "required": [
+    "task_id",
+    "id",
+    "sender_kind",
+    "sender_id",
+    "recipient_id",
+    "body"
+  ],
+  "title": "CtfMessage",
+  "type": "object"
+}

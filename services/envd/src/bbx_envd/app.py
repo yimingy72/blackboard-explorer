@@ -25,6 +25,7 @@ from bbx_envd.core import (
     COMMAND_LOG,
     SUDO_LOG,
     WORKSPACE,
+    CtfCommandRegistry,
     execute_command,
     prepare_audit_logs,
     prepare_workspace,
@@ -37,6 +38,8 @@ settings = Settings()  # pyright: ignore[reportCallIssue]
 mcp = FastMCP("envd", host="0.0.0.0")
 RESTORE_MARKER = Path("/var/lib/bbx/restore-ready")
 AUDIT_MAX_BYTES = 32 * 1024 * 1024
+CTF_BOOT_MARKER = Path("/var/lib/bbx/ctf-boot")
+ctf_registry: CtfCommandRegistry | None = None
 
 
 @mcp.tool(name="execute_command")
@@ -51,7 +54,40 @@ async def execute_command_tool(
     """Run a command in the current agent's workspace."""
     request = ctx.request_context.request
     agent_id = request.headers.get("X-Agent-Id", "") if request is not None else ""
+    if settings.envd_mode == "ctf":
+        if ctf_registry is None:
+            raise ValueError("CTF registry is not initialized")
+        meta = ctx.request_context.meta
+        metadata = meta.model_dump().get("ctf") if meta is not None else None
+        if not isinstance(metadata, dict):
+            raise ValueError("CTF command metadata required")
+        return await ctf_registry.execute(
+            agent_id, metadata, command, cwd, timeout_sec, privileged, settings
+        )
     return await execute_command(agent_id, command, cwd, timeout_sec, privileged, settings)
+
+
+async def ctf_control(request) -> Response:
+    if settings.envd_mode != "ctf" or ctf_registry is None:
+        return JSONResponse({"error": "CTF mode unavailable"}, status_code=409)
+    try:
+        if request.method == "GET":
+            agent_id = request.query_params.get("agent_id")
+            result = ctf_registry.status(agent_id)
+            if agent_id is not None and "generation" in request.query_params:
+                if result.get("generation") != int(request.query_params["generation"]):
+                    raise ValueError("Stale generation")
+            return JSONResponse(result)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Object body required")
+        if request.url.path.endswith("/register"):
+            result = ctf_registry.register(body)
+        else:
+            result = await ctf_registry.stop(body)
+        return JSONResponse(result)
+    except (ValueError, TypeError, KeyError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
 
 
 async def health(request) -> Response:
@@ -120,11 +156,28 @@ async def users(request) -> Response:
 
 def requested_path(request) -> Path | Response:
     try:
-        return workspace_path(request.query_params["path"])
+        path = workspace_path(request.query_params["path"])
+        check_file_scope(request, path)
+        return path
     except KeyError:
         return JSONResponse({"error": "missing path"}, status_code=400)
     except (ValueError, FileNotFoundError, OSError):
         return JSONResponse({"error": "invalid path"}, status_code=400)
+
+
+def check_file_scope(request, path: Path) -> None:
+    """Apply a trusted caller's optional member scope after resolving symlinks."""
+    agent_id = request.query_params.get("scope_agent_id")
+    if agent_id is None:
+        return
+    if not valid_agent_id(agent_id):
+        raise ValueError("Invalid file scope")
+    root = WORKSPACE.resolve(strict=True)
+    if not any(
+        path.is_relative_to(directory)
+        for directory in (root / "agents" / agent_id, root / "shared")
+    ):
+        raise ValueError("File is outside the member's permitted workspace")
 
 
 def open_workspace_path(path: Path) -> int:
@@ -206,6 +259,7 @@ async def files(request) -> Response:
 async def stat(request) -> Response:
     try:
         path = workspace_path(request.query_params["path"], strict=False)
+        check_file_scope(request, path)
     except (KeyError, ValueError, OSError):
         return JSONResponse({"error": "invalid path"}, status_code=400)
     try:
@@ -459,6 +513,9 @@ class TokenAuth:
 
 @asynccontextmanager
 async def lifespan(app):
+    global ctf_registry
+    if settings.envd_mode == "ctf":
+        ctf_registry = CtfCommandRegistry(str(settings.envd_task_id), CTF_BOOT_MARKER)
     prepare_workspace()
     prepare_audit_logs()
     async with mcp.session_manager.run():
@@ -469,6 +526,10 @@ app = TokenAuth(
     Starlette(
         routes=[
             Route("/health", health),
+            Route("/ctf/status", ctf_control),
+            Route("/ctf/register", ctf_control, methods=["POST"]),
+            Route("/ctf/stop", ctf_control, methods=["POST"]),
+            Route("/ctf/drain", ctf_control, methods=["POST"]),
             Route("/audit", audit),
             Route("/users", users, methods=["POST"]),
             Route("/files", files),

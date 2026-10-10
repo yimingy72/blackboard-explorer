@@ -1,0 +1,81 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "action": {
+      "enum": [
+        "claim",
+        "assign",
+        "set_status",
+        "release",
+        "reopen",
+        "collaborators",
+        "delete"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "owner_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Id"
+    },
+    "collaborator_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Collaborator Ids"
+    },
+    "work_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "in_progress",
+            "blocked",
+            "completed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Work Status"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "action"
+  ],
+  "title": "CtfChallengeUpdateRequest",
+  "type": "object"
+}

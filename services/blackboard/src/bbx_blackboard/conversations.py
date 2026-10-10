@@ -137,6 +137,24 @@ class Conversations:
             raise HTTPException(404, "Task not found")
         if writable and task["deleting"]:
             raise HTTPException(409, "Task is being deleted")
+        if task.get("mode") == "ctf":
+            if writable:
+                raise HTTPException(409, "CTF writes require a generation-fenced checkpoint")
+            member = (
+                (
+                    await conn.execute(
+                        select(s.ctf_members).where(
+                            s.ctf_members.c.task_id == tid,
+                            s.ctf_members.c.id == aid,
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if member is None:
+                raise HTTPException(404, "Member not found")
+            return dict(task), dict(member)
         agent = (
             (
                 await conn.execute(
@@ -631,7 +649,16 @@ class Conversations:
                     .limit(1)
                 )
             ).first()
-            if active_agent or processing:
+            ctf_active = None
+            if task.get("mode") == "ctf":
+                ctf_active = (
+                    await conn.execute(
+                        select(s.ctf_turns.c.id)
+                        .where(s.ctf_turns.c.task_id == tid, s.ctf_turns.c.status == "running")
+                        .limit(1)
+                    )
+                ).first()
+            if active_agent or processing or ctf_active:
                 raise HTTPException(409, "Task has active work")
             await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(deleting=True))
             cancelled = (
@@ -701,6 +728,11 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.ctf_records,
+                s.ctf_challenges,
+                s.ctf_messages,
+                s.ctf_turns,
+                s.ctf_members,
                 s.agent_messages,
                 s.agent_sessions,
                 s.tool_calls,

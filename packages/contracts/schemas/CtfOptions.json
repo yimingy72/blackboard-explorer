@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_teammates": {
+      "default": 4,
+      "minimum": 0,
+      "title": "Max Teammates",
+      "type": "integer"
+    },
+    "max_steps": {
+      "default": 60,
+      "minimum": 1,
+      "title": "Max Steps",
+      "type": "integer"
+    },
+    "context_threshold": {
+      "default": 128000,
+      "minimum": 1,
+      "title": "Context Threshold",
+      "type": "integer"
+    }
+  },
+  "title": "CtfOptions",
+  "type": "object"
+}

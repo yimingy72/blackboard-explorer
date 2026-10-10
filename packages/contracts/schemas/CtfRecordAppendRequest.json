@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "body": {
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    },
+    "kind": {
+      "default": "note",
+      "enum": [
+        "note",
+        "correction"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "artifact_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Artifact Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "body"
+  ],
+  "title": "CtfRecordAppendRequest",
+  "type": "object"
+}
