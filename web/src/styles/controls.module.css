@@ -13,12 +13,14 @@
   font-weight: var(--weight-strong);
   line-height: 1.3;
   text-decoration: none;
-  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .button:hover:not(:disabled) { background: var(--color-surface); border-color: var(--color-line-strong); }
 .button:active:not(:disabled) { background: var(--color-surface); }
-.button:disabled { opacity: 0.55; }
+.button:disabled, .button[aria-disabled='true'] { opacity: 0.55; cursor: not-allowed; }
+.iconButton { width: 34px; min-height: 34px; padding: 7px; }
+.compact { min-height: 34px; padding: 6px 10px; font-size: var(--text-sm); }
 
 .primary {
   border-color: var(--color-primary);
@@ -95,6 +97,9 @@
 
 @media (max-width: 650px) {
   .button { min-height: 44px; }
+  .iconButton { width: 44px; }
   .input, .textarea, .select { font-size: 1rem; }
   .hint, .error { font-size: var(--text-base); }
 }
+
+.button[aria-disabled='true'] { pointer-events: none; }

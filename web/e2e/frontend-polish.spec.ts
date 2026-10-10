@@ -25,27 +25,27 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     await page.setViewportSize({ width, height: width > 900 ? 1000 : 844 });
     for (const [name, url, heading] of [
       ['login', '/login', '进入工作台'], ['tasks', '/tasks', '任务'],
-      ['create', '/tasks/new', '创建探索任务'], ['workers', '/profiles', 'Agent 配置'],
+      ['create', '/tasks/new', '创建任务'], ['workers', '/profiles', 'Agent 配置'],
       ['report', `/tasks/${TASK_ID}/report`, '最终报告'],
     ]) {
       await page.goto(url);
       await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible();
       await noOverflow(page);
-      await page.screenshot({ path: `${output}/${name}-${width}.png`, fullPage: true });
+      await page.screenshot({ animations: 'disabled', path: `${output}/${name}-${width}.png`, fullPage: true });
     }
     await page.goto('/profiles');
     for (const [name, label, item] of [['models', '模型配置', /审查模型/], ['mcp', 'MCP 工具', /资料检索/]] as const) {
       await page.getByRole('button', { name: label, exact: true }).click();
       await page.getByRole('button', { name: item }).click();
       await noOverflow(page);
-      await page.screenshot({ path: `${output}/${name}-${width}.png`, fullPage: true });
+      await page.screenshot({ animations: 'disabled', path: `${output}/${name}-${width}.png`, fullPage: true });
     }
     await page.goto(`/tasks/${TASK_ID}`);
     const canvas = page.getByRole('region', { name: '黑板关系图' }).first();
     await expect(canvas.getByRole('button', { name: /事实 F1，已提出/ })).toBeVisible();
     await noOverflow(page);
     expect(await page.evaluate(() => document.documentElement.scrollHeight - innerHeight)).toBeLessThanOrEqual(1);
-    await page.screenshot({ path: `${output}/workbench-${width}.png` });
+    await page.screenshot({ animations: 'disabled', path: `${output}/workbench-${width}.png` });
     await canvas.getByRole('button', { name: /事实 F1，已提出/ }).click();
     const detail = page.getByRole('complementary', { name: '对象详情' });
     await expect(detail).toBeVisible();
@@ -53,11 +53,11 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     const bounds = await detail.boundingBox();
     expect(bounds?.x).toBeGreaterThanOrEqual(0);
     expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(width > 900 ? 1001 : 845);
-    await page.screenshot({ path: `${output}/detail-${width}.png` });
+    await page.screenshot({ animations: 'disabled', path: `${output}/detail-${width}.png` });
     await page.getByRole('button', { name: '复盘记录', exact: true }).click();
     const records = page.getByRole('dialog', { name: '复盘记录' });
     await expect(records).toBeVisible();
-    await page.screenshot({ path: `${output}/records-${width}.png` });
+    await page.screenshot({ animations: 'disabled', path: `${output}/records-${width}.png` });
     await page.keyboard.press('Escape');
     await expect(records).not.toBeVisible();
   }
@@ -158,13 +158,13 @@ test('Agent回复按Markdown阅读且保留原文，窄屏输入和桌面长页�
   expect(await page.evaluate(() => 'replyInjected' in window)).toBe(false);
   await mkdir(output, { recursive: true });
   await entry.getByRole('heading', { name: '发现' }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${output}/agent-markdown-390.png` });
+  await page.screenshot({ animations: 'disabled', path: `${output}/agent-markdown-390.png` });
   await entry.locator('summary').filter({ hasText: '原始文本' }).click();
   await expect(entry.locator('pre').filter({ hasText: '<script>' })).toHaveText(source);
   await expect(pane.getByRole('textbox')).toBeVisible();
   await expect(pane.getByRole('button', { name: '发送', exact: true })).toBeInViewport({ ratio: 1 });
   await noOverflow(page);
-  await page.screenshot({ path: `${output}/agent-390.png` });
+  await page.screenshot({ animations: 'disabled', path: `${output}/agent-390.png` });
   await page.getByRole('button', { name: '关闭对话' }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/profiles');
@@ -212,7 +212,7 @@ test('中等断点保存栏不被导航遮挡，短屏Agent发送按钮能完整
   await send.click();
   expect(sent).toBe(1);
   await mkdir(output, { recursive: true });
-  await page.screenshot({ path: `${output}/agent-short-390.png` });
+  await page.screenshot({ animations: 'disabled', path: `${output}/agent-short-390.png` });
 });
 
 test('长任务目标保留全文且不挤走画布', async ({ page }) => {

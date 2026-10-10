@@ -84,7 +84,7 @@ test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对�
   await expect(page.getByRole('complementary', { name: 'Agent 1 对话记录' })).toBeVisible();
   await page.getByRole('button', { name: '关闭对话' }).click();
   await expect(page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ })).toBeFocused();
-  await page.getByRole('link', { name: '← 返回任务' }).click();
+  await page.getByRole('link', { name: '返回任务' }).click();
   await page.getByRole('link', { name: '查看任务：第二个任务' }).click();
   const agents = page.getByRole('group', { name: '全部 Agent' });
   await expect(agents).toContainText('Agent 1');

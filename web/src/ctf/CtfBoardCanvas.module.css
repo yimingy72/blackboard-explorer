@@ -1,0 +1,38 @@
+.canvas { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: auto; background: var(--color-bg); }
+.canvas :global(.react-flow) { width: 100%; height: auto; flex: 1 1 auto; min-height: 0; }
+.canvas :global(.react-flow__pane) { cursor: grab; }
+.canvas :global(.react-flow__node) { z-index: 3; border: 0; background: transparent; width: 240px; pointer-events: all; }
+.canvas :global(.react-flow__edge-path) { transition: stroke var(--duration-fast) var(--ease-out); }
+.node { position: relative; width: 100%; }
+.nodeButton { position: relative; z-index: 1; width: 100%; text-align: left; border: 1px solid var(--color-line); border-radius: 12px; background: var(--color-bg); color: var(--color-ink); box-shadow: var(--shadow-raised); padding: 14px; pointer-events: auto; transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.nodeButton:hover, .selected .nodeButton { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-soft); }
+.handle { width: 8px; height: 8px; border: 2px solid var(--color-bg); background: var(--color-line-strong); opacity: .8; }
+.agent { min-height: 70px; }
+.agent .nodeButton { display: flex; align-items: center; gap: 10px; }
+.lead .nodeButton { border-color: oklch(0.54 0.17 36 / .45); }
+.agentMark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: var(--color-info-soft); color: var(--color-info); font-size: 14px; font-weight: 700; }
+.lead .agentMark { background: var(--color-primary-soft); color: var(--color-primary); }
+.nodeCopy { min-width: 0; flex: 1; }
+.nodeCopy strong, .nodeCopy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nodeCopy strong { font-size: 13px; }
+.nodeCopy small { margin-top: 4px; color: var(--color-muted); font-size: 11px; }
+.nodeCount { color: var(--color-success); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+.task { min-height: 142px; }
+.taskHeader { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.nodeType { color: var(--color-subtle); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.taskStatus, .verification { color: var(--color-muted); font-size: 10px; }
+.taskTitle, .taskDetail, .candidate { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskTitle { margin-top: 8px; font-size: 14px; }
+.taskDetail { margin-top: 5px; color: var(--color-muted); font-size: 11px; }
+.verification { margin-top: 13px; color: var(--color-warning); }
+.verification.accepted { color: var(--color-success); }
+.verification.rejected { color: var(--color-danger); }
+.candidate { margin-top: 5px; color: var(--color-ink); font-family: var(--font-mono); font-size: 10px; }
+.legend { position: absolute; left: 18px; bottom: 16px; display: flex; gap: 14px; padding: 7px 10px; border: 1px solid var(--color-line); border-radius: 8px; background: oklch(1 0 0 / .9); color: var(--color-muted); font-size: 10px; box-shadow: var(--shadow-raised); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px dashed var(--color-primary); }
+.legend .collaborateLine { border-top-color: var(--color-info); border-top-style: dotted; }
+.controls :global(button) { background: var(--color-bg); border: 1px solid var(--color-line); color: var(--color-ink); }
+.minimap { right: 12px; bottom: 12px; background: var(--color-surface); border: 1px solid var(--color-line); opacity: .94; border-radius: 6px; overflow: hidden; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-muted); font-size: 13px; pointer-events: none; }
+@media (max-width: 650px) { .canvas { min-height: 0; } .canvas :global(.react-flow__node) { width: 240px; } .legend { left: 10px; bottom: 10px; } }

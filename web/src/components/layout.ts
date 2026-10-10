@@ -1,8 +1,11 @@
-import ELK from 'elkjs/lib/elk.bundled.js'
+import type { ELK } from 'elkjs/lib/elk.bundled.js'
 
 import type { GraphEdge, GraphNode } from '../board/graph'
 
-const elk = new ELK()
+let engine: Promise<ELK> | undefined
+function loadEngine(): Promise<ELK> {
+  return engine ??= import('elkjs/lib/elk.bundled.js').then(({ default: ELK }) => new ELK()).catch((error: unknown) => { engine = undefined; throw error })
+}
 
 export const NODE_SIZE: Record<string, { width: number; height: number }> = {
   goal: { width: 260, height: 176 },
@@ -58,6 +61,7 @@ export async function layoutGraph(
 
   const ordered = [...nodes].sort((a, b) => versionOf(a) - versionOf(b) || a.id.localeCompare(b.id))
   const nodeIds = new Set(nodes.map((node) => node.id))
+  const elk = await loadEngine()
   const layout = await elk.layout({
     id: 'board',
     layoutOptions: {

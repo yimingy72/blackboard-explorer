@@ -1,3 +1,4 @@
+import Icon from './Icon';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type InitialAttachment } from '../api/client';
 import controls from '../styles/controls.module.css';
@@ -99,7 +100,7 @@ export default function TaskAttachments({ ensureGroup, resetGroup, groupExpired,
   }
 
   return <div>
-    <div className={styles.attachmentHeading}><h2>初始附件</h2><label className={controls.button}>添加文件<input className={styles.srOnly} type="file" multiple disabled={disabled || busy || expired || groupExpired} aria-label="添加初始附件" onChange={(event) => { choose(event.target.files); event.target.value = ''; }} /></label></div>
+    <div className={styles.attachmentHeading}><h2>初始附件</h2><label className={controls.button} aria-disabled={disabled || busy || expired || groupExpired}><Icon name="plus" />添加文件<input className={styles.srOnly} type="file" multiple disabled={disabled || busy || expired || groupExpired} aria-label="添加初始附件" onChange={(event) => { choose(event.target.files); event.target.value = ''; }} /></label></div>
     {(expired || groupExpired) && <p className={controls.error} role="alert">附件已过期。<button type="button" className={controls.button} disabled={disabled || busy} onClick={restartUploads}>重新上传附件</button></p>}
     {error && <p className={controls.error} role="alert">{error}</p>}
     {uploads.length ? <ul className={styles.uploads}>{uploads.map((item) => <li key={item.key}>

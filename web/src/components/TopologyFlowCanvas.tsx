@@ -278,7 +278,7 @@ function GraphCanvas({ state, agentNumbers = {}, selectedId, onSelect }: CanvasP
 
   return (
     <SelectContext.Provider value={selectNode}>
-      <div className={styles.canvas} role="region" aria-label="黑板关系图">
+      <div className={styles.canvas} tabIndex={-1} role="region" aria-label="黑板关系图">
         <ReactFlow<GraphNode, GraphEdge>
           nodes={shownNodes}
           edges={edges}

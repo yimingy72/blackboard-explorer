@@ -19,6 +19,9 @@ export default function NewTaskPage() {
   const location = useLocation();
   const nextKey = useRef(2);
   const formRef = useRef<HTMLFormElement>(null);
+  const [mode, setMode] = useState<'blackboard' | 'ctf'>('blackboard');
+  const [maxTeammates, setMaxTeammates] = useState('4');
+  const [completionRequirements, setCompletionRequirements] = useState('');
   const [goal, setGoal] = useState('');
   const [name, setName] = useState('');
   const [context, setContext] = useState('');
@@ -100,15 +103,15 @@ export default function NewTaskPage() {
     let input = submitted.current;
     if (!input) {
       const descriptions = acceptance.map((item) => item.desc.trim());
-      if (!goal.trim() || descriptions.some((value) => !value)) {
-        setFormError('请填写任务目标和每一项验收条件。');
+      if (!goal.trim() || (mode === 'blackboard' && descriptions.some((value) => !value))) {
+        setFormError(mode === 'ctf' ? '请填写任务目标。' : '请填写任务目标和每一项验收条件。');
         return;
       }
       const cost = Number(maxCost);
       const minutes = Number(maxMinutes);
-      const agents = Number(maxAgents);
-      if (!Number.isFinite(cost) || cost <= 0 || !Number.isInteger(minutes) || minutes <= 0 || !Number.isInteger(agents) || agents <= 0) {
-        setFormError('预算金额必须大于 0，时长和并发数必须是正整数。');
+      const agents = Number(mode === 'ctf' ? maxTeammates : maxAgents);
+      if (!Number.isFinite(cost) || cost <= 0 || !Number.isInteger(minutes) || minutes <= 0 || !Number.isInteger(agents) || agents < (mode === 'ctf' ? 0 : 1)) {
+        setFormError(mode === 'ctf' ? '预算金额和时长必须大于 0，队友数必须是非负整数。' : '预算金额必须大于 0，时长和并发数必须是正整数。');
         return;
       }
       if (!selectedModel || !selectedModel.enabled) {
@@ -119,16 +122,23 @@ export default function NewTaskPage() {
         setFormError('所选模型不支持当前推理强度，请重新选择。');
         return;
       }
-      input = {
+      const common = {
         name: name.trim() || null,
         goal: goal.trim(),
         domain_context: context.trim() || null,
-        acceptance: descriptions.map((desc, index) => ({ id: `A${index + 1}`, desc })),
-        budget: { max_cost: maxCost, max_minutes: minutes, max_concurrent_agents: agents },
-        agent_profile: 'default',
         model_id: selectedModel.name,
         model_version: selectedModel.version,
         egress_allowlist: [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
+      };
+      input = mode === 'ctf' ? {
+        ...common, mode: 'ctf', agent_profile: 'ctf',
+        completion_requirements: completionRequirements.trim() || null,
+        budget: { max_cost: maxCost, max_minutes: minutes },
+        ctf_options: { max_teammates: agents },
+      } : {
+        ...common, agent_profile: 'default',
+        acceptance: descriptions.map((desc, index) => ({ id: `A${index + 1}`, desc })),
+        budget: { max_cost: maxCost, max_minutes: minutes, max_concurrent_agents: agents },
       };
       if (reasoningEffort) input.reasoning_effort = reasoningEffort;
     }
@@ -156,9 +166,14 @@ export default function NewTaskPage() {
     <div className={styles.page}>
       <nav className={styles.breadcrumb} aria-label="面包屑导航"><Link to="/tasks">任务</Link><span aria-hidden="true">/</span><span>新建</span></nav>
       <header className={styles.heading}>
-        <h1>创建探索任务</h1>
+        <h1>创建任务</h1>
       </header>
       <form ref={formRef} onSubmit={submit} className={styles.form} aria-busy={pending}>
+        <fieldset className={styles.modePicker} disabled={pending || locked}>
+          <legend>协作模式</legend>
+          <label><input type="radio" name="mode" value="blackboard" checked={mode === 'blackboard'} onChange={() => setMode('blackboard')} /><span><strong>黑板探索</strong><small>围绕验收条件组织事实与探索方向</small></span></label>
+          <label><input type="radio" name="mode" value="ctf" checked={mode === 'ctf'} onChange={() => setMode('ctf')} /><span><strong>CTF 团队</strong><small>Lead 统筹具名队友，按题协作与增援</small></span></label>
+        </fieldset>
         <div className={styles.layout}>
           <div className={styles.editor}>
             <section className={styles.section} aria-label="任务内容">
@@ -176,7 +191,13 @@ export default function NewTaskPage() {
               </div>
             </section>
 
-            <section className={styles.section} aria-labelledby="acceptance-heading">
+            {mode === 'ctf' ? <section className={styles.section} aria-labelledby="completion-heading">
+              <div className={controls.field}>
+                <label id="completion-heading" className={controls.label} htmlFor="completion-requirements">完成要求</label>
+                <textarea id="completion-requirements" className={controls.textarea} rows={4} value={completionRequirements} onChange={(event) => { setCompletionRequirements(event.target.value); fitTextarea(event.currentTarget); }} placeholder="说明需要完成的题目、证据或交付内容（可选）" disabled={pending || locked} />
+                <p className={controls.hint}>Lead 会持续接收任务和插话，并结合这些要求组织收尾。</p>
+              </div>
+            </section> : <section className={styles.section} aria-labelledby="acceptance-heading">
               <div className={styles.sectionHeading}><h2 id="acceptance-heading">验收条件</h2></div>
               <div className={styles.acceptanceList}>{acceptance.map((item, index) => (
                 <div className={styles.acceptanceRow} key={item.key}>
@@ -187,7 +208,7 @@ export default function NewTaskPage() {
                 </div>
               ))}</div>
               <button type="button" className={`${controls.button} ${styles.add}`} onClick={addAcceptance} disabled={pending || locked}>＋ 添加验收条件</button>
-            </section>
+            </section>}
             <section className={styles.section} aria-label="初始附件"><TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked} onStatus={attachmentsStatus} /></section>
           </div>
 
@@ -197,7 +218,7 @@ export default function NewTaskPage() {
               <div className={`${styles.settingsFields} ${styles.budgetFields}`}>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-cost">金额上限（{currencyLabel}）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-cost" className={controls.input} type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required disabled={pending || locked} /></div>
                 <div className={controls.field}><label className={controls.label} htmlFor="max-minutes">时长上限（分钟）<span className={controls.required} aria-hidden="true">*</span></label><input id="max-minutes" className={controls.input} type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required disabled={pending || locked} /></div>
-                <div className={controls.field}><label className={controls.label} htmlFor="max-agents">并发 Agent 上限<span className={controls.required} aria-hidden="true">*</span></label><input id="max-agents" className={controls.input} type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required disabled={pending || locked} /></div>
+                {mode === 'ctf' ? <div className={controls.field}><label className={controls.label} htmlFor="max-teammates">队友上限（不含 Lead）</label><input id="max-teammates" className={controls.input} type="number" min="0" step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required disabled={pending || locked} /><p className={controls.hint}>默认建议 4 名；填 0 时由 Lead 独立执行。</p></div> : <div className={controls.field}><label className={controls.label} htmlFor="max-agents">并发 Agent 上限<span className={controls.required} aria-hidden="true">*</span></label><input id="max-agents" className={controls.input} type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required disabled={pending || locked} /></div>}
               </div>
             </section>
 

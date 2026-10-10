@@ -1,3 +1,4 @@
+import Icon from './Icon';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { BoardEvent, BoardState } from '../board/types';
 import { eventLabels } from '../board/view';
@@ -99,7 +100,7 @@ export default function WorkbenchDrawer({ open, onClose, taskId, state, events, 
     tabRefs.current[nextTab]?.focus();
   }
   return <dialog ref={dialog} className={styles.drawer} aria-label="复盘记录" onCancel={onClose} onClose={onClose}>
-    <header className={styles.dialogHeader}><h2>复盘记录</h2><button type="button" onClick={onClose} aria-label="关闭复盘记录">×</button></header>
+    <header className={styles.dialogHeader}><h2>复盘记录</h2><button type="button" onClick={onClose} aria-label="关闭复盘记录"><Icon name="close" /></button></header>
     <div className={styles.tabs}>
       <div className={styles.tabList} role="tablist" aria-label="记录分类" onKeyDown={keySwitch}>
         {tabs.map(([name, label]) => <button key={name} ref={(node) => { tabRefs.current[name] = node; }} type="button" role="tab" id={`${id}-tab-${name}`} aria-selected={tab === name} aria-controls={panelId} tabIndex={tab === name ? 0 : -1} onClick={() => { setTab(name); }}>{label}</button>)}

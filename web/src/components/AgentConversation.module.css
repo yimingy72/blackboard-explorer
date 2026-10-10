@@ -75,3 +75,5 @@
   .composer textarea { height: 64px; min-height: 64px; max-height: 140px; font-size: 1rem; }
   .composer button, .load, .contribution button { min-height: 44px; }
 }
+
+.panel { animation: panel-enter var(--duration-panel) var(--ease-out); }

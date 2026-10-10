@@ -1,3 +1,4 @@
+import Icon from './Icon';
 import { formatMoney } from '../pages/format';
 import { TaskCurrency } from '../pages/currency';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
@@ -126,9 +127,13 @@ export default function DetailPanel({ taskId, state, selectedId, onSelect, histo
   const fact = selectedId ? state.facts[selectedId] : undefined;
   const intent = selectedId ? state.intents[selectedId] : undefined;
   const agent = selectedId ? state.agents[selectedId] : undefined;
-  function close() { onSelect(null); requestAnimationFrame(() => panel.current?.focus()); }
+  function close() {
+    const node = selectedId ? document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(selectedId)}"] button`) : null;
+    onSelect(null);
+    requestAnimationFrame(() => { if (node?.isConnected) node.focus({ preventScroll: true }); else document.querySelector<HTMLElement>('[aria-label="黑板关系图"]')?.focus({ preventScroll: true }); });
+  }
   return <AgentNumbers.Provider value={agentNumbers}><aside key={taskId} ref={panel} tabIndex={-1} className={styles.panel} aria-label={historical ? '历史快照详情' : '对象详情'} onKeyDown={(event) => { if (event.key === 'Escape' && selectedId) close(); }}>
-    <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情">×</button>}</div>
+    <div className={styles.top}><span className={styles.panelLabel}>详情{historical ? ' · 历史快照' : ''}</span>{selectedId && <button type="button" className={`${controls.button} ${controls.quiet} ${styles.close}`} onClick={close} aria-label="关闭详情"><Icon name="close" /></button>}</div>
     {!selectedId ? <div className={styles.placeholder}><h2>选择图上的节点</h2><p>查看任务目标、事实、意图或 Agent 的详细信息。</p></div> :
       <div ref={body} className={styles.body}>{selectedId === 'goal' ? <>
         <div className={styles.titleBlock}><h2 tabIndex={-1}>{state.task?.name || '任务目标'}</h2><span className={controls.badge}>{state.task?.status ?? '尚未建立'}</span></div><GoalBody goal={state.task?.goal ?? ''} />

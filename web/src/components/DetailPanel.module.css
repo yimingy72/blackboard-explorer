@@ -67,3 +67,5 @@
 .readingTools span { color: var(--color-muted); }
 .markdown .rawText { max-height: none; white-space: pre-wrap; }
 @media (max-width: 650px) { .readingTools button { min-height: 44px; } }
+
+.panel { animation: panel-enter var(--duration-panel) var(--ease-out); }

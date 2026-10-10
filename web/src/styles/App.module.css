@@ -5,9 +5,9 @@
 .skipLink:focus { width: auto; height: auto; overflow: visible; clip-path: none; }
 .topbarInner {
   max-width: 1440px;
-  min-height: 64px;
+  min-height: 56px;
   margin: 0 auto;
-  padding: 0 40px;
+  padding: 0 28px;
   display: flex;
   align-items: center;
   gap: 32px;

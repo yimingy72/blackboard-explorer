@@ -61,3 +61,5 @@
 .deleteDialog p { font-size: .86rem; line-height: 1.7; overflow-wrap: anywhere; }
 .deleteDialog > div { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 @media (max-width: 740px) { .table .deleteButton { min-height: 44px; margin-left: 0; } }
+
+.modeBadge { flex-shrink: 0; display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-muted); font-size: var(--text-xs); font-weight: 500; white-space: nowrap; }

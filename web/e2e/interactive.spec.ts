@@ -89,7 +89,7 @@ test('删除任务须确认清除所有会话，取消不发请求', async ({ pa
   expect(removed).toBe(false);
   await page.getByRole('button', { name: `删除任务：${GOAL}` }).click();
   await dialog.getByRole('button', { name: '确认删除' }).click();
-  await expect(page.getByRole('heading', { name: '还没有探索任务' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '还没有任务' })).toBeVisible();
   expect(removed).toBe(true);
   expect(mock.unexpected).toEqual([]);
 });

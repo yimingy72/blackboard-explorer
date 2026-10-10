@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WorkerPrompts from '../components/WorkerPrompts';
+import CtfSettings from '../ctf/CtfSettings';
 import { defaultTools, workers } from '../components/workerOptions';
 import PlatformCatalog from '../components/PlatformCatalog';
 import { api, ApiError, type ProfileInput, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
@@ -38,7 +39,7 @@ export default function ProfilesPage() {
   const [drafts, setDrafts] = useState<Drafts | null>(null);
   const [runtime, setRuntime] = useState<RuntimeInput | null>(null);
   const [role, setRole] = useState<WorkerRole>('explore');
-  const [section, setSection] = useState<'worker' | 'models' | 'mcp'>('worker');
+  const [section, setSection] = useState<'worker' | 'ctf' | 'models' | 'mcp'>('worker');
   const [catalogDirty, setCatalogDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -97,8 +98,8 @@ export default function ProfilesPage() {
   const currentDirty = Boolean(snapshot && current && JSON.stringify(current) !== JSON.stringify(workerDraft(snapshot.profile, role)));
   return <div className={styles.page}>
     <header className={styles.pageHeader}><h1>Agent 配置</h1></header>
-    <nav className={styles.topNav} aria-label="配置中心">{([['worker', 'Worker 配置'], ['models', '模型配置'], ['mcp', 'MCP 工具']] as const).map(([id, label]) => <button key={id} type="button" className={section === id ? styles.tabActive : styles.tab} aria-current={section === id ? 'page' : undefined} onClick={() => chooseSection(id)}>{label}</button>)}</nav>
-    {section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} /> : <>
+    <nav className={styles.topNav} aria-label="配置中心">{([['worker', 'Worker 配置'], ['ctf', 'CTF 配置'], ['models', '模型配置'], ['mcp', 'MCP 工具']] as const).map(([id, label]) => <button key={id} type="button" className={section === id ? styles.tabActive : styles.tab} aria-current={section === id ? 'page' : undefined} onClick={() => chooseSection(id)}>{label}</button>)}</nav>
+    {section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} /> : <>
       {error && <p className={styles.errorBanner} role="alert">{error} <button type="button" onClick={() => void reload()}>重新读取</button></p>}
       {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
       {settings.isLoading && !snapshot && <p role="status">正在读取 Worker 配置…</p>}

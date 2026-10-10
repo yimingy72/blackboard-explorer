@@ -1,3 +1,4 @@
+import Icon from './Icon';
 import { TaskCurrency } from '../pages/currency';
 import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -142,7 +143,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
   return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
     <header className={styles.header}>
       <div><span className={styles.overline}>Agent 对话{historical ? ' · 历史快照' : ''}</span><h2 tabIndex={-1} ref={heading} title={agent.id}>{label} <span>· {agentRole(agent)}</span></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次{!historical && messages.data?.session_available && messages.data.session_origin === 'native' ? ' · 会话已保存' : ''}</p></div>
-      <button type="button" className={styles.close} onClick={onClose} aria-label="关闭对话">×</button>
+      <button type="button" className={styles.close} onClick={onClose} aria-label="关闭对话"><Icon name="close" /></button>
     </header>
     <div className={styles.scroll} ref={scroll} onScroll={() => { const node = scroll.current; if (node) following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
       <details className={styles.metrics}><summary>运行概况 · {elapsed}</summary><dl><dt>模型调用</dt><dd>{agent.steps} 次</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens ?? 0).toLocaleString()} / {(agent.usage.reasoning_tokens ?? 0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatMoney(agent.usage.cost, currency)}</dd></dl></details>

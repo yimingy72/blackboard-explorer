@@ -1,9 +1,11 @@
+import Icon from '../components/Icon';
 import { taskTitle } from './format';
 import { TaskCurrency } from './currency';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, request, type TaskView } from '../api/client';
+import CtfWorkbench from '../ctf/CtfWorkbench';
 import { useBoard } from '../board/store';
 import { reduceBoard } from '../board/reducer';
 import { taskEndExplanation } from '../board/view';
@@ -31,7 +33,7 @@ function statusClass(status: string) {
   return '';
 }
 
-export default function TaskWorkbenchPage() {
+function BlackboardWorkbenchPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -150,7 +152,7 @@ export default function TaskWorkbenchPage() {
   return (
     <TaskCurrency.Provider value={task?.cost_currency ?? null}><div className={styles.page}>
       <header className={styles.header}>
-        <div className={styles.topline}><Link to="/tasks" className={styles.back}>← 返回任务</Link><span className={styles.taskId}>{taskId.slice(0, 8)}</span></div>
+        <div className={styles.topline}><Link to="/tasks" className={styles.back}><Icon name="back" />返回任务</Link><span className={styles.taskId}>{taskId.slice(0, 8)}</span></div>
         <div className={styles.titleRow}>
           <div className={styles.titleGroup}><h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><div className={styles.titleMeta}><span className={`${controls.badge} ${statusClass(status)}`}>{taskStatusLabel(status)}</span><span>第 {boardTask?.runNumber ?? task?.run_number ?? 1} 轮</span><span>累计运行 {duration}</span><span>估算费用 {formatMoney(usedCost, task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost, task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden="true" />{connectionText[board.connection]}</span></div></div>
           <div className={styles.actions}><button type="button" className={controls.button} onClick={() => setSelectedId('goal')}>任务内容</button><button type="button" className={controls.button} onClick={() => setRecordsOpen(true)}>复盘记录</button>
@@ -199,4 +201,15 @@ export default function TaskWorkbenchPage() {
       </dialog>
     </div></TaskCurrency.Provider>
   );
+}
+
+export default function TaskWorkbenchPage() {
+  const { taskId } = useParams<{ taskId: string }>();
+  const navigate = useNavigate();
+  const task = useQuery({ queryKey: ['task-mode', taskId], queryFn: ({ signal }) => request<TaskView>(`/tasks/${encodeURIComponent(taskId!)}`, { signal }), enabled: Boolean(taskId), retry: false });
+  useEffect(() => { if (task.error instanceof ApiError && task.error.status === 401) navigate('/login', { replace: true }); }, [task.error, navigate]);
+  if (!taskId) return <p role="alert">未指定任务。</p>;
+  if (task.isLoading) return <p role="status">正在读取任务…</p>;
+  if (!task.data) return <div role="alert"><p>{task.error?.message ?? '无法读取任务。'}</p><button type="button" className={controls.button} onClick={() => void task.refetch()}>重试</button> <Link to="/tasks">返回任务列表</Link></div>;
+  return task.data.mode === 'ctf' ? <CtfWorkbench key={taskId} taskId={taskId} initialTask={task.data} /> : <BlackboardWorkbenchPage key={taskId} />;
 }

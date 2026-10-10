@@ -26,7 +26,10 @@ export default defineConfig({
   fullyParallel: true,
   timeout: 45_000,
   expect: { timeout: 10_000 },
-  use: { ...devices['Desktop Chrome'], baseURL, trace: 'retain-on-failure' },
+  use: {
+    ...devices['Desktop Chrome'], baseURL, trace: 'retain-on-failure',
+    launchOptions: process.env.BBX_E2E_BROWSER ? { executablePath: process.env.BBX_E2E_BROWSER } : {},
+  },
   webServer: {
     command: `pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,

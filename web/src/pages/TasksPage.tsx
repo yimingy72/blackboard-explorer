@@ -1,3 +1,4 @@
+import Icon from '../components/Icon';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -26,6 +27,7 @@ export default function TasksPage() {
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const deletePending = useRef(false);
   const [deleteError, setDeleteError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks, refetchInterval: (query) => query.state.data?.some((task) => ['provisioning', 'running', 'closing'].includes(task.status) || Boolean('deleting' in task && task.deleting)) ? 2000 : false });
@@ -40,14 +42,15 @@ export default function TasksPage() {
   }, [deleteTarget]);
 
   async function removeTask() {
-    if (!deleteTarget || deleting) return;
+    if (!deleteTarget || deletePending.current) return;
+    deletePending.current = true;
     setDeleting(true); setDeleteError('');
     try {
       await api.deleteTask(deleteTarget.id);
       setDeleteTarget(null);
       await queryClient.invalidateQueries({ queryKey: ['tasks'] });
     } catch (error) { setDeleteError(error instanceof Error ? error.message : '删除失败，请重试。'); }
-    finally { setDeleting(false); }
+    finally { deletePending.current = false; setDeleting(false); }
   }
 
   const tasks = query.data ?? [];
@@ -75,8 +78,8 @@ export default function TasksPage() {
       ) : tasks.length === 0 ? (
         <div className={styles.state}>
           <div className={styles.emptyGlyph} aria-hidden="true">◇</div>
-          <h2>还没有探索任务</h2>
-          <p>创建任务、设定验收条件后，事实和意图会在工作台形成关系图。</p>
+          <h2>还没有任务</h2>
+          <p>创建黑板探索或 CTF 团队任务，开始协作。</p>
           <Link to="/tasks/new" className={`${controls.button} ${controls.primary}`}>创建第一个任务</Link>
         </div>
       ) : (
@@ -94,12 +97,12 @@ export default function TasksPage() {
                 <thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">验收</th><th scope="col">已用金额</th><th scope="col">创建时间</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
                 <tbody>{visible.map((task) => (
                   <tr key={task.id}>
-                    <td className={styles.goal}><div className={styles.identity}><span className={styles.taskId} title={task.id}>{task.id.slice(0, 8)}</span><Link to={`/tasks/${task.id}`} title={taskTitle(task)}>{taskTitle(task)}</Link></div></td>
+                    <td className={styles.goal}><div className={styles.identity}><span className={styles.taskId} title={task.id}>{task.id.slice(0, 8)}</span><Link to={`/tasks/${task.id}`} title={taskTitle(task)}>{taskTitle(task)}</Link><span className={styles.modeBadge}>{task.mode === 'ctf' ? 'CTF 团队' : '黑板探索'}</span></div></td>
                     <td data-label="状态"><span className={`${controls.badge} ${statusClass(task.status)}`}>{'deleting' in task && task.deleting ? '删除中' : taskStatusLabel(task.status)}</span></td>
-                    <td data-label="验收满足">{metCount(task)}</td>
+                    <td data-label="验收满足">{task.mode === 'ctf' ? '按题协作' : metCount(task)}</td>
                     <td data-label="已用金额">{formatMoney(task.usage?.cost, task.cost_currency)}</td>
                     <td data-label="创建时间">{formatDate(task.created_at)}</td>
-                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${taskTitle(task)}`}>查看<span aria-hidden="true"> →</span></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${taskTitle(task)}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
+                    <td className={styles.open}><Link to={`/tasks/${task.id}`} aria-label={`查看任务：${taskTitle(task)}`}>查看<Icon name="arrow" /></Link><button type="button" className={styles.deleteButton} aria-label={`删除任务：${taskTitle(task)}`} disabled={!['created', 'finished', 'failed', 'stopped'].includes(task.status) || Boolean('deleting' in task && task.deleting)} title="任务结束后可删除，删除同时清除所有 Agent 会话" onClick={() => { setDeleteError(''); setDeleteTarget(task); }}>删除</button></td>
                   </tr>
                 ))}</tbody>
               </table>
