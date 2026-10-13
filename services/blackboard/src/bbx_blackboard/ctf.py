@@ -197,6 +197,121 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         require(not task["deleting"], "Task is deleting")
         return task
 
+    async def cleanup_terminal_context_blocks(self, tid):
+        """Archive legacy terminal blockers without changing history or execution state."""
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            require(task["status"] in {"finished", "failed", "stopped"}, "Task is not terminal")
+            require(task["ctf_control"]["phase"] == "closed", "Task is not closed")
+            running = (
+                await conn.execute(
+                    select(s.ctf_turns.c.id)
+                    .where(s.ctf_turns.c.task_id == tid, s.ctf_turns.c.status == "running")
+                    .limit(1)
+                )
+            ).first()
+            require(running is None, "Task has an active execution or review turn")
+            members = (
+                (await conn.execute(select(s.ctf_members).where(s.ctf_members.c.task_id == tid)))
+                .mappings()
+                .all()
+            )
+            require(
+                not any(
+                    member["current_turn_id"] or member["pending_operation"] for member in members
+                ),
+                "Task has an active member operation or turn",
+            )
+            control = task["ctf_control"]
+            blocked = control.get("context_blocked_members", {})
+            if not blocked:
+                return {"task_id": str(tid), "changed": False, "cleared_members": 0}
+            await patch(conn, s.tasks, tid, {"ctf_control": clear_context_blocks(task, control)})
+            await self._emit(
+                conn,
+                tid,
+                "coordination.reminded",
+                "system",
+                {
+                    "status": "terminal_context_blocks_cleared",
+                    "run_number": task["run_number"],
+                    "cleared_members": len(blocked),
+                },
+            )
+            return {"task_id": str(tid), "changed": True, "cleared_members": len(blocked)}
+
+    async def _recovery_diagnostics(self, conn, tid, control, agent_id=None):
+        """Bound references and numeric context diagnostics without exposing private inputs."""
+        query = select(s.ctf_messages.c.id, s.ctf_messages.c.recipient_id).where(
+            s.ctf_messages.c.task_id == tid,
+            s.ctf_messages.c.purpose == "execution",
+            s.ctf_messages.c.status == "queued",
+            s.ctf_messages.c.deferred.is_(True),
+        )
+        if agent_id is not None:
+            query = query.where(s.ctf_messages.c.recipient_id == agent_id)
+        messages = (
+            (
+                await conn.execute(
+                    query.order_by(
+                        s.ctf_messages.c.recipient_id, s.ctf_messages.c.recipient_sequence
+                    ).limit(51)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        blocked = control.get("context_blocked_members", {})
+        entries = [
+            (aid, entry)
+            for aid, entry in sorted(blocked.items())
+            if agent_id is None or aid == agent_id
+        ]
+        known_branches = {
+            "no_loaded_prefix",
+            "loaded_prefix_mismatch",
+            "unconfirmed_prefix",
+            "missing_recovery_seed",
+            "no_safe_boundary",
+            "unsafe_tool_boundary",
+            "remaining_over_limit",
+            "compacted",
+            "unsafe_loaded_boundary",
+            "unshrinkable_loaded_history",
+            "protected_input",
+            "legacy",
+        }
+        diagnostics = []
+        for aid, entry in entries[:20]:
+            values = {
+                key: value if type(value) is int and 0 <= value <= 1_000_000_000 else None
+                for key in ("eligible", "cut", "estimated_input_tokens", "limit_tokens")
+                for value in [entry.get(key)]
+            }
+            diagnostics.append(
+                {
+                    "agent_id": aid,
+                    "branch": entry.get("branch")
+                    if isinstance(entry.get("branch"), str) and entry["branch"] in known_branches
+                    else "unknown",
+                    **values,
+                }
+            )
+        return {
+            "blocked_members": diagnostics,
+            "blocked_members_truncated": len(entries) > 20,
+            "deferred_messages": [
+                {
+                    "id": message["id"],
+                    "recipient_id": message["recipient_id"],
+                    "status": "queued",
+                    "deferred": True,
+                }
+                for message in messages[:50]
+            ],
+            "deferred_messages_truncated": len(messages) > 50,
+        }
+
     async def _emit(self, conn, tid, kind, actor, payload):
         addressed_to = None
         if kind.startswith("message."):
@@ -730,6 +845,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             operation_id = str(
                 uuid5(NAMESPACE_URL, f"ctf-idle:{tid}:{task['run_number']}:{progress}:{attempt}")
             )
+            diagnostics = await self._recovery_diagnostics(conn, tid, control)
             if attempt > limit:
                 if lead_blocked:
                     summary = (
@@ -748,6 +864,9 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                         "Coordination stalled: the completed board received a "
                         "final-summary reminder but no task conclusion."
                     )
+                if diagnostics["deferred_messages"] or diagnostics["blocked_members"]:
+                    summary += " Deferred input references and blocked diagnostics remain saved: "
+                    summary += json.dumps(diagnostics)
                 stored = {
                     **CtfConclusion.model_validate(
                         {
@@ -788,39 +907,13 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 "Review shared results and request the final task conclusion. "
                 "This is the only automatic summary reminder."
             )
-            deferred = (
-                (
-                    await conn.execute(
-                        select(s.ctf_messages.c.id, s.ctf_messages.c.recipient_id)
-                        .where(
-                            s.ctf_messages.c.task_id == tid,
-                            s.ctf_messages.c.status == "queued",
-                            s.ctf_messages.c.deferred.is_(True),
-                        )
-                        .order_by(
-                            s.ctf_messages.c.recipient_id, s.ctf_messages.c.recipient_sequence
-                        )
-                        .limit(100)
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            if deferred:
+            if diagnostics["deferred_messages"] or diagnostics["blocked_members"]:
                 body += " Deferred work needs a relevance decision; no messages were released. "
-                body += json.dumps(
-                    {
-                        "deferred_messages": [
-                            {
-                                "id": m["id"],
-                                "recipient_id": m["recipient_id"],
-                                "status": "queued",
-                                "deferred": True,
-                            }
-                            for m in deferred
-                        ]
-                    }
+                body += (
+                    "Lead can explicitly confirm relevant deferred messages "
+                    "or issue a smaller new instruction. "
                 )
+                body += json.dumps(diagnostics)
             await self._message(conn, tid, "system", "lead", body, operation_id, "instruction")
             if lead_blocked:
                 retries = dict(control.get("turn_retries", {}))
@@ -1988,6 +2081,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             exhausted = reason is None
             if exhausted and end_reason in {"provider_transient", "context_blocked"}:
                 label = "context" if end_reason == "context_blocked" else "provider"
+                diagnostics = await self._recovery_diagnostics(conn, tid, control, member["id"])
                 await self._message(
                     conn,
                     tid,
@@ -1995,8 +2089,10 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     "lead",
                     f"Member {member['id']} exhausted {limit} automatic {label} recoveries "
                     "in this run. Full saved history, records, ownership and queued inputs remain. "
-                    "Inspect the saved work and context diagnostics before requesting a smaller "
-                    "new instruction or an explicit resume; no further automatic retry is allowed.",
+                    "Inspect saved work; Lead can explicitly confirm relevant deferred messages "
+                    "or issue a smaller new instruction. Confirmation does not bypass a context "
+                    "block on the same old input. No further automatic retry is allowed. "
+                    + json.dumps(diagnostics),
                     str(uuid5(NAMESPACE_URL, f"ctf-{label}-exhausted:{tid}:{turn['id']}")),
                     deferred=member["role"] == "lead" or control["phase"] != "running",
                     source_turn_id=turn["id"],
