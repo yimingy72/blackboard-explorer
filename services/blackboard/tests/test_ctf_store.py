@@ -1,11 +1,60 @@
 """Offline guard and native history checks."""
 
 from datetime import timedelta
+from typing import Any, cast
 
 import pytest
-from bbx_blackboard.ctf import check_budget, history_ids
+from bbx_blackboard.ctf import check_budget, dispatch_message_condition, history_ids
 from bbx_blackboard.store.repository import now
 from fastapi import HTTPException
+from sqlalchemy import column, create_engine, select, table, values
+
+
+@pytest.mark.parametrize("blocked_ids", [["old", None], [None], ["old"]])
+@pytest.mark.parametrize("delay_seconds", [None, -1, 2])
+def test_context_dispatch_ignores_missing_model_ids_without_replaying_old_inputs(
+    blocked_ids, delay_seconds
+):
+    instant = now()
+    mailbox = table(
+        "ctf_messages", column("id"), column("recipient_id"), column("kind"), column("sender_kind")
+    )
+    rows = (
+        values(*mailbox.c)
+        .data(
+            [
+                ("old", "member", "instruction", "agent"),
+                ("new", "member", "instruction", "agent"),
+                ("user", "member", "message", "user"),
+                ("notice", "member", "message", "system"),
+                ("retry", "member", "instruction", "system"),
+            ]
+        )
+        .cte("ctf_messages")
+    )
+    control: dict[str, Any] = {
+        "context_blocked_members": {"member": {"input_message_ids": blocked_ids}}
+    }
+    if delay_seconds is not None:
+        control["turn_retry_delays"] = {
+            "member": {
+                "message_id": "retry",
+                "ready_at": (instant + timedelta(seconds=delay_seconds)).isoformat(),
+            }
+        }
+    condition = dispatch_message_condition({"ctf_control": control}, instant=instant)
+    # Execute SQL three-valued logic rather than checking rendered query text.
+    from sqlalchemy.sql.util import ClauseAdapter
+
+    condition = ClauseAdapter(rows, adapt_on_names=True).traverse(condition)
+    with create_engine("sqlite://").connect() as connection:
+        ready = set(connection.execute(select(rows.c.id).where(condition)).scalars())
+    assert ready == {
+        "new",
+        "user",
+        *([] if "old" in blocked_ids else ["old"]),
+        *(["retry"] if delay_seconds is None or delay_seconds < 0 else []),
+    }
 
 
 def test_delivery_requires_real_history_not_pending_or_metadata():
@@ -59,8 +108,10 @@ def test_budget_guard_uses_persistent_reservations_not_a_magic_threshold():
     task["usage"]["cost"] = "0.80"
     check_budget(task)
     task["ctf_control"]["budget_reservations"] = {"call-1": {"cost": "0.20"}}
-    with pytest.raises(HTTPException, match="budget exhausted"):
+    with pytest.raises(HTTPException) as caught:
         check_budget(task)
+    assert isinstance(caught.value.detail, dict)
+    assert cast(dict[str, Any], caught.value.detail)["code"] == "ctf_budget_wait"
 
 
 def test_initial_input_preserves_long_goal_workflow_and_attachment_references():

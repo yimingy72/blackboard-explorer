@@ -852,6 +852,7 @@
               "ctf.turn.finished",
               "ctf.conclusion.requested",
               "ctf.conclusion.finalized",
+              "ctf.coordination.reminded",
               "ctf.cursor"
             ],
             "title": "Type",
@@ -7442,6 +7443,23 @@
               "title": "Offset",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "after_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Version"
+            }
           }
         ],
         "responses": {
@@ -7734,6 +7752,51 @@
           }
         },
         "summary": "Member Operation",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime-state": {
+      "get": {
+        "operationId": "runtime_state_api_tasks__task_id__ctf_runtime_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime State Api Tasks  Task Id  Ctf Runtime State Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runtime State",
         "tags": [
           "ctf"
         ]

@@ -237,8 +237,21 @@ def model_error_metadata(
         "incomplete_reason": _bounded_identifier(stream_error.incomplete_reason, _IDENTIFIER)
         if stream_error is not None
         else None,
-        "transient": category
-        in {"connection", "timeout", "rate_limit", "conflict", "server_error"},
+        "transient": category in {"connection", "timeout", "rate_limit", "conflict", "server_error"}
+        and not any(
+            isinstance(
+                item,
+                (
+                    httpx2.LocalProtocolError,
+                    TypeError,
+                    ValueError,
+                    ChatClientInvalidAuthException,
+                    ChatClientInvalidRequestException,
+                ),
+            )
+            or (isinstance(item, RuntimeError) and not isinstance(item, ModelStreamError))
+            for item in chain
+        ),
         "http_status": status,
         "provider_code": code
         or (
@@ -258,3 +271,11 @@ def model_error_metadata(
 def model_attempt_limit(provider: str) -> int:
     """Return the configured maximum number of provider HTTP attempts."""
     return 5 if provider in OPENAI_PROVIDERS else 1
+
+
+def is_transient_model_error(error: BaseException) -> bool:
+    """Recover provider failures, never a local error with incidental transport context."""
+    return (
+        isinstance(error, (ChatClientException, APIError, httpx2.TransportError, ModelStreamError))
+        and model_error_metadata(error)["transient"] is True
+    )

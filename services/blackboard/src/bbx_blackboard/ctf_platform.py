@@ -42,6 +42,8 @@ class CtfPlatformMixin:
         target=None,
         platform_call=None,
         expected_revision=None,
+        work_status=None,
+        preserve_verification=False,
     ):
         applied = expected_revision is None or challenge["revision"] == expected_revision
         result = {
@@ -57,13 +59,17 @@ class CtfPlatformMixin:
             "platform_call": platform_call,
             "summary_applied": applied,
         }
+        if work_status is not None:
+            result["work_status"] = work_status
         record = await self._board_event(
             conn, tid, actor, "ctf.record.appended", request_id, digest, result
         )
         if applied:
             updated = {**challenge, "revision": challenge["revision"] + 1}
-            if verification is not None:
+            if verification is not None and not preserve_verification:
                 updated["verification"] = verification
+            if work_status is not None:
+                updated["work_status"] = work_status
             if target is not None:
                 updated["target"] = target
             await self._board_event(
@@ -133,8 +139,13 @@ class CtfPlatformMixin:
         evidence_refs=None,
         generation=None,
         turn_id=None,
+        work_status=None,
     ):
         ensure(status in {"candidate", "unknown"}, "Agents can only declare candidate or unknown")
+        ensure(
+            work_status is None or work_status in {"in_progress", "blocked", "completed"},
+            "Invalid candidate work status",
+        )
         return await self._verification_write(
             tid,
             actor,
@@ -147,6 +158,7 @@ class CtfPlatformMixin:
             "agent",
             generation,
             turn_id,
+            work_status=work_status,
         )
 
     async def manual_verification(
@@ -193,6 +205,7 @@ class CtfPlatformMixin:
         generation,
         turn_id,
         user_id=None,
+        work_status=None,
     ):
         async with self.repo.engine.begin() as conn:
             await self._board_write(conn, tid, actor, generation, turn_id)
@@ -210,6 +223,7 @@ class CtfPlatformMixin:
                     evidence_refs=[str(item) for item in (evidence_refs or [])],
                     source=source,
                     user_id=user_id,
+                    **({"work_status": work_status} if work_status is not None else {}),
                 ),
             )
             if previous:
@@ -221,6 +235,16 @@ class CtfPlatformMixin:
                 actor in {"lead", "user", challenge["owner_id"], *challenge["collaborator_ids"]},
                 "Only assigned members may declare a candidate",
             )
+            if work_status is not None:
+                ensure(
+                    actor in {"lead", challenge["owner_id"]},
+                    "Only the owner or Lead can update work status",
+                )
+                ensure(challenge["owner_id"] is not None, "Challenge needs an owner")
+                ensure(
+                    challenge["work_status"] not in {"completed", "cancelled"},
+                    "Reopen the challenge first",
+                )
             refs = await self._artifact_refs(conn, tid, evidence_refs)
             previous_state = challenge["verification"]
             verification = CtfVerification(
@@ -233,7 +257,19 @@ class CtfPlatformMixin:
                 updated_at=now(),
             ).model_dump(mode="json")
             return await self._verification_record(
-                conn, tid, actor, request_id, digest, challenge, verification, summary, refs
+                conn,
+                tid,
+                actor,
+                request_id,
+                digest,
+                challenge,
+                verification,
+                summary,
+                refs,
+                work_status=work_status,
+                preserve_verification=source == "agent"
+                and previous_state.get("source") in {"platform", "user"}
+                and not previous_state.get("test_only"),
             )
 
     async def _platform_binding(

@@ -163,7 +163,12 @@ async def test_native_maf_board_tools_read_record_and_append_registered_artifact
             calls.append((operation, body))
             assert token == "member-token"
             if operation == "list_records":
-                return [{"body": "route A failed because nonce expires", "artifact_ids": []}]
+                return {
+                    "records": [
+                        {"body": "route A failed because nonce expires", "artifact_refs": []}
+                    ],
+                    "next_offset": None,
+                }
             if operation == "append_record":
                 from bbx_contracts.ctf import CtfRecordAppendRequest
 

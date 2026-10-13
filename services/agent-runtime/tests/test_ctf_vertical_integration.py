@@ -119,7 +119,7 @@ async def run_ready_turns(coordinator, task_id):
         await asyncio.wait_for(asyncio.gather(*futures), 15)
 
 
-async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_database):
+async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_database, monkeypatch):
     settings = BoardSettings(
         postgres_password=SecretStr("isolated-test"),
         minio_root_password=SecretStr("unused-test"),
@@ -246,6 +246,8 @@ async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_databa
                 and "Continue alpha using your earlier evidence" in message.text
                 for message in resumed_messages
             )
+            clock = [0.0]
+            monkeypatch.setattr("bbx_runtime.ctf.coordinator.monotonic", lambda: clock[0])
             phase = "finish"
             response = await http.post(
                 f"/api/tasks/{tid}/agents/lead/messages",
@@ -262,6 +264,7 @@ async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_databa
             )
             assert late.status_code == 200 and late.json()["deferred"]
             drain.confirmed = True
+            clock[0] = coordinator.close_retries[tid].next_retry
             assert not await coordinator.tick(tid)
             final = await ctf.state(tid)
             assert final["task"]["ctf_control"]["phase"] == "closed"

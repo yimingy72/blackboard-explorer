@@ -31,6 +31,23 @@
       },
       "title": "Evidence Refs",
       "type": "array"
+    },
+    "work_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "in_progress",
+            "blocked",
+            "completed"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Work Status"
     }
   },
   "required": [

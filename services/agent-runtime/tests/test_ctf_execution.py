@@ -36,7 +36,7 @@ class Service:
         }
         self.operations = []
 
-    async def state(self, _):
+    async def runtime_state(self, _):
         return {"members": [self.member]}
 
     async def runtime(self, tid, operation, **body):
@@ -217,7 +217,7 @@ async def test_replacement_callback_runs_only_after_local_checkpoint_and_join():
     events = []
 
     class LifecycleService:
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"ctf_control": {}}}
 
         async def runtime(self, *_):
@@ -304,7 +304,7 @@ async def test_restart_continues_destroyed_replacement_before_missing_container_
     events = []
 
     class LifecycleService:
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"ctf_control": {"replacement": {"phase": "destroyed"}}}}
 
         async def runtime(self, *_):
@@ -342,6 +342,7 @@ async def test_cancelled_runner_retains_failed_checkpoint_until_pending_stop_can
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.clients.blackboard import RemoteError
     from bbx_runtime.ctf.runner import CtfRunner
+    from bbx_runtime.testing.scripted_client import ScriptedChatClient
 
     started = asyncio.Event()
     calls = []
@@ -370,7 +371,7 @@ async def test_cancelled_runner_retains_failed_checkpoint_until_pending_stop_can
         def __init__(self):
             self.client = self
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "agent_profile": "ctf",
@@ -413,13 +414,26 @@ async def test_cancelled_runner_retains_failed_checkpoint_until_pending_stop_can
     runner = CtfRunner(
         cast(Any, RuntimeService()),
         cast(Any, SimpleNamespace()),
-        client_factory=lambda *_: cast(Any, object()),
+        client_factory=lambda *_: ScriptedChatClient([]),
         envd=SimpleNamespace(stop_member=object()),
     )
     future = asyncio.create_task(
         runner.run("task", member, {"id": "turn", "generation": 1, "token": "t"})
     )
-    await started.wait()
+    waiting = asyncio.create_task(started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {future, waiting}, timeout=1, return_when=asyncio.FIRST_COMPLETED
+        )
+        if future in done:
+            await future
+        assert waiting in done, "Runner did not reach the scripted waiting stream"
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+        if not started.is_set() and not future.done():
+            future.cancel()
+            await asyncio.gather(future, return_exceptions=True)
     future.cancel()
     with pytest.raises(RemoteError, match="checkpoint unavailable"):
         await future
@@ -506,7 +520,7 @@ async def test_recovery_waits_for_process_reaping_without_container_replacement(
             return True
 
     class StateService(Service):
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"ctf_control": {"phase": "running"}}, "members": []}
 
     service, execution = StateService(), ReapingExecution()

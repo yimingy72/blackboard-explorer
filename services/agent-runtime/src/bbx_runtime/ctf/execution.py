@@ -106,7 +106,7 @@ class CtfExecutionAdapter:
         return proof
 
     async def drain(self, task_id: str) -> bool:
-        state = await self.service.state(task_id)
+        state = await self.service.runtime_state(task_id)
         # Root status is checked even for an empty roster: a restarted registry
         # must never masquerade as an empty, drained environment.
         root = await self.envd.ctf_status()
@@ -134,7 +134,9 @@ class CtfExecutionAdapter:
             turn_id=turn["id"],
         )
         member = next(
-            m for m in (await self.service.state(task_id))["members"] if m["id"] == member_id
+            m
+            for m in (await self.service.runtime_state(task_id))["members"]
+            if m["id"] == member_id
         )
         binding = member.get("execution") or {}
         identity = await self.identity(

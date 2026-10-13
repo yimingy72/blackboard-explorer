@@ -20,8 +20,13 @@ def ctf_max_output_tokens(model: ModelConfig) -> int:
         "deepseek-v4-flash-vision-exp",
         "deepseek-v4-pro",
     }:
-        return 393216
-    return CTF_MAX_OUTPUT_TOKENS
+        maximum = 393216
+    else:
+        maximum = CTF_MAX_OUTPUT_TOKENS
+    if model.context_window is not None:
+        # A configured smaller window must still leave room for the input.
+        maximum = min(maximum, max(1, model.context_window // 2))
+    return maximum
 
 
 def ctf_call_reservation(
@@ -44,7 +49,7 @@ def ctf_call_reservation(
     assert price.cache_miss_per_m is not None
     assert price.output_per_m is not None
     input_rate = max(price.cache_hit_per_m, price.cache_miss_per_m)
-    input_tokens = min(context_tokens, model.context_window)
+    input_tokens = min(context_tokens, max(0, model.context_window - max_output_tokens))
     return (
         Decimal(input_tokens) * input_rate + Decimal(max_output_tokens) * price.output_per_m
     ) / Decimal(1_000_000)

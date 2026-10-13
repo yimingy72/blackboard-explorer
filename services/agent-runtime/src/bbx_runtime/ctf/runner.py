@@ -1,6 +1,7 @@
 """Execute one member turn with a fixed native MAF session."""
 
 import asyncio
+import logging
 from collections.abc import Callable
 from time import monotonic
 from typing import Any
@@ -15,7 +16,12 @@ from agent_framework import (
     MessageInjectionMiddleware,
     ResponseStream,
 )
-from bbx_contracts.ctf import CtfAgentProfile, execution_agent_id, render_ctf_prompt
+from bbx_contracts.ctf import (
+    CtfAgentProfile,
+    execution_agent_id,
+    render_ctf_prompt,
+    resolve_ctf_options,
+)
 from bbx_contracts.models import ModelConfig
 
 from bbx_runtime.clients.blackboard import RemoteError
@@ -23,14 +29,25 @@ from bbx_runtime.clients.objects import object_store
 from bbx_runtime.ctf.artifacts import ArtifactRegistrar
 from bbx_runtime.ctf.budget import ctf_call_reservation
 from bbx_runtime.ctf.client import CtfClient
+from bbx_runtime.ctf.context import fixed_prompt_tokens
 from bbx_runtime.ctf.execution import DrainPending
-from bbx_runtime.ctf.middleware import CtfHistoryProvider, MailboxMiddleware, TurnBoundary
+from bbx_runtime.ctf.middleware import (
+    CtfHistoryProvider,
+    MailboxMiddleware,
+    TurnBoundary,
+    flush_usage_outbox,
+)
 from bbx_runtime.ctf.platform import PlatformAdapter
+from bbx_runtime.ctf.provider_boundary import provider_call_boundary
 from bbx_runtime.ctf.review import build_review_tools
 from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.telemetry import ToolObservationMiddleware, observe
 from bbx_runtime.ctf.tools import build_tools
-from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
+from bbx_runtime.model_errors import (
+    is_transient_model_error,
+    model_attempt_limit,
+    model_error_metadata,
+)
 from bbx_runtime.models import (
     close_model_client,
     ctf_model_run_options,
@@ -39,6 +56,8 @@ from bbx_runtime.models import (
 )
 from bbx_runtime.session import ToolResultCheckpointMiddleware
 from bbx_runtime.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class ModelErrorMiddleware(ChatMiddleware):
@@ -57,7 +76,7 @@ class ModelErrorMiddleware(ChatMiddleware):
 
         async def record_error(error: Exception) -> None:
             nonlocal recorded
-            if recorded:
+            if recorded or isinstance(error, TurnBoundary):
                 return
             recorded = True
             metadata = model_error_metadata(
@@ -122,7 +141,7 @@ class CtfRunner:
         self.pending_checkpoints: dict[tuple[str, str], tuple[Any, Any, Any, str]] = {}
 
     async def run(self, task_id: str, member: dict[str, Any], turn: dict[str, Any]) -> None:
-        task = (await self.service.state(task_id))["task"]
+        task = (await self.service.runtime_state(task_id))["task"]
         review = turn.get("purpose") == "review"
         envd: Any = None if review else self.envds.get(task_id, self.envd)
         checkpoint = None
@@ -132,6 +151,11 @@ class CtfRunner:
             task["agent_profile"], task["agent_profile_version"]
         )
         profile = CtfAgentProfile.model_validate(document.get("profile", document))
+        profile = profile.model_copy(
+            update={
+                "options": resolve_ctf_options(profile, task.get("ctf_options")),
+            }
+        )
         reservation_cost = (
             None
             if review
@@ -242,52 +266,115 @@ class CtfRunner:
                     profile.options.max_steps,
                     reservation_cost,
                 )
+                instructions = (
+                    checkpoint.opening_instructions + "\n当前为终态只读复盘。"
+                    "上面的执行职责仅为历史上下文。仅回答用户历史问题并读取已保存题目、记录及附件；"
+                    "不执行命令、发送团队消息、变更任务或连接平台。成员身份及历史保持不变。"
+                    if review
+                    else checkpoint.opening_instructions
+                )
                 history = CtfHistoryProvider(
-                    self.service, checkpoint, turn, profile.model, profile.options.context_threshold
+                    self.service,
+                    checkpoint,
+                    turn,
+                    profile.model,
+                    profile.options.context_threshold,
+                    fixed_input_tokens=fixed_prompt_tokens(instructions, tools),
                 )
                 await history.flush_usage()
                 try:
-                    async with Agent(
-                        client=client,
-                        name=member["id"],
-                        instructions=(
-                            checkpoint.opening_instructions + "\n当前为终态只读复盘。"
-                            "上面的执行职责仅为历史上下文。仅回答用户历史问题并读取已保存题目、记录及附件；"
-                            "不执行命令、发送团队消息、变更任务或连接平台。成员身份及历史保持不变。"
-                            if review
-                            else checkpoint.opening_instructions
-                        ),
-                        tools=tools,
-                        context_providers=[history],
-                        middleware=[
-                            mailbox,
-                            MessageInjectionMiddleware(),
-                            ModelErrorMiddleware(
-                                self.service, task_id, member["id"], turn, profile.model
-                            ),
-                            ToolObservationMiddleware(self.service, task_id, member["id"], turn),
-                            ToolResultCheckpointMiddleware(checkpoint),
-                        ],
-                        require_per_service_call_history_persistence=True,
-                    ) as agent:
-                        stream = agent.run(
-                            [],
-                            session=checkpoint.session,
-                            stream=True,
-                            options=ctf_model_run_options(profile.model),
-                        )
-                        async for _ in stream:
-                            pass
-                        response = await stream.get_final_response()
-                        answer = response.text
+                    with provider_call_boundary(
+                        client, mailbox.enter_provider, history.prepare_provider_messages
+                    ):
+                        async with Agent(
+                            client=client,
+                            name=member["id"],
+                            instructions=instructions,
+                            tools=tools,
+                            context_providers=[history],
+                            middleware=[
+                                mailbox,
+                                MessageInjectionMiddleware(),
+                                ModelErrorMiddleware(
+                                    self.service, task_id, member["id"], turn, profile.model
+                                ),
+                                ToolObservationMiddleware(
+                                    self.service, task_id, member["id"], turn
+                                ),
+                                ToolResultCheckpointMiddleware(checkpoint),
+                            ],
+                            require_per_service_call_history_persistence=True,
+                        ) as agent:
+                            stream = agent.run(
+                                [],
+                                session=checkpoint.session,
+                                stream=True,
+                                options=ctf_model_run_options(profile.model),
+                            )
+                            async for _ in stream:
+                                pass
+                            response = await stream.get_final_response()
+                            answer = response.text
                     await checkpoint.save()
                     break
                 except (httpx.TransportError, ConnectionError):
+                    if getattr(checkpoint, "failed", False):
+                        # Saving retries the CAS write; never replay completed provider/tool work.
+                        raise
                     if attempt:
                         raise
+                    if reservation_cost is not None and not review:
+                        current = (await self.service.runtime_state(task_id))["task"]
+                        reservations = current["ctf_control"].get("budget_reservations", {})
+                        if any(
+                            entry.get("turn_id") == str(turn["id"]) and entry.get("state") == "sent"
+                            for entry in reservations.values()
+                        ):
+                            # The provider may already have charged this unconfirmed call.
+                            raise
                     # The failed stream has exited; rebuild from confirmed state.
         except TurnBoundary as error:
             reason = str(error)
+            if checkpoint is not None:
+                if reason == "context_blocked":
+                    blocked = checkpoint.session.state.get("ctf_context_blocked", {})
+                    answer = (
+                        "Context blocked before provider dispatch. Full history and evidence "
+                        "remain saved. "
+                        f"Compaction stopped at {blocked.get('branch', 'unknown')}, "
+                        f"eligible {blocked.get('eligible', 0)}, cut {blocked.get('cut', 0)}: "
+                        f"{blocked.get('estimated_input_tokens', 0)} "
+                        f"estimated input tokens, limit {blocked.get('limit_tokens', 0)}. "
+                        "Lead action is required."
+                    )
+                    try:
+                        await observe(
+                            self.service,
+                            task_id,
+                            member["id"],
+                            turn,
+                            "turn_context",
+                            {"boundary": "context_blocked", "diagnostics": blocked},
+                            f"{turn['id']}:context_blocked",
+                        )
+                    except Exception as diagnostic_error:
+                        logger.warning(
+                            "CTF blocked observation failed turn_id=%s error_type=%s",
+                            turn["id"],
+                            type(diagnostic_error).__name__,
+                        )
+                try:
+                    await checkpoint.save()
+                except Exception:
+                    # Exceptions raised inside this handler bypass sibling handlers.
+                    checkpoint.pending_end_reason = reason
+                    self.pending_checkpoints[(task_id, member["id"])] = (
+                        checkpoint,
+                        member,
+                        turn,
+                        answer,
+                    )
+                    raise
         except asyncio.CancelledError:
             if checkpoint is not None:
                 try:
@@ -315,7 +402,16 @@ class CtfRunner:
             if error.status not in {403, 409}:
                 raise
             reason = "interrupted"
-        except Exception:
+            logger.warning(
+                "CTF turn interrupted turn_id=%s generation=%s status=%s "
+                "answer_length=%s checkpoint_failed=%s",
+                turn["id"],
+                turn["generation"],
+                error.status,
+                len(answer),
+                getattr(checkpoint, "failed", False),
+            )
+        except Exception as error:
             if checkpoint is not None and getattr(checkpoint, "failed", False):
                 self.pending_checkpoints[(task_id, member["id"])] = (
                     checkpoint,
@@ -323,7 +419,31 @@ class CtfRunner:
                     turn,
                     answer,
                 )
-            raise
+                raise
+            if (
+                review
+                or checkpoint is None
+                or not isinstance(getattr(error, "bbx_model_error", None), dict)
+                or not is_transient_model_error(error)
+            ):
+                raise
+            # A new turn owns a fresh reservation; the uncertain dispatched call
+            # remains charged conservatively by the existing settlement path.
+            reason = "provider_transient"
+            answer = (
+                "A transient model service error interrupted this turn. Confirmed history "
+                "and tool results remain saved; automatic recovery is bounded by task controls."
+            )
+            try:
+                await checkpoint.save()
+            except Exception:
+                self.pending_checkpoints[(task_id, member["id"])] = (
+                    checkpoint,
+                    member,
+                    turn,
+                    "",
+                )
+                raise
         finally:
             if client is not None and self.client_factory is None:
                 await close_model_client(client)
@@ -333,29 +453,74 @@ class CtfRunner:
         for key, (checkpoint, member, turn, answer) in list(self.pending_checkpoints.items()):
             if key[0] != task_id:
                 continue
-            await checkpoint.save()
-            entries = checkpoint.session.state.get(
-                "ctf_review_usage_outbox"
-                if turn.get("purpose") == "review"
-                else "ctf_usage_outbox",
-                [],
-            )
-            for entry in entries:
-                await self.service.runtime(
-                    task_id,
-                    "bill_usage",
-                    agent_id=member["id"],
-                    turn_id=turn["id"],
-                    generation=turn["generation"],
-                    **entry,
-                )
-            if entries:
-                entries.clear()
+            try:
                 await checkpoint.save()
-            if settle:
-                await self.settle(
-                    task_id, member, turn, "completed" if answer else "interrupted", answer
+                await flush_usage_outbox(self.service, checkpoint, turn)
+            except RemoteError as error:
+                if error.status >= 500:
+                    raise
+                snapshot = await self.service.runtime_state(task_id)
+                current_turn = next(
+                    (item for item in snapshot.get("turns", []) if item["id"] == turn["id"]),
+                    None,
                 )
+                current_member = next(
+                    (item for item in snapshot.get("members", []) if item["id"] == member["id"]),
+                    None,
+                )
+                terminal = (
+                    current_turn is not None and current_turn.get("status") == "finished"
+                ) or (
+                    current_member is not None
+                    and (
+                        current_member.get("generation", turn["generation"]) != turn["generation"]
+                        or (
+                            "current_turn_id" in current_member
+                            and current_member["current_turn_id"] != turn["id"]
+                        )
+                    )
+                )
+                if not terminal:
+                    raise
+                control = snapshot.get("task", {}).get("ctf_control", {})
+                if getattr(checkpoint, "failed", False) and (
+                    turn["id"] not in control.get("unresolved_checkpoints", [])
+                    and turn["id"] not in control.get("checkpoint_failures", {})
+                ):
+                    # A failed failure-marker must remain visible to bounded close escalation.
+                    raise
+                usage_key = (
+                    "ctf_review_usage_outbox"
+                    if turn.get("purpose") == "review"
+                    else "ctf_usage_outbox"
+                )
+                entries = checkpoint.session.state.get(usage_key, [])
+                if entries:
+                    confirmed = await self.service.runtime(
+                        task_id, "reconcile_usage_outbox", agent_id=member["id"]
+                    )
+                    if any(
+                        entry["request_id"] not in confirmed.get("request_ids", [])
+                        for entry in entries
+                    ):
+                        # Retain unsaved usage; closing escalation keeps sent reservations unknown.
+                        raise
+                del self.pending_checkpoints[key]
+                logger.warning(
+                    "CTF checkpoint retry discarded turn_id=%s generation=%s status=%s "
+                    "terminal=%s answer_length=%s",
+                    turn["id"],
+                    turn["generation"],
+                    error.status,
+                    terminal,
+                    len(answer),
+                )
+                continue
+            if settle:
+                reason = getattr(checkpoint, "pending_end_reason", None) or (
+                    "completed" if answer else "interrupted"
+                )
+                await self.settle(task_id, member, turn, reason, answer)
             del self.pending_checkpoints[key]
 
     async def retry_settlements(self, task_id: str) -> None:
@@ -388,7 +553,9 @@ class CtfRunner:
         envd: Any = None if turn.get("purpose") == "review" else self.envds.get(task_id, self.envd)
         if hasattr(envd, "stop_member"):
             current = next(
-                m for m in (await self.service.state(task_id))["members"] if m["id"] == member["id"]
+                m
+                for m in (await self.service.runtime_state(task_id))["members"]
+                if m["id"] == member["id"]
             )
             if current.get("pending_operation"):
                 self.pending_settlements.pop((task_id, member["id"]), None)
@@ -412,7 +579,9 @@ class CtfRunner:
             if error.status != 409:
                 raise
             current = next(
-                m for m in (await self.service.state(task_id))["members"] if m["id"] == member["id"]
+                m
+                for m in (await self.service.runtime_state(task_id))["members"]
+                if m["id"] == member["id"]
             )
             if not current.get("pending_operation"):
                 raise

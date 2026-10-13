@@ -51,9 +51,29 @@ async def test_ctf_start_is_idempotent_for_in_progress_tasks(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ctf_create_auto_provisions_task(monkeypatch):
+@pytest.mark.parametrize(
+    "overrides,expected,status",
+    [
+        (None, {"max_steps": 90, "max_teammates": 5, "context_threshold": 1_000_000}, 200),
+        (
+            {"max_teammates": 0},
+            {"max_steps": 90, "max_teammates": 0, "context_threshold": 1_000_000},
+            200,
+        ),
+        (
+            {"max_steps": 4000, "max_teammates": 12, "context_threshold": 400000},
+            {"max_steps": 4000, "max_teammates": 12, "context_threshold": 400000},
+            200,
+        ),
+        ({"context_threshold": 1_000_001}, None, 422),
+    ],
+)
+async def test_ctf_create_auto_provisions_task(monkeypatch, overrides, expected, status):
     tid = uuid4()
     profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
+    profile.options.max_steps = 90
+    profile.options.max_teammates = 5
+    profile.model.context_window = 1_000_000
     profile_row = {"name": "ctf", "version": 1}
     model = profile.model.model_dump(mode="json")
     profiles = SimpleNamespace(
@@ -91,11 +111,20 @@ async def test_ctf_create_auto_provisions_task(monkeypatch):
                 "budget": {"max_cost": "1", "max_minutes": 1},
                 "agent_profile": "ctf",
                 "model_id": "test-model",
+                **({"ctf_options": overrides} if overrides is not None else {}),
             },
         )
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == status, response.text
+    if status == 422:
+        assert "context_window" in response.text
+        profiles.create.assert_not_awaited()
+        backend.create_task.assert_not_awaited()
+        backend.provision.assert_not_awaited()
+        return
     backend.create_task.assert_awaited_once()
+    assert backend.create_task.call_args.args[0]["ctf_options"] == expected
+    assert profiles.create.call_args.args[1].options.model_dump() == expected
     backend.provision.assert_awaited_once_with(tid)
 
 
@@ -114,6 +143,7 @@ async def test_ctf_http_boundaries_and_token_authority(monkeypatch):
         authorize_member=AsyncMock(return_value={"role": "lead"}),
         authorize_reader=AsyncMock(),
         authorize_object=AsyncMock(return_value=False),
+        runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         state=AsyncMock(
             return_value={
                 "task": task,
@@ -347,7 +377,13 @@ async def test_events_http_serializes_both_ctf_events_and_legacy_events(monkeypa
     task = {"id": tid, "mode": "ctf"}
     monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
     app.state.ctf_service = SimpleNamespace()
-    event_types = ["task.created", "ctf.member.created", "ctf.message.posted", "ctf.cursor"]
+    event_types = [
+        "task.created",
+        "ctf.member.created",
+        "ctf.message.posted",
+        "ctf.coordination.reminded",
+        "ctf.cursor",
+    ]
     app.state.board_service = SimpleNamespace(
         events=AsyncMock(
             return_value=[
@@ -382,7 +418,7 @@ async def test_member_lifecycle_routes_bind_actor_and_operation(monkeypatch):
     task = {"id": tid, "mode": "ctf", "agent_profile": "ctf", "agent_profile_version": 1}
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "lead"}),
-        state=AsyncMock(return_value={"task": task, "members": []}),
+        runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         request_member_operation=AsyncMock(return_value={"status": "stopping"}),
         complete_member_operation=AsyncMock(return_value={"lifecycle": "stopped"}),
     )
@@ -463,7 +499,7 @@ async def test_board_routes_use_contracts_and_execution_authority(monkeypatch):
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "teammate"}),
         authorize_reader=AsyncMock(),
-        state=AsyncMock(return_value={"task": task, "members": []}),
+        runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         create_challenge=AsyncMock(return_value={"id": str(cid), "owner_id": None}),
         update_challenge=AsyncMock(return_value={"id": str(cid), "owner_id": "member-1"}),
         append_record=AsyncMock(return_value={"id": str(rid)}),
@@ -612,7 +648,7 @@ async def test_verification_endpoints_derive_source_from_authenticated_identity(
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "teammate"}),
         authorize_reader=AsyncMock(),
-        state=AsyncMock(return_value={"task": task, "members": []}),
+        runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         record_candidate=AsyncMock(return_value={"verification": {"source": "agent"}}),
         manual_verification=AsyncMock(return_value={"verification": {"source": "user"}}),
     )

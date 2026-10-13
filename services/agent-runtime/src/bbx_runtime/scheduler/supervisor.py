@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any
 
 from bbx_contracts.ctf import CtfAgentProfile
@@ -46,6 +47,7 @@ class TaskSupervisor:
         self.tick_lock = asyncio.Lock()
         self.ctf: CtfCoordinator | None = None
         self.ctf_tasks: dict[str, asyncio.Task[None]] = {}
+        self.ctf_wait_warnings: dict[str, tuple[str, float]] = {}
 
     def _ctf(self) -> CtfCoordinator:
         if self.ctf is None:
@@ -78,7 +80,7 @@ class TaskSupervisor:
     async def _replace_ctf_envd(self, tid: str) -> EnvdClient:
         """Resume a durable replacement without declaring an unknown registry drained."""
         service = self._ctf().service
-        state = await service.state(tid)
+        state = await service.runtime_state(tid)
         task = state["task"]
         replacement = task["ctf_control"].get("replacement")
         handle = await self.manager.find(tid)
@@ -293,12 +295,32 @@ class TaskSupervisor:
 
     async def _cleanup_task(self, tid: str, state: dict[str, Any]) -> None:
         if state["task"].get("mode") == "ctf":
+            state = await self.service.state(tid)
+            task = state["task"]
+            control = task.get("ctf_control", {})
+            failures = [
+                entry
+                for entry in control.get("checkpoint_failures", {}).values()
+                if entry.get("run_number") == task.get("run_number")
+                and entry.get("purpose") == "execution"
+            ]
+            if control.get("unresolved_checkpoints") or failures or control.get("close_failure"):
+                self.archive_blocked.add(tid)
+                LOGGER.error(
+                    "Task %s has unconfirmed CTF state; checkpoints and environment retained.", tid
+                )
+                await self._ctf().service.runtime(
+                    tid,
+                    "cleanup_status",
+                    phase="failed",
+                    error="Unconfirmed CTF checkpoint or close failure blocks archive cleanup",
+                )
+                return
+            self.ctf_wait_warnings.pop(tid, None)
             if future := self.ctf_tasks.pop(tid, None):
                 future.cancel()
                 await asyncio.gather(future, return_exceptions=True)
             await self._ctf().detach(tid)
-            if state["task"].get("ctf_control", {}).get("unresolved_checkpoints"):
-                raise RuntimeError("Unconfirmed CTF checkpoint blocks archive cleanup")
         else:
             await self._drain(tid, state)
         state = await self.service.state(tid)
@@ -339,6 +361,7 @@ class TaskSupervisor:
         self.cleaned.add(tid)
 
     async def _purge_deleted(self, tid: str) -> None:
+        self.ctf_wait_warnings.pop(tid, None)
         if cleanup := self.cleanups.pop(tid, None):
             cleanup.cancel()
             await asyncio.gather(cleanup, return_exceptions=True)
@@ -377,6 +400,22 @@ class TaskSupervisor:
                         "CTF coordinator exited for task %s: %s", tid, type(error).__name__
                     )
                 del self.ctf_tasks[tid]
+                self.ctf_wait_warnings.pop(tid, None)
+            else:
+                waits = getattr(self._ctf(), "control_waits", {})
+                waiting = waits.get(tid) if isinstance(waits, dict) else None
+                if waiting is None:
+                    self.ctf_wait_warnings.pop(tid, None)
+                elif monotonic() - waiting[1] >= 60 and self.ctf_wait_warnings.get(tid) != waiting:
+                    # Long archive, drain and checkpoint waits can be valid; observe
+                    # the stage without cancelling writers or inventing drain proof.
+                    LOGGER.warning(
+                        "CTF coordinator waiting task=%s stage=%s elapsed_seconds=%.1f",
+                        tid,
+                        waiting[0],
+                        monotonic() - waiting[1],
+                    )
+                    self.ctf_wait_warnings[tid] = waiting
         for tid, future in list(self.cleanups.items()):
             if future.done():
                 try:
@@ -497,6 +536,7 @@ class TaskSupervisor:
             await self.ctf.close()
         await asyncio.gather(*self.ctf_tasks.values(), return_exceptions=True)
         self.ctf_tasks.clear()
+        self.ctf_wait_warnings.clear()
         for task in self.cleanups.values():
             task.cancel()
         await asyncio.gather(*self.cleanups.values(), return_exceptions=True)

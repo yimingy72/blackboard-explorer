@@ -1,9 +1,10 @@
 """Persist CTF observations without inventing blackboard roles or identities."""
 
+import json
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from agent_framework import FunctionInvocationContext, FunctionMiddleware
+from agent_framework import Content, FunctionInvocationContext, FunctionMiddleware
 from bbx_contracts.storage import storage_safe
 from pydantic import BaseModel
 
@@ -72,12 +73,15 @@ class ToolObservationMiddleware(FunctionMiddleware):
                 f"{key}:result",
             )
             raise
+        result = context.result
+        if isinstance(result, list):
+            result = [item.to_dict() if isinstance(item, Content) else item for item in result]
         await observe(
             self.service,
             self.task_id,
             self.member_id,
             self.turn,
             "tool_result",
-            {**payload, "result": str(context.result)},
+            {**payload, "result": json.dumps(result, ensure_ascii=False, default=str)},
             f"{key}:result",
         )

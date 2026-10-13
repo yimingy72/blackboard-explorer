@@ -50,6 +50,9 @@ class MemoryCtf:
     async def read_evidence(self, _):
         return b""
 
+    async def runtime_state(self, _):
+        return {"task": {"goal": "Synthetic task"}, "members": []}
+
     async def runtime(self, task_id, operation, **body):
         self.operations.append(operation)
         if body.get("generation", self.generation) != self.generation:
@@ -105,7 +108,7 @@ async def test_runner_records_failed_model_stream_without_tools_retries_or_inven
             self.client = self
             self.bills = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "agent_profile": "ctf",
@@ -359,7 +362,7 @@ async def test_runner_uses_explicit_fake_envd_and_settles_after_checkpoint(allow
             self.settlements = []
             self.billed = set()
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "agent_profile": "ctf",
@@ -481,7 +484,7 @@ async def test_running_coordinator_claims_queued_work_and_budget_closes_first():
             self.exhausted = exhausted
             self.operations = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "ctf_control": {"phase": "running"},
@@ -491,6 +494,7 @@ async def test_running_coordinator_claims_queued_work_and_budget_closes_first():
                     "active_since": None,
                 },
                 "members": [{"id": "lead", "lifecycle": "active"}],
+                "ready_member_ids": ["lead"],
             }
 
         async def runtime(self, _task_id, operation, **_body):
@@ -514,7 +518,7 @@ async def test_running_coordinator_claims_queued_work_and_budget_closes_first():
     )
     coordinator.service = cast(CtfClient, exhausted)
     await coordinator.tick("task")
-    assert exhausted.operations == ["request_finish"]
+    assert exhausted.operations == ["reconcile_budget", "request_finish"]
     await coordinator.close()
 
 
@@ -528,7 +532,7 @@ async def test_renew_409_after_runner_settles_turn_is_an_expected_race():
             self.settled = False
             self.operations = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "ctf_control": {"phase": "running"},
@@ -550,6 +554,7 @@ async def test_renew_409_after_runner_settles_turn_is_an_expected_race():
                         "status": "finished" if self.settled else "running",
                     }
                 ],
+                "ready_member_ids": [],
             }
 
         async def runtime(self, _task_id, operation, **_body):
@@ -583,7 +588,7 @@ async def test_coordinator_stops_admission_at_the_exact_budget_cap():
     class Service:
         operations = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "ctf_control": {"phase": "running"},
@@ -609,7 +614,7 @@ async def test_coordinator_stops_admission_at_the_exact_budget_cap():
     )
     coordinator.service = cast(CtfClient, service)
     await coordinator.tick("task")
-    assert service.operations == ["request_finish"]
+    assert service.operations == ["reconcile_budget", "request_finish"]
     await coordinator.close()
 
 
@@ -625,15 +630,14 @@ def test_ctf_reservation_requires_a_real_context_bound():
     price = model.price.model_copy(update={"billing_mode": "fixed"})
     bounded = model.model_copy(update={"context_window": 128000, "price": price})
     assert (
-        ctf_model_run_options(bounded).get("max_tokens") == ctf_max_output_tokens(bounded) == 393216
+        ctf_model_run_options(bounded).get("max_tokens") == ctf_max_output_tokens(bounded) == 64000
     )
-    assert ctf_call_reservation(bounded, context_tokens=128000) == Decimal("3.401728")
+    assert ctf_call_reservation(bounded, context_tokens=128000) == Decimal("0.640000")
     assert ctf_call_reservation(bounded, context_tokens=128000) == (
-        Decimal(128000) * Decimal("2.00")
-        + Decimal(ctf_max_output_tokens(bounded)) * Decimal("8.00")
+        Decimal(64000) * Decimal("2.00") + Decimal(ctf_max_output_tokens(bounded)) * Decimal("8.00")
     ) / Decimal(1_000_000)
     assert ctf_call_reservation(bounded, context_tokens=128000, max_output_tokens=8192) == Decimal(
-        "0.321536"
+        "0.305152"
     )
 
 
@@ -746,7 +750,7 @@ async def test_coordinator_persists_start_failure_instead_of_requeueing():
     class Service:
         operations = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"status": "provisioning", "ctf_control": {"phase": "provisioning"}}}
 
         async def runtime(self, _task_id, operation, **_body):
@@ -780,7 +784,7 @@ async def test_future_failure_persists_safe_diagnostic_and_completes_cleanup(cap
             self.operations = []
             self.conclusion = None
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "ctf_control": {"phase": self.phase, "unresolved_checkpoints": []},
@@ -847,7 +851,7 @@ async def test_tick_failure_persists_reference_and_finishes_drain(caplog):
             self.operations = []
             self.conclusion = None
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             self.state_calls += 1
             if self.state_calls == 2:
                 raise RuntimeError("untrusted model payload must stay out of diagnostics")
@@ -892,16 +896,19 @@ async def test_tick_failure_persists_reference_and_finishes_drain(caplog):
     await coordinator.close()
 
 
-async def test_closing_waits_for_drain_and_never_claims_new_work():
+async def test_closing_waits_for_drain_and_never_claims_new_work(monkeypatch):
     from types import SimpleNamespace
 
     from bbx_runtime.ctf.coordinator import CtfCoordinator
+
+    clock = [0.0]
+    monkeypatch.setattr("bbx_runtime.ctf.coordinator.monotonic", lambda: clock[0])
 
     class Control:
         def __init__(self):
             self.operations = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"ctf_control": {"phase": "closing"}}, "members": []}
 
         async def runtime(self, _tid, operation, **_):
@@ -921,6 +928,7 @@ async def test_closing_waits_for_drain_and_never_claims_new_work():
     assert await coordinator.tick("task") is True
     assert "finalize_close" not in service.operations
     envd.drained = True
+    clock[0] = coordinator.close_retries["task"].next_retry
     assert await coordinator.tick("task") is False
     assert service.operations == ["recover", "finalize_close"]
     await coordinator.close()
@@ -935,7 +943,7 @@ async def test_recover_joins_old_writer_before_drain_and_generation_takeover():
     events = []
 
     class Service:
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {"task": {"ctf_control": {}}, "members": []}
 
         async def runtime(self, *_):
@@ -972,7 +980,7 @@ async def test_unconfirmed_checkpoint_blocks_goal_claimed_finalization():
     operations = []
 
     class Service:
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "ctf_control": {"phase": "closing", "unresolved_checkpoints": ["turn"]},
@@ -1000,10 +1008,11 @@ async def test_bounded_model_view_preserves_full_persistent_history():
 
     service = MemoryCtf()
     checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
-    old = Message(role="user", message_id="old", contents=[Content.from_text("x" * 2000)])
+    old = Message(role="user", message_id="old", contents=[Content.from_text("x" * 6000)])
     final = Message(role="assistant", contents=[Content.from_text("old final")])
     recent = Message(role="user", message_id="recent", contents=[Content.from_text("new")])
     checkpoint.session.state["in_memory"] = {"messages": [old, final, recent]}
+    await checkpoint.save()
     provider = CtfHistoryProvider(
         cast(CtfClient, service),
         checkpoint,
@@ -1014,7 +1023,8 @@ async def test_bounded_model_view_preserves_full_persistent_history():
     view = await provider.get_messages(
         checkpoint.session.session_id, state=checkpoint.session.state["in_memory"]
     )
-    assert view == [recent]
+    assert view[-1:] == [recent]
+    assert "Synthetic task" in view[0].text
     assert checkpoint.session.state["in_memory"]["messages"] == [old, final, recent]
     assert checkpoint.session.state["ctf_history_view"]["excluded_before"] == 2
 
@@ -1030,7 +1040,7 @@ async def test_bounded_model_view_can_resume_after_a_complete_tool_batch():
     checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
     call = Message(
         role="assistant",
-        contents=[Content.from_function_call("call-1", "inspect", arguments={})],
+        contents=[Content.from_function_call("call-1", "inspect", arguments={"q": "x" * 6000})],
     )
     result = Message(
         role="tool",
@@ -1038,6 +1048,7 @@ async def test_bounded_model_view_can_resume_after_a_complete_tool_batch():
     )
     recent = Message(role="user", message_id="recent", contents=[Content.from_text("new")])
     checkpoint.session.state["in_memory"] = {"messages": [call, result, recent]}
+    await checkpoint.save()
     provider = CtfHistoryProvider(
         cast(CtfClient, service),
         checkpoint,
@@ -1048,8 +1059,10 @@ async def test_bounded_model_view_can_resume_after_a_complete_tool_batch():
     view = await provider.get_messages(
         checkpoint.session.session_id, state=checkpoint.session.state["in_memory"]
     )
-    assert view == [recent]
+    assert view[-1:] == [recent]
+    assert "Synthetic task" in view[0].text
     assert checkpoint.session.state["ctf_history_view"]["excluded_before"] == 2
+    assert checkpoint.session.state["in_memory"]["messages"] == [call, result, recent]
 
 
 async def test_context_limit_view_uses_real_persisted_tool_batches():
@@ -1097,8 +1110,21 @@ async def test_context_limit_view_uses_real_persisted_tool_batches():
     view = await provider.get_messages(
         checkpoint.session.session_id, state=checkpoint.session.state["in_memory"]
     )
-    assert [message.message_id for message in view if message.role == "user"] == ["continuation"]
-    assert checkpoint.session.state["ctf_history_view"]["excluded_before"] > 0
+    # Stable previews fit without evicting the original instruction or tool pairs.
+    assert [message.message_id for message in view if message.role == "user"] == [
+        "first",
+        "continuation",
+    ]
+    assert checkpoint.session.state["ctf_history_view"]["excluded_before"] == 0
+    assert sum(message.role == "assistant" for message in view) == 2
+    assert sum(message.role == "tool" for message in view) == 2
+    assert all(
+        str(content.result).startswith("[Truncated model preview:")
+        for message in view
+        if message.role == "tool"
+        for content in message.contents
+        if content.type == "function_result"
+    )
 
 
 async def test_failed_checkpoint_marks_durable_barrier_after_reconciliation_fails():
@@ -1128,6 +1154,7 @@ async def test_retry_checkpoint_flushes_usage_before_settlement():
             operations.append(operation)
 
     class Checkpoint:
+        task_id, agent_id = "task", "member-1"
         session = SimpleNamespace(
             state={"ctf_usage_outbox": [{"request_id": "usage", "usage": {}}]}
         )

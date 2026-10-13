@@ -120,16 +120,22 @@ class CtfBoardMixin:
             }
         return result
 
-    async def list_challenges(self, tid):
+    async def list_challenges(self, tid, *, limit=None, offset=0):
         async with self.repo.engine.connect() as conn:
-            rows = (
-                await conn.execute(
-                    select(s.ctf_challenges)
-                    .where(s.ctf_challenges.c.task_id == tid)
-                    .order_by(s.ctf_challenges.c.id)
-                )
-            ).mappings()
-            return {"challenges": [dict(item["data"]) for item in rows]}
+            query = (
+                select(s.ctf_challenges.c.data)
+                .where(s.ctf_challenges.c.task_id == tid)
+                .order_by(s.ctf_challenges.c.id)
+            )
+            if limit is not None:
+                query = query.offset(offset).limit(limit + 1)
+            values = [dict(item) for item in (await conn.execute(query)).scalars()]
+            if limit is None:
+                return {"challenges": values}
+            return {
+                "challenges": values[:limit],
+                "next_offset": offset + limit if len(values) > limit else None,
+            }
 
     async def get_challenge(self, tid, challenge_id):
         async with self.repo.engine.connect() as conn:
@@ -299,20 +305,30 @@ class CtfBoardMixin:
                 conn, tid, actor, "ctf.challenge.updated", request_id, digest, result
             )
 
-    async def list_records(self, tid, challenge_id):
+    async def list_records(self, tid, challenge_id, *, limit=None, offset=0, after_version=None):
+        if after_version is not None and (type(after_version) is not int or after_version < 0):
+            raise HTTPException(422, "Invalid after_version")
         async with self.repo.engine.connect() as conn:
             await self._challenge(conn, tid, challenge_id)
-            rows = (
-                await conn.execute(
-                    select(s.ctf_records)
-                    .where(
-                        s.ctf_records.c.task_id == tid,
-                        s.ctf_records.c.data["challenge_id"].astext == str(challenge_id),
-                    )
-                    .order_by(s.ctf_records.c.version)
+            query = (
+                select(s.ctf_records.c.data)
+                .where(
+                    s.ctf_records.c.task_id == tid,
+                    s.ctf_records.c.data["challenge_id"].astext == str(challenge_id),
                 )
-            ).mappings()
-            return {"records": [dict(item["data"]) for item in rows]}
+                .order_by(s.ctf_records.c.version)
+            )
+            if after_version is not None:
+                query = query.where(s.ctf_records.c.version > after_version)
+            if limit is not None:
+                query = query.offset(offset).limit(limit + 1)
+            values = [dict(item) for item in (await conn.execute(query)).scalars()]
+            if limit is None:
+                return {"records": values}
+            return {
+                "records": values[:limit],
+                "next_offset": offset + limit if len(values) > limit else None,
+            }
 
     async def _artifact_refs(self, conn, tid, artifact_ids):
         refs = []

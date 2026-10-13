@@ -134,6 +134,7 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         "ctf.started",
         "ctf.turn.started",
         "ctf.message.delivered",
+        "ctf.coordination.reminded",
         "agent.trace.recorded",
         "tool_call.recorded",
     }:

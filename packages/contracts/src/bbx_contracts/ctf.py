@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import yaml
@@ -200,6 +201,28 @@ class CtfAgentProfile(ContractModel):
         return self
 
 
+def resolve_ctf_options(
+    profile: CtfAgentProfile,
+    overrides: Mapping[str, Any] | None = None,
+    *,
+    inherit_model_window: bool = False,
+) -> CtfOptions:
+    """Resolve task overrides without applying the runtime's input safety margin.
+
+    Creation inherits the selected model window when no threshold was requested.
+    Existing tasks retain their saved threshold; runtime input sizing bounds it
+    against the model window and output reserve.
+    """
+    requested = CtfOptions.model_validate(overrides or {}).model_dump(exclude_unset=True)
+    options = profile.options.model_dump()
+    window = profile.model.context_window
+    if inherit_model_window and window is not None:
+        if requested.get("context_threshold", window) > window:
+            raise ValueError("CTF context_threshold exceeds the selected model context_window")
+        options["context_threshold"] = window
+    return CtfOptions.model_validate({**options, **requested})
+
+
 def execution_agent_id(member_id: str) -> str:
     """Map durable team identities to the existing execution directory namespace."""
     if member_id == "lead":
@@ -384,6 +407,7 @@ class CtfEvent(ContractModel):
         "ctf.turn.finished",
         "ctf.conclusion.requested",
         "ctf.conclusion.finalized",
+        "ctf.coordination.reminded",
         "ctf.cursor",
     ]
     actor: str = Field(min_length=1)
@@ -471,6 +495,7 @@ class CtfRecord(ContractModel):
     help_needed: str | None = None
     no_artifacts_reason: str | None = None
     verification: dict[str, object] | None = None
+    work_status: CtfWorkStatus | None = None
     target: dict[str, object] | None = None
     platform_call: dict[str, object] | None = None
     summary_applied: bool = True
@@ -561,6 +586,7 @@ class CtfVerificationCandidateRequest(ContractModel):
     status: Literal["candidate", "unknown"]
     summary: str = Field(min_length=1)
     evidence_refs: list[UUID] = Field(default_factory=list)
+    work_status: Literal["in_progress", "blocked", "completed"] | None = None
 
 
 class CtfVerificationRequiredRequest(ContractModel):
