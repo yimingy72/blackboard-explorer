@@ -72,6 +72,10 @@
 
 ---
 
+### 0.1 2026-10-13 本地分支独立审查
+
+`execenv-kali`（`5cbfb5b`）及 `fix-ctf-reminded-event-type`（`99ba1e1`）已在独立工作树审查，修正空pip索引、同步生成契约并补HTTP回归后分别合并main：`8685d0d`、`f77db71`。两边make check为1090/1091项通过。已重建 `bbx-exec-env-kali:latest`（`e8996f63…`）及 `bbx-ctf-blackboard:latest`（`a7b38101…`），当前业务容器未重启；ctf-cooperation在办工作树保持原分支与改动。Kali仍为可选镜像，无默认Profile或设计正本变更，6.1待同步事项未改变。详见[独立分支审查报告](tasks/Local-branches-review-report.md)。本轮仅本地合并，未推送。
+
 ## 1. 仓库与文档
 
 ```
