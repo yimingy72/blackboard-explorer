@@ -380,6 +380,7 @@ class CtfEvent(ContractModel):
         "ctf.platform.dispatched",
         "ctf.message.posted",
         "ctf.message.delivered",
+        "ctf.coordination.reminded",
         "ctf.turn.started",
         "ctf.turn.finished",
         "ctf.conclusion.requested",
