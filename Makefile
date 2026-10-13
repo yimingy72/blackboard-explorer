@@ -1,7 +1,7 @@
 VENV = .venv/bin
 PYTHON_DIRS = packages/contracts packages/objects services/blackboard services/agent-runtime services/envd eval/runner
 
-.PHONY: up down clean-volumes fmt lint typecheck test test-integration check check-all schemas image-exec-env image-egress-proxy
+.PHONY: up down clean-volumes fmt lint typecheck test test-integration check check-all schemas image-exec-env image-exec-env-kali image-egress-proxy
 
 # Package mirrors for image builds; set to empty to use upstream sources.
 APT_MIRROR ?= http://mirrors.aliyun.com/ubuntu
@@ -14,6 +14,16 @@ DEBIAN_MIRROR ?= http://mirrors.aliyun.com/debian
 image-exec-env:
 	docker build $(DOCKER_BUILD_ARGS) -f services/envd/Dockerfile --build-arg APT_MIRROR=$(APT_MIRROR) \
 		--build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) -t bbx-exec-env:latest .
+
+# Alternative CTF exec image on a Kali base (see services/envd/Dockerfile.kali).
+# BASE_IMAGE is a local image reference by default; override it per host.
+BASE_IMAGE ?= kali-mini:latest
+EXEC_KALI_IMAGE ?= bbx-exec-env-kali:latest
+
+image-exec-env-kali:
+	docker build $(DOCKER_BUILD_ARGS) -f services/envd/Dockerfile.kali \
+		--build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) \
+		-t $(EXEC_KALI_IMAGE) .
 
 image-egress-proxy:
 	docker build $(DOCKER_BUILD_ARGS) -f services/egress-proxy/Dockerfile --build-arg APK_MIRROR=$(APK_MIRROR) \
