@@ -1768,7 +1768,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.coordination.reminded" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.cursor";
             /** Version */
             version: number;
         };

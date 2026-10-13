@@ -347,7 +347,13 @@ async def test_events_http_serializes_both_ctf_events_and_legacy_events(monkeypa
     task = {"id": tid, "mode": "ctf"}
     monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
     app.state.ctf_service = SimpleNamespace()
-    event_types = ["task.created", "ctf.member.created", "ctf.message.posted", "ctf.cursor"]
+    event_types = [
+        "task.created",
+        "ctf.member.created",
+        "ctf.message.posted",
+        "ctf.coordination.reminded",
+        "ctf.cursor",
+    ]
     app.state.board_service = SimpleNamespace(
         events=AsyncMock(
             return_value=[
