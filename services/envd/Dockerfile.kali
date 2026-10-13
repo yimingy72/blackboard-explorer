@@ -63,7 +63,7 @@ RUN groupadd bbx-agents \
 
 COPY services/envd /opt/envd/source
 RUN python3.13 -m venv /opt/envd/venv \
-    && /opt/envd/venv/bin/pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" /opt/envd/source \
+    && /opt/envd/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} /opt/envd/source \
     && chmod -R a-w /opt/envd
 
 EXPOSE 8080
