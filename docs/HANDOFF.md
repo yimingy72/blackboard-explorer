@@ -53,12 +53,14 @@
   | Code-simplification | ✅ 全仓库按模块审查，11个生产文件完成12处行为保持精简；原733普通/69集成/33前端/27浏览器全绿，测试/提示词/设计/配置不变，六个分组提交快进合并main，未重启运行服务；子代理统一GPT-6.1 Sol high（2026-09-30） |
   | Prompt-speed | ✅ 种子最小阶段早发布、任务自由选择思考强度/DeepSeek max、短暂断连同会话有界恢复；822普通/69集成/33前端/32浏览器通过并本地部署，Worker revision10仅Explore模板变化，8任务/268会话与模型配置保留；Session回包/Derive行为/并发不改（2026-09-30） |
   | Task-inputs-layout | ✅ 配置/创建表单紧凑排版、任务名与ID同行/单计数、长目标折叠、MinIO初始附件/启动还原/必要归档/删除清理；877普通/84集成/33前端/43浏览器通过，schema0012已部署并完成无模型生命周期烟测；8任务/268会话、Worker revision10与模型配置保持（2026-09-30） |
-  | CTF-team-mode | ✅ 可选Lead/具名队友模式、持久Session/定向消息、题目记录与增援、执行fencing/停止/归档/续跑/复盘及迁移0013/0014已合并main；1086普通/120隔离集成通过，本地Cybench候选独立核对成功；预算准入重复唤醒仍待单独修复（2026-10-10） |
+  | CTF-team-mode | ✅ 可选Lead/具名队友模式、持久Session/定向消息、题目记录与增援、执行fencing/停止/归档/续跑/复盘及迁移0013/0014已合并main；1086普通/120隔离集成通过，本地Cybench候选独立核对成功；后续预算与可靠性修复见CTF-cooperation（2026-10-10） |
   | UI-unification | ✅ 正式画布优先、可拉伸Agent/题目详情、保存推理与工具结果、移除人工入口、统一SVG与动态效果/焦点/视角；48前端/70浏览器通过，启动配置保留修复已合并；本地9任务/13会话及配置保持（2026-10-10） |
   | UI-rebuild · B2 | ✅ 用户确认B2及Goal就地展示；Ant Design/X统一全平台组件、主题、图标与交互，保留画布/会话/配置/附件等功能；1090普通/120隔离集成/48前端/80浏览器通过，三分组提交快进合并main并推送GitHub，本地已部署（2026-10-10） |
+  | CTF-cooperation / close-context | ✅ 预算等待、轻量调度、持久上下文/成员恢复、原子交付、收尾死锁与诊断修复已本地部署并合并main；1359普通/228隔离集成通过，复用MAF、保留未知费用与故障环境（2026-10-13） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **最新交付**：B2只读API补充 `b759792`、前端重构 `c0e50e4`、说明与报告 `a9bc8a4` 已按用户要求快进合并main并推送GitHub。正式本地入口仍为 `http://127.0.0.1:58000/login`，B2默认全画布、可展开左栏、按需可调宽详情、顶部Goal就地展示，模型与任务规则保持。当前CTF镜像标签 `bbx-ctf-blackboard:latest` 为b2d98f14，原 `bbx-blackboard:latest` 仍为e2709030，runtime为f79dd1。本轮已恢复原数据库并保留备份，恢复/部署时5任务、11会话、schema0014与配置保持；这仅是部署检查点快照。预算准入重复唤醒仍待独立修复，完整验证与Git记录见[UI-rebuild报告](tasks/UI-rebuild-report.md)。
+- **最新交付**：CTF累计可靠性改动按代码与测试 `ded93ee`、提示词 `1f4341c`、文档 `118b393` 三组提交，合并main为 `d457785`。任务分支与main最终检查均1359项通过，生产源码与已通过228项集成的版本一致；本地部署runtime镜像 `35b6e681…`、blackboard `28ccb5ce…`，Worker revision13。发布时9任务/56会话及既有数据摘要保持；不据此宣称真实解题或缓存收益。完整说明见[收尾与上下文修复报告](tasks/CTF-close-context-fix-report.md)。
+- **B2交付记录**：B2只读API补充 `b759792`、前端重构 `c0e50e4`、说明与报告 `a9bc8a4` 已按用户要求快进合并main并推送GitHub。正式本地入口仍为 `http://127.0.0.1:58000/login`，B2默认全画布、可展开左栏、按需可调宽详情、顶部Goal就地展示，模型与任务规则保持。该检查点CTF镜像标签 `bbx-ctf-blackboard:latest` 为b2d98f14，原 `bbx-blackboard:latest` 仍为e2709030，runtime为f79dd1。当时恢复原数据库并保留备份，恢复/部署时5任务、11会话、schema0014与配置保持；这仅是部署检查点快照。预算准入重复唤醒已由后续CTF-cooperation修复，原界面验证与Git记录见[UI-rebuild报告](tasks/UI-rebuild-report.md)。
 - **黑板模式基线交付**：M0–M5软件及通用框架收尾已完成；当前执行环境默认直接出网，代理白名单仅在显式代理隔离模式启用。详见`docs/tasks/M5-E2-report.md`与`docs/tasks/Direct-egress-report.md`。本机`http://127.0.0.1:58000`已按新配置启动，原用户任务已finished且workspace归档仍在；需新建任务以使用新网络。最终通用Profile在非代码CSV核对（3行统计、9条问题全部匹配参考）与代码诊断（100/100、200/200复现且有互斥对照）均完成真实闭环；两次估算费用合计约USD0.1447。预算数值不注入Agent；自主判重、Explore声明、Close裁定的机制保持。旧E1/E2采用代理限制且对比样本不完整，不能与最新网络配置混算或宣称统计优势。已有开发、设计同步、构建和Git授权继续有效；子代理统一使用GPT-6.1 Sol high（用户2026-09-30最新要求），前端设计与实施由主会话负责。
 - **最新运行能力**：Runtime-continuation已合并部署；任务页可显式续跑（保留黑板/会话/旧产物、追加预算与活动时间，软硬链接/系统包/进程不恢复）。derive同ID多轮复用，旧轮token/请求受事务隔离；超阈值仅切模型输入段，完整会话不删除。新增view_image、证据分页与官方DeepSeek峰谷估算；最新任务4a695a5b费用校正v5532，由约¥10.89改为¥5.45，未自动重新执行。默认模型v2使用时段估算；545普通/59容器/32前端/18浏览器与独立DeepSeek红图测试通过，实测视觉估算¥0.00242224。详见[实施及性能报告](tasks/Runtime-continuation-report.md)。
 - **最新故障修复**：任务425ceb85因3次模型请求异常连续触发失败；另有13次命令二进制NUL导致Session JSONB写入失败。现已在PostgreSQL边界转写U+0000、为DeepSeek/OpenAI系启用SDK 4次瞬时错误重试、持久化脱敏model_error类别/状态/请求ID，并按derive轮次保存初始上下文。570普通、62容器集成、33前端、18浏览器通过；部署HTTP NUL烟测成功，失败任务未自动续跑。见[运行失败收敛报告](tasks/Runtime-failure-hardening-report.md)。
@@ -75,6 +77,12 @@
 ### 0.1 2026-10-13 本地分支独立审查
 
 `execenv-kali`（`5cbfb5b`）及 `fix-ctf-reminded-event-type`（`99ba1e1`）已在独立工作树审查，修正空pip索引、同步生成契约并补HTTP回归后分别合并main：`8685d0d`、`f77db71`。两边make check为1090/1091项通过。已重建 `bbx-exec-env-kali:latest`（`e8996f63…`）及 `bbx-ctf-blackboard:latest`（`a7b38101…`），当前业务容器未重启；ctf-cooperation在办工作树保持原分支与改动。Kali仍为可选镜像，无默认Profile或设计正本变更，6.1待同步事项未改变。详见[独立分支审查报告](tasks/Local-branches-review-report.md)。本轮仅本地合并，未推送。
+
+### 0.2 2026-10-13 CTF 累计修复 Git 发布
+
+用户授权“提交推送”后，92个CTF文件按三组提交并合并main（`d457785`）；代码、提示词及文档分别为 `ded93ee`、`1f4341c`、`118b393`。与此前独立提醒修复合并时，去重同一个枚举并重新生成契约，避免保留重复enum或手写生成类型；最终92文件逐字节与接受验证的任务工作树相同，main的make check为1359 passed。完整隔离集成228 passed，未调用真实模型/靶机；此次Git发布不重启服务。
+
+本次推送main同时发布第0.1节已本地合并的Kali和提醒分支。其他在办工作树未切换、暂存或提交；最新环绕前端的在办源码仍位于ui-rebuild，未纳入此轮后端发布。ctf-cooperation工作树保留忽略的检查、镜像及源码备份材料，任务分支已提交干净；不删除这些审计依据。运行中的正式前端、数据库与MinIO保持。
 
 ## 1. 仓库与文档
 
@@ -383,6 +391,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+CTF-cooperation及收尾/上下文修复已按独立提案补充并交付：预算暂时占额保留原turn，实际任务阈值覆盖默认值，复用MAF分组和持久恢复前缀，恢复额度与失败诊断按轮次留痕；最后checkpoint无法确认时，只在drain证实后失败终态并保留环境，不能删屏障发布成功。规则见提案15.5与[修复报告](tasks/CTF-close-context-fix-report.md)，取代下文历史预算待办。原三份通用黑板设计未改；将来统一正本时应单独补充可选CTF模式与这些故障门禁，不改变Fact/Intent/derive/Close流程。
 
 UI-rebuild按用户确认的B2与顶部Goal方案交付，正式产品规范已更新web/DESIGN及使用文档：Ant Design/X组件、可展开左导航、画布优先与可调宽详情、Goal就地展开、状态/草稿/幂等保持。新增CTF完成要求只读投影不改变领域规则、私有Session或数据库。三份docs/design正本本轮未修改；若后续统一实现架构第8章，需同步组件来源及B2布局描述，以web/DESIGN为本轮界面依据。保留既有CTF模式提案和预算问题待办。见[UI-rebuild报告](tasks/UI-rebuild-report.md)。
 
