@@ -18,10 +18,18 @@ def _body(value: BaseModel | dict[str, Any]) -> dict[str, Any]:
 
 
 class RemoteError(RuntimeError):
-    def __init__(self, status: int, message: str, code: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        code: str | None = None,
+        *,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
         self.status = status
         self.code = code
         self.message = message
+        self.detail = detail
         super().__init__(message)
 
 
@@ -64,14 +72,60 @@ class BlackboardClient:
                 payload = response.json()
             except ValueError:
                 payload = None
+            safe_detail = None
             if isinstance(payload, dict):
                 detail = payload.get("message", payload.get("detail", payload.get("error")))
-                message = detail if isinstance(detail, str) else response.text
                 code = payload.get("code")
+                if isinstance(detail, dict):
+                    code = code or detail.get("code")
+                    revision = detail.get("current_revision")
+                    if (
+                        response.status_code == 409
+                        and code == "revision_conflict"
+                        and type(revision) is int
+                        and revision >= 1
+                    ):
+                        safe_detail = {"current_revision": revision}
+                    if response.status_code == 409 and code == "message_confirmation_conflict":
+                        conflicts = []
+                        rows = detail.get("conflicts", [])
+                        for row in rows[:100] if isinstance(rows, list) else []:
+                            if not isinstance(row, dict):
+                                continue
+                            try:
+                                identifier = str(UUID(str(row.get("id"))))
+                            except (ValueError, TypeError):
+                                continue
+                            if (
+                                row.get("status")
+                                not in {
+                                    "queued",
+                                    "leased",
+                                    "delivered",
+                                    "cancelled",
+                                    "failed",
+                                    "unknown",
+                                }
+                                or type(row.get("deferred")) is not bool
+                            ):
+                                continue
+                            conflicts.append(
+                                {
+                                    "id": identifier,
+                                    "status": row["status"],
+                                    "deferred": row["deferred"],
+                                }
+                            )
+                        safe_detail = {"conflicts": conflicts}
+                    detail = detail.get("message")
+                message = detail if isinstance(detail, str) else response.text
             else:
                 message, code = response.text, None
             raise RemoteError(
-                response.status_code, message, code if isinstance(code, str) else None
+                response.status_code,
+                message,
+                code if isinstance(code, str) else None,
+                detail=safe_detail,
             )
         return response
 

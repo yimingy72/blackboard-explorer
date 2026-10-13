@@ -6,6 +6,7 @@ from agent_framework import tool
 from pydantic import Field
 
 from bbx_runtime.ctf.board_tools import build_board_tools
+from bbx_runtime.ctf.tool_results import json_tool_result
 
 
 def build_review_tools(service: Any, task_id: str, member_id: str, turn: dict) -> list[Any]:
@@ -23,8 +24,8 @@ def build_review_tools(service: Any, task_id: str, member_id: str, turn: dict) -
         limit: Annotated[int, Field(ge=1, le=16384)] = 16384,
     ) -> str:
         """Read a bounded section of a persisted task artifact by registered ID."""
-        return str(
-            await service.tool(
+        return await json_tool_result(
+            service.tool(
                 task_id,
                 turn["token"],
                 "read_artifact",

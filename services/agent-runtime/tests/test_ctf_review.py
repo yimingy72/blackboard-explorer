@@ -26,7 +26,7 @@ async def test_review_removed_member_preserves_session_and_only_claims_review_ma
             self.reads = []
             self.billed = []
 
-        async def state(self, _):
+        async def runtime_state(self, _):
             return {
                 "task": {
                     "status": "finished",
@@ -154,10 +154,11 @@ async def test_review_coordinator_does_not_provision_and_includes_removed_member
         Any,
         SimpleNamespace(
             runtime=runtime,
-            state=AsyncMock(
+            runtime_state=AsyncMock(
                 return_value={
                     "task": {"status": "finished"},
                     "members": [{"id": "member-1", "status": "removed"}],
+                    "review_ready_member_ids": ["member-1"],
                 }
             ),
         ),

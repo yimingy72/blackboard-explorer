@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import anyio
-from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate
+from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate, resolve_ctf_options
 from bbx_contracts.models import (
     AgentProfile,
     Event,
@@ -716,6 +716,14 @@ def create_app(
             if body.reasoning_effort is not None:
                 model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
             profile.model = ModelConfig.model_validate(model)
+            try:
+                profile.options = resolve_ctf_options(
+                    profile,
+                    body.ctf_options.model_dump(exclude_unset=True),
+                    inherit_model_window=True,
+                )
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
             row = await profiles.create("ctf-task-settings", profile, identity.name)
             spec = body.model_dump(
                 exclude={
@@ -728,6 +736,7 @@ def create_app(
                 }
             )
             spec["agent_profile"] = row["name"]
+            spec["ctf_options"] = profile.options.model_dump()
             tid = await request.app.state.ctf_service.create_task(
                 spec,
                 profile_version=row["version"],

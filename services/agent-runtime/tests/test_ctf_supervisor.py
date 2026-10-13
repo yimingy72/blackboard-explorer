@@ -132,6 +132,36 @@ async def test_running_ctf_task_is_recovered_after_coordinator_transport_failure
     await instance.stop()
 
 
+async def test_slow_control_wait_logs_stage_once_without_cancelling_writers(monkeypatch, caplog):
+    import bbx_runtime.scheduler.supervisor as module
+
+    instance, _, _, coordinator = supervisor([{"id": "ctf-1", "mode": "ctf", "status": "running"}])
+
+    async def running():
+        await asyncio.Event().wait()
+
+    future = asyncio.create_task(running())
+    instance.ctf_tasks["ctf-1"] = future
+    coordinator.control_waits = {"ctf-1": ("drain_execution", 0.0)}
+    instant = [59.0]
+    monkeypatch.setattr(module, "monotonic", lambda: instant[0])
+    try:
+        await instance.tick()
+        assert not caplog.records
+        for instant[0] in (60.0, 90.0, 180.0):
+            await instance.tick()
+        assert len(caplog.records) == 1
+        assert "stage=drain_execution" in caplog.text
+        assert not future.done()
+        coordinator.recover.assert_not_awaited()
+        coordinator.control_waits.clear()
+        await instance.tick()
+        assert not instance.ctf_wait_warnings
+    finally:
+        future.cancel()
+        await instance.stop()
+
+
 @pytest.mark.asyncio
 async def test_ctf_factory_provisions_fixed_mode_and_restores_registered_inputs():
     from pathlib import Path
@@ -199,7 +229,7 @@ async def test_ctf_replacement_persists_progress_before_destroy_and_resumes(monk
         control["replacement"] = {**control.get("replacement", {}), **body}
 
     coordinator.service = Mock()
-    coordinator.service.state = AsyncMock(
+    coordinator.service.runtime_state = AsyncMock(
         return_value={
             "task": task,
             "members": [{"execution": {"boot_id": "registered-boot", "drained": False}}],

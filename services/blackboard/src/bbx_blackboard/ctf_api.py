@@ -38,6 +38,12 @@ def public_member(member: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@router.get("/runtime-state")
+async def runtime_state(request: Request, task_id: UUID) -> dict[str, Any]:
+    require_service(request)
+    return await service(request).runtime_state(task_id)
+
+
 @router.get("/state")
 async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     identity = require_task_reader(request, task_id)
@@ -87,6 +93,9 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "authorize_member",
         "mark_reservation_sent",
         "bill_usage",
+        "reconcile_usage_outbox",
+        "reconcile_budget",
+        "idle_watchdog",
         "request_finish",
         "record_execution",
         "execution_replacement",
@@ -101,6 +110,16 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
     if operation not in allowed:
         raise HTTPException(404, "Unknown CTF runtime operation")
     arguments = dict(body)
+    if operation == "reconcile_usage_outbox" and (
+        set(arguments) != {"agent_id"}
+        or not isinstance(arguments.get("agent_id"), str)
+        or not arguments["agent_id"]
+    ):
+        raise HTTPException(422, "Agent identity is required for usage reconciliation")
+    if operation == "idle_watchdog" and arguments:
+        raise HTTPException(422, "Unexpected watchdog arguments")
+    if operation == "reconcile_budget" and arguments:
+        raise HTTPException(422, "Unexpected budget reconciliation arguments")
     if operation in {"authorize_platform_call", "begin_platform_call", "record_platform_result"}:
         identity_fields = {
             key: arguments.pop(key)
@@ -190,7 +209,7 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
         identity.generation,
         identity.turn_id,
     )
-    data = await service(request).state(task_id)
+    data = await service(request).runtime_state(task_id)
     task = data["task"]
     profile = await request.app.state.profile_store.get(
         task["agent_profile"],
@@ -206,7 +225,10 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     if builtin not in profile["worker_tools"][member["role"]]["builtin"]:
         raise HTTPException(403, "Tool is disabled in the task profile")
     if operation == "confirm_messages":
-        validated = ctf_models.CtfConfirmMessagesRequest.model_validate(body)
+        try:
+            validated = ctf_models.CtfConfirmMessagesRequest.model_validate(body)
+        except ValueError as error:
+            raise HTTPException(422, "Message IDs must be UUIDs") from error
         return await service(request).confirm_messages(
             task_id,
             actor=identity.agent_id,
@@ -248,7 +270,7 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     }:
         return await board_tool(request, task_id, operation, body, identity)
     if operation in {"list_members", "list_team"}:
-        return [public_member(member) for member in data["members"]]
+        return [public_member({**member, "agent_id": member["id"]}) for member in data["members"]]
     lifecycle = {"stop_teammate": "stop", "resume_teammate": "resume", "remove_teammate": "remove"}
     if operation in lifecycle:
         if member["role"] != "lead":
@@ -361,6 +383,11 @@ async def board_tool(
                 raise HTTPException(422, "Unexpected query arguments")
             return await service(request).get_challenge(task_id, challenge_id)
         limit, offset = arguments.pop("limit", 100), arguments.pop("offset", 0)
+        after_version = None
+        if operation == "list_records" and "after_version" in arguments:
+            after_version = arguments.pop("after_version")
+            if type(after_version) is not int or after_version < 0:
+                raise HTTPException(422, "Invalid after_version")
         if (
             arguments
             or type(limit) is not int
@@ -370,16 +397,10 @@ async def board_tool(
         ):
             raise HTTPException(422, "Invalid pagination")
         if operation == "list_challenges":
-            result = await service(request).list_challenges(task_id)
-            key = "challenges"
-        else:
-            result = await service(request).list_records(task_id, challenge_id)
-            key = "records"
-        values = result[key]
-        return {
-            key: values[offset : offset + limit],
-            "next_offset": offset + limit if len(values) > offset + limit else None,
-        }
+            return await service(request).list_challenges(task_id, limit=limit, offset=offset)
+        return await service(request).list_records(
+            task_id, challenge_id, limit=limit, offset=offset, after_version=after_version
+        )
     if operation == "claim_challenge":
         arguments["action"] = "claim"
         operation = "update_challenge"
@@ -412,17 +433,16 @@ async def challenges(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     require_task_reader(request, task_id)
-    result = await service(request).list_challenges(task_id)
-    values = result["challenges"]
-    return {
-        "challenges": values[offset : offset + limit],
-        "next_offset": offset + limit if len(values) > offset + limit else None,
-    }
+    if set(request.query_params) - {"limit", "offset"}:
+        raise HTTPException(422, "Unexpected query arguments")
+    return await service(request).list_challenges(task_id, limit=limit, offset=offset)
 
 
 @router.get("/challenges/{challenge_id}")
 async def challenge(request: Request, task_id: UUID, challenge_id: UUID) -> dict[str, Any]:
     require_task_reader(request, task_id)
+    if request.query_params:
+        raise HTTPException(422, "Unexpected query arguments")
     return await service(request).get_challenge(task_id, str(challenge_id))
 
 
@@ -470,14 +490,14 @@ async def records(
     challenge_id: UUID,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    after_version: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     require_task_reader(request, task_id)
-    result = await service(request).list_records(task_id, str(challenge_id))
-    values = result["records"]
-    return {
-        "records": values[offset : offset + limit],
-        "next_offset": offset + limit if len(values) > offset + limit else None,
-    }
+    if set(request.query_params) - {"limit", "offset", "after_version"}:
+        raise HTTPException(422, "Unexpected query arguments")
+    return await service(request).list_records(
+        task_id, str(challenge_id), limit=limit, offset=offset, after_version=after_version
+    )
 
 
 @router.post("/challenges/{challenge_id}/records")

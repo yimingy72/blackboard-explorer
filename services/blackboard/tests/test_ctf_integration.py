@@ -224,7 +224,7 @@ async def test_claim_checkpoint_recovery_and_replay(ctf):
     tid = await team(ctf)
     claims = await asyncio.gather(*(ctf.claim_turn(tid, "lead", "runtime") for _ in range(2)))
     turn = next(t for t in claims if t)
-    assert sum(t is not None for t in claims) == 1
+    assert all(t is not None and t["id"] == turn["id"] for t in claims)
     messages = await ctf.claim_messages(tid, "lead", turn["id"], turn["generation"])
     retried = await ctf.claim_messages(tid, "lead", turn["id"], turn["generation"])
     assert retried[0]["claim_token"] == messages[0]["claim_token"]
@@ -488,7 +488,7 @@ async def test_long_settlement_and_private_reply_do_not_lose_lead_result(ctf):
         await ctf.turn_result(tid, turn["id"], bob["id"])
 
 
-async def test_unconfirmed_final_checkpoint_blocks_closing_after_recovery(ctf):
+async def test_unconfirmed_final_checkpoint_recovery_closes_as_failure(ctf):
     tid = await team(ctf)
     turn = await ctf.claim_turn(tid, "lead", "runtime")
     await ctf.request_finish(
@@ -500,12 +500,14 @@ async def test_unconfirmed_final_checkpoint_blocks_closing_after_recovery(ctf):
         turn_id=turn["id"],
     )
     await ctf.checkpoint_failed(tid, "lead", turn["id"], turn["generation"])
-    await ctf.recover(tid)
     with pytest.raises(HTTPException, match="checkpoint"):
         await ctf.finalize_close(tid, True)
+    await ctf.recover(tid)
+    assert await ctf.finalize_close(tid, True) == {"phase": "closed", "status": "failed"}
     state = await ctf.state(tid)
-    assert state["task"]["ctf_control"]["phase"] == "closing"
-    assert state["task"]["ctf_control"]["unresolved_checkpoints"] == [turn["id"]]
+    assert state["task"]["ctf_control"]["unresolved_checkpoints"] == []
+    assert turn["id"] in state["task"]["ctf_control"]["checkpoint_failures"]
+    assert state["task"]["ctf_conclusion"]["end_reason"] == "system_failure"
 
 
 async def test_initial_workflow_is_delivered_with_source_and_survives_start(ctf):

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import insert, select, update
 
+from bbx_blackboard.ctf_report import build_report_summary, render_report
 from bbx_blackboard.domain.rules import event
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.store import schema as s
@@ -69,28 +70,8 @@ class CtfLifecycleMixin:
             state["artifacts"] = [
                 r["artifact"] for r in state["records"] if r.get("kind") == "artifact_registration"
             ]
-            conclusion = task.get("ctf_conclusion") or {}
-            report = "# CTF task conclusion\n\n" + "\n\n".join(
-                f"## {key}\n\n{value}" for key, value in conclusion.items()
-            )
-            report += "\n\n## Challenge work and external target observations\n\n"
-            report += json.dumps(
-                jsonable_encoder(
-                    [
-                        {
-                            key: challenge.get(key)
-                            for key in ("id", "title", "work_status", "verification", "target")
-                        }
-                        for challenge in state["challenges"]
-                    ]
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
-            report += (
-                "\n\nExternal target state is the last recorded observation; "
-                "local container cleanup does not prove external target shutdown.\n"
-            )
+            report_summary = build_report_summary(state)
+            report = render_report(report_summary)
             report_uri = (
                 f"reports/{tid}.md"
                 if task["run_number"] == 1
@@ -102,6 +83,7 @@ class CtfLifecycleMixin:
             state["task"] = {**task, "report_uri": report_uri}
             result.update(
                 state=state,
+                report_summary=report_summary,
                 sessions=state["sessions"],
                 messages=state["messages"],
                 events=state["events"],
@@ -270,7 +252,16 @@ class CtfLifecycleMixin:
                 *control.get("conclusion_history", []),
                 {"run_number": task["run_number"], "conclusion": task["ctf_conclusion"]},
             ]
-            for key in ("closing_request_id", "replacement", "cleanup"):
+            for key in (
+                "closing_request_id",
+                "close_failure",
+                "replacement",
+                "cleanup",
+                "idle_watchdog",
+                "context_blocked_members",
+                "turn_retries",
+                "turn_retry_delays",
+            ):
                 control.pop(key, None)
             control.update(phase="provisioning", epoch=control.get("epoch", 0) + 1)
             await patch(conn, s.tasks, tid, {"ctf_control": control, "ctf_conclusion": None})
@@ -294,6 +285,38 @@ class CtfLifecycleMixin:
                     lease_until=None,
                 )
             )
+            deferred = (
+                (
+                    await conn.execute(
+                        select(s.ctf_messages.c.id, s.ctf_messages.c.recipient_id)
+                        .where(
+                            s.ctf_messages.c.task_id == tid,
+                            s.ctf_messages.c.status == "queued",
+                            s.ctf_messages.c.deferred.is_(True),
+                        )
+                        .order_by(
+                            s.ctf_messages.c.recipient_id, s.ctf_messages.c.recipient_sequence
+                        )
+                        .limit(101)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            confirmation = json.dumps(
+                {
+                    "deferred_messages": [
+                        {
+                            "id": m["id"],
+                            "recipient_id": m["recipient_id"],
+                            "status": "queued",
+                            "deferred": True,
+                        }
+                        for m in deferred[:100]
+                    ],
+                    "truncated": len(deferred) > 100,
+                }
+            )
             await self._message(
                 conn,
                 tid,
@@ -302,7 +325,9 @@ class CtfLifecycleMixin:
                 "Task explicitly resumed. First inspect existing targets and connections, "
                 "shared records and unresolved work. Do not replay unknown tool calls. "
                 "Previously queued messages are deferred: confirm_messages only after checking "
-                "their continuing relevance. Stopped and removed members remain unchanged.",
+                "their continuing relevance. Confirm only queued deferred IDs; already confirmed "
+                "active or delivered IDs may be repeated safely. Stopped and removed members "
+                "remain unchanged. Deferred message metadata (no message bodies): " + confirmation,
                 str(uuid5(request_id, "resume-lead")),
                 kind="instruction",
             )
@@ -327,14 +352,48 @@ class CtfLifecycleMixin:
                 .mappings()
                 .all()
             )
-            check(len(messages) == len(set(identifiers)), "Unknown message")
-            check(
-                all(m["status"] == "queued" for m in messages),
-                "Only queued messages can be confirmed",
-            )
+            recipients = (
+                await conn.execute(
+                    select(s.ctf_members.c.id, s.ctf_members.c.lifecycle).where(
+                        s.ctf_members.c.task_id == tid,
+                        s.ctf_members.c.id.in_([m["recipient_id"] for m in messages]),
+                    )
+                )
+            ).all()
+            active = {member.id for member in recipients if member.lifecycle == "active"}
+            by_id = {m["id"]: m for m in messages}
+            conflicts = []
+            release = []
+            for identifier in dict.fromkeys(identifiers):
+                message = by_id.get(identifier)
+                if message is not None and message["recipient_id"] in active:
+                    if message["status"] == "queued" and message["deferred"]:
+                        release.append(identifier)
+                        continue
+                    if (
+                        message["status"] in {"queued", "leased", "delivered"}
+                        and not message["deferred"]
+                    ):
+                        continue
+                conflicts.append(
+                    {
+                        "id": identifier,
+                        "status": message["status"] if message is not None else "unknown",
+                        "deferred": bool(message["deferred"]) if message is not None else False,
+                    }
+                )
+            if conflicts:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "message_confirmation_conflict",
+                        "message": "Check message status and recipient lifecycle.",
+                        "conflicts": conflicts,
+                    },
+                )
             await conn.execute(
                 update(s.ctf_messages)
-                .where(s.ctf_messages.c.task_id == tid, s.ctf_messages.c.id.in_(identifiers))
+                .where(s.ctf_messages.c.task_id == tid, s.ctf_messages.c.id.in_(release))
                 .values(deferred=False)
             )
             return {"message_ids": identifiers}

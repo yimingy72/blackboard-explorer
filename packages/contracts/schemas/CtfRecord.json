@@ -196,6 +196,25 @@
       "default": null,
       "title": "Verification"
     },
+    "work_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "pending",
+            "in_progress",
+            "blocked",
+            "completed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Work Status"
+    },
     "target": {
       "anyOf": [
         {
