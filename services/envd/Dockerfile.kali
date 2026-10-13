@@ -1,0 +1,71 @@
+# Alternative exec-environment image for CTF runs, built on a Kali Linux base.
+#
+# Why this variant exists: the official services/envd/Dockerfile starts from
+# ubuntu:24.04 and ships a minimal toolchain, so CTF members spend a large share of
+# their budget installing pwntools / gdb / tshark / z3 / ... at the start of a run.
+# A Kali base already carries that toolset, which removes the install phase and the
+# PEP 668 friction observed with the system pip.
+#
+# Build (context must be the repository root, so services/envd can be copied):
+#   make image-exec-env-kali
+#
+# BASE IMAGE: `kali-mini:latest` is a locally built/tagged image on the build host,
+# not a registry reference. It is overridable for other hosts:
+#   make image-exec-env-kali BASE_IMAGE=<your-local-ref>
+#
+# Design notes (differences from services/envd/Dockerfile):
+#  1. envd's pyproject requires Python >=3.12,<3.14 while this base ships Python 3.14,
+#     so envd gets a dedicated python3.13 virtualenv. The system python3 (3.14) and its
+#     preinstalled CTF libraries stay available to the members untouched.
+#  2. /opt/envd/venv/bin is deliberately NOT prepended to PATH: doing so would put the
+#     envd interpreter (3.13) ahead of the members' python3 (3.14) and shadow the
+#     packages that ship with it. The CMD below therefore invokes the venv explicitly.
+#  3. /etc/pip.conf enables break-system-packages because the base is a PEP 668
+#     "externally managed" environment and members install ad-hoc tooling with pip.
+#  4. The bbx-agents group and sudoers fragment are byte-identical to the official
+#     image: envd runs members through runuser and privileged commands via `sudo -n`.
+#  5. Package sources are left to the base image, so no APT_MIRROR argument is taken
+#     here (the ubuntu mirror used by image-exec-env does not apply to this base).
+#  6. iproute2 and openvpn are installed for capability parity with the official image,
+#     which adds them for members' runtime use (sudo/iproute2/openvpn).
+ARG BASE_IMAGE=kali-mini:latest
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+# Optional Python package index; empty keeps the upstream default.
+ARG PIP_INDEX_URL=
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       tini zstd util-linux sudo passwd ca-certificates curl wget git jq unzip zip xz-utils \
+       iproute2 openvpn \
+       python3.13 python3.13-venv python3.13-dev \
+       build-essential gdb file socat netcat-openbsd binutils strace ltrace patchelf ripgrep \
+       tshark tcpdump binwalk \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+RUN groupadd bbx-agents \
+    && mkdir -p /var/log/bbx \
+    && chmod 700 /var/log/bbx \
+    && printf '%s\n' \
+       '%bbx-agents ALL=(ALL:ALL) NOPASSWD: ALL' \
+       'Defaults !use_pty' \
+       'Defaults logfile="/var/log/bbx/sudo.log"' \
+       'Defaults log_year' \
+       'Defaults log_exit_status' \
+       'Defaults loglinelen=0' \
+       'Defaults env_keep += "HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy"' \
+       > /etc/sudoers.d/bbx-agents \
+    && chmod 440 /etc/sudoers.d/bbx-agents \
+    && visudo -cf /etc/sudoers
+
+COPY services/envd /opt/envd/source
+RUN python3.13 -m venv /opt/envd/venv \
+    && /opt/envd/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} /opt/envd/source \
+    && chmod -R a-w /opt/envd
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/opt/envd/venv/bin/python", "-m", "uvicorn", "bbx_envd.app:app", "--host", "0.0.0.0", "--port", "8080"]
