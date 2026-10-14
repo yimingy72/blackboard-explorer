@@ -11,6 +11,7 @@ from alembic import command
 from alembic.config import Config
 from bbx_blackboard.ctf import CtfService
 from bbx_blackboard.store import schema as s
+from ctf_solution_fixtures import solution
 from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -851,6 +852,7 @@ async def test_challenge_cas_owner_help_and_shared_records(ctf):
             expected_revision=3,
             action="set_status",
             work_status="completed",
+            solution=solution(),
         )
     help_args = dict(
         challenge_id=cid,
@@ -883,6 +885,7 @@ async def test_challenge_cas_owner_help_and_shared_records(ctf):
         expected_revision=4,
         action="set_status",
         work_status="completed",
+        solution=solution(),
     )
     assert completed["verification"] == {}
     assert completed["owner_id"] == owner["actor"]
@@ -995,6 +998,7 @@ async def test_challenge_close_reopen_delete_and_finish_gate(ctf):
         expected_revision=4,
         action="set_status",
         work_status="completed",
+        solution=solution(),
     )
     with pytest.raises(HTTPException):
         await ctf.request_help(

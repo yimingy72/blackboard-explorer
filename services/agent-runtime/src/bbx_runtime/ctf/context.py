@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+from bisect import bisect_right
 from collections.abc import Sequence
 from copy import copy, deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
@@ -180,6 +182,7 @@ def stable_tool_previews(
                     previews[key] = (
                         f"[Truncated model preview: message_id={message.message_id}; "
                         f"call_id={content.call_id}; full result remains in the saved Session; "
+                        "use read_saved_tool_result if available; "
                         f"original_characters={len(result)}]\n"
                         + raw[:half].decode("utf-8", errors="ignore")
                         + "\n[... omitted from model view ...]\n"
@@ -197,7 +200,24 @@ def stable_tool_previews(
     return view
 
 
-def _history_boundaries(messages: Sequence[Message]) -> tuple[list[int], set[int], int]:
+@dataclass
+class HistoryBoundaries:
+    completed: list[int]
+    forbidden: set[int]
+    unfinished_from: int
+
+    def align(self, start: int) -> int | None:
+        if start == 0:
+            return 0
+        if start > self.unfinished_from:
+            return None
+        if start not in self.forbidden:
+            return start
+        index = bisect_right(self.completed, start)
+        return self.completed[index] if index < len(self.completed) else None
+
+
+def history_boundaries(messages: Sequence[Message]) -> HistoryBoundaries:
     """Use MAF's native atomic groups, with CTF admission/completion safeguards."""
     grouped = []
     original_spans: dict[str, tuple[int, int]] = {}
@@ -231,13 +251,13 @@ def _history_boundaries(messages: Sequence[Message]) -> tuple[list[int], set[int
         group_kinds[group_id] = annotation["kind"]
         extend_span(f"native:{group_id}", index)
 
-    forbidden = {
-        boundary
-        for first, last in original_spans.values()
-        for boundary in range(first + 1, last + 1)
-    }
+    # Merge overlapping spans in one sweep instead of expanding each span.
+    coverage = [0] * (len(messages) + 2)
+    for first, last in original_spans.values():
+        coverage[first + 1] += 1
+        coverage[last + 1] -= 1
     unfinished_from = len(messages)
-    candidates = []
+    candidates = set()
     for group_id, indices in native_groups.items():
         # Native groups establish pairing, including non-contiguous late results.
         # They intentionally lack a completed flag: CTF cannot evict a group
@@ -259,27 +279,25 @@ def _history_boundaries(messages: Sequence[Message]) -> tuple[list[int], set[int
         if declared - returned:
             unfinished_from = min(unfinished_from, indices[0])
         if group_kinds[group_id] in {"assistant_text", "tool_call"}:
-            candidates.append(indices[-1] + 1)
-    completed = sorted(
-        boundary
-        for boundary in candidates
-        if boundary <= unfinished_from and boundary not in forbidden
-    )
-    return completed, forbidden, unfinished_from
+            candidates.add(indices[-1] + 1)
+    completed = []
+    forbidden = set()
+    active = 0
+    for boundary in range(len(messages) + 1):
+        active += coverage[boundary]
+        if active:
+            forbidden.add(boundary)
+        elif boundary <= unfinished_from and boundary in candidates:
+            completed.append(boundary)
+    return HistoryBoundaries(completed, forbidden, unfinished_from)
 
 
 def safe_history_boundaries(messages: Sequence[Message], start: int) -> list[int]:
-    completed, _, _ = _history_boundaries(messages)
-    return [boundary for boundary in completed if boundary > start]
+    return [boundary for boundary in history_boundaries(messages).completed if boundary > start]
 
 
 def align_history_start(messages: Sequence[Message], start: int) -> int | None:
     """Move legacy cutoffs forward only; never reintroduce an omitted tool call."""
     if start == 0:
         return 0
-    completed, forbidden, unfinished_from = _history_boundaries(messages)
-    if start > unfinished_from:
-        return None
-    if start not in forbidden:
-        return start
-    return next((boundary for boundary in completed if boundary > start), None)
+    return history_boundaries(messages).align(start)

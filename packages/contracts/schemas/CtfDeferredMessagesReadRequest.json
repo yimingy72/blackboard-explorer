@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "offset": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "limit": {
+      "default": 5,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "title": "CtfDeferredMessagesReadRequest",
+  "type": "object"
+}

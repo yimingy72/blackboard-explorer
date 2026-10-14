@@ -1,6 +1,7 @@
 """Confirmed model usage settles old calls without reopening execution fences."""
 
 import copy
+import json
 from typing import Any, cast
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ import pytest
 from bbx_blackboard.store import schema as s
 from fastapi import HTTPException
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncConnection
 from test_ctf_integration import ctf as ctf
 from test_ctf_integration import ctf_turn, team
 from test_ctf_integration import ctf_url as ctf_url
@@ -67,6 +69,43 @@ async def test_recovery_bills_persisted_usage_before_classifying_dispatch_unknow
     second = await ctf.reconcile_usage_outbox(tid, "lead")
     assert first == second == {"request_ids": [entry["request_id"]]}
     assert (await ctf.state(tid))["task"]["usage"]["cost"] == "0.12"
+
+
+@pytest.mark.parametrize("entries", [False, True])
+async def test_usage_projection_excludes_history_and_repeated_billing_keeps_exact_cost(
+    ctf, monkeypatch, entries
+):
+    tid, turn, state, entry = await saved_dispatch(ctf, entries=entries)
+    state["in_memory"] = {"messages": [{"contents": [{"text": "x" * 6_500_000}]}]}
+    async with ctf.repo.engine.begin() as conn:
+        await ctf.sessions._save_session(conn, tid, "lead", {"state": state}, "role", "native", 1)
+    projections = []
+    execute = AsyncConnection.execute
+
+    async def capture(conn, statement, *args, **kwargs):
+        result = await execute(conn, statement, *args, **kwargs)
+        if (
+            getattr(statement, "is_select", False)
+            and "ctf_usage_outbox" in statement.selected_columns
+        ):
+            frozen = result.freeze()
+            projections.extend(dict(row) for row in frozen().mappings())
+            return frozen()
+        return result
+
+    monkeypatch.setattr(AsyncConnection, "execute", capture)
+    expected = {"request_ids": [entry["request_id"]] if entries else []}
+    assert await ctf.reconcile_usage_outbox(tid, "lead") == expected
+    assert await ctf.reconcile_usage_outbox(tid, "lead") == expected
+    assert len(projections) == 2
+    assert all(len(json.dumps(row).encode()) < 1000 for row in projections)
+    snapshot = await ctf.state(tid)
+    if entries:
+        assert snapshot["task"]["usage"]["cost"] == "0.12"
+        assert snapshot["task"]["usage"]["output_tokens"] == 10
+    else:
+        assert snapshot["task"]["usage"] == {}
+        assert entry["reservation_id"] in snapshot["task"]["ctf_control"]["budget_reservations"]
 
 
 async def test_late_confirmed_outbox_replaces_only_matching_unknown_and_retains_other_calls(ctf):

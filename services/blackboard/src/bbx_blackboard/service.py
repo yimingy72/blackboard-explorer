@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from datetime import UTC, datetime
@@ -160,6 +161,8 @@ class BoardService:
         data: dict[str, Any],
         *,
         expected_derive_round: int | None = None,
+        expected_run_number: int | None = None,
+        expected_agent_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
@@ -170,6 +173,28 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
             self._check_derive_round(state.agents.get(target), expected_derive_round)
+            if command == "finish_agent" and (
+                expected_run_number is not None or expected_agent_run_id is not None
+            ):
+                if expected_run_number is None or expected_agent_run_id is None:
+                    raise RuleViolation(
+                        "invalid_finish_identity", "最终回执需同时指定任务轮次和 Agent。"
+                    )
+                if state.task["run_number"] != expected_run_number:
+                    raise RuleViolation("stale_task_run", "任务轮次已变化，旧回执不能写入本轮。")
+                agent = state.agents.get(target)
+                if agent is None or agent["id"] != expected_agent_run_id:
+                    raise RuleViolation("stale_agent_run", "Agent 身份已变化，旧回执不能写入本轮。")
+                if agent["status"] not in {"running", "concluding"}:
+                    if (
+                        json.dumps(agent["receipt"], sort_keys=True)
+                        != json.dumps(data["receipt"], sort_keys=True)
+                        or agent["end_reason"] != data["end_reason"]
+                    ):
+                        raise RuleViolation(
+                            "final_receipt_conflict", "已保存最终回执与补偿请求不一致。"
+                        )
+                    return []
             events = decide(state, command, actor, data)
             written = await self.repo.append(conn, tid, events)
             if command == "finish_agent":
@@ -591,6 +616,8 @@ class BoardService:
         end_reason: str,
         *,
         expected_derive_round: int | None = None,
+        expected_run_number: int | None = None,
+        expected_agent_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -598,6 +625,8 @@ class BoardService:
             agent_id,
             {"agent_id": agent_id, "receipt": receipt, "end_reason": end_reason},
             expected_derive_round=expected_derive_round,
+            expected_run_number=expected_run_number,
+            expected_agent_run_id=expected_agent_run_id,
         )
 
     async def submit_close(

@@ -7,11 +7,11 @@ from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import yaml
-from pydantic import Field, field_validator, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
 
@@ -30,6 +30,8 @@ CTF_COMMON_TOOLS = frozenset(
         "register_artifact",
         "request_help",
         "record_candidate",
+        "read_turn_result",
+        "read_saved_tool_result",
     }
 )
 CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {
@@ -40,6 +42,7 @@ CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {
     "finish_task",
     "set_verification_required",
     "confirm_messages",
+    "list_deferred_messages",
 }
 CTF_TOOLS = {"lead": CTF_LEAD_TOOLS, "teammate": CTF_COMMON_TOOLS}
 # Provider billing is settled after a response. Keep a conservative allowance for
@@ -338,6 +341,10 @@ class CtfFailureDiagnostic(ContractModel):
     occurred_at: datetime
     correlation_id: UUID
     summary: str = Field(min_length=1, max_length=240)
+    task_id: str | None = Field(default=None, min_length=1, max_length=128)
+    member_id: str | None = Field(default=None, min_length=1, max_length=128)
+    turn_id: str | None = Field(default=None, min_length=1, max_length=128)
+    generation: int | None = Field(default=None, ge=0)
 
 
 class CtfConclusion(ContractModel):
@@ -420,6 +427,54 @@ class CtfEvent(ContractModel):
 CtfWorkStatus = Literal["pending", "in_progress", "blocked", "completed", "cancelled"]
 
 
+def _nonblank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("Text must not be blank")
+    return value
+
+
+CtfProgressStage = Literal["approach", "attempt", "breakthrough", "result"]
+CtfShortTitle = Annotated[str, Field(min_length=1, max_length=40), AfterValidator(_nonblank)]
+CtfShortSummary = Annotated[str, Field(min_length=1, max_length=160), AfterValidator(_nonblank)]
+CtfSolutionText = Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_nonblank)]
+
+
+class CtfProgress(ContractModel):
+    stage: CtfProgressStage
+    title: CtfShortTitle
+    summary: CtfShortSummary
+
+
+class CtfSolutionStep(ContractModel):
+    kind: CtfProgressStage
+    title: CtfShortTitle
+    result: Literal["supported", "ruled_out", "inconclusive"]
+    summary: CtfShortSummary
+    record_ids: list[UUID] = Field(default_factory=list, max_length=8)
+    artifact_ids: list[UUID] = Field(default_factory=list, max_length=8)
+
+
+class CtfSolution(ContractModel):
+    conclusion: CtfSolutionText
+    approach: CtfSolutionText
+    steps: list[CtfSolutionStep] = Field(min_length=1, max_length=6)
+    remaining: list[CtfSolutionText] = Field(default_factory=list, max_length=3)
+    reproduction: Annotated[str, Field(min_length=1, max_length=300), AfterValidator(_nonblank)]
+
+    @model_validator(mode="after")
+    def bounded_text(self) -> CtfSolution:
+        texts = [self.conclusion, self.approach, self.reproduction, *self.remaining]
+        texts.extend(text for step in self.steps for text in (step.title, step.summary))
+        if sum(map(len, texts)) > 1600:
+            raise ValueError("Solution text must not exceed 1600 characters")
+        return self
+
+
+def validate_ctf_delivery(completed: bool, solution: CtfSolution | None) -> None:
+    if completed != (solution is not None):
+        raise ValueError("Solution is required only when completing challenge work")
+
+
 class CtfChallenge(ContractModel):
     id: UUID
     task_id: UUID
@@ -435,6 +490,7 @@ class CtfChallenge(ContractModel):
     verification: dict[str, object] = Field(default_factory=dict)
     target: dict[str, object] = Field(default_factory=dict)
     tombstone: bool = False
+    solution_record_id: UUID | None = None
 
 
 class CtfArtifactUploadRequest(ContractModel):
@@ -483,7 +539,9 @@ class CtfRecord(ContractModel):
     task_id: UUID
     challenge_id: UUID
     author_id: str = Field(min_length=1)
-    kind: Literal["note", "correction", "help_request", "artifact", "verification", "target"]
+    kind: Literal[
+        "note", "correction", "help_request", "artifact", "verification", "target", "solution"
+    ]
     body: str = Field(min_length=1)
     created_version: int = Field(ge=1)
     created_at: datetime
@@ -499,6 +557,12 @@ class CtfRecord(ContractModel):
     target: dict[str, object] | None = None
     platform_call: dict[str, object] | None = None
     summary_applied: bool = True
+    progress: CtfProgress | None = None
+    solution: CtfSolution | None = None
+    solution_generation: int | None = Field(default=None, ge=1)
+    solution_turn_id: UUID | None = None
+    solution_run_number: int | None = Field(default=None, ge=1)
+    solution_challenge_revision: int | None = Field(default=None, ge=1)
 
 
 class CtfChallengeCreateRequest(ContractModel):
@@ -515,6 +579,11 @@ class CtfChallengeClaimRequest(ContractModel):
     expected_revision: int = Field(ge=1)
 
 
+class CtfAssignmentInstruction(ContractModel):
+    recipient_id: str = Field(min_length=1, max_length=100)
+    body: str = Field(min_length=1, max_length=20000)
+
+
 class CtfChallengeUpdateRequest(ContractModel):
     request_id: UUID
     expected_revision: int = Field(ge=1)
@@ -522,9 +591,16 @@ class CtfChallengeUpdateRequest(ContractModel):
     owner_id: str | None = Field(default=None, min_length=1)
     collaborator_ids: list[str] | None = None
     work_status: Literal["in_progress", "blocked", "completed", "cancelled"] | None = None
+    solution: CtfSolution | None = None
+    instructions: list[CtfAssignmentInstruction] | None = Field(
+        default=None, min_length=1, max_length=32
+    )
 
     @model_validator(mode="after")
     def action_fields(self) -> CtfChallengeUpdateRequest:
+        validate_ctf_delivery(
+            self.action == "set_status" and self.work_status == "completed", self.solution
+        )
         for field, action in (
             ("owner_id", "assign"),
             ("collaborator_ids", "collaborators"),
@@ -538,10 +614,19 @@ class CtfChallengeUpdateRequest(ContractModel):
             or len(set(self.collaborator_ids)) != len(self.collaborator_ids)
         ):
             raise ValueError("Collaborators must be nonempty unique member IDs")
+        if self.instructions is not None:
+            recipients = [item.recipient_id for item in self.instructions]
+            if self.action not in {"assign", "collaborators"}:
+                raise ValueError("Instructions require assignment or collaborator update")
+            if any(not value.strip() for value in recipients) or len(set(recipients)) != len(
+                recipients
+            ):
+                raise ValueError("Instruction recipients must be nonempty unique member IDs")
         return self
 
 
 class CtfRecordAppendRequest(ContractModel):
+    progress: CtfProgress | None = None
     request_id: UUID
     body: str = Field(min_length=1)
     kind: Literal["note", "correction"] = "note"
@@ -587,6 +672,13 @@ class CtfVerificationCandidateRequest(ContractModel):
     summary: str = Field(min_length=1)
     evidence_refs: list[UUID] = Field(default_factory=list)
     work_status: Literal["in_progress", "blocked", "completed"] | None = None
+
+    solution: CtfSolution | None = None
+
+    @model_validator(mode="after")
+    def delivery_fields(self) -> CtfVerificationCandidateRequest:
+        validate_ctf_delivery(self.work_status == "completed", self.solution)
+        return self
 
 
 class CtfVerificationRequiredRequest(ContractModel):
@@ -660,3 +752,27 @@ class CtfPlatformResultRequest(CtfPlatformAuthorizeRequest):
 
 class CtfConfirmMessagesRequest(ContractModel):
     message_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class CtfRecoveryInputProofRequest(ContractModel):
+    agent_id: str = Field(min_length=1, max_length=100)
+    turn_id: UUID
+    generation: int = Field(ge=0)
+    message_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class CtfTurnResultReadRequest(ContractModel):
+    turn_id: UUID
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=2000, ge=1, le=16000)
+
+
+class CtfSavedToolResultReadRequest(ContractModel):
+    call_id: str = Field(min_length=1, max_length=200)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=2000, ge=1, le=16000)
+
+
+class CtfDeferredMessagesReadRequest(ContractModel):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=5, ge=1, le=100)

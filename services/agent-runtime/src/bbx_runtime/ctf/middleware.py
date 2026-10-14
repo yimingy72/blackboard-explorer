@@ -4,13 +4,16 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
+from itertools import accumulate
 from time import monotonic
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import httpx
 from agent_framework import (
     GROUP_ANNOTATION_KEY,
     ChatContext,
@@ -29,6 +32,7 @@ from bbx_runtime.ctf.context import (
     align_history_start,
     estimate_message_lengths,
     estimate_messages_tokens,
+    history_boundaries,
     input_token_limit,
     message_signature,
     safe_history_boundaries,
@@ -48,7 +52,11 @@ class TurnBoundary(RuntimeError):
 
 
 async def flush_usage_outbox(
-    service: CtfClient, checkpoint: SessionCheckpoint, turn: dict[str, Any]
+    service: CtfClient,
+    checkpoint: SessionCheckpoint,
+    turn: dict[str, Any],
+    *,
+    defer_cleanup: bool = False,
 ) -> None:
     key = "ctf_review_usage_outbox" if turn.get("purpose") == "review" else "ctf_usage_outbox"
     entries = checkpoint.session.state.get(key, [])
@@ -57,7 +65,9 @@ async def flush_usage_outbox(
         original_turn = entry.get("turn_id") or (
             reservation_id.rsplit(":", 1)[0] if ":" in reservation_id else str(turn["id"])
         )
-        if key == "ctf_usage_outbox" and (
+        if entry.get("agent_id", checkpoint.agent_id) != checkpoint.agent_id:
+            raise RuntimeError("Usage outbox belongs to another member")
+        if (
             original_turn != str(turn["id"])
             or entry.get("generation", turn["generation"]) != turn["generation"]
         ):
@@ -67,8 +77,6 @@ async def flush_usage_outbox(
             if entry["request_id"] not in settled.get("request_ids", []):
                 raise RuntimeError("Historical usage is absent from the confirmed Session")
             continue
-        if entry.get("agent_id", checkpoint.agent_id) != checkpoint.agent_id:
-            raise RuntimeError("Usage outbox belongs to another member")
         await service.runtime(
             checkpoint.task_id,
             "bill_usage",
@@ -82,8 +90,10 @@ async def flush_usage_outbox(
             },
         )
     if entries:
+        # Normal after_run has a required later checkpoint; recovery must save cleanup itself.
         entries.clear()
-        await checkpoint.save()
+        if not defer_cleanup:
+            await checkpoint.save()
 
 
 def mailbox_message(row: dict[str, Any]) -> Message:
@@ -99,6 +109,8 @@ def mailbox_message(row: dict[str, Any]) -> Message:
             "challenge_id",
             "record_id",
             "purpose",
+            "source_turn_id",
+            "notification_purpose",
         )
     }
     return Message(
@@ -290,6 +302,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
         self._loaded_start = 0
         self._loaded_prefix_count = 0
         self._confirmed_count = 0
+        self._recovery_inputs_checked = False
         self.usage_key = (
             "ctf_review_usage_outbox" if turn.get("purpose") == "review" else "ctf_usage_outbox"
         )
@@ -395,6 +408,8 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
         ]
         body = messages[self._loaded_prefix_count :]
         lengths = estimate_message_lengths(body, provider=self.model.provider)
+        totals = list(accumulate(lengths, initial=0))
+        raw_boundaries = history_boundaries(raw)
         eligible = self._confirmed_count - self._loaded_start
         protected = self._protected_input_ids()
         protected_hits = []
@@ -413,37 +428,26 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
         target = self.fixed_input_tokens + int((self.input_limit - self.fixed_input_tokens) * 0.6)
         cut = 0
         recovered_inputs = self._recovered_inputs()
-        pinned = list(recovered_inputs)
+        recovered_ids = {message.message_id for message in recovered_inputs}
+        moved: list[Message] = []
+        moved_tokens = 0
+        scanned = 0
         diagnostic["branch"] = "no_safe_boundary"
-        for boundary in safe_history_boundaries(body, 0):
+        for boundary in history_boundaries(body).completed:
             if boundary > eligible:
                 break
-            if align_history_start(raw, self._loaded_start + boundary) != (
-                self._loaded_start + boundary
-            ):
+            if raw_boundaries.align(self._loaded_start + boundary) != self._loaded_start + boundary:
                 diagnostic["branch"] = "unsafe_tool_boundary"
                 return None
-            moved = [
-                message
-                for message in raw[self._loaded_start : self._loaded_start + boundary]
-                if message.message_id in protected
-            ]
-            pinned = [
-                *recovered_inputs,
-                *[
-                    message
-                    for message in moved
-                    if message.message_id not in {item.message_id for item in recovered_inputs}
-                ],
-            ]
-            # Relocated inputs stay whole and count against the same hard input budget.
-            remaining = (
-                overhead
-                + sum(lengths[boundary:])
-                + estimate_messages_tokens(
-                    pinned[len(recovered_inputs) :], provider=self.model.provider
-                )
-            )
+            while scanned < boundary:
+                message = raw[self._loaded_start + scanned]
+                if message.message_id in protected and message.message_id not in recovered_ids:
+                    moved.append(message)
+                    # Eligible protected messages are plain text, so their count
+                    # is independent of reasoning IDs in the retained suffix.
+                    moved_tokens += lengths[scanned]
+                scanned += 1
+            remaining = overhead + totals[-1] - totals[boundary] + moved_tokens
             cut = boundary
             diagnostic["cut"] = cut
             diagnostic["remaining"] = remaining
@@ -453,7 +457,8 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
             diagnostic["branch"] = "no_safe_boundary" if not cut else "remaining_over_limit"
             return None
         diagnostic["branch"] = "compacted"
-        prefix = [*prefix, *pinned[len(recovered_inputs) :]]
+        pinned = [*recovered_inputs, *moved]
+        prefix = [*prefix, *moved]
         previous = durable["ctf_history_view"]
         durable["ctf_history_view"] = {
             "excluded_before": self._loaded_start + cut,
@@ -482,6 +487,214 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
             item if isinstance(item, Message) else Message.from_dict(item)
             for item in recovery.get("protected_inputs", [])
         ]
+
+    @staticmethod
+    def _one_shot_input(source: dict[str, Any]) -> bool:
+        return (source.get("sender_kind") == "agent" and source.get("kind") == "instruction") or (
+            source.get("sender_kind") == "system"
+            and (
+                (
+                    source.get("kind") == "turn_finished"
+                    and source.get("notification_purpose") == "assignment_result"
+                )
+                or (
+                    source.get("kind") == "instruction"
+                    and source.get("notification_purpose")
+                    in {"turn_recovery", "context_continuation"}
+                )
+            )
+        )
+
+    async def _retire_recovered_inputs(
+        self, messages: Sequence[Message], confirmed_count: int, start: int
+    ) -> bool:
+        durable = self.checkpoint.session.state
+        recovery = durable.get("ctf_context_recovery", {})
+        if (
+            self._recovery_inputs_checked
+            or not recovery
+            or recovery.get("turn_id") == str(self.turn["id"])
+            or self.turn.get("purpose", "execution") != "execution"
+        ):
+            return False
+        self._recovery_inputs_checked = True
+        inputs = self._recovered_inputs()
+        input_counts = Counter(message.message_id for message in inputs)
+        protected = self._protected_input_ids()
+        for item in durable.get(PENDING_KEY, []):
+            message = item if isinstance(item, Message) else Message.from_dict(item)
+            if message.message_id:
+                protected.add(message.message_id)
+        # A repaired unknown result establishes pairing, never successful completion.
+        prefix = messages[:start]
+        if (
+            confirmed_count < start
+            or align_history_start(prefix, start) != start
+            or any(
+                content.additional_properties.get("bbx_recovery_repair") == "interrupted"
+                for message in prefix
+                for content in message.contents
+            )
+        ):
+            return False
+        boundaries = safe_history_boundaries(prefix, 0)
+        confirmed = getattr(self.checkpoint, "confirmed_history", ())
+        positions: dict[str, list[int]] = {}
+        for index, original in enumerate(prefix):
+            if original.message_id:
+                positions.setdefault(original.message_id, []).append(index)
+        candidates = {}
+        for message in inputs:
+            mid = message.message_id
+            source = message.additional_properties.get("ctf_source", {})
+            if (
+                not mid
+                or input_counts[mid] != 1
+                or mid in protected
+                or not self._can_relocate_input(message)
+                or not isinstance(source, dict)
+                or source.get("id") != mid
+                or source.get("recipient_id") != self.checkpoint.agent_id
+                or source.get("purpose", "execution") != "execution"
+                or not (
+                    (source.get("sender_kind") == "agent" and source.get("kind") == "instruction")
+                    or (
+                        source.get("sender_kind") == "system"
+                        and source.get("kind") in {"instruction", "turn_finished"}
+                    )
+                )
+            ):
+                continue
+            try:
+                if str(UUID(mid)) != mid:
+                    continue
+            except ValueError:
+                continue
+            matching = positions.get(mid, [])
+            if len(matching) != 1:
+                continue
+            index = matching[0]
+            if (
+                message_signature(message) != confirmed[index]
+                or not boundaries
+                or index >= boundaries[-1]
+            ):
+                continue
+            candidates[mid] = source
+        if not candidates:
+            return False
+        proofs = []
+        identifiers = list(candidates)
+        try:
+            for offset in range(0, len(identifiers), 100):
+                result = await self.service.runtime(
+                    self.checkpoint.task_id,
+                    "recovery_input_proofs",
+                    agent_id=self.checkpoint.agent_id,
+                    turn_id=self.turn["id"],
+                    generation=self.turn["generation"],
+                    message_ids=identifiers[offset : offset + 100],
+                )
+                proofs.extend(result.get("proofs", []))
+        except (httpx.TransportError, ConnectionError, RemoteError) as error:
+            if isinstance(error, RemoteError) and error.status < 500:
+                raise
+            durable["ctf_recovery_input_check"] = {
+                "turn_id": str(self.turn["id"]),
+                "status": "proof_unavailable",
+                "error_type": type(error).__name__,
+            }
+            logger.warning(
+                "CTF recovery inputs retained turn_id=%s error_type=%s",
+                self.turn["id"],
+                type(error).__name__,
+            )
+            return False
+        retired = {}
+        commands = durable.get("ctf_commands", {})
+        platform_calls = durable.get("ctf_platform_calls", {})
+        for proof in proofs:
+            if not isinstance(proof, dict):
+                continue
+            source = candidates.get(proof.get("id"))
+            original_turn = proof.get("delivered_turn_id")
+            original_generation = proof.get("turn_generation")
+            revision = proof.get("session_revision")
+            if (
+                source is None
+                or proof.get("recipient_id") != self.checkpoint.agent_id
+                or proof.get("purpose") != "execution"
+                or proof.get("turn_status") != "finished"
+                or proof.get("end_reason") != "completed"
+                or not isinstance(original_turn, str)
+                or not original_turn
+                or original_turn == str(self.turn["id"])
+                or type(original_generation) is not int
+                or not 0 < original_generation < self.turn["generation"]
+                or proof.get("claim_generation") != original_generation
+                or type(revision) is not int
+                or not 0 < revision <= self.checkpoint.revision
+                or any(
+                    source.get(key) != proof.get(key)
+                    for key in ("sender_kind", "sender_id", "kind", "recipient_id")
+                )
+                or any(
+                    key.startswith(f"{original_turn}:") and entry.get("state") != "finished"
+                    for key, entry in commands.items()
+                )
+                or any(
+                    key.startswith(f"{original_turn}:")
+                    and entry.get("state") != "rejected"
+                    and (entry.get("state") != "received" or "record" not in entry)
+                    for key, entry in platform_calls.items()
+                )
+            ):
+                continue
+            if not self._one_shot_input(proof):
+                continue
+            retired[proof["id"]] = {
+                key: proof.get(key)
+                for key in (
+                    "id",
+                    "recipient_id",
+                    "sender_kind",
+                    "sender_id",
+                    "kind",
+                    "purpose",
+                    "session_revision",
+                    "delivered_turn_id",
+                    "claim_generation",
+                    "source_turn_id",
+                    "notification_purpose",
+                    "turn_generation",
+                    "turn_status",
+                    "end_reason",
+                )
+            }
+        durable["ctf_recovery_input_check"] = {
+            "turn_id": str(self.turn["id"]),
+            "status": "checked",
+            "candidate_count": len(candidates),
+            "retired_ids": list(retired),
+        }
+        if not retired:
+            return False
+        durable["ctf_context_recovery"] = {
+            **recovery,
+            "turn_id": str(self.turn["id"]),
+            "protected_inputs": [
+                message.to_dict() for message in inputs if message.message_id not in retired
+            ],
+        }
+        durable.setdefault("ctf_recovery_input_retirements", []).extend(
+            {
+                "retired_in_turn_id": str(self.turn["id"]),
+                "retired_in_generation": self.turn["generation"],
+                "proof": proof,
+            }
+            for proof in retired.values()
+        )
+        return True
 
     def _protected_input_ids(self) -> set[str]:
         active = self.checkpoint.session.state.get("ctf_active_input_ids", {})
@@ -591,6 +804,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
         epoch = int(previous.get("epoch", 0))
         view = stable_tool_previews(messages, durable, self.input_limit)
         confirmed_count = self._confirmed_history_count(messages)
+        retired_inputs = await self._retire_recovered_inputs(messages, confirmed_count, start)
         protected = self._protected_input_ids()
         recovery = durable.get("ctf_context_recovery")
         prefix = []
@@ -601,8 +815,13 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 *self._recovered_inputs(),
             ]
         blocked = durable.get("ctf_context_blocked", {})
-        new_turn = bool(blocked and blocked.get("turn_id") != str(self.turn["id"]))
-        aligned = align_history_start(view, start)
+        new_turn = bool(
+            blocked
+            and blocked.get("turn_id") != str(self.turn["id"])
+            and (retired_inputs or not recovery or recovery.get("turn_id") != str(self.turn["id"]))
+        )
+        native_boundaries = history_boundaries(view)
+        aligned = native_boundaries.align(start)
         if aligned is None and not new_turn:
             self.block_context(
                 [*prefix, *view[start:]], self.input_limit, start, branch="unsafe_loaded_boundary"
@@ -626,14 +845,15 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
             - estimate_messages_tokens(prefix, provider=self.model.provider),
         )
         lengths = estimate_message_lengths(view, provider=self.model.provider)
-        remaining = sum(lengths[start:])
+        totals = list(accumulate(lengths, initial=0))
+        remaining = totals[-1] - totals[start]
         eligible = confirmed_count
         for index, message in enumerate(messages[start:confirmed_count], start=start):
             if message.message_id in protected and not self._can_relocate_input(message):
                 eligible = index
                 break
         boundaries = [
-            boundary for boundary in safe_history_boundaries(view, start) if boundary <= eligible
+            boundary for boundary in native_boundaries.completed if start < boundary <= eligible
         ]
         seed = await self._recovery_seed() if new_turn or migrated or boundaries else None
         if new_turn or migrated or (not prefix and remaining > limit and boundaries):
@@ -658,38 +878,37 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
             # on every model call. Never split parallel calls/results.
             original_start = start
             previous_inputs = self._recovered_inputs()
+            previous_ids = {message.message_id for message in previous_inputs}
+            moved: list[Message] = []
+            moved_tokens = 0
+            selected_count: int | None = None
+            scanned = original_start
+            prefix_tokens = estimate_messages_tokens(prefix, provider=self.model.provider)
             for boundary in boundaries:
-                moved = [
-                    message
-                    for message in view[original_start:boundary]
-                    if message.message_id in protected
-                ]
-                pinned = [
-                    *previous_inputs,
-                    *[
-                        message
-                        for message in moved
-                        if message.message_id not in {item.message_id for item in previous_inputs}
-                    ],
-                ]
-                candidate_prefix = [prefix[0], *pinned] if prefix else []
+                while scanned < boundary:
+                    message = view[scanned]
+                    if message.message_id in protected and message.message_id not in previous_ids:
+                        moved.append(message)
+                        moved_tokens += lengths[scanned]
+                    scanned += 1
                 candidate_limit = max(
                     0,
-                    self.input_limit
-                    - self.fixed_input_tokens
-                    - estimate_messages_tokens(candidate_prefix, provider=self.model.provider),
+                    self.input_limit - self.fixed_input_tokens - prefix_tokens - moved_tokens,
                 )
-                candidate_remaining = sum(lengths[boundary:])
+                candidate_remaining = totals[-1] - totals[boundary]
                 if candidate_remaining <= candidate_limit:
                     start, remaining, limit = boundary, candidate_remaining, candidate_limit
-                    prefix = candidate_prefix
-                    durable["ctf_context_recovery"] = {
-                        "turn_id": str(self.turn["id"]),
-                        "message": durable["ctf_context_recovery_seed"],
-                        "protected_inputs": [message.to_dict() for message in pinned],
-                    }
+                    selected_count = len(moved)
                     if remaining <= int(limit * 0.6):
                         break
+            if selected_count is not None:
+                pinned = [*previous_inputs, *moved[:selected_count]]
+                prefix = [prefix[0], *pinned] if prefix else []
+                durable["ctf_context_recovery"] = {
+                    "turn_id": str(self.turn["id"]),
+                    "message": durable["ctf_context_recovery_seed"],
+                    "protected_inputs": [message.to_dict() for message in pinned],
+                }
             if (
                 remaining > limit
                 and new_turn
@@ -713,7 +932,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 }
                 self.block_context([*prefix, *view[start:]], self.input_limit, start)
                 raise TurnBoundary("context_blocked")
-        if start != previous.get("excluded_before", 0) or new_turn:
+        if start != previous.get("excluded_before", 0) or new_turn or retired_inputs:
             epoch += 1
         durable["ctf_history_view"] = {
             "excluded_before": start,
@@ -772,7 +991,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 }
             )
         await super().after_run(agent=agent, session=session, context=context, state=state)
-        await self.flush_usage()
+        await self.flush_usage(defer_cleanup=True)
         if response is not None:
             await observe(
                 self.service,
@@ -791,5 +1010,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 f"{self.turn['id']}:model:{step}",
             )
 
-    async def flush_usage(self) -> None:
-        await flush_usage_outbox(self.service, self.checkpoint, self.turn)
+    async def flush_usage(self, *, defer_cleanup: bool = False) -> None:
+        await flush_usage_outbox(
+            self.service, self.checkpoint, self.turn, defer_cleanup=defer_cleanup
+        )

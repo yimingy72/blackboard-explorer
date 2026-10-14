@@ -104,6 +104,19 @@ async def test_owner_help_existing_collaborator_and_registered_script_recovery(
                     action="claim",
                 )
             assert stale.value.status == 409
+            delivery = {
+                "conclusion": "Ordinary assigned work is delivered; no acceptance is claimed",
+                "approach": "Inspect the assigned scope and retain the public result",
+                "steps": [
+                    {
+                        "kind": "result",
+                        "title": "Stage delivery",
+                        "result": "inconclusive",
+                        "summary": "Work result is recorded separately from acceptance",
+                    }
+                ],
+                "reproduction": "Read the retained task-board result",
+            }
             complete = await tool(
                 owner,
                 "update_challenge",
@@ -112,6 +125,7 @@ async def test_owner_help_existing_collaborator_and_registered_script_recovery(
                 expected_revision=claimed["revision"],
                 action="set_status",
                 work_status="completed",
+                solution=delivery,
             )
             assert complete["work_status"] == "completed" and complete["owner_id"] == "member-1"
             hard = await tool(lead, "create_challenge", request_id=str(uuid4()), title="Difficult")
@@ -204,7 +218,7 @@ async def test_owner_help_existing_collaborator_and_registered_script_recovery(
                 artifact_ids=[first["id"]],
             )
             assert supplement["author_id"] == "member-2"
-            with pytest.raises(RemoteError):
+            with pytest.raises(RemoteError) as unauthorized_completion:
                 await tool(
                     helper,
                     "update_challenge",
@@ -213,7 +227,9 @@ async def test_owner_help_existing_collaborator_and_registered_script_recovery(
                     expected_revision=shared["revision"],
                     action="set_status",
                     work_status="completed",
+                    solution=delivery,
                 )
+            assert unauthorized_completion.value.status == 409
             latest = await register(b"print('include header')\n")
             await tool(
                 owner,

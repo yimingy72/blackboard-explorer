@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from agent_framework import (
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
+from bbx_runtime.clients.blackboard import is_control_transport_error
 from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
@@ -133,6 +135,147 @@ class AgentRunner:
             key: gate for key, gate in self._recovery_gates.items() if key[0] != task_id
         }
 
+    async def _finish_state(self, task_id: str) -> dict[str, Any]:
+        for attempt in range(3):
+            try:
+                return await self.service.state(task_id)
+            except Exception as error:
+                if not is_control_transport_error(error) or attempt == 2:
+                    raise
+                await asyncio.sleep(0.1 * 2**attempt)
+        raise AssertionError("State read retry budget exhausted")
+
+    @staticmethod
+    def _same_finish_scope(state: dict[str, Any], proof: dict[str, Any]) -> bool:
+        agent = state.get("agents", {}).get(proof.get("agent_id"))
+        return bool(
+            agent
+            and str(state["task"].get("id", proof["task_id"])) == proof["task_id"]
+            and state["task"].get("run_number") == proof.get("run_number")
+            and str(agent.get("id", proof["agent_id"])) == proof.get("run_id")
+            and agent.get("task_type") == proof.get("task_type")
+            and (
+                proof.get("derive_round") is None
+                or int(agent.get("derive_round") or 1) == proof["derive_round"]
+            )
+        )
+
+    async def _finish_receipt(
+        self, task_id: str, agent_id: str, proof: dict[str, Any], *, compensate: bool = False
+    ) -> bool:
+        kwargs = (
+            {"expected_derive_round": proof["derive_round"]}
+            if proof["derive_round"] is not None
+            else {}
+        )
+        fenced = proof["run_number"] is not None
+        if fenced:
+            kwargs.update(
+                expected_run_number=proof["run_number"], expected_agent_run_id=proof["run_id"]
+            )
+        for attempt in range(3):
+            try:
+                if compensate:
+                    state = await self._finish_state(task_id)
+                    if not self._same_finish_scope(state, proof):
+                        return False
+                    agent = state["agents"][agent_id]
+                    if agent["status"] not in {"running", "concluding"}:
+                        if (
+                            json.dumps(agent.get("receipt"), sort_keys=True, ensure_ascii=False)
+                            != json.dumps(proof["receipt"], sort_keys=True, ensure_ascii=False)
+                            or agent.get("end_reason") != proof["end_reason"]
+                        ):
+                            raise RuntimeError(
+                                "Final receipt differs from the settled agent result"
+                            )
+                        return True
+                    if not fenced:
+                        return False
+                await self.service.finish_agent(
+                    task_id, agent_id, proof["receipt"], proof["end_reason"], **kwargs
+                )
+                return True
+            except Exception as error:
+                if not is_control_transport_error(error):
+                    raise
+                # Unknown writes are read first, then only the service's run-fenced
+                # idempotent finish can compensate a still-current original run.
+                compensate = True
+                logger.warning(
+                    "Agent final receipt deferred task_id=%s agent_id=%s run_number=%s "
+                    "derive_round=%s attempt=%s error_type=%s",
+                    task_id,
+                    agent_id,
+                    proof["run_number"],
+                    proof["derive_round"],
+                    attempt + 1,
+                    type(error).__name__,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(0.1 * 2**attempt)
+        return False
+
+    async def reconcile_final_receipt(
+        self, task_id: str, agent_id: str, agent: dict[str, Any], task: dict[str, Any]
+    ) -> bool:
+        """Prefer a confirmed final Session receipt over a generic sweeper timeout."""
+        if not hasattr(self.service, "get_agent_session"):
+            return False
+        saved = None
+        for attempt in range(3):
+            try:
+                saved = await self.service.get_agent_session(task_id, agent_id)
+                break
+            except RemoteError as error:
+                if error.status == 404:
+                    return False
+                if not is_control_transport_error(error):
+                    raise
+                if attempt == 2:
+                    # A failed lookup cannot prove absence of an already saved receipt.
+                    logger.warning(
+                        "Agent final receipt lookup deferred task_id=%s agent_id=%s error_type=%s",
+                        task_id,
+                        agent_id,
+                        type(error).__name__,
+                    )
+                    return True
+                await asyncio.sleep(0.1 * 2**attempt)
+            except Exception as error:
+                if not is_control_transport_error(error):
+                    raise
+                if attempt == 2:
+                    logger.warning(
+                        "Agent final receipt lookup deferred task_id=%s agent_id=%s error_type=%s",
+                        task_id,
+                        agent_id,
+                        type(error).__name__,
+                    )
+                    return True
+                await asyncio.sleep(0.1 * 2**attempt)
+        assert saved is not None
+        proof = saved["session"].get("state", {}).get("bbx_final_receipt")
+        if (
+            not isinstance(proof, dict)
+            or proof.get("task_id") != task_id
+            or proof.get("agent_id") != agent_id
+        ):
+            return False
+        if not self._same_finish_scope({"task": task, "agents": {agent_id: agent}}, proof):
+            return False
+        try:
+            await self._finish_receipt(task_id, agent_id, proof, compensate=True)
+        except Exception as error:
+            if not is_control_transport_error(error):
+                logger.warning(
+                    "Agent final receipt blocked task_id=%s agent_id=%s error_type=%s",
+                    task_id,
+                    agent_id,
+                    type(error).__name__,
+                )
+        return True
+
     async def run_agent(
         self,
         task_id: str,
@@ -152,8 +295,11 @@ class AgentRunner:
         mcp_http = envd_http_client
         external_mcp_http: httpx.AsyncClient | None = None
         cancelled = False
+        cancellation_error: asyncio.CancelledError | None = None
         checkpoint: SessionCheckpoint | None = None
         round_fence = expected_derive_round
+        run_number = None
+        run_id = agent_id
         try:
             state = await self.service.state(task_id)
             run = state["agents"][agent_id]
@@ -168,6 +314,8 @@ class AgentRunner:
             if task_type == "derive" and round_fence is None:
                 round_fence = int(run.get("derive_round") or 1)
             task = state["task"]
+            run_number = task.get("run_number")
+            run_id = str(run.get("id", agent_id))
             profile = load_runtime_profile(
                 await self.service.get_profile(task["agent_profile"], task["agent_profile_version"])
             )
@@ -463,6 +611,7 @@ class AgentRunner:
             end_reason = "normal" if receipt.get("accepted") else "refused"
         except asyncio.CancelledError as error:
             cancelled = True
+            cancellation_error = error
             receipt = {"accepted": True, "data": {"note": "运行被取消，系统结束交接"}}
             reason = error.args[0] if error.args else None
             end_reason = (
@@ -500,29 +649,58 @@ class AgentRunner:
             end_reason = "runtime_error"
 
         async def finalize() -> None:
+            async def close_resource(name, callback, *args) -> None:
+                try:
+                    await callback(*args)
+                except Exception as error:
+                    # These callbacks close local pools; they do not stop or delete task work.
+                    logger.warning(
+                        "Agent resource cleanup failed task_id=%s agent_id=%s "
+                        "resource=%s error_type=%s",
+                        task_id,
+                        agent_id,
+                        name,
+                        type(error).__name__,
+                    )
+
             async with AsyncExitStack() as resources:
                 if envd is not None:
-                    resources.push_async_callback(envd.close)
+                    resources.push_async_callback(close_resource, "envd_client", envd.close)
                 if owned_client is not None:
-                    resources.push_async_callback(close_model_client, owned_client)
+                    resources.push_async_callback(
+                        close_resource, "model_client", close_model_client, owned_client
+                    )
                 if mcp_http is not None and envd_http_client is None:
-                    resources.push_async_callback(mcp_http.aclose)
+                    resources.push_async_callback(close_resource, "mcp_http", mcp_http.aclose)
                 if external_mcp_http is not None:
-                    resources.push_async_callback(external_mcp_http.aclose)
+                    resources.push_async_callback(
+                        close_resource, "external_mcp_http", external_mcp_http.aclose
+                    )
                 save_error: Exception | None = None
+                proof = {
+                    "task_id": task_id,
+                    "agent_id": agent_id,
+                    "run_id": run_id,
+                    "run_number": run_number,
+                    "task_type": task_type,
+                    "derive_round": round_fence,
+                    "receipt": receipt,
+                    "end_reason": end_reason,
+                }
                 if checkpoint is not None:
                     try:
                         repair_unpaired_tool_calls(checkpoint.session, include_interrupted=False)
+                        checkpoint.session.state["bbx_final_receipt"] = proof
                         await checkpoint.save()
                     except Exception as error:
                         save_error = error
-                await self.service.finish_agent(
-                    task_id,
-                    agent_id,
-                    {"accepted": False, "reason": "会话持久化失败"} if save_error else receipt,
-                    "runtime_error" if save_error else end_reason,
-                    **({"expected_derive_round": round_fence} if round_fence is not None else {}),
-                )
+                if save_error is not None:
+                    proof = {
+                        **proof,
+                        "receipt": {"accepted": False, "reason": "会话持久化失败"},
+                        "end_reason": "runtime_error",
+                    }
+                await self._finish_receipt(task_id, agent_id, proof)
                 if save_error is not None:
                     raise save_error
 
@@ -531,9 +709,11 @@ class AgentRunner:
         while not cleanup.done():
             try:
                 await asyncio.shield(cleanup)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as error:
                 cancelled = True
+                if cancellation_error is None:
+                    cancellation_error = error
         cleanup.result()
         if cancelled:
-            raise asyncio.CancelledError
+            raise cancellation_error or asyncio.CancelledError()
         return RunResult(receipt, end_reason)

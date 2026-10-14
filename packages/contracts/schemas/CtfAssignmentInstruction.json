@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "recipient_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Recipient Id",
+      "type": "string"
+    },
+    "body": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    }
+  },
+  "required": [
+    "recipient_id",
+    "body"
+  ],
+  "title": "CtfAssignmentInstruction",
+  "type": "object"
+}

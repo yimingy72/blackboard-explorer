@@ -196,10 +196,10 @@ def test_ctf_prompt_collaboration_keeps_shared_safety_contracts(role) -> None:
             (
                 "按负责边界、依赖和独立产出拆分目标",
                 "优先续接已有具名成员的Session",
-                "分配owner只改任务板，随后用instruction=true发送明确派工",
+                "分工权限与派工同事务生效",
                 "每题保留一个owner",
-                "先将帮手登记到collaborator_ids并保留owner，再用instruction=true派工",
-                "已登记且最新状态已知时无需重复更新",
+                "将帮手登记到collaborator_ids并保留owner，可附instructions一起派工",
+                "已登记且最新状态已知时直接用instruction=true派工，无需重复更新",
                 "队友可直接讨论",
                 "未授权接管的用户既有资源",
                 "你负责处理求助和调配成员",

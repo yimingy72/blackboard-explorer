@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent
+from agent_framework import Agent, Content
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
@@ -91,7 +91,8 @@ async def test_control_transport_retries_keep_healthy_teammate_running(monkeypat
     try:
         await instance.run("task")
         assert len(attempts) == 3 and delays == [1, 2]
-        assert [call.args[1] for call in service.runtime.call_args_list] == ["start"]
+        # Startup reads the already-running phase, so no extra start write is needed.
+        assert service.runtime.call_args_list == []
         assert not healthy.done()
     finally:
         healthy.cancel()
@@ -120,7 +121,9 @@ async def test_confirmation_conflict_http_metadata_is_bounded_and_body_free():
     )
     with pytest.raises(RemoteError) as caught:
         await BlackboardClient._check(response)
-    result = json.loads(await json_tool_result(AsyncMock(side_effect=caught.value)()))
+    content = await json_tool_result(AsyncMock(side_effect=caught.value)())
+    assert isinstance(content, Content) and isinstance(content.text, str)
+    result = json.loads(content.text)
     conflicts = result["error"]["conflicts"]
     assert len(conflicts) == 100
     assert set(conflicts[0]) == {"id", "status", "deferred"}

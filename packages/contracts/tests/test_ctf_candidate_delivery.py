@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 import pytest
-from bbx_contracts.ctf import CtfVerificationCandidateRequest
+from bbx_contracts.ctf import CtfSolution, CtfVerificationCandidateRequest
 from pydantic import ValidationError
 
 
@@ -15,6 +15,24 @@ def test_candidate_delivery_work_status(work_status):
         status="unknown",
         summary="Work delivered",
         work_status=work_status,
+        solution=CtfSolution.model_validate(
+            {
+                "conclusion": "Work remains",
+                "approach": "Inspect sample",
+                "steps": [
+                    {
+                        "kind": "attempt",
+                        "title": "Inspect",
+                        "result": "inconclusive",
+                        "summary": "No result",
+                    }
+                ],
+                "remaining": [],
+                "reproduction": "Inspect again",
+            }
+        )
+        if work_status == "completed"
+        else None,
     )
     assert request.work_status == work_status
     assert request.status == "unknown"

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Table,
     Text,
     func,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -129,6 +130,12 @@ events = Table(
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 Index("ix_events_task_version", events.c.task_id, events.c.version)
+Index(
+    "ix_events_ctf_observation",
+    events.c.task_id,
+    events.c.object_id,
+    postgresql_where=events.c.type == "agent.trace.recorded",
+)
 
 facts = scoped(
     "facts",
@@ -358,11 +365,23 @@ Index(
     unique=True,
 )
 Index("ix_ctf_pending", ctf_messages.c.task_id, ctf_messages.c.recipient_id, ctf_messages.c.status)
+Index(
+    "ix_ctf_message_sequence",
+    ctf_messages.c.task_id,
+    ctf_messages.c.recipient_id,
+    ctf_messages.c.recipient_sequence,
+)
 ctf_challenges = scoped(
     "ctf_challenges", col("data", JSONB, nullable=False), col("revision", Integer, nullable=False)
 )
 ctf_records = scoped(
     "ctf_records", col("data", JSONB, nullable=False), col("version", BigInteger, nullable=False)
+)
+Index(
+    "ix_ctf_record_challenge_version",
+    ctf_records.c.task_id,
+    ctf_records.c.data[literal_column("'challenge_id'")].astext,
+    ctf_records.c.version,
 )
 
 ctf_members.append_column(col("pending_operation", JSONB))

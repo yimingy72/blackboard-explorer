@@ -334,8 +334,21 @@ def test_role_tool_permissions_and_explicit_fake_execution():
         "record_candidate",
         "set_verification_required",
         "confirm_messages",
+        "list_deferred_messages",
+        "read_turn_result",
+        "read_saved_tool_result",
     }
-    assert teammate == {"list_members", "send_message", "record_candidate"} | board
+    assert (
+        teammate
+        == {
+            "list_members",
+            "send_message",
+            "record_candidate",
+            "read_turn_result",
+            "read_saved_tool_result",
+        }
+        | board
+    )
     assert board <= lead
     assert "execute_command" not in lead
     assert "execute_command" in {
@@ -710,7 +723,7 @@ async def test_model_error_observation_failure_preserves_original_exception():
     [
         ({"incomplete_reason": "max_output_tokens", "payload": "secret payload"}, "输出上限"),
         ({"category": "content_filter", "payload": "secret payload"}, "内容审核"),
-        ({"category": "unknown", "payload": "secret payload"}, "内部错误"),
+        ({"category": "unknown", "payload": "secret payload"}, "模型调用异常，具体原因未确认"),
         ("max_output_tokens secret payload", "内部错误"),
     ],
 )
@@ -892,7 +905,8 @@ async def test_tick_failure_persists_reference_and_finishes_drain(caplog):
     assert failure["phase"] == "tick"
     assert failure["correlation_id"]
     assert "untrusted model payload" not in caplog.text
-    assert service.operations == ["start", "request_finish", "recover", "finalize_close"]
+    # Already-running startup is confirmed by the state read; no duplicate start POST.
+    assert service.operations == ["request_finish", "recover", "finalize_close"]
     await coordinator.close()
 
 

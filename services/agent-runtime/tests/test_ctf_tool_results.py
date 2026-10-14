@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent
+from agent_framework import Agent, Content
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.review import build_review_tools
@@ -175,9 +175,44 @@ async def test_unknown_errors_keep_original_exception_and_are_not_echoed_to_mode
 @pytest.mark.parametrize("message", ["Invalid CTF board request", "Invalid after_version"])
 async def test_known_argument_error_is_safe_json_without_raw_error_text(message):
     request = AsyncMock(side_effect=RemoteError(422, message))
-    result = json.loads(await json_tool_result(request()))
+    content = await json_tool_result(request())
+    assert isinstance(content, Content)
+    assert isinstance(content.text, str)
+    result = json.loads(content.text)
     assert result["error"]["code"] == "invalid_arguments"
     assert message not in result["error"]["message"]
+
+
+async def test_remote_solution_feedback_contains_only_validated_paths_and_types():
+    valid = {"path": ["solution", "steps", 0, "record_ids", 0], "type": "uuid_parsing"}
+    response = httpx.Response(
+        422,
+        json={
+            "detail": {
+                "code": "invalid_solution_delivery",
+                "message": "synthetic-private-diagnostic",
+                "fields": [
+                    {
+                        **valid,
+                        "input": "synthetic-private-value",
+                        "msg": "synthetic-private-message",
+                    },
+                    {"path": ["synthetic-private-field"], "type": "value_error"},
+                    {"path": ["solution"], "type": "synthetic-private-type"},
+                    {"path": ["solution"], "type": []},
+                    {"path": [True], "type": "uuid_parsing"},
+                ],
+            }
+        },
+    )
+    with pytest.raises(RemoteError) as caught:
+        await BlackboardClient._check(response)
+    assert caught.value.detail == {"fields": [valid]}
+    content = await json_tool_result(AsyncMock(side_effect=caught.value)())
+    assert isinstance(content, Content)
+    assert isinstance(content.text, str)
+    assert json.loads(content.text)["error"]["fields"] == [valid]
+    assert "synthetic-private" not in content.text
 
 
 @pytest.mark.parametrize("revision", [2, 0, True, "2", None])
@@ -194,7 +229,10 @@ async def test_http_client_preserves_only_valid_cas_revision_detail(revision):
     assert error.detail == (
         {"current_revision": 2} if type(revision) is int and revision == 2 else None
     )
-    result = json.loads(await json_tool_result(AsyncMock(side_effect=error)()))
+    content = await json_tool_result(AsyncMock(side_effect=error)())
+    assert isinstance(content, Content)
+    assert isinstance(content.text, str)
+    result = json.loads(content.text)
     assert result["error"].get("current_revision") == (
         2 if type(revision) is int and revision == 2 else None
     )
@@ -261,6 +299,13 @@ def test_tool_schemas_express_server_constraints_and_action_requirements():
     assert "assign requires owner_id" in tools["update_challenge"].description
     assert "Only the teammate owner" in tools["request_help"].description
     assert "no_artifacts_reason" in tools["request_help"].description
+    for name in ("append_record", "record_candidate"):
+        assert (
+            "Only Lead, the challenge owner or registered collaborators" in tools[name].description
+        )
+        assert "ask Lead to add you to collaborator_ids" in tools[name].description
+        assert "send_message the existing owner" in tools[name].description
+    assert "cannot bypass this permission" in tools["append_record"].description
     assert (
         "Registered artifact IDs only"
         in tools["record_candidate"].parameters()["properties"]["evidence_refs"]["description"]

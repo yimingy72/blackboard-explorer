@@ -141,6 +141,13 @@ async def test_ctf_http_boundaries_and_token_authority(monkeypatch):
     }
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "lead"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": "lead"},
+                "purpose": "execution",
+            }
+        ),
         authorize_reader=AsyncMock(),
         authorize_object=AsyncMock(return_value=False),
         runtime_state=AsyncMock(return_value={"task": task, "members": []}),
@@ -418,6 +425,13 @@ async def test_member_lifecycle_routes_bind_actor_and_operation(monkeypatch):
     task = {"id": tid, "mode": "ctf", "agent_profile": "ctf", "agent_profile_version": 1}
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "lead"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": "lead"},
+                "purpose": "execution",
+            }
+        ),
         runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         request_member_operation=AsyncMock(return_value={"status": "stopping"}),
         complete_member_operation=AsyncMock(return_value={"lifecycle": "stopped"}),
@@ -498,6 +512,13 @@ async def test_board_routes_use_contracts_and_execution_authority(monkeypatch):
     task = {"id": tid, "mode": "ctf", "agent_profile": "ctf", "agent_profile_version": 1}
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "teammate"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": "teammate"},
+                "purpose": "execution",
+            }
+        ),
         authorize_reader=AsyncMock(),
         runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         create_challenge=AsyncMock(return_value={"id": str(cid), "owner_id": None}),
@@ -647,6 +668,13 @@ async def test_verification_endpoints_derive_source_from_authenticated_identity(
     task = {"mode": "ctf", "id": tid, "agent_profile": "ctf", "agent_profile_version": 1}
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "teammate"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": "teammate"},
+                "purpose": "execution",
+            }
+        ),
         authorize_reader=AsyncMock(),
         runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         record_candidate=AsyncMock(return_value={"verification": {"source": "agent"}}),

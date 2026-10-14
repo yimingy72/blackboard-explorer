@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import CloseMode, TaskType
@@ -125,6 +126,9 @@ class ActionExecutor:
             mark_final(self.task_id)
         raw_round = registration.get("derive_round") if task_type == "derive" else None
         derive_round = int(raw_round) if raw_round is not None else None
+        round_kwargs: dict[str, Any] = (
+            {"expected_derive_round": derive_round} if derive_round else {}
+        )
         try:
             self._check_stopped()
             if intent_id is not None:
@@ -138,7 +142,7 @@ class ActionExecutor:
                         aid,
                         {"accepted": False, "reason": "claim_lost"},
                         "normal",
-                        **({"expected_derive_round": derive_round} if derive_round else {}),
+                        **round_kwargs,
                     )
                     return
                 self._check_stopped()
@@ -153,7 +157,7 @@ class ActionExecutor:
                 aid,
                 {"accepted": False, "reason": "runtime_stop_before_launch"},
                 self._stop_reason,
-                **({"expected_derive_round": derive_round} if derive_round else {}),
+                **round_kwargs,
             )
             return
         except Exception:
@@ -162,7 +166,7 @@ class ActionExecutor:
                 aid,
                 {"accepted": False, "reason": "Agent 启动准备失败"},
                 "runtime_error",
-                **({"expected_derive_round": derive_round} if derive_round else {}),
+                **round_kwargs,
             )
             raise
 

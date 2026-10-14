@@ -67,6 +67,13 @@ async def test_invalid_confirmation_is_a_safe_422_not_server_failure(monkeypatch
     profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": "lead"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": {"agent_profile": "ctf", "agent_profile_version": 1},
+                "member": {"id": "lead", "role": "lead"},
+                "purpose": "execution",
+            }
+        ),
         runtime_state=AsyncMock(
             return_value={"task": {"agent_profile": "ctf", "agent_profile_version": 1}}
         ),

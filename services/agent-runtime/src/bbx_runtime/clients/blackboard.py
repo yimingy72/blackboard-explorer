@@ -10,6 +10,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from bbx_contracts.tool_errors import solution_validation_details
 from pydantic import BaseModel
 
 
@@ -31,6 +32,15 @@ class RemoteError(RuntimeError):
         self.message = message
         self.detail = detail
         super().__init__(message)
+
+
+def is_control_transport_error(error: BaseException) -> bool:
+    """Retry platform transport drops and 5xx, never local protocol/configuration faults."""
+    if isinstance(error, RemoteError):
+        return error.status >= 500
+    return isinstance(error, (httpx.TransportError, ConnectionError)) and not isinstance(
+        error, (httpx.LocalProtocolError, httpx.UnsupportedProtocol)
+    )
 
 
 class BlackboardClient:
@@ -117,6 +127,8 @@ class BlackboardClient:
                                 }
                             )
                         safe_detail = {"conflicts": conflicts}
+                    if response.status_code == 422 and code == "invalid_solution_delivery":
+                        safe_detail = {"fields": solution_validation_details(detail.get("fields"))}
                     detail = detail.get("message")
                 message = detail if isinstance(detail, str) else response.text
             else:
@@ -491,6 +503,8 @@ class BlackboardClient:
         end_reason: str,
         *,
         expected_derive_round: int | None = None,
+        expected_run_number: int | None = None,
+        expected_agent_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
@@ -501,6 +515,16 @@ class BlackboardClient:
                 **(
                     {"expected_derive_round": expected_derive_round}
                     if expected_derive_round is not None
+                    else {}
+                ),
+                **(
+                    {"expected_run_number": expected_run_number}
+                    if expected_run_number is not None
+                    else {}
+                ),
+                **(
+                    {"expected_agent_run_id": expected_agent_run_id}
+                    if expected_agent_run_id is not None
                     else {}
                 ),
             },

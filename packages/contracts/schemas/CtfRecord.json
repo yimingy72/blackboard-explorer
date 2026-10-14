@@ -53,6 +53,152 @@
       ],
       "title": "CtfArtifactRef",
       "type": "object"
+    },
+    "CtfProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "stage": {
+          "enum": [
+            "approach",
+            "attempt",
+            "breakthrough",
+            "result"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "title",
+        "summary"
+      ],
+      "title": "CtfProgress",
+      "type": "object"
+    },
+    "CtfSolution": {
+      "additionalProperties": false,
+      "properties": {
+        "conclusion": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Conclusion",
+          "type": "string"
+        },
+        "approach": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Approach",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/CtfSolutionStep"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        },
+        "remaining": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Remaining",
+          "type": "array"
+        },
+        "reproduction": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Reproduction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conclusion",
+        "approach",
+        "steps",
+        "reproduction"
+      ],
+      "title": "CtfSolution",
+      "type": "object"
+    },
+    "CtfSolutionStep": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "approach",
+            "attempt",
+            "breakthrough",
+            "result"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "supported",
+            "ruled_out",
+            "inconclusive"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "record_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Record Ids",
+          "type": "array"
+        },
+        "artifact_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Artifact Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "result",
+        "summary"
+      ],
+      "title": "CtfSolutionStep",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -84,7 +230,8 @@
         "help_request",
         "artifact",
         "verification",
-        "target"
+        "target",
+        "solution"
       ],
       "title": "Kind",
       "type": "string"
@@ -245,6 +392,80 @@
       "default": true,
       "title": "Summary Applied",
       "type": "boolean"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "solution": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfSolution"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "solution_generation": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solution Generation"
+    },
+    "solution_turn_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solution Turn Id"
+    },
+    "solution_run_number": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solution Run Number"
+    },
+    "solution_challenge_revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solution Challenge Revision"
     }
   },
   "required": [

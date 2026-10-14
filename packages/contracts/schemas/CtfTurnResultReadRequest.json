@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "turn_id": {
+      "format": "uuid",
+      "title": "Turn Id",
+      "type": "string"
+    },
+    "offset": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "limit": {
+      "default": 2000,
+      "maximum": 16000,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "turn_id"
+  ],
+  "title": "CtfTurnResultReadRequest",
+  "type": "object"
+}

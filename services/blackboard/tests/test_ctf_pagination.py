@@ -34,6 +34,13 @@ def pagination_app(monkeypatch):
         authorize_review=AsyncMock(side_effect=HTTPException(409, "Not a review turn")),
         authorize_reader=AsyncMock(),
         authorize_member=AsyncMock(return_value={"role": "teammate"}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": "teammate"},
+                "purpose": "execution",
+            }
+        ),
         runtime_state=AsyncMock(return_value={"task": task, "members": []}),
         list_challenges=AsyncMock(
             return_value={"challenges": [{"id": str(cid), "tombstone": True}], "next_offset": 12}
@@ -82,7 +89,7 @@ async def test_routes_pass_pagination_to_database_method(
         if explicit:
             params["after_version"] = 41
     if route == "review_tool":
-        setup.backend.authorize_review.side_effect = None
+        setup.backend.authorize_tool.return_value["purpose"] = "review"
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(setup.app), base_url="http://test"
     ) as client:

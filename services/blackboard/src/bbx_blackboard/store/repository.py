@@ -720,10 +720,15 @@ class Repository:
             for evt in log:
                 await apply(conn, evt)
 
-    async def notify(self, tid: UUID, version: int) -> None:
+    async def notify(
+        self, tid: UUID, version: int, *, connection: AsyncConnection | None = None
+    ) -> None:
+        if connection is None:
+            async with self.engine.begin() as conn:
+                await self.notify(tid, version, connection=conn)
+            return
         channel = f"bbx_task_{tid.hex}"
-        async with self.engine.begin() as conn:
-            await conn.execute(
-                text("SELECT pg_notify(:channel, :version)"),
-                {"channel": channel, "version": str(version)},
-            )
+        await connection.execute(
+            text("SELECT pg_notify(:channel, :version)"),
+            {"channel": channel, "version": str(version)},
+        )

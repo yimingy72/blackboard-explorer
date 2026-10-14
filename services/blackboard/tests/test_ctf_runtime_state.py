@@ -119,6 +119,14 @@ async def test_roster_tool_uses_lightweight_state_and_preserves_filtering_and_fe
     }
     backend = SimpleNamespace(
         authorize_member=AsyncMock(return_value={"role": role}),
+        authorize_tool=AsyncMock(
+            return_value={
+                "task": task,
+                "member": {"id": "lead", "role": role},
+                "purpose": "execution",
+            }
+        ),
+        list_members=AsyncMock(return_value={"members": [{**member, "agent_id": member["id"]}]}),
         authorize_reader=AsyncMock(),
         runtime_state=AsyncMock(return_value={"task": task, "members": [member]}),
         state=AsyncMock(side_effect=AssertionError("Tools must not read complete history")),
@@ -137,15 +145,14 @@ async def test_roster_tool_uses_lightweight_state_and_preserves_filtering_and_fe
         assert response.status_code == 200
         assert response.json() == [{"id": "member-1", "agent_id": "member-1", "role": "teammate"}]
         assert "private-marker" not in response.text
-        assert backend.authorize_member.await_count == 2
-        assert all(
-            call.args == (tid, "lead", 2, turn) for call in backend.authorize_member.await_args_list
-        )
-        backend.runtime_state.assert_awaited_once_with(tid)
+        backend.authorize_tool.assert_awaited_once_with(tid, "lead", 2, turn)
+        backend.authorize_member.assert_not_awaited()
+        backend.list_members.assert_awaited_once_with(tid)
+        backend.runtime_state.assert_not_awaited()
         profile["worker_tools"][role]["builtin"] = []
         assert (await client.post(path, headers=headers, json={})).status_code == 403
-        before = backend.runtime_state.await_count
-        backend.authorize_member.side_effect = HTTPException(409, "Stale CTF generation")
+        before = backend.list_members.await_count
+        backend.authorize_tool.side_effect = HTTPException(409, "Stale CTF generation")
         assert (await client.post(path, headers=headers, json={})).status_code == 409
-        assert backend.runtime_state.await_count == before
+        assert backend.list_members.await_count == before
     backend.state.assert_not_awaited()

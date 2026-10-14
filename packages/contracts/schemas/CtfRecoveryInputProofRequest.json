@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "turn_id": {
+      "format": "uuid",
+      "title": "Turn Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "message_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Message Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "agent_id",
+    "turn_id",
+    "generation",
+    "message_ids"
+  ],
+  "title": "CtfRecoveryInputProofRequest",
+  "type": "object"
+}

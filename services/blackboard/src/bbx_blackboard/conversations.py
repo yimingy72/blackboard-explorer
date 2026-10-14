@@ -203,14 +203,22 @@ class Conversations:
         opening_instructions: str,
         origin: str,
         expected_revision: int,
+        *,
+        return_session: bool = True,
     ) -> dict[str, Any]:
-        existing = await self._session(conn, tid, aid)
-        revision = existing["revision"] if existing else 0
+        existing = (
+            await conn.execute(
+                select(s.agent_sessions.c.revision).where(
+                    s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
+                )
+            )
+        ).scalar_one_or_none()
+        revision = existing if existing is not None else 0
         if revision != expected_revision:
             raise HTTPException(409, "Session revision conflict")
         session = storage_safe(session)
         opening_instructions = storage_safe(opening_instructions)
-        if existing:
+        if existing is not None:
             await conn.execute(
                 update(s.agent_sessions)
                 .where(s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid)
@@ -233,6 +241,8 @@ class Conversations:
                     revision=1,
                 )
             )
+        if not return_session:
+            return {"revision": revision + 1}
         return {
             "session": session,
             "opening_instructions": opening_instructions,
