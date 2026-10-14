@@ -22,11 +22,14 @@ from agent_framework import (
     FunctionInvocationContext,
     FunctionMiddleware,
     Message,
+    MiddlewareFailure,
+    MiddlewareTermination,
     ResponseStream,
 )
 from bbx_contracts.billing import effective_price
 from bbx_contracts.storage import storage_safe
-from pydantic import BaseModel, ValidationError
+from bbx_contracts.tool_errors import validation_issues
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from bbx_runtime.billing import _input_tokens, _usage
 from bbx_runtime.clients.blackboard import RemoteError
@@ -41,12 +44,15 @@ from bbx_runtime.recovery import (
     RecoveryExhausted,
     recoverable_transport,
 )
+from bbx_runtime.tool_failures import BlackboardToolFailure, tool_error_content
 from bbx_runtime.trace import model_content, record_trace
+from bbx_runtime.usage_receipts import flush_ordinary_usage
 
 DIGEST_TYPES = {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
 VERDICT_TYPES = {"acceptance.judged", "acceptance.reverted"}
 GRACE_TOOLS = {"release", "post_fact", "post_intent"}
 logger = logging.getLogger(__name__)
+_JSON_ARGUMENTS = TypeAdapter(dict[str, Any])
 
 
 def _call_id() -> str:
@@ -54,7 +60,9 @@ def _call_id() -> str:
 
 
 def _arguments(value: BaseModel | Mapping[str, Any]) -> dict[str, Any]:
-    return value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
+    return _JSON_ARGUMENTS.dump_python(
+        value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value), mode="json"
+    )
 
 
 def _result_text(value: Any) -> str:
@@ -82,65 +90,105 @@ class ToolLogMiddleware(FunctionMiddleware):
         self.ctx = ctx
 
     async def process(self, context: FunctionInvocationContext, call_next) -> None:
+        failure = None
         try:
             await call_next()
+        except (MiddlewareFailure, MiddlewareTermination):
+            raise
         except Exception as exc:
-            cause = exc.__cause__
-            if type(exc).__name__ == "_FunctionArgumentValidationError" and isinstance(
-                cause, ValidationError
-            ):
-                errors = []
-                for error in cause.errors():
-                    path = "".join(
-                        f"[{part}]" if isinstance(part, int) else f".{part}"
-                        for part in error["loc"]
-                    ).lstrip(".")
-                    issue = "缺少必填字段" if error["type"] == "missing" else "字段值不合法"
-                    errors.append(f"{issue} {path}")
-                context.result = "工具参数不合法：" + "；".join(errors) + "。请修正后重试。"
-            else:
-                context.result = (
-                    f"工具调用失败（{type(exc).__name__}）。请检查参数或换一种方法后重试。"
+            failure = exc
+            context.result = [
+                tool_error_content(
+                    "tool_execution_unconfirmed",
+                    "工具执行失败或结果未确认，系统停止本次执行。旧调用不得盲目重新执行。",
+                    error_type=type(exc).__name__,
                 )
-        call_id = _call_id()
-        args = _arguments(context.arguments)
-        result = _result_text(context.result)
-        uri = f"toolcalls/{self.ctx.task_id}/{call_id}.txt"
-        full = json.dumps(
-            {"tool": context.function.name, "args": args, "result": result},
-            ensure_ascii=False,
-            default=str,
-        ).encode("utf-8")
-        await self.ctx.objects.put(uri, full, content_type="application/json")
-        await self.ctx.service.record_tool_call(
-            self.ctx.task_id,
-            {
-                "agent_id": self.ctx.agent_id,
-                "id": call_id,
-                "tool": context.function.name,
-                "args": args,
-                "result_head": result.encode("utf-8")[:4096].decode("utf-8", errors="ignore"),
-                "result_uri": uri,
-            },
-            **(
-                {"expected_derive_round": self.ctx.expected_derive_round}
-                if self.ctx.expected_derive_round is not None
-                else {}
-            ),
-        )
-        context.result = _append_call_id(context.result, call_id)
+            ]
         checkpoint = self.ctx.checkpoint
         model_call_id = context.metadata.get("call_id")
-        if (
+        saved_result = (
             checkpoint is not None
             and context.session is checkpoint.session
             and isinstance(model_call_id, str)
-        ):
-            result_content = Content.from_function_result(model_call_id, result=context.result)
-            checkpoint.session.state.setdefault("bbx_tool_results", {})[model_call_id] = (
-                result_content.to_dict()
+        )
+        failure_type = type(failure).__name__ if failure is not None else None
+        try:
+            if saved_result:
+                assert checkpoint is not None and isinstance(model_call_id, str)
+                checkpoint.session.state.setdefault("bbx_tool_results", {})[model_call_id] = (
+                    Content.from_function_result(
+                        model_call_id, result=context.result, exception=failure_type
+                    ).to_dict()
+                )
+            call_id = _call_id()
+            args = _arguments(context.arguments)
+            result = _result_text(context.result)
+            uri = f"toolcalls/{self.ctx.task_id}/{call_id}.txt"
+            full = json.dumps(
+                {"tool": context.function.name, "args": args, "result": result},
+                ensure_ascii=False,
+                default=str,
+            ).encode("utf-8")
+            await self.ctx.objects.put(uri, full, content_type="application/json")
+            await self.ctx.service.record_tool_call(
+                self.ctx.task_id,
+                {
+                    "agent_id": self.ctx.agent_id,
+                    "id": call_id,
+                    "tool": context.function.name,
+                    "args": args,
+                    "result_head": result.encode("utf-8")[:4096].decode("utf-8", errors="ignore"),
+                    "result_uri": uri,
+                },
+                **(
+                    {"expected_derive_round": self.ctx.expected_derive_round}
+                    if self.ctx.expected_derive_round is not None
+                    else {}
+                ),
             )
-            await checkpoint.save()
+            context.result = _append_call_id(context.result, call_id)
+            if saved_result:
+                assert checkpoint is not None and isinstance(model_call_id, str)
+                checkpoint.session.state["bbx_tool_results"][model_call_id] = (
+                    Content.from_function_result(
+                        model_call_id, result=context.result, exception=failure_type
+                    ).to_dict()
+                )
+                await checkpoint.save()
+        except Exception as error:
+            original = failure if failure is not None else error
+            raise BlackboardToolFailure(original) from original
+        if failure is not None:
+            raise BlackboardToolFailure(failure) from failure
+
+
+class ToolArgumentFeedbackMiddleware(FunctionMiddleware):
+    """Let MAF's public input model reject invalid arguments before tool dispatch."""
+
+    async def process(self, context: FunctionInvocationContext, call_next) -> None:
+        model = context.function.input_model
+        if model is not None:
+            try:
+                model.model_validate(context.arguments)
+            except ValidationError as error:
+                fields = validation_issues(error, model.model_json_schema())
+                descriptions = []
+                for issue in fields:
+                    path = "".join(
+                        f"[{part}]" if isinstance(part, int) else f".{part}"
+                        for part in issue["path"]
+                    ).lstrip(".")
+                    label = "缺少必填字段" if issue["type"] == "missing" else "字段值不合法"
+                    descriptions.append(f"{label} {path}")
+                context.result = [
+                    tool_error_content(
+                        "invalid_arguments",
+                        "工具参数不合法：" + "；".join(descriptions) + "。请按工具 schema 修正。",
+                        fields=fields,
+                    )
+                ]
+                return
+        await call_next()
 
 
 class GraceGateMiddleware(FunctionMiddleware):
@@ -438,9 +486,25 @@ class BoardSyncMiddleware(ChatMiddleware):
         permit: ModelCallPermit | None = None
         deadline = self.recovery_deadline
         deadline_metadata = self.recovery_metadata
+        completed_model = False
+
+        def complete_model() -> None:
+            nonlocal completed_model
+            completed_model = True
+            if self.recovery and permit:
+                self.recovery.succeeded(permit)
+                self.recovery_deadline = None
+
+        async def trace_response(response: ChatResponse) -> None:
+            output, reasoning = model_content(response)
+            await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
 
         async def before_model() -> None:
             nonlocal permit, deadline, deadline_metadata, requested_at, started_at
+            if self.ctx.checkpoint is not None and self.ctx.checkpoint.session.state.get(
+                "bbx_usage_outbox"
+            ):
+                await flush_ordinary_usage(self.ctx.checkpoint)
             if self.recovery:
                 delayed = self.recovery.paused and (
                     permit is None or permit.episode is not self.recovery.episode
@@ -474,9 +538,42 @@ class BoardSyncMiddleware(ChatMiddleware):
                     deadline_metadata = self.recovery_metadata or permit.episode.metadata
             requested_at = datetime.now(UTC)
             started_at = monotonic()
+            if self.ctx.checkpoint is not None:
+                selected, _ = effective_price(
+                    model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
+                )
+                self.ctx.checkpoint.ordinary_usage_request = {
+                    "price": selected,
+                    "provider": model.provider,
+                    "on_complete": complete_model,
+                    "trace_response": trace_response,
+                    "heartbeat": {
+                        "steps": 1,
+                        "last_seen_version": last_seen,
+                        "requested_at": requested_at,
+                        "expected_run_number": self.ctx.state["task"].get("run_number") or 1,
+                        "expected_derive_round": (
+                            self.ctx.expected_derive_round
+                            or board["agents"][self.ctx.agent_id].get("derive_round")
+                            or 1
+                        )
+                        if self.ctx.task_type == "derive"
+                        else None,
+                    },
+                    "scope": {
+                        "task_id": self.ctx.task_id,
+                        "agent_id": self.ctx.agent_id,
+                        "task_type": self.ctx.task_type,
+                        "profile_name": self.ctx.state["task"]["agent_profile"],
+                        "profile_version": self.ctx.state["task"]["agent_profile_version"],
+                        "billing_mode": board.get("task", {}).get("billing_mode"),
+                    },
+                }
 
         async def record_error(error: Exception) -> None:
-            if isinstance(error, RecoveryExhausted):
+            if isinstance(error, RecoveryExhausted) or getattr(
+                error, "bbx_usage_settlement_error", False
+            ):
                 return
             metadata = model_error_metadata(
                 error,
@@ -497,11 +594,8 @@ class BoardSyncMiddleware(ChatMiddleware):
             await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
 
         async def record(response: ChatResponse) -> ChatResponse:
-            if self.recovery and permit:
-                self.recovery.succeeded(permit)
-                self.recovery_deadline = None
-            output, reasoning = model_content(response)
-            await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
+            if self.ctx.checkpoint is None:
+                complete_model()
             details = response.usage_details
             price, _ = effective_price(
                 model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
@@ -510,9 +604,7 @@ class BoardSyncMiddleware(ChatMiddleware):
             if self.price_warning and not self._warned_missing_price:
                 logger.warning("Model price is not configured; cost is recorded as zero")
                 self._warned_missing_price = True
-            await self.ctx.service.heartbeat(
-                self.ctx.task_id,
-                self.ctx.agent_id,
+            heartbeat: dict[str, Any] = dict(
                 steps=1,
                 context_tokens=_input_tokens(details, model.provider),
                 usage=usage,
@@ -524,12 +616,16 @@ class BoardSyncMiddleware(ChatMiddleware):
                     else {}
                 ),
             )
+            if self.ctx.checkpoint is None:
+                await self.ctx.service.heartbeat(self.ctx.task_id, self.ctx.agent_id, **heartbeat)
+            if self.ctx.checkpoint is None:
+                await trace_response(response)
             return response
 
         try:
             await before_model()
         except BaseException:
-            finish_pending_images(messages, injection, sent=False)
+            finish_pending_images(messages, injection, sent=completed_model)
             if self.recovery and permit:
                 self.recovery.release(permit)
             raise
@@ -538,7 +634,7 @@ class BoardSyncMiddleware(ChatMiddleware):
             async with timeout:
                 await call_next()
         except BaseException as error:
-            finish_pending_images(messages, injection, sent=False)
+            finish_pending_images(messages, injection, sent=completed_model)
             if self.recovery and permit:
                 self.recovery.release(permit)
             if isinstance(error, TimeoutError) and timeout.expired():
@@ -575,7 +671,7 @@ class BoardSyncMiddleware(ChatMiddleware):
                         await record_error(error)
                     raise
                 finally:
-                    finish_pending_images(messages, injection, sent=sent)
+                    finish_pending_images(messages, injection, sent=sent or completed_model)
                 await record(result)
 
             context.result = ResponseStream(

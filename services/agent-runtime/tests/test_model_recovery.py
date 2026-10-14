@@ -15,6 +15,7 @@ import pytest
 from agent_framework import Agent, AgentSession, ChatResponseUpdate, Content, Message, tool
 from bbx_blackboard.domain import BoardState
 from bbx_blackboard.domain import decide as board_decide
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.models import Params, WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
@@ -29,6 +30,7 @@ from bbx_runtime.session import _unpaired_calls
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from openai import APIStatusError, AsyncOpenAI
+from usage_receipt_fixtures import heartbeat_ack
 
 RECEIPT = '{"accepted":true,"data":{"posted":[],"excluded":[]}}'
 CONNECTION = {"category": "connection", "transient": True}
@@ -82,6 +84,7 @@ class RecoveryService:
         self.record_agent_trace = AsyncMock()
         self.put_error: Exception | None = None
         self.heartbeat_error: Exception | None = None
+        self.usage_acknowledged: set[str] = set()
 
     async def state(self, _task_id):
         return deepcopy(self.board)
@@ -114,6 +117,7 @@ class RecoveryService:
             for key in ("session", "opening_instructions", "origin")
         }
         self.saved["revision"] = revision + 1
+        self.saved.update(usage_receipt_support(self.saved["session"]))
         self.deliveries.extend(kwargs["deliveries"])
         for delivery in kwargs["deliveries"]:
             message = next(item for item in self.messages if item["id"] == delivery["id"])
@@ -136,13 +140,18 @@ class RecoveryService:
     async def heartbeat(self, _task_id, _agent_id, **kwargs):
         if self.heartbeat_error:
             raise self.heartbeat_error
+        request_id = kwargs.get("request_id")
+        if request_id is not None and request_id in self.usage_acknowledged:
+            return heartbeat_ack(_task_id, _agent_id, kwargs)
+        if request_id is not None:
+            self.usage_acknowledged.add(request_id)
         self.beats.append(kwargs)
         agent = self.board["agents"]["agent-1"]
         agent["steps"] += kwargs["steps"]
         agent["last_seen_version"] = kwargs["last_seen_version"]
         if agent["task_type"] == "derive":
             assert kwargs["expected_derive_round"] == 2
-        return {}
+        return heartbeat_ack(_task_id, _agent_id, kwargs)
 
     async def record_tool_call(self, *_args, **_kwargs):
         return []
@@ -650,13 +659,18 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
 
     monkeypatch.setattr("bbx_runtime.runner.make_board_tools", lambda _ctx: [step])
 
-    def chunk(delta, finish=None):
+    def chunk(delta, finish=None, *, known_usage=False):
         return {
             "id": "chat",
             "object": "chat.completion.chunk",
             "created": 1,
             "model": "offline",
             "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            **(
+                {"usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}}
+                if known_usage
+                else {}
+            ),
         }
 
     def encode(*events):
@@ -706,7 +720,7 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
                             ],
                         }
                     ),
-                    chunk({}, "tool_calls"),
+                    chunk({}, "tool_calls", known_usage=True),
                 ),
                 headers={"content-type": "text/event-stream"},
             )
@@ -723,7 +737,10 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
         assert "POISON" not in json.dumps(body)
         return httpx2.Response(
             200,
-            content=encode(chunk({"role": "assistant", "content": RECEIPT}), chunk({}, "stop")),
+            content=encode(
+                chunk({"role": "assistant", "content": RECEIPT}),
+                chunk({}, "stop", known_usage=True),
+            ),
             headers={"content-type": "text/event-stream"},
         )
 

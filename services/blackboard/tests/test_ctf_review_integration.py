@@ -62,7 +62,9 @@ async def test_terminal_review_removed_history_billing_and_resume_delete_barrier
     turns = await asyncio.gather(
         *(ctf.claim_review_turn(tid, aid, "review-runtime") for _ in range(2))
     )
-    assert sum(turn is not None for turn in turns) == 1
+    assert all(turn is not None for turn in turns)
+    assert len({turn["id"] for turn in turns}) == 1
+    assert len((await ctf.state(tid))["turns"]) == 1
     turn = next(turn for turn in turns if turn is not None)
     assert turn["purpose"] == "review"
     with pytest.raises(HTTPException):

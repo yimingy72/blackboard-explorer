@@ -4,11 +4,12 @@ from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from agent_framework import FunctionInvocationContext, tool
+from bbx_contracts.ctf import CtfSolution
 from pydantic import Field
 
 from bbx_runtime.ctf.board_tools import build_board_tools
 from bbx_runtime.ctf.client import CtfClient
-from bbx_runtime.ctf.tool_results import json_tool_result
+from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
 
 
 def build_tools(
@@ -25,7 +26,7 @@ def build_tools(
     token = turn["token"]
 
     @tool
-    async def list_members() -> str:
+    async def list_members() -> ToolJsonResult:
         """Read the shared team roster without private conversations."""
         return await json_tool_result(service.tool(task_id, token, "list_team"))
 
@@ -35,7 +36,7 @@ def build_tools(
         body: Annotated[str, Field(min_length=1, max_length=20000)],
         instruction: bool = False,
         reply_to: str | None = None,
-    ) -> str:
+    ) -> ToolJsonResult:
         """Send a directed message with challenge IDs and record/artifact IDs in the body.
 
         instruction explicitly assigns work. reply_to is the original message UUID.
@@ -54,9 +55,57 @@ def build_tools(
         )
 
     @tool
+    async def read_turn_result(
+        turn_id: str,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: Annotated[int, Field(ge=1, le=16000)] = 2000,
+    ) -> ToolJsonResult:
+        """Read a page of a settled result_ref. Lead can read assignment results;
+        members can read only their own turns. This never reads another private Session.
+        """
+        return await json_tool_result(
+            service.tool(
+                task_id, token, "read_turn_result", turn_id=turn_id, offset=offset, limit=limit
+            )
+        )
+
+    @tool
+    async def read_saved_tool_result(
+        call_id: str,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: Annotated[int, Field(ge=1, le=16000)] = 2000,
+    ) -> ToolJsonResult:
+        """Read a page of your saved tool result by the call_id in its preview.
+        Use this to recover omitted content without executing the tool again.
+        """
+        return await json_tool_result(
+            service.tool(
+                task_id,
+                token,
+                "read_saved_tool_result",
+                call_id=call_id,
+                offset=offset,
+                limit=limit,
+            )
+        )
+
+    @tool
+    async def list_deferred_messages(
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: Annotated[int, Field(ge=1, le=100)] = 5,
+    ) -> ToolJsonResult:
+        """Lead: inspect deferred input metadata before confirm_messages.
+        Follow next_offset to inspect the next page. This does not release messages
+        and does not expose teammates' private conversation bodies.
+        """
+        return await json_tool_result(
+            service.tool(task_id, token, "list_deferred_messages", offset=offset, limit=limit)
+        )
+
+    @tool
     async def create_teammate(
         display_name: Annotated[str, Field(min_length=1, max_length=100)],
-    ) -> str:
+    ) -> ToolJsonResult:
         """Create a named teammate with a persistent session."""
         return await json_tool_result(
             service.tool(
@@ -70,7 +119,7 @@ def build_tools(
         unresolved_items: list[str],
         evidence_refs: list[str],
         lead_claim: bool = False,
-    ) -> str:
+    ) -> ToolJsonResult:
         """Register closing and return immediately; do not wait for this turn to drain."""
         return await json_tool_result(
             service.tool(
@@ -99,12 +148,26 @@ def build_tools(
             Field(description="Registered artifact IDs only, never record IDs or file paths."),
         ] = None,
         work_status: Literal["in_progress", "blocked", "completed"] | None = None,
-    ) -> str:
+        solution: Annotated[
+            CtfSolution | None,
+            Field(description="Public solution delivery; at most 1600 text characters in total."),
+        ] = None,
+    ) -> ToolJsonResult:
         """Record a candidate/unknown claim with registered artifact IDs as evidence.
 
+        Only Lead, the challenge owner or registered collaborators may declare candidates.
+        Read get_challenge first. If unassigned, ask Lead to add you to collaborator_ids,
+        or send_message the existing owner to relay your findings.
         Owner or Lead may explicitly set work_status in the same transaction.
         completed means your work is delivered; candidate/unknown remains unverified.
-        Collaborators must omit work_status. Trusted verification is preserved.
+        completed requires solution in this same call, with the concise approach,
+        meaningful attempts and evidence, actual breakthroughs if any, conclusion and
+        reproduction. Cite existing same-challenge records and registered artifact IDs.
+        Report remaining blockers honestly; never invent success or expose private
+        step-by-step reasoning. Lead must name the actual author and source when relaying.
+        Collaborators must omit work_status and solution. Omit solution unless completed.
+        Stopping or budget/error closure needs no solution. Trusted verification is preserved.
+        A final chat answer alone does not deliver work; do not broadcast it repeatedly.
         This never establishes platform acceptance. Read get_challenge on revision_conflict.
         """
         return await json_tool_result(
@@ -119,6 +182,11 @@ def build_tools(
                 summary=summary,
                 evidence_refs=evidence_refs or [],
                 work_status=work_status,
+                **(
+                    {"solution": CtfSolution.model_validate(solution).model_dump(mode="json")}
+                    if solution is not None
+                    else {}
+                ),
             )
         )
 
@@ -128,7 +196,7 @@ def build_tools(
         expected_revision: Annotated[int, Field(ge=1)],
         required: bool,
         basis: Annotated[str, Field(min_length=1)],
-    ) -> str:
+    ) -> ToolJsonResult:
         """Set whether platform verification is required, with explicit user-goal basis."""
         return await json_tool_result(
             service.tool(
@@ -146,7 +214,7 @@ def build_tools(
     @tool
     async def confirm_messages(
         message_ids: Annotated[list[str], Field(min_length=1, max_length=100)],
-    ) -> str:
+    ) -> ToolJsonResult:
         """After checking resumed targets, release relevant queued deferred message IDs
         from the resume notice. Already confirmed active or delivered IDs are safe
         to repeat. Never confirm cancelled/failed messages or inactive recipients.
@@ -188,7 +256,7 @@ def build_tools(
         return str(await envd.execute(task_id, member_id, command))
 
     @tool
-    async def stop_teammate(member_id: str) -> str:
+    async def stop_teammate(member_id: str) -> ToolJsonResult:
         """Request a teammate stop; completion waits for remote process drain."""
         return await json_tool_result(
             service.tool(
@@ -201,7 +269,7 @@ def build_tools(
         )
 
     @tool
-    async def resume_teammate(member_id: str) -> str:
+    async def resume_teammate(member_id: str) -> ToolJsonResult:
         """Resume a stopped named teammate using its existing session."""
         return await json_tool_result(
             service.tool(
@@ -214,7 +282,7 @@ def build_tools(
         )
 
     @tool
-    async def remove_teammate(member_id: str) -> str:
+    async def remove_teammate(member_id: str) -> ToolJsonResult:
         """Retire a teammate after proven stop while preserving history."""
         return await json_tool_result(
             service.tool(
@@ -231,6 +299,8 @@ def build_tools(
         *([execute_command] if envd is not None else []),
         list_members,
         send_message,
+        read_turn_result,
+        read_saved_tool_result,
         record_candidate,
         *(
             [
@@ -241,6 +311,7 @@ def build_tools(
                 finish_task,
                 set_verification_required,
                 confirm_messages,
+                list_deferred_messages,
             ]
             if role == "lead"
             else []

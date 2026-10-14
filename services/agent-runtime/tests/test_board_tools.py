@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,7 +16,7 @@ from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
 from bbx_runtime.context import RunContext
-from bbx_runtime.middleware import ToolLogMiddleware
+from bbx_runtime.middleware import ToolArgumentFeedbackMiddleware, ToolLogMiddleware
 from bbx_runtime.testing.fake_envd import FakeEnvd
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from bbx_runtime.tools import EvidenceInput, make_board_tools
@@ -260,7 +261,7 @@ async def test_post_fact_missing_evidence_type_reports_field_and_can_retry(tmp_p
             response = await Agent(
                 client=client,
                 tools=[named(ctx)["post_fact"]],
-                middleware=[ToolLogMiddleware(ctx)],
+                middleware=[ToolLogMiddleware(ctx), ToolArgumentFeedbackMiddleware()],
             ).run("start")
     assert response.text == "done"
     assert board.fact is not None and board.fact.statement == "reproducible fact"
@@ -300,12 +301,13 @@ async def test_post_fact_invalid_arguments_do_not_echo_values(evidence: dict[str
     await Agent(
         client=client,
         tools=[named(ctx)["post_fact"]],
-        middleware=[ToolLogMiddleware(ctx)],
+        middleware=[ToolLogMiddleware(ctx), ToolArgumentFeedbackMiddleware()],
     ).run("start")
     assert board.post_fact_calls == 0
     assert len(board.tool_calls) == 1
     feedback = board.tool_calls[0]["result_head"]
-    assert "evidence[0]" in feedback
+    fields = json.loads(json.loads(feedback)[0]["text"])["error"]["fields"]
+    assert fields[0]["path"][:2] == ["evidence", 0]
     assert "sentinel" not in feedback
 
 
@@ -361,7 +363,8 @@ async def test_agent_cannot_supply_auto_or_uri_and_backend_error_is_preserved(
                 statement="x",
                 evidence=[{"type": "text", "path": "/workspace/agents/agent-1/a", "summary": "x"}],
             )
-    assert result == "事实引用不存在，请先提交依据。"
+    assert '"code": "invalid_reference"' in result
+    assert "get/search" in result
 
 
 @pytest.mark.asyncio

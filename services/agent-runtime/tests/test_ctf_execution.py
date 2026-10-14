@@ -13,8 +13,17 @@ class Env:
     boot = "boot-1"
     state = "ready"
 
-    async def ctf_status(self):
-        return {"task_id": "task", "boot_id": self.boot, "state": self.state}
+    async def ctf_status(self, **identity):
+        root = {"task_id": "task", "boot_id": self.boot, "state": self.state}
+        if identity.get("agent_id") and self.state != "unknown":
+            return {
+                **root,
+                "agent_id": identity["agent_id"],
+                "member_id": "member-1",
+                "generation": 1,
+                "state": "registered",
+            }
+        return root
 
     async def create_user(self, aid):
         return {"agent_id": aid}
@@ -296,6 +305,126 @@ async def test_native_maf_tool_injects_occurrence_context_outside_model_schema()
     assert seen[0][0] is checkpoint
     assert seen[0][1].get("function_call_occurrence_id")
     assert seen[0][2]["command"] == "inspect"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param("transport", id="lost-response"),
+        pytest.param("unknown", id="unknown-command"),
+        pytest.param("output", id="output-preservation"),
+    ],
+)
+async def test_native_unknown_command_aborts_before_model_can_repeat_effect(error):
+    import httpx
+    from agent_framework import Agent
+    from bbx_runtime.ctf.failures import CtfToolFailure
+    from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
+
+    original = {
+        "transport": httpx.ReadError("synthetic response lost after effect"),
+        "unknown": UnknownCommandOutcome("synthetic unknown command outcome"),
+        "output": ValueError("synthetic invalid preserved result"),
+    }[error]
+
+    class UncertainAdapter(Adapter):
+        async def _call(self, identity, arguments, metadata):
+            self.calls.append((identity, arguments, metadata))
+            if error == "output":
+                return json.dumps({"structuredContent": {"stdout": "synthetic result"}})
+            raise original
+
+        async def preserve_output(self, task_id, member_id, turn, command_id, result):
+            if error == "output":
+                raise original
+            return await super().preserve_output(task_id, member_id, turn, command_id, result)
+
+    checkpoint = Checkpoint()
+    adapter = UncertainAdapter(cast(Any, Service()), cast(Any, Env()))
+    tools = build_tools(
+        cast(Any, Service()),
+        "task",
+        {"id": "turn", "generation": 1, "token": "t"},
+        "teammate",
+        envd=adapter,
+        member_id="member-1",
+        checkpoint_provider=lambda: checkpoint,
+    )
+    execute = next(item for item in tools if item.name == "execute_command")
+    client = ScriptedChatClient(
+        [
+            ScriptStep(calls=(ScriptToolCall("execute_command", {"command": "synthetic effect"}),)),
+            ScriptStep(calls=(ScriptToolCall("execute_command", {"command": "synthetic effect"}),)),
+            ScriptStep(text="done"),
+        ]
+    )
+    async with Agent(client=client, tools=[execute]) as agent:
+        with pytest.raises(CtfToolFailure) as caught:
+            await agent.run("synthetic retry", session=checkpoint.session)
+    assert caught.value.original_error is original
+    assert "synthetic response" not in str(caught.value)
+    assert len(adapter.calls) == len(client.received_messages) == 1
+    assert len(checkpoint.session.state["ctf_commands"]) == 1
+
+
+async def test_native_unknown_command_cancels_suspended_sibling_before_its_effect():
+    import asyncio
+
+    import httpx
+    from agent_framework import Agent
+    from bbx_runtime.ctf.failures import CtfToolFailure
+    from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
+
+    sibling_started, sibling_cancelled = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    class UncertainAdapter(Adapter):
+        async def _call(self, identity, arguments, metadata):
+            if arguments["command"] == "uncertain":
+                effects.append(metadata["ctf"]["command_id"])
+                await sibling_started.wait()
+                raise httpx.ReadError("synthetic response lost after effect")
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            raise AssertionError("Suspended sibling must never execute its side effect")
+
+    checkpoint = Checkpoint()
+    adapter = UncertainAdapter(cast(Any, Service()), cast(Any, Env()))
+    execute = next(
+        item
+        for item in build_tools(
+            cast(Any, Service()),
+            "task",
+            {"id": "turn", "generation": 1, "token": "t"},
+            "teammate",
+            envd=adapter,
+            member_id="member-1",
+            checkpoint_provider=lambda: checkpoint,
+        )
+        if item.name == "execute_command"
+    )
+    client = ScriptedChatClient(
+        [
+            ScriptStep(
+                calls=(
+                    ScriptToolCall("execute_command", {"command": "uncertain"}),
+                    ScriptToolCall("execute_command", {"command": "suspended sibling"}),
+                )
+            ),
+            ScriptStep(text="must not run"),
+        ]
+    )
+    async with Agent(client=client, tools=[execute]) as agent:
+        with pytest.raises(CtfToolFailure):
+            await asyncio.wait_for(agent.run("synthetic concurrent commands"), timeout=2)
+    assert len(effects) == len(client.received_messages) == 1
+    assert sibling_cancelled.is_set()
 
 
 async def test_restart_continues_destroyed_replacement_before_missing_container_factory():

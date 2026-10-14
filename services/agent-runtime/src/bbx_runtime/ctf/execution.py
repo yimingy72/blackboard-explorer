@@ -13,9 +13,10 @@ from bbx_contracts.ctf import execution_agent_id
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 from bbx_runtime.clients.envd import EnvdClient
 from bbx_runtime.ctf.client import CtfClient
+from bbx_runtime.ctf.failures import CtfToolFailure
 from bbx_runtime.ctf.telemetry import observe
 from bbx_runtime.session import SessionCheckpoint
 
@@ -34,6 +35,92 @@ class UnknownCommandOutcome(RuntimeError):
 class CtfExecutionAdapter:
     def __init__(self, service: CtfClient, envd: EnvdClient) -> None:
         self.service, self.envd = service, envd
+        self.pending_registrations: dict[tuple[str, str], dict[str, Any]] = {}
+
+    async def _registration(self, identity: dict[str, Any]) -> dict[str, Any]:
+        status = await self.envd.ctf_status(agent_id=identity["agent_id"])
+        if any(status.get(key) != identity[key] for key in ("task_id", "boot_id", "agent_id")):
+            raise UnknownCommandOutcome("Execution registration identity changed")
+        if status.get("state") == "unregistered":
+            return status
+        if (
+            status.get("state") not in {"registered", "running", "stopping", "drained"}
+            or status.get("member_id") != identity["member_id"]
+            or type(status.get("generation")) is not int
+            or status["generation"] < 0
+        ):
+            raise UnknownCommandOutcome(
+                "Execution registration is unknown or belongs to another member"
+            )
+        return status
+
+    async def _register(self, identity: dict[str, Any]) -> None:
+        for attempt in range(2):
+            try:
+                await self.envd.ctf_operation("register", identity)
+                return
+            except (httpx.TransportError, ConnectionError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
+                try:
+                    status = await self._registration(identity)
+                except Exception as read_error:
+                    raise error from read_error
+                if status.get("generation") == identity["generation"] and status["state"] in {
+                    "registered",
+                    "running",
+                }:
+                    return
+                # Registration is idempotent for this exact boot/member/generation.
+                # A stopped or different generation must never be reopened.
+                if status["state"] != "unregistered" or attempt:
+                    raise
+
+    async def _record_binding(self, identity: dict[str, Any], turn_id: str | None) -> None:
+        for attempt in range(2):
+            try:
+                await self.service.runtime(
+                    identity["task_id"],
+                    "record_execution",
+                    agent_id=identity["member_id"],
+                    turn_id=turn_id,
+                    generation=identity["generation"],
+                    boot_id=identity["boot_id"],
+                )
+                self.pending_registrations.pop((identity["task_id"], identity["member_id"]), None)
+                return
+            except (httpx.TransportError, ConnectionError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
+                try:
+                    state = await self.service.runtime_state(identity["task_id"])
+                except Exception as read_error:
+                    raise error from read_error
+                member = next(
+                    (m for m in state["members"] if m["id"] == identity["member_id"]), None
+                )
+                binding = (member or {}).get("execution") or {}
+                if all(binding.get(key) == identity[key] for key in ("boot_id", "generation")):
+                    self.pending_registrations.pop(
+                        (identity["task_id"], identity["member_id"]), None
+                    )
+                    return
+                if (
+                    attempt
+                    or member is None
+                    or member.get("generation") != identity["generation"]
+                    or member.get("current_turn_id") != turn_id
+                ):
+                    raise
+                # Retry only the same fenced binding after authoritative readback.
+
+    async def _drain_identity(self, identity: dict[str, Any]) -> dict[str, Any]:
+        proof = await self.envd.ctf_operation("drain", identity)
+        if any(proof.get(key) != identity[key] for key in identity):
+            raise UnknownCommandOutcome("Execution drain identity changed")
+        if proof.get("drained") is not True:
+            raise DrainPending()
+        return proof
 
     async def identity(
         self, task_id: str, member_id: str, generation: int, boot_id: str | None = None
@@ -56,24 +143,53 @@ class CtfExecutionAdapter:
     ) -> dict[str, Any]:
         generation = turn["generation"] if turn else member["generation"]
         previous = member.get("execution") or {}
+        pending = self.pending_registrations.get((task_id, member["id"]), {})
         identity = await self.identity(
             task_id,
             member["id"],
             generation,
             previous.get("replacement_boot_id")
             if previous.get("container_destroyed")
-            else previous.get("boot_id"),
+            else previous.get("boot_id", pending.get("boot_id")),
         )
+        turn_id = turn["id"] if turn else member.get("current_turn_id")
+        status = await self._registration(identity)
+        if status.get("generation", generation) > generation:
+            raise UnknownCommandOutcome("Execution belongs to a newer generation")
+        if status.get("generation", generation) < generation:
+            current = next(
+                (
+                    m
+                    for m in (await self.service.runtime_state(task_id))["members"]
+                    if m["id"] == member["id"]
+                ),
+                None,
+            )
+            if (
+                current is None
+                or current["generation"] != generation
+                or current.get("current_turn_id") != turn_id
+            ):
+                raise UnknownCommandOutcome("Execution handoff is not owned by this turn")
+            # A lost binding from a previous runtime must be stopped on its real
+            # registered generation before this generation can be installed.
+            old_identity = {**identity, "generation": status["generation"]}
+            proof = (
+                status
+                if status.get("drained") is True
+                else await self._drain_identity(old_identity)
+            )
+            old_binding = current.get("execution") or {}
+            if not old_binding.get("drained") and all(
+                old_binding.get(key) == old_identity[key] for key in ("boot_id", "generation")
+            ):
+                await self.service.runtime(
+                    task_id, "record_execution_drained", agent_id=member["id"], proof=proof
+                )
         await self.envd.create_user(identity["agent_id"])
-        await self.envd.ctf_operation("register", identity)
-        await self.service.runtime(
-            task_id,
-            "record_execution",
-            agent_id=member["id"],
-            turn_id=turn["id"] if turn else None,
-            generation=generation,
-            boot_id=identity["boot_id"],
-        )
+        self.pending_registrations[(task_id, member["id"])] = identity.copy()
+        await self._register(identity)
+        await self._record_binding(identity, turn_id)
         return identity
 
     async def stop_member(self, task_id: str, member: dict[str, Any]) -> dict[str, Any]:
@@ -92,14 +208,32 @@ class CtfExecutionAdapter:
                 "drained": True,
             }
         if not binding:
-            identity = await self.prepare(task_id, member, None)
+            pending = self.pending_registrations.get((task_id, member["id"]), {})
+            identity = await self.identity(
+                task_id, member["id"], generation, pending.get("boot_id")
+            )
+            status = await self._registration(identity)
+            if status.get("generation") == generation:
+                # Recover a registered (possibly already stopped) handshake using
+                # the current turn identity rather than an invalid idle binding.
+                self.pending_registrations[(task_id, member["id"])] = identity.copy()
+                await self._record_binding(identity, member.get("current_turn_id"))
+            else:
+                identity = await self.prepare(task_id, member, None)
         else:
             identity = await self.identity(task_id, member["id"], generation, binding["boot_id"])
-        proof = await self.envd.ctf_operation("drain", identity)
-        if any(proof.get(key) != identity[key] for key in ("boot_id", "generation", "member_id")):
-            raise UnknownCommandOutcome("Execution drain identity changed")
-        if not proof.get("drained"):
-            raise DrainPending()
+            status = await self._registration(identity)
+            if status.get("generation", generation) != generation:
+                if not binding.get("drained") or status.get("generation") != member["generation"]:
+                    raise UnknownCommandOutcome(
+                        "Execution registration does not match the saved binding"
+                    )
+                identity = {**identity, "generation": member["generation"]}
+                self.pending_registrations[(task_id, member["id"])] = identity.copy()
+                await self._record_binding(identity, member.get("current_turn_id"))
+            elif status["state"] == "unregistered":
+                await self._register(identity)
+        proof = await self._drain_identity(identity)
         await self.service.runtime(
             task_id, "record_execution_drained", agent_id=member["id"], proof=proof
         )
@@ -113,7 +247,20 @@ class CtfExecutionAdapter:
         if root.get("state") == "unknown" or str(root.get("task_id")) != task_id:
             return False
         for member in state["members"]:
-            if member.get("execution"):
+            identity = {
+                "task_id": task_id,
+                "member_id": member["id"],
+                "agent_id": execution_agent_id(member["id"]),
+                "boot_id": root["boot_id"],
+                "generation": member["generation"],
+            }
+            registration = await self._registration(identity)
+            if (
+                member.get("execution")
+                or member.get("current_turn_id")
+                or (task_id, member["id"]) in self.pending_registrations
+                or registration["state"] != "unregistered"
+            ):
                 await self.stop_member(task_id, member)
         return True
 
@@ -164,8 +311,14 @@ class CtfExecutionAdapter:
             return entry["result"]
         await checkpoint.save()
         metadata = {"ctf": {**identity, "command_id": entry["command_id"]}}
-        result = await self._call(identity, arguments, metadata)
-        result = await self.preserve_output(task_id, member_id, turn, entry["command_id"], result)
+        try:
+            result = await self._call(identity, arguments, metadata)
+            result = await self.preserve_output(
+                task_id, member_id, turn, entry["command_id"], result
+            )
+        except Exception as error:
+            # Dispatch or output preservation can fail after the command's side effects.
+            raise CtfToolFailure(error) from error
         entry.update(state="finished", result=result)
         await checkpoint.save()
         return result

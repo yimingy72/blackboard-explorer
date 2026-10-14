@@ -1,0 +1,206 @@
+{
+  "$defs": {
+    "AgentTaskType": {
+      "enum": [
+        "explore",
+        "derive",
+        "close"
+      ],
+      "title": "AgentTaskType",
+      "type": "string"
+    },
+    "HeartbeatRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "requested_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested At"
+        },
+        "expected_derive_round": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Derive Round"
+        },
+        "steps": {
+          "minimum": 0,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "context_tokens": {
+          "minimum": 0,
+          "title": "Context Tokens",
+          "type": "integer"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "usage_known": {
+          "default": true,
+          "title": "Usage Known",
+          "type": "boolean"
+        },
+        "last_seen_version": {
+          "minimum": 0,
+          "title": "Last Seen Version",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "expected_run_number": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Run Number"
+        }
+      },
+      "required": [
+        "steps",
+        "context_tokens",
+        "usage",
+        "last_seen_version"
+      ],
+      "title": "HeartbeatRequest",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request": {
+      "$ref": "#/$defs/HeartbeatRequest"
+    },
+    "task_id": {
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "task_type": {
+      "$ref": "#/$defs/AgentTaskType"
+    },
+    "profile_name": {
+      "minLength": 1,
+      "title": "Profile Name",
+      "type": "string"
+    },
+    "profile_version": {
+      "minimum": 1,
+      "title": "Profile Version",
+      "type": "integer"
+    },
+    "billing_mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "fixed",
+            "deepseek_schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Billing Mode"
+    }
+  },
+  "required": [
+    "request",
+    "task_id",
+    "agent_id",
+    "task_type",
+    "profile_name",
+    "profile_version"
+  ],
+  "title": "OrdinaryUsageReceipt",
+  "type": "object"
+}

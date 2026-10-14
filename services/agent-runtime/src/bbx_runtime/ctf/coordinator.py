@@ -1,6 +1,7 @@
 """Database-driven team scheduling; notification loss is covered by polling."""
 
 import asyncio
+import json
 import logging
 import traceback
 from dataclasses import dataclass
@@ -12,8 +13,8 @@ from uuid import uuid4
 
 import httpx
 
-from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
-from bbx_runtime.ctf.client import CtfClient
+from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError, is_control_transport_error
+from bbx_runtime.ctf.client import CtfClient, CtfControlTransportExhausted
 from bbx_runtime.ctf.execution import CtfExecutionAdapter, DrainPending, UnknownCommandOutcome
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.settings import Settings
@@ -22,6 +23,23 @@ logger = logging.getLogger(__name__)
 
 CLOSE_RETRY_LIMIT = 8
 CLOSE_TIMEOUT_SECONDS = 60
+FALLBACK_SECONDS = 2
+EVENT_RECONNECT_SECONDS = 1
+HEALTH_SECONDS = 2
+
+
+def scheduling_event(kind: str) -> bool:
+    return kind.startswith(
+        (
+            "ctf.message.",
+            "ctf.member.",
+            "ctf.turn.",
+            "ctf.conclusion.",
+            "ctf.control.",
+            "ctf.budget.",
+            "ctf.execution.",
+        )
+    ) or kind in {"ctf.started", "ctf.recovered", "task.stopped", "task.resumed", "task.failed"}
 
 
 @dataclass
@@ -32,7 +50,15 @@ class CloseRetry:
     escalated: bool = False
 
 
-def failure_diagnostic(stage: str, error: BaseException) -> dict[str, Any]:
+def failure_diagnostic(
+    stage: str,
+    error: BaseException,
+    *,
+    task_id: str | None = None,
+    member_id: str | None = None,
+    turn_id: str | None = None,
+    generation: int | None = None,
+) -> dict[str, Any]:
     """Return bounded failure metadata without copying exception or request contents."""
     error_type = type(error).__name__
     if not error_type.isidentifier():
@@ -41,16 +67,37 @@ def failure_diagnostic(stage: str, error: BaseException) -> dict[str, Any]:
     summary = "CTF 执行因内部错误停止；请使用失败追踪 ID 查询受控日志。"
     metadata = getattr(error, "bbx_model_error", None)
     if isinstance(metadata, dict):
-        if metadata.get("incomplete_reason") == "max_output_tokens":
-            summary = "模型响应达到单次输出上限而截断，不完整的工具调用未执行；请查看模型错误记录。"
-        elif metadata.get("category") == "content_filter":
+        summary = "模型调用异常，具体原因未确认；请使用失败追踪 ID 查询受控日志及模型错误记录。"
+        if metadata.get("category") == "content_filter":
             summary = "模型服务的内容审核拦截了本次调用，任务已停止；请查看模型错误记录。"
+        elif metadata.get("incomplete_reason") == "max_output_tokens":
+            summary = "模型响应达到单次输出上限而截断，不完整的工具调用未执行；请查看模型错误记录。"
+        elif metadata.get("category") == "authentication":
+            summary = "模型服务鉴权失败，任务已停止；请查看模型错误记录。"
+        elif metadata.get("category") == "invalid_request":
+            summary = "模型服务拒绝了本次请求，任务已停止；请查看模型错误记录。"
+    if isinstance(error, CtfControlTransportExhausted):
+        stage = error.stage
+        task_id, member_id, turn_id, generation = (
+            error.task_id,
+            error.member_id,
+            error.turn_id,
+            error.generation,
+        )
+    identity: dict[str, Any] = {
+        key: value[:128]
+        for key, value in {"task_id": task_id, "member_id": member_id, "turn_id": turn_id}.items()
+        if isinstance(value, str) and value
+    }
+    if type(generation) is int and generation >= 0:
+        identity["generation"] = generation
     diagnostic = {
         "error_type": error_type[:100],
         "phase": stage[:64],
         "occurred_at": datetime.now(UTC).isoformat(),
         "correlation_id": correlation_id,
         "summary": summary,
+        **identity,
     }
     # Keep the stack location for operators, but deliberately omit str(error), which may
     # contain credentials, tool arguments, model requests, or remote response bodies.
@@ -59,10 +106,15 @@ def failure_diagnostic(stage: str, error: BaseException) -> dict[str, Any]:
         for frame in traceback.extract_tb(error.__traceback__)
     )
     logger.error(
-        "CTF coordinator failure correlation_id=%s phase=%s error_type=%s stack=%s",
+        "CTF coordinator failure correlation_id=%s phase=%s error_type=%s "
+        "task_id=%s member_id=%s turn_id=%s generation=%s stack=%s",
         correlation_id,
         diagnostic["phase"],
         diagnostic["error_type"],
+        task_id,
+        member_id,
+        turn_id,
+        generation,
         stack,
     )
     return diagnostic
@@ -115,6 +167,54 @@ class CtfCoordinator:
         self.tick_locks: dict[str, asyncio.Lock] = {}
         self.control_waits: dict[str, tuple[str, float]] = {}
         self.close_retries: dict[str, CloseRetry] = {}
+        self.review_recovery_waits: dict[tuple[str, str], float] = {}
+        self.event_wakes: dict[str, asyncio.Event] = {}
+        self.event_cursors: dict[str, int] = {}
+        self.listeners: dict[str, asyncio.Task[None]] = {}
+        self.health_checks: dict[str, tuple[str, float]] = {}
+
+    def wake(self, task_id: str) -> None:
+        if task_id in self.event_wakes:
+            self.event_wakes[task_id].set()
+
+    async def _listen(self, task_id: str) -> None:
+        while not self.stopping.is_set() and task_id in self.event_wakes:
+            try:
+                async for event in self.service.client.stream(
+                    task_id, since=self.event_cursors[task_id]
+                ):
+                    version = int(event["version"])
+                    if version <= self.event_cursors[task_id]:
+                        continue
+                    self.event_cursors[task_id] = version
+                    kind = event["type"]
+                    if scheduling_event(kind):
+                        if kind.startswith(("ctf.member.", "ctf.execution.", "ctf.control.")):
+                            self.health_checks.pop(task_id, None)
+                        self.wake(task_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(
+                    "CTF event stream reconnecting task_id=%s error_type=%s",
+                    task_id,
+                    type(error).__name__,
+                )
+            await asyncio.sleep(EVENT_RECONNECT_SECONDS)
+
+    async def _stop_listener(self, task_id: str) -> None:
+        listener = self.listeners.pop(task_id, None)
+        if listener is not None:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
+
+    def _clear_task_signals(self, task_id: str) -> None:
+        self.event_wakes.pop(task_id, None)
+        self.event_cursors.pop(task_id, None)
+        self.health_checks.pop(task_id, None)
+        clear = getattr(self.runner, "clear_platform_catalog", None)
+        if clear is not None:
+            clear(task_id)
 
     def waiting(self, task_id: str, stage: str) -> None:
         self.control_waits[task_id] = (stage, monotonic())
@@ -184,7 +284,7 @@ class CtfCoordinator:
                 return
             except RemoteError:
                 continue
-            await self.service.runtime(
+            completed = await self.service.runtime(
                 task_id,
                 "complete_member_operation",
                 member_id=member["id"],
@@ -192,6 +292,21 @@ class CtfCoordinator:
                 proof=proof,
                 **({"checkpoint_failure": checkpoint_failure} if checkpoint_failure else {}),
             )
+            key = (task_id, member["id"])
+            pending = getattr(self.runner, "pending_settlements", {}).get(key)
+            if (
+                pending is not None
+                and pending[1]["id"] == member.get("current_turn_id")
+                and pending[1]["generation"] == member["generation"]
+                and isinstance(completed, dict)
+                and completed.get("id") == member["id"]
+                and any(
+                    item.get("request_id") == operation["request_id"]
+                    for item in completed.get("operation_history", [])
+                )
+            ):
+                self.runner.pending_settlements.pop(key, None)
+                getattr(self.runner, "settlement_retries", {}).pop(key, None)
 
     async def recover(self, task_id: str) -> None:
         pending = [future for (tid, _), (future, _) in self.active.items() if tid == task_id]
@@ -225,6 +340,11 @@ class CtfCoordinator:
         entries = getattr(self.runner, "pending_settlements", {})
         for key in [key for key in entries if key[0] == task_id]:
             del entries[key]
+        attempts = getattr(self.runner, "settlement_retries", {})
+        for key in [key for key in attempts if key[0] == task_id]:
+            del attempts[key]
+        for key in [key for key in self.review_recovery_waits if key[0] == task_id]:
+            del self.review_recovery_waits[key]
 
     async def renew(self, task_id: str, agent_id: str, turn: dict[str, Any]) -> None:
         key = (task_id, agent_id)
@@ -278,6 +398,8 @@ class CtfCoordinator:
 
     async def _tick(self, task_id: str) -> bool:
         state = await self.service.runtime_state(task_id)
+        if type(state.get("event_version")) is int:
+            self.event_cursors.setdefault(task_id, state["event_version"])
         phase = state["task"]["ctf_control"]["phase"]
         if phase == "closed":
             self.close_retries.pop(task_id, None)
@@ -291,19 +413,29 @@ class CtfCoordinator:
         self.waiting(task_id, "execution_status")
         envd = await self.adapter(task_id)
         if isinstance(envd, CtfExecutionAdapter):
-            root = await envd.envd.ctf_status()
             bindings = [m.get("execution") for m in state["members"] if m.get("execution")]
-            if root.get("state") == "unknown" or any(
-                (
-                    binding.get("replacement_boot_id")
-                    if binding.get("container_destroyed")
-                    else binding["boot_id"]
-                )
-                != root.get("boot_id")
-                for binding in bindings
-            ):
-                await self.replace_execution(task_id)
-                return True
+            signature = json.dumps(
+                [
+                    state["task"]["ctf_control"].get("replacement"),
+                    [(m["id"], m.get("generation"), m.get("execution")) for m in state["members"]],
+                ],
+                sort_keys=True,
+            )
+            previous = self.health_checks.get(task_id)
+            if previous is None or previous[0] != signature or monotonic() >= previous[1]:
+                root = await envd.envd.ctf_status()
+                if root.get("state") == "unknown" or any(
+                    (
+                        binding.get("replacement_boot_id")
+                        if binding.get("container_destroyed")
+                        else binding["boot_id"]
+                    )
+                    != root.get("boot_id")
+                    for binding in bindings
+                ):
+                    await self.replace_execution(task_id)
+                    return True
+                self.health_checks[task_id] = (signature, monotonic() + HEALTH_SECONDS)
         retry_settlements = getattr(self.runner, "retry_settlements", None)
         if retry_settlements is not None:
             self.waiting(task_id, "retry_settlements")
@@ -329,18 +461,58 @@ class CtfCoordinator:
             if key[0] != task_id:
                 continue
             if future.done():
-                del self.active[key]
-                self.renewals.pop(key, None)
                 error = None if future.cancelled() else future.exception()
+                if error is not None and is_control_transport_error(error):
+                    logger.warning(
+                        "CTF turn control transport deferred task_id=%s member_id=%s "
+                        "turn_id=%s generation=%s error_type=%s",
+                        task_id,
+                        key[1],
+                        turn["id"],
+                        turn["generation"],
+                        type(error).__name__,
+                    )
+                    if key not in getattr(
+                        self.runner, "pending_checkpoints", {}
+                    ) and key not in getattr(self.runner, "pending_settlements", {}):
+                        member = next(
+                            (m for m in state["members"] if m["id"] == key[1]),
+                            {"id": key[1]},
+                        )
+                        try:
+                            await self.runner.settle(
+                                task_id,
+                                member,
+                                turn,
+                                "interrupted",
+                                "黑板控制连接中断，本回合停止；已确认会话和记录保留，未知操作不重放。",
+                            )
+                        except Exception as settlement_error:
+                            error = settlement_error
+                        else:
+                            error = None
+                    else:
+                        error = None
                 if error is not None:
                     # An unconfirmed checkpoint must remain recoverable. Close admission
                     # before recovery settles it as interrupted, never as success.
                     await self.request_close(
                         task_id,
                         "system_failure",
-                        failure=failure_diagnostic("turn", error),
+                        failure=failure_diagnostic(
+                            "turn",
+                            error,
+                            task_id=task_id,
+                            member_id=key[1],
+                            turn_id=turn["id"],
+                            generation=turn["generation"],
+                        ),
                     )
+                    del self.active[key]
+                    self.renewals.pop(key, None)
                     return True
+                del self.active[key]
+                self.renewals.pop(key, None)
             elif phase == "running":
                 try:
                     self.waiting(task_id, "renew_turn")
@@ -367,12 +539,27 @@ class CtfCoordinator:
                     # this lease renewal. A fenced 409 is then an expected race.
         if phase == "closing":
             return await self._close_tick(task_id, state)
+        checkpoints = getattr(self.runner, "pending_checkpoints", {})
+        retry_checkpoints = getattr(self.runner, "retry_checkpoints", None)
+        if (
+            retry_checkpoints is not None
+            and any(key[0] == task_id for key in checkpoints)
+            and all(
+                key not in self.active or self.active[key][0].done()
+                for key in checkpoints
+                if key[0] == task_id
+            )
+        ):
+            self.waiting(task_id, "retry_checkpoints")
+            await retry_checkpoints(task_id)
         if phase == "running":
             ready = set(state["ready_member_ids"])
             for member in state["members"]:
                 key = (task_id, member["id"])
                 if (
                     key in self.active
+                    or key in getattr(self.runner, "pending_settlements", {})
+                    or key in getattr(self.runner, "pending_checkpoints", {})
                     or member["lifecycle"] != "active"
                     or member["id"] not in ready
                 ):
@@ -382,8 +569,10 @@ class CtfCoordinator:
                     task_id, "claim_turn", agent_id=member["id"], runtime_instance=self.instance
                 )
                 if turn:
+                    future = asyncio.create_task(self.runner.run(task_id, member, turn))
+                    future.add_done_callback(lambda _, tid=task_id: self.wake(tid))
                     self.active[key] = (
-                        asyncio.create_task(self.runner.run(task_id, member, turn)),
+                        future,
                         turn,
                     )
             if (
@@ -492,17 +681,55 @@ class CtfCoordinator:
             )
             return True
 
+    async def _start_with_recovery(self, task_id: str) -> None:
+        uncertain_start = False
+        for attempt in range(3):
+            try:
+                await self.adapter(task_id)
+                task = (await self.service.runtime_state(task_id))["task"]
+                if task["ctf_control"]["phase"] in {"running", "closing", "closed"}:
+                    return
+                if uncertain_start:
+                    # A lost start response must be reconciled, never blindly dispatched again.
+                    raise httpx.ReadError("CTF startup has not been confirmed")
+                uncertain_start = True
+                await self.service.runtime(task_id, "start")
+                return
+            except (httpx.TransportError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
+                logger.warning(
+                    "CTF startup transport deferred task_id=%s attempt=%s error_type=%s",
+                    task_id,
+                    attempt + 1,
+                    type(error).__name__,
+                )
+                try:
+                    task = (await self.service.runtime_state(task_id))["task"]
+                except (httpx.TransportError, RemoteError):
+                    task = None
+                if task and task["ctf_control"]["phase"] in {"running", "closing", "closed"}:
+                    return
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2**attempt)
+
     async def run(self, task_id: str) -> None:
+        self.event_wakes.setdefault(task_id, asyncio.Event())
+        try:
+            await self._run_task(task_id)
+        finally:
+            await self._stop_listener(task_id)
+            self._clear_task_signals(task_id)
+
+    async def _run_task(self, task_id: str) -> None:
         self.waiting(task_id, "startup")
         try:
-            await self.adapter(task_id)
-            task = (await self.service.runtime_state(task_id))["task"]
-            if task["ctf_control"]["phase"] not in {"closing", "closed"}:
-                await self.service.runtime(task_id, "start")
+            await self._start_with_recovery(task_id)
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            failure = failure_diagnostic("startup", error)
+            failure = failure_diagnostic("startup", error, task_id=task_id)
             try:
                 await self.service.runtime(
                     task_id,
@@ -516,45 +743,141 @@ class CtfCoordinator:
         finally:
             self.control_waits.pop(task_id, None)
         failures = 0
-        while not self.stopping.is_set():
-            delay = self.poll_seconds
+        while not self.stopping.is_set() and task_id in self.event_wakes:
+            wake = self.event_wakes[task_id]
+            wake.clear()
+            delay = FALLBACK_SECONDS if self.poll_seconds else 0
             try:
                 if not await self.tick(task_id):
                     return
                 failures = 0
-                if retry := self.close_retries.get(task_id):
-                    delay = max(delay, retry.next_retry - monotonic())
-            except httpx.TransportError as error:
-                failures += 1
-                logger.warning(
-                    "CTF control transport retry task=%s attempt=%s error_type=%s",
-                    task_id,
-                    failures,
-                    type(error).__name__,
-                )
-                if failures >= 3:
-                    failure = failure_diagnostic("control_transport", error)
+                if task_id in self.close_retries:
+                    delay = self.poll_seconds
+                stream = getattr(getattr(self.service, "client", None), "stream", None)
+                if not callable(stream) or task_id not in self.event_cursors:
+                    delay = self.poll_seconds
+                if (
+                    task_id not in self.listeners
+                    and task_id in self.event_cursors
+                    and callable(stream)
+                ):
+                    self.listeners[task_id] = asyncio.create_task(
+                        self._listen(task_id), name=f"ctf:{task_id}/events"
+                    )
+                    # Subscribe from the pre-tick watermark, then bridge the subscription gap.
+                    continue
+            except (httpx.TransportError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    failure = failure_diagnostic("control_protocol", error, task_id=task_id)
                     await self.request_close(task_id, "system_failure", failure=failure)
-                    raise
-                delay = max(self.poll_seconds, min(2 ** (failures - 1), 4))
+                    delay = self.poll_seconds
+                else:
+                    failures += 1
+                    logger.warning(
+                        "CTF control transport retry task=%s attempt=%s error_type=%s",
+                        task_id,
+                        failures,
+                        type(error).__name__,
+                    )
+                    if failures >= 3:
+                        failure = failure_diagnostic("control_transport", error, task_id=task_id)
+                        await self.request_close(task_id, "system_failure", failure=failure)
+                        raise
+                    delay = max(self.poll_seconds, min(2 ** (failures - 1), 4))
             except Exception as error:
-                failure = failure_diagnostic("tick", error)
+                failure = failure_diagnostic("tick", error, task_id=task_id)
                 # If persistence is unavailable, retain authoritative running/closing
                 # state for recovery rather than manufacture a terminal result.
                 await self.request_close(task_id, "system_failure", failure=failure)
+                delay = self.poll_seconds
             try:
-                await asyncio.wait_for(self.stopping.wait(), delay)
+                if failures:
+                    # Event bursts must not shorten control transport recovery backoff.
+                    await asyncio.wait_for(self.stopping.wait(), delay)
+                    continue
+                deadline = monotonic() + delay
+                await asyncio.wait_for(wake.wait(), delay)
+                if not self.stopping.is_set():
+                    # One fixed window coalesces a burst; new events cannot extend its deadline.
+                    await asyncio.wait_for(
+                        self.stopping.wait(),
+                        min(self.poll_seconds, max(0, deadline - monotonic())),
+                    )
             except TimeoutError:
                 pass
 
     async def stop(self, task_id: str) -> None:
         await self.request_close(task_id, "user_stop")
+        self.wake(task_id)
+
+    async def _retry_review_settlements(self, task_id: str) -> None:
+        for key, (member, turn, reason, answer) in list(
+            getattr(self.runner, "pending_settlements", {}).items()
+        ):
+            if key[0] != task_id or turn.get("purpose") != "review":
+                continue
+            if monotonic() < self.review_recovery_waits.get(key, 0):
+                continue
+            try:
+                await self.runner.settle(task_id, member, turn, reason, answer)
+            except CtfControlTransportExhausted as error:
+                running = self.review_active.get(key)
+                if (running is not None and not running[0].done()) or key in getattr(
+                    self.runner, "pending_checkpoints", {}
+                ):
+                    self.review_recovery_waits[key] = monotonic() + 30
+                    continue
+                if running is not None and not running[0].cancelled():
+                    running[0].exception()
+                self.review_recovery_waits[key] = monotonic() + 30
+                try:
+                    result = await self.service.runtime(
+                        task_id,
+                        "recover_reviews",
+                        runtime_instance=self.instance,
+                        failed_turn_id=turn["id"],
+                        agent_id=member["id"],
+                        generation=turn["generation"],
+                        joined=True,
+                        answer=answer,
+                        failure=failure_diagnostic("review_settlement", error),
+                    )
+                    saved = result["turn"]
+                    if (
+                        saved.get("status") != "finished"
+                        or saved.get("id") != turn["id"]
+                        or saved.get("purpose") != "review"
+                        or saved.get("agent_id") != member["id"]
+                        or saved.get("generation") != turn["generation"]
+                        # A prior targeted recovery may have committed before its ACK was lost.
+                        or saved.get("end_reason") not in {reason, "interrupted"}
+                        or saved.get("final_answer") != answer
+                    ):
+                        raise RuntimeError("Joined review recovery result does not match")
+                except (httpx.TransportError, RemoteError) as recovery_error:
+                    logger.warning(
+                        "CTF joined review recovery deferred task_id=%s member_id=%s "
+                        "turn_id=%s generation=%s error_type=%s status=%s",
+                        task_id,
+                        member["id"],
+                        turn["id"],
+                        turn["generation"],
+                        type(recovery_error).__name__,
+                        getattr(recovery_error, "status", None),
+                    )
+                    continue
+                self.runner.pending_settlements.pop(key, None)
+                getattr(self.runner, "settlement_retries", {}).pop(key, None)
+                self.review_recovery_waits.pop(key, None)
+                self.review_active.pop(key, None)
+                self.renewals.pop(key, None)
 
     async def review_tick(self, task_id: str) -> None:
         """Review owns separate turns and never provisions an execution environment."""
         if task_id not in self.review_recovered:
             await self.service.runtime(task_id, "recover_reviews", runtime_instance=self.instance)
             self.review_recovered.add(task_id)
+        await self._retry_review_settlements(task_id)
         for key, (future, turn) in list(self.review_active.items()):
             if key[0] != task_id:
                 continue
@@ -562,6 +885,8 @@ class CtfCoordinator:
                 error = None if future.cancelled() else future.exception()
                 if key in self.runner.pending_checkpoints:
                     await self.runner.retry_checkpoints(task_id)
+                elif key in getattr(self.runner, "pending_settlements", {}):
+                    pass
                 elif error is not None:
                     await self.runner.settle(
                         task_id, {"id": key[1]}, turn, "failed", "复盘中断，可重试。"
@@ -577,7 +902,12 @@ class CtfCoordinator:
         ready = set(state["review_ready_member_ids"])
         for member in state["members"]:
             key = (task_id, member["id"])
-            if key in self.review_active or member["id"] not in ready:
+            if (
+                key in self.review_active
+                or key in getattr(self.runner, "pending_settlements", {})
+                or key in getattr(self.runner, "pending_checkpoints", {})
+                or member["id"] not in ready
+            ):
                 continue
             turn = await self.service.runtime(
                 task_id, "claim_review_turn", agent_id=member["id"], runtime_instance=self.instance
@@ -590,6 +920,9 @@ class CtfCoordinator:
 
     async def detach(self, task_id: str, *, deleting: bool = False) -> None:
         """Join local writers and discard per-run transport state without destroying files."""
+        await self._stop_listener(task_id)
+        self.wake(task_id)
+        self._clear_task_signals(task_id)
         futures = [
             future
             for group in (self.active, self.review_active)
@@ -620,6 +953,12 @@ class CtfCoordinator:
 
     async def close(self) -> None:
         self.stopping.set()
+        for task_id in list(self.event_wakes):
+            self.wake(task_id)
+        for task_id in list(self.listeners):
+            await self._stop_listener(task_id)
+        for task_id in set(self.event_wakes) | set(self.envds):
+            self._clear_task_signals(task_id)
         futures = [
             future for group in (self.active, self.review_active) for future, _ in group.values()
         ]

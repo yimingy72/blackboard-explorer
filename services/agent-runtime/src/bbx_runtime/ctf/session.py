@@ -99,6 +99,40 @@ class TurnSessionClient:
                     ],
                     **payload,
                 )
+                if (
+                    not isinstance(result, dict)
+                    or type(result.get("revision")) is not int
+                    or result["revision"] != payload["expected_revision"] + 1
+                ):
+                    raise httpx.RemoteProtocolError("CTF checkpoint response lacks write proof")
+                if "checkpoint_id" in result:
+                    expected = {
+                        "task_id": task_id,
+                        "agent_id": agent_id,
+                        "turn_id": str(self.turn["id"]),
+                        "generation": self.turn["generation"],
+                        "purpose": self.turn.get("purpose", "execution"),
+                        "checkpoint_id": payload["session"]
+                        .get("state", {})
+                        .get("bbx_checkpoint_id"),
+                        "revision": payload["expected_revision"] + 1,
+                    }
+                    delivered = result.get("delivered_message_ids")
+                    if (
+                        any(result.get(key) != value for key, value in expected.items())
+                        or type(result.get("generation")) is not int
+                        or not isinstance(delivered, list)
+                        or any(not isinstance(value, str) for value in delivered)
+                        or len(delivered) != len(set(delivered))
+                        or set(delivered) != {str(item["id"]) for item in deliveries}
+                    ):
+                        raise httpx.RemoteProtocolError("CTF checkpoint response lacks write proof")
+                elif (
+                    result.get("session") != payload["session"]
+                    or result.get("opening_instructions") != payload["opening_instructions"]
+                    or result.get("origin") != "native"
+                ):
+                    raise httpx.RemoteProtocolError("CTF checkpoint response lacks write proof")
                 self.write_error = None
                 break
             except (httpx.TransportError, ConnectionError, RemoteError) as error:

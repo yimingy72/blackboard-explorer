@@ -20,9 +20,9 @@ prompts:
   teammate: prompts/teammate.md.j2
 worker_tools:
   lead:
-    builtin: [list_members, send_message, create_teammate, stop_teammate, resume_teammate, remove_teammate, finish_task, set_verification_required, confirm_messages, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate]
+    builtin: [list_members, send_message, create_teammate, stop_teammate, resume_teammate, remove_teammate, finish_task, set_verification_required, confirm_messages, list_deferred_messages, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate, read_turn_result, read_saved_tool_result]
   teammate:
-    builtin: [list_members, send_message, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate]
+    builtin: [list_members, send_message, execute_command, list_challenges, get_challenge, create_challenge, update_challenge, list_records, append_record, register_artifact, request_help, record_candidate, read_turn_result, read_saved_tool_result]
 exec_image: bbx-exec-env:latest
 exec_resources:
   cpus: 2

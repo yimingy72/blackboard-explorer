@@ -12,6 +12,7 @@ from bbx_contracts.ctf import CtfAgentProfile
 from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
+from bbx_runtime.clients.blackboard import is_control_transport_error
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.execenv.archive import ArchiveCapacityError
@@ -43,11 +44,24 @@ class TaskSupervisor:
         self.cleanups: dict[str, asyncio.Task[None]] = {}
         self.cleaned: set[str] = set()
         self.archive_blocked: set[str] = set()
+        self.pending_starts: dict[str, ExecEnvHandle] = {}
+        self.start_retries: dict[str, tuple[int, float]] = {}
         self.stopping = asyncio.Event()
         self.tick_lock = asyncio.Lock()
         self.ctf: CtfCoordinator | None = None
         self.ctf_tasks: dict[str, asyncio.Task[None]] = {}
         self.ctf_wait_warnings: dict[str, tuple[str, float]] = {}
+
+    def _defer_start(self, tid: str, error: Exception) -> None:
+        attempt = min(self.start_retries.get(tid, (0, 0))[0] + 1, 5)
+        self.start_retries[tid] = (attempt, monotonic() + min(2**attempt, 30))
+        LOGGER.warning(
+            "Task startup control deferred task=%s attempt=%s error_type=%s status=%s",
+            tid,
+            attempt,
+            type(error).__name__,
+            getattr(error, "status", None),
+        )
 
     def _ctf(self) -> CtfCoordinator:
         if self.ctf is None:
@@ -180,7 +194,12 @@ class TaskSupervisor:
 
     async def recover(self) -> None:
         for listed in await self.service.list_tasks():
+            if self.stopping.is_set():
+                return
             tid = str(listed["id"])
+            # A partial startup retry must not finish agents launched by this instance.
+            if tid in self.loops or tid in self.ctf_tasks:
+                continue
             if listed.get("mode", "blackboard") == "ctf":
                 if listed["status"] == "running":
                     await self._ctf().recover(tid)
@@ -189,17 +208,25 @@ class TaskSupervisor:
             state = await self.service.state(tid)
             # No previous Python coroutine can survive the exclusive runtime lock handoff.
             for aid, agent in state["agents"].items():
+                if self.stopping.is_set():
+                    return
                 if agent["status"] in ACTIVE:
+                    reconcile = getattr(self.runner, "reconcile_final_receipt", None)
+                    if asyncio.iscoroutinefunction(reconcile) and await reconcile(
+                        tid, aid, agent, state["task"]
+                    ):
+                        continue
+                    finish_options: dict[str, Any] = (
+                        {"expected_derive_round": int(agent.get("derive_round") or 1)}
+                        if agent.get("task_type") == "derive"
+                        else {}
+                    )
                     await self.service.finish_agent(
                         tid,
                         aid,
                         {"accepted": False, "reason": "运行器重启"},
                         "runtime_restart",
-                        **(
-                            {"expected_derive_round": int(agent.get("derive_round") or 1)}
-                            if agent.get("task_type") == "derive"
-                            else {}
-                        ),
+                        **finish_options,
                     )
             state = await self.service.state(tid)
             status = state["task"]["status"]
@@ -217,6 +244,8 @@ class TaskSupervisor:
                     continue
                 await self._start(state, handle)
             except Exception as error:
+                if is_control_transport_error(error):
+                    raise
                 LOGGER.error("Recovery failed for task %s: %s", tid, type(error).__name__)
                 await self._fail_if_active(tid, "执行环境丢失或无法恢复")
 
@@ -254,16 +283,22 @@ class TaskSupervisor:
                 expired = (now - requested).total_seconds() >= params.grace_timeout * 60
                 task = loop.executor.tasks.get(aid) if loop is not None else None
                 if task is None or task.done():
+                    reconcile = getattr(self.runner, "reconcile_final_receipt", None)
+                    if asyncio.iscoroutinefunction(reconcile) and await reconcile(
+                        tid, aid, agent, state["task"]
+                    ):
+                        continue
+                    finish_options: dict[str, Any] = (
+                        {"expected_derive_round": int(agent.get("derive_round") or 1)}
+                        if agent.get("task_type") == "derive"
+                        else {}
+                    )
                     await self.service.finish_agent(
                         tid,
                         aid,
                         {"accepted": False, "reason": "运行协程已不存在"},
                         "runtime_restart",
-                        **(
-                            {"expected_derive_round": int(agent.get("derive_round") or 1)}
-                            if agent.get("task_type") == "derive"
-                            else {}
-                        ),
+                        **finish_options,
                     )
                 elif expired:
                     await loop.executor.cancel(  # type: ignore[union-attr]
@@ -374,6 +409,10 @@ class TaskSupervisor:
             await loop.stop(reason="runtime_restart")
             await self.loop_tasks.pop(tid)
         await self.manager.destroy(tid)
+        # Purge can commit before its HTTP response is lost. The destroyed handle
+        # must not keep a deleted task's slot reserved in the startup cache.
+        self.pending_starts.pop(tid, None)
+        self.start_retries.pop(tid, None)
         await self.service.purge_task(tid)
         self.cleaned.discard(tid)
         self.archive_blocked.discard(tid)
@@ -449,6 +488,30 @@ class TaskSupervisor:
                     if task["status"] == "provisioning":
                         self.archive_blocked.discard(tid)
                     continue
+            if task["status"] in TERMINAL:
+                self.pending_starts.pop(tid, None)
+                self.start_retries.pop(tid, None)
+            elif (
+                task.get("mode", "blackboard") != "ctf"
+                and task["status"] in {"running", "closing"}
+                and tid in self.pending_starts
+                and tid not in self.loops
+                and monotonic() >= self.start_retries.get(tid, (0, 0))[1]
+            ):
+                try:
+                    fresh = await self.service.state(tid)
+                    if fresh["task"]["status"] in {"running", "closing"}:
+                        await self._start(fresh, self.pending_starts[tid])
+                        self.pending_starts.pop(tid, None)
+                        self.start_retries.pop(tid, None)
+                except Exception as error:
+                    if is_control_transport_error(error):
+                        self._defer_start(tid, error)
+                    else:
+                        LOGGER.error(
+                            "Startup recovery failed for task %s: %s", tid, type(error).__name__
+                        )
+                        await self._fail_if_active(tid, "执行环境启动恢复失败")
             if task["status"] == "provisioning":
                 self.archive_blocked.discard(tid)
             if (
@@ -463,43 +526,69 @@ class TaskSupervisor:
         occupied.update(self.cleanups)
         occupied.update(self.loops)
         occupied.update(self.ctf_tasks)
+        occupied.update(self.pending_starts)
         queue = sorted(
             (t for t in tasks if t["status"] == "provisioning"), key=lambda t: str(t["created_at"])
         )
         for task in queue:
-            if self.stopping.is_set() or len(occupied) >= self.settings.max_running_tasks:
+            if self.stopping.is_set():
                 break
             tid = str(task["id"])
+            if (
+                len(occupied) >= self.settings.max_running_tasks and tid not in self.pending_starts
+            ) or monotonic() < self.start_retries.get(tid, (0, 0))[1]:
+                continue
             self.cleaned.discard(tid)
             try:
                 if task.get("mode", "blackboard") == "ctf":
                     await self._start_ctf(tid)
                     occupied.add(tid)
                     continue
-                profile = load_runtime_profile(
-                    await self.service.get_profile(
-                        task["agent_profile"], task["agent_profile_version"]
+                handle = self.pending_starts.get(tid)
+                if handle is None:
+                    profile = load_runtime_profile(
+                        await self.service.get_profile(
+                            task["agent_profile"], task["agent_profile_version"]
+                        )
                     )
-                )
-                restore_uri = task.get("resume_workspace_uri")
-                handle = (
-                    await self.manager.provision(tid, profile, restore_uri)
-                    if restore_uri
-                    else await self.manager.provision(tid, profile)
-                )
+                    restore_uri = task.get("resume_workspace_uri")
+                    handle = (
+                        await self.manager.provision(tid, profile, restore_uri)
+                        if restore_uri
+                        else await self.manager.provision(tid, profile)
+                    )
+                    # A successful handle includes restore/readiness confirmation.
+                    # Retain it across control failures instead of provisioning again.
+                    self.pending_starts[tid] = handle
                 occupied.add(tid)
                 fresh = await self.service.state(tid)
-                if fresh["task"]["status"] != "provisioning":
-                    continue
-                attachments = fresh["task"].get("initial_attachments", [])
-                if attachments:
-                    await self.manager.ensure_initial_inputs(handle, attachments)
-                await self.service.transition(tid, "running")
-                self.cleaned.discard(tid)
-                await self._start(await self.service.state(tid), handle)
+                if fresh["task"]["status"] == "provisioning":
+                    attachments = fresh["task"].get("initial_attachments", [])
+                    if attachments:
+                        await self.manager.ensure_initial_inputs(handle, attachments)
+                    try:
+                        await self.service.transition(tid, "running")
+                    except RemoteError as error:
+                        if error.status not in {409, 422} or error.code != "invalid_transition":
+                            raise
+                        # The guarded transition can have committed after a prior
+                        # read. Never turn this expected race into a failed task.
+                        fresh = await self.service.state(tid)
+                        if fresh["task"]["status"] not in {"running", "closing", *TERMINAL}:
+                            raise
+                    else:
+                        fresh = await self.service.state(tid)
+                if fresh["task"]["status"] in {"running", "closing"}:
+                    self.cleaned.discard(tid)
+                    await self._start(fresh, handle)
+                    self.pending_starts.pop(tid, None)
+                    self.start_retries.pop(tid, None)
             except Exception as error:
-                LOGGER.error("Provisioning failed for task %s: %s", tid, type(error).__name__)
-                await self._fail_if_active(tid, "执行环境创建失败")
+                if is_control_transport_error(error):
+                    self._defer_start(tid, error)
+                else:
+                    LOGGER.error("Provisioning failed for task %s: %s", tid, type(error).__name__)
+                    await self._fail_if_active(tid, "执行环境创建失败")
         for tid, future in list(self.loop_tasks.items()):
             if future.done() and tid not in self.cleanups:
                 try:
@@ -512,8 +601,28 @@ class TaskSupervisor:
                     await self._fail_if_active(tid, "调度循环异常退出")
 
     async def run(self) -> None:
-        async with self.tick_lock:
-            await self.recover()
+        attempts = 0
+        while not self.stopping.is_set():
+            try:
+                async with self.tick_lock:
+                    await self.recover()
+            except Exception as error:
+                if not is_control_transport_error(error):
+                    raise
+                attempts += 1
+                LOGGER.warning(
+                    "Task startup recovery deferred attempt=%s error_type=%s",
+                    attempts,
+                    type(error).__name__,
+                )
+                try:
+                    await asyncio.wait_for(
+                        self.stopping.wait(), timeout=min(2 ** min(attempts, 5), 30)
+                    )
+                except TimeoutError:
+                    pass
+            else:
+                break
         while not self.stopping.is_set():
             try:
                 await self.tick()
@@ -545,3 +654,5 @@ class TaskSupervisor:
         self.cleanups.clear()
         self.loops.clear()
         self.loop_tasks.clear()
+        self.pending_starts.clear()
+        self.start_retries.clear()

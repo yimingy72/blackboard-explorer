@@ -12,6 +12,7 @@ import httpx
 from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 
 from .decision import decide
 from .executor import ActionExecutor
@@ -62,7 +63,9 @@ class SchedulerLoop:
                 return
             try:
                 state = await self.service.state(self.task_id)
-            except httpx.TransportError as error:
+            except (httpx.TransportError, ConnectionError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
                 logger.warning(
                     "Task %s decision tick reconnecting phase=read_state error=%s",
                     self.task_id,
@@ -75,7 +78,9 @@ class SchedulerLoop:
             actions = decide(state, self.params, self.now())
             try:
                 await self.executor.execute(actions)
-            except httpx.TransportError as error:
+            except (httpx.TransportError, ConnectionError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
                 logger.warning(
                     "Task %s decision tick reconnecting phase=apply_actions error=%s",
                     self.task_id,

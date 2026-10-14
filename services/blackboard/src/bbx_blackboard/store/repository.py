@@ -419,7 +419,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         )
     elif kind == "agent.progress":
         agent = await row(conn, s.agent_runs, tid, p["agent_id"])
-        values: dict[str, Any] = {"last_heartbeat_at": stamp}
+        values: dict[str, Any] = {} if p.get("accounting_only") else {"last_heartbeat_at": stamp}
         if "steps" in p:
             values["steps"] = agent["steps"] + p["steps"]
         if "context_tokens" in p:
@@ -611,7 +611,9 @@ class Repository:
         if found.scalar_one_or_none() is None:
             raise KeyError(f"task {tid} does not exist")
 
-    async def load(self, conn: AsyncConnection, tid: UUID) -> BoardState:
+    async def load(
+        self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
+    ) -> BoardState:
         task = await row(conn, s.tasks, tid)
         task["version"] = (
             await conn.execute(
@@ -645,7 +647,7 @@ class Repository:
             await mapped(s.facts),
             await mapped(s.intents),
             await mapped(s.agent_runs),
-            await mapped(s.tool_calls),
+            await mapped(s.tool_calls) if include_tool_calls else {},
             {x["kind"]: x["value"] for x in counts},
         )
 
@@ -720,10 +722,15 @@ class Repository:
             for evt in log:
                 await apply(conn, evt)
 
-    async def notify(self, tid: UUID, version: int) -> None:
+    async def notify(
+        self, tid: UUID, version: int, *, connection: AsyncConnection | None = None
+    ) -> None:
+        if connection is None:
+            async with self.engine.begin() as conn:
+                await self.notify(tid, version, connection=conn)
+            return
         channel = f"bbx_task_{tid.hex}"
-        async with self.engine.begin() as conn:
-            await conn.execute(
-                text("SELECT pg_notify(:channel, :version)"),
-                {"channel": channel, "version": str(version)},
-            )
+        await connection.execute(
+            text("SELECT pg_notify(:channel, :version)"),
+            {"channel": channel, "version": str(version)},
+        )

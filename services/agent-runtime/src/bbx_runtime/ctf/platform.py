@@ -4,32 +4,146 @@ import asyncio
 import hashlib
 import io
 import json
-from typing import Any
+import logging
+import sys
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Any
 from uuid import uuid4
 
-import httpx
-from agent_framework import FunctionInvocationContext, tool
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool, tool
+from mcp import types
+from pydantic import Field
+
+from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.ctf.tool_results import ToolJsonResult, recoverable_tool_error
+
+logger = logging.getLogger(__name__)
+
+
+class PlatformCatalogCache:
+    """Task-scoped pinned metadata; connection credentials never live in this cache."""
+
+    def __init__(self) -> None:
+        self.tasks: dict[str, dict[str, tuple[asyncio.Lock, dict[str, Any]]]] = {}
+
+    def clear(self, task_id: str) -> None:
+        self.tasks.pop(task_id, None)
+
+    async def get(
+        self, task_id: str, identity: str, load: Callable[[], Awaitable[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        entries = self.tasks.setdefault(task_id, {})
+        lock, value = entries.setdefault(identity, (asyncio.Lock(), {}))
+        async with lock:
+            if not value:
+                value.update(await load())
+            return value
 
 
 class PlatformAdapter:
-    def __init__(self, service: Any, objects_factory: Any, transport: Any = None) -> None:
+    def __init__(
+        self,
+        service: Any,
+        objects_factory: Any,
+        transport: Any = None,
+        catalog_cache: PlatformCatalogCache | None = None,
+    ) -> None:
         self.service = service
         self.objects_factory = objects_factory
         self.transport = transport
+        self.catalog_cache = catalog_cache or PlatformCatalogCache()
+        self.connections: dict[str, MCPStreamableHTTPTool] = {}
+        self.connection_locks: dict[str, asyncio.Lock] = {}
+
+    @staticmethod
+    def identity(server: dict, headers: dict, **scope: Any) -> str:
+        return hashlib.sha256(
+            json.dumps({"server": server, "headers": headers, **scope}, sort_keys=True).encode()
+        ).hexdigest()
+
+    async def _close_connection(self, connection: MCPStreamableHTTPTool) -> None:
+        primary = sys.exception()
+        cleanup = None
+        try:
+            if primary is None:
+                await connection.close()
+            else:
+                cleanup = asyncio.create_task(connection.close())
+                await asyncio.wait_for(asyncio.shield(cleanup), timeout=2)
+        except (Exception, asyncio.CancelledError) as error:
+            if isinstance(error, asyncio.CancelledError) and primary is None:
+                raise
+            if cleanup is not None and not cleanup.done():
+                if isinstance(error, asyncio.CancelledError):
+                    try:
+                        await asyncio.wait({cleanup}, timeout=2)
+                    except asyncio.CancelledError:
+                        pass
+                if not cleanup.done():
+                    cleanup.cancel()
+                    try:
+                        await asyncio.wait({cleanup}, timeout=2)
+                    except asyncio.CancelledError:
+                        pass
+                # Retrieve any late cleanup error, including after a bounded join expires.
+                cleanup.add_done_callback(
+                    lambda done: None if done.cancelled() else done.exception()
+                )
+            logger.warning("CTF MCP cleanup failed error_type=%s", type(error).__name__)
+
+    async def close(self) -> None:
+        connections, self.connections = self.connections, {}
+        for connection in connections.values():
+            await self._close_connection(connection)
+
+    async def _connection(
+        self, identity: str, server: dict, headers: dict
+    ) -> MCPStreamableHTTPTool:
+        async with self.connection_locks.setdefault(identity, asyncio.Lock()):
+            if identity not in self.connections:
+                connection = MCPStreamableHTTPTool(
+                    name=server["name"],
+                    url=server["url"],
+                    static_headers=headers,
+                    request_timeout=120,
+                    allowed_tools=[],
+                    load_tools=False,
+                    load_prompts=False,
+                    sampling_max_requests=0,
+                )
+                try:
+                    await connection.connect()
+                except BaseException:
+                    await self._close_connection(connection)
+                    raise
+                self.connections[identity] = connection
+            return self.connections[identity]
 
     async def request(self, server: dict, headers: dict, name: str | None, arguments: dict) -> Any:
         if self.transport is not None:
             return await self.transport(server, headers, name, arguments)
-        async with httpx.AsyncClient(headers=headers, timeout=120) as http:
-            async with streamable_http_client(server["url"], http_client=http) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    if name is None:
-                        return (await session.list_tools()).model_dump(mode="json")
-                    # Intentionally bypass MCPTool's automatic transport retry layer.
-                    return (await session.call_tool(name, arguments)).model_dump(mode="json")
+        identity = self.identity(server, headers)
+        connection = await self._connection(identity, server, headers)
+        try:
+            session = connection.session
+            if session is None:
+                raise RuntimeError("MCP session is unavailable")
+            if name is None:
+                catalog = []
+                params = None
+                while True:
+                    page = await session.list_tools(params=params)
+                    catalog.extend(item.model_dump(mode="json") for item in page.tools)
+                    if not page.nextCursor:
+                        return {"tools": catalog}
+                    params = types.PaginatedRequestParams(cursor=page.nextCursor)
+            # MCPTool retries writes; the public session API sends once and validates results.
+            return (await session.call_tool(name, arguments)).model_dump(mode="json")
+        except BaseException:
+            if self.connections.get(identity) is connection:
+                self.connections.pop(identity)
+                await self._close_connection(connection)
+            raise
 
     async def build(
         self,
@@ -69,8 +183,23 @@ class PlatformAdapter:
                 if not isinstance(secret, str) or not secret:
                     raise ValueError("MCP credential is unavailable")
                 headers[server["auth_header"]] = f"{server['auth_scheme']} {secret}".strip()
-            catalog = await self.request(server, headers, None, {})
-            catalog = {item["name"]: item for item in catalog["tools"]}
+
+            async def load_catalog(server=server, headers=headers):
+                catalog = await self.request(server, headers, None, {})
+                return {"tools": {item["name"]: item for item in catalog["tools"]}}
+
+            catalog = (
+                await self.catalog_cache.get(
+                    task_id,
+                    self.identity(
+                        server,
+                        headers,
+                        role=role,
+                        allowed_tools=sorted(grant.allowed_tools or []),
+                    ),
+                    load_catalog,
+                )
+            )["tools"]
             for binding in selected:
                 if binding.tool_name not in catalog:
                     raise ValueError("Configured MCP tool is unavailable")
@@ -107,10 +236,10 @@ class PlatformAdapter:
         )
         async def invoke(
             challenge_id: str,
-            expected_revision: int,
+            expected_revision: Annotated[int, Field(ge=1)],
             arguments: dict[str, Any],
             ctx: FunctionInvocationContext,
-        ) -> str:
+        ) -> ToolJsonResult:
             cancelled = False
             checkpoint = checkpoint_provider()
             identity = dict(
@@ -140,11 +269,19 @@ class PlatformAdapter:
             occurrence = ctx.metadata.get("function_call_occurrence_id") or occurrence
             key = f"{turn['id']}:{occurrence}"
             entry: Any = calls.get(key)
-            if entry is None:
-                await self.service.runtime(task_id, "authorize_platform_call", **identity)
+            if entry is not None and entry["digest"] != digest:
+                raise ValueError("Platform occurrence arguments changed")
+            if entry is None or entry["state"] == "rejected":
+                try:
+                    await self.service.runtime(task_id, "authorize_platform_call", **identity)
+                except RemoteError as error:
+                    if feedback := recoverable_tool_error(error):
+                        return feedback
+                    raise
                 # A changed model occurrence must not blindly repeat an uncertain write.
                 if not binding.read_only and any(
                     item["digest"] == digest
+                    and item["state"] != "rejected"
                     and (item["state"] in {"dispatched", "unknown"} or "record" not in item)
                     for item in calls.values()
                 ):
@@ -154,15 +291,29 @@ class PlatformAdapter:
                             "message": "Prior call outcome unknown; query platform status.",
                         }
                     )
-                entry = calls[key] = {
-                    "digest": digest,
-                    "call_id": str(uuid4()),
-                    "state": "dispatched",
-                }
+                if entry is None:
+                    entry = calls[key] = {
+                        "digest": digest,
+                        "call_id": str(uuid4()),
+                        "state": "prepared",
+                    }
+                else:
+                    entry["state"] = "prepared"
                 await checkpoint.save()
-                await self.service.runtime(
-                    task_id, "begin_platform_call", **identity, call_id=entry["call_id"]
-                )
+                try:
+                    await self.service.runtime(
+                        task_id, "begin_platform_call", **identity, call_id=entry["call_id"]
+                    )
+                except RemoteError as error:
+                    if 400 <= error.status < 500:
+                        # An explicit preflight rejection proves the MCP request never started.
+                        entry["state"] = "rejected"
+                        await checkpoint.save()
+                        if feedback := recoverable_tool_error(error):
+                            return feedback
+                    raise
+                entry["state"] = "dispatched"
+                await checkpoint.save()
                 try:
                     entry["response"] = await self.request(
                         server, headers, binding.tool_name, arguments
@@ -180,8 +331,13 @@ class PlatformAdapter:
                         response={"status": "unknown", "error": "transport outcome unknown"},
                     )
                 await checkpoint.save()
-            elif entry["digest"] != digest:
-                raise ValueError("Platform occurrence arguments changed")
+            elif entry["state"] == "prepared":
+                return json.dumps(
+                    {
+                        "status": "unknown",
+                        "message": "Prior call preflight outcome unknown; query platform status.",
+                    }
+                )
             if "response" not in entry:
                 entry.update(
                     state="unknown",

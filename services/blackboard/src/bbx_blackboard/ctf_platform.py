@@ -27,6 +27,8 @@ class CtfPlatformMixin:
     _existing: Any
     _artifact_refs: Any
     _board_event: Any
+    _delivery_solution: Any
+    _complete_solution: Any
 
     async def _verification_record(
         self,
@@ -44,6 +46,7 @@ class CtfPlatformMixin:
         expected_revision=None,
         work_status=None,
         preserve_verification=False,
+        solution_record_id=None,
     ):
         applied = expected_revision is None or challenge["revision"] == expected_revision
         result = {
@@ -70,6 +73,8 @@ class CtfPlatformMixin:
                 updated["verification"] = verification
             if work_status is not None:
                 updated["work_status"] = work_status
+            if solution_record_id is not None:
+                updated["solution_record_id"] = solution_record_id
             if target is not None:
                 updated["target"] = target
             await self._board_event(
@@ -140,6 +145,7 @@ class CtfPlatformMixin:
         generation=None,
         turn_id=None,
         work_status=None,
+        solution=None,
     ):
         ensure(status in {"candidate", "unknown"}, "Agents can only declare candidate or unknown")
         ensure(
@@ -159,6 +165,7 @@ class CtfPlatformMixin:
             generation,
             turn_id,
             work_status=work_status,
+            solution=solution,
         )
 
     async def manual_verification(
@@ -206,7 +213,9 @@ class CtfPlatformMixin:
         turn_id,
         user_id=None,
         work_status=None,
+        solution=None,
     ):
+        solution = self._delivery_solution(work_status == "completed", solution)
         async with self.repo.engine.begin() as conn:
             await self._board_write(conn, tid, actor, generation, turn_id)
             previous, digest = await self._existing(
@@ -224,6 +233,7 @@ class CtfPlatformMixin:
                     source=source,
                     user_id=user_id,
                     **({"work_status": work_status} if work_status is not None else {}),
+                    **({"solution": solution} if solution is not None else {}),
                 ),
             )
             if previous:
@@ -237,7 +247,7 @@ class CtfPlatformMixin:
             )
             if work_status is not None:
                 ensure(
-                    actor in {"lead", challenge["owner_id"]},
+                    actor in {"lead", "user", challenge["owner_id"]},
                     "Only the owner or Lead can update work status",
                 )
                 ensure(challenge["owner_id"] is not None, "Challenge needs an owner")
@@ -245,7 +255,7 @@ class CtfPlatformMixin:
                     challenge["work_status"] not in {"completed", "cancelled"},
                     "Reopen the challenge first",
                 )
-            refs = await self._artifact_refs(conn, tid, evidence_refs)
+            refs = await self._artifact_refs(conn, tid, evidence_refs, challenge_id)
             previous_state = challenge["verification"]
             verification = CtfVerification(
                 required=previous_state.get("required", False),
@@ -256,6 +266,19 @@ class CtfPlatformMixin:
                 user_id=user_id,
                 updated_at=now(),
             ).model_dump(mode="json")
+            solution_record = None
+            if solution is not None:
+                solution_record = await self._complete_solution(
+                    conn,
+                    tid,
+                    actor,
+                    challenge,
+                    request_id,
+                    solution,
+                    evidence_refs,
+                    generation=generation,
+                    turn_id=turn_id,
+                )
             return await self._verification_record(
                 conn,
                 tid,
@@ -267,6 +290,7 @@ class CtfPlatformMixin:
                 summary,
                 refs,
                 work_status=work_status,
+                solution_record_id=solution_record["id"] if solution_record else None,
                 preserve_verification=source == "agent"
                 and previous_state.get("source") in {"platform", "user"}
                 and not previous_state.get("test_only"),

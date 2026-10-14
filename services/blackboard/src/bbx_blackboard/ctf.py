@@ -16,13 +16,14 @@ from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import func, insert, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.ctf_board import CtfBoardMixin
 from bbx_blackboard.ctf_lifecycle import CtfLifecycleMixin
 from bbx_blackboard.ctf_platform import CtfPlatformMixin
+from bbx_blackboard.ctf_readback import CtfReadbackMixin
 from bbx_blackboard.ctf_review import CtfReviewMixin
 from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.store import Repository
@@ -184,7 +185,9 @@ def initial_input_parts(fields: dict[str, Any]) -> list[str]:
     ]
 
 
-class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMixin):
+class CtfService(
+    CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMixin, CtfReadbackMixin
+):
     def __init__(self, engine: AsyncEngine, objects=None) -> None:
         self.objects = objects
         self.repo = Repository(engine)
@@ -197,6 +200,121 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         require(not task["deleting"], "Task is deleting")
         return task
 
+    async def cleanup_terminal_context_blocks(self, tid):
+        """Archive legacy terminal blockers without changing history or execution state."""
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            require(task["status"] in {"finished", "failed", "stopped"}, "Task is not terminal")
+            require(task["ctf_control"]["phase"] == "closed", "Task is not closed")
+            running = (
+                await conn.execute(
+                    select(s.ctf_turns.c.id)
+                    .where(s.ctf_turns.c.task_id == tid, s.ctf_turns.c.status == "running")
+                    .limit(1)
+                )
+            ).first()
+            require(running is None, "Task has an active execution or review turn")
+            members = (
+                (await conn.execute(select(s.ctf_members).where(s.ctf_members.c.task_id == tid)))
+                .mappings()
+                .all()
+            )
+            require(
+                not any(
+                    member["current_turn_id"] or member["pending_operation"] for member in members
+                ),
+                "Task has an active member operation or turn",
+            )
+            control = task["ctf_control"]
+            blocked = control.get("context_blocked_members", {})
+            if not blocked:
+                return {"task_id": str(tid), "changed": False, "cleared_members": 0}
+            await patch(conn, s.tasks, tid, {"ctf_control": clear_context_blocks(task, control)})
+            await self._emit(
+                conn,
+                tid,
+                "coordination.reminded",
+                "system",
+                {
+                    "status": "terminal_context_blocks_cleared",
+                    "run_number": task["run_number"],
+                    "cleared_members": len(blocked),
+                },
+            )
+            return {"task_id": str(tid), "changed": True, "cleared_members": len(blocked)}
+
+    async def _recovery_diagnostics(self, conn, tid, control, agent_id=None):
+        """Bound references and numeric context diagnostics without exposing private inputs."""
+        query = select(s.ctf_messages.c.id, s.ctf_messages.c.recipient_id).where(
+            s.ctf_messages.c.task_id == tid,
+            s.ctf_messages.c.purpose == "execution",
+            s.ctf_messages.c.status == "queued",
+            s.ctf_messages.c.deferred.is_(True),
+        )
+        if agent_id is not None:
+            query = query.where(s.ctf_messages.c.recipient_id == agent_id)
+        messages = (
+            (
+                await conn.execute(
+                    query.order_by(
+                        s.ctf_messages.c.recipient_id, s.ctf_messages.c.recipient_sequence
+                    ).limit(51)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        blocked = control.get("context_blocked_members", {})
+        entries = [
+            (aid, entry)
+            for aid, entry in sorted(blocked.items())
+            if agent_id is None or aid == agent_id
+        ]
+        known_branches = {
+            "no_loaded_prefix",
+            "loaded_prefix_mismatch",
+            "unconfirmed_prefix",
+            "missing_recovery_seed",
+            "no_safe_boundary",
+            "unsafe_tool_boundary",
+            "remaining_over_limit",
+            "compacted",
+            "unsafe_loaded_boundary",
+            "unshrinkable_loaded_history",
+            "protected_input",
+            "legacy",
+        }
+        diagnostics = []
+        for aid, entry in entries[:20]:
+            values = {
+                key: value if type(value) is int and 0 <= value <= 1_000_000_000 else None
+                for key in ("eligible", "cut", "estimated_input_tokens", "limit_tokens")
+                for value in [entry.get(key)]
+            }
+            diagnostics.append(
+                {
+                    "agent_id": aid,
+                    "branch": entry.get("branch")
+                    if isinstance(entry.get("branch"), str) and entry["branch"] in known_branches
+                    else "unknown",
+                    **values,
+                }
+            )
+        return {
+            "blocked_members": diagnostics,
+            "blocked_members_truncated": len(entries) > 20,
+            "deferred_messages": [
+                {
+                    "id": message["id"],
+                    "recipient_id": message["recipient_id"],
+                    "status": "queued",
+                    "deferred": True,
+                }
+                for message in messages[:50]
+            ],
+            "deferred_messages_truncated": len(messages) > 50,
+        }
+
     async def _emit(self, conn, tid, kind, actor, payload):
         addressed_to = None
         if kind.startswith("message."):
@@ -205,7 +323,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         elif kind.startswith("turn."):
             turn = await row(conn, s.ctf_turns, tid, payload["id"])
             addressed_to = [turn["agent_id"]]
-        await self.repo.append(
+        events = await self.repo.append(
             conn,
             tid,
             [
@@ -218,6 +336,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 }
             ],
         )
+        await self.repo.notify(tid, events[-1]["version"], connection=conn)
 
     async def _fence(self, conn, tid, aid, generation, turn_id=None):
         member = await row(conn, s.ctf_members, tid, aid)
@@ -248,9 +367,43 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         reservation_id=None,
         reservation_cost: Decimal | str = Decimal(0),
     ):
+        context = await self._authorize_with_budget(
+            tid, agent_id, generation, turn_id, reservation_id, reservation_cost
+        )
+        return context["member"]
+
+    async def authorize_tool(self, tid, agent_id, generation, turn_id):
+        """Fence one tool request and expose only its purpose and fixed profile identity."""
+        context = await self._authorize_with_budget(
+            tid, agent_id, generation, turn_id, allow_review=True
+        )
+        task, member = context["task"], context["member"]
+        return {
+            "task": {key: task[key] for key in ("agent_profile", "agent_profile_version")},
+            "member": {key: member[key] for key in ("id", "role")},
+            "purpose": context["purpose"],
+        }
+
+    async def _authorize_with_budget(
+        self,
+        tid,
+        agent_id,
+        generation,
+        turn_id=None,
+        reservation_id=None,
+        reservation_cost: Decimal | str = Decimal(0),
+        *,
+        allow_review=False,
+    ):
         try:
             return await self._authorize_member(
-                tid, agent_id, generation, turn_id, reservation_id, reservation_cost
+                tid,
+                agent_id,
+                generation,
+                turn_id,
+                reservation_id,
+                reservation_cost,
+                allow_review=allow_review,
             )
         except HTTPException as error:
             if (
@@ -265,7 +418,13 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     raise
                 await self._reconcile_budget(conn, tid)
             return await self._authorize_member(
-                tid, agent_id, generation, turn_id, reservation_id, reservation_cost
+                tid,
+                agent_id,
+                generation,
+                turn_id,
+                reservation_id,
+                reservation_cost,
+                allow_review=allow_review,
             )
 
     async def _authorize_member(
@@ -276,10 +435,16 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         turn_id=None,
         reservation_id=None,
         reservation_cost: Decimal | str = Decimal(0),
+        *,
+        allow_review=False,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
             member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            context = {"task": task, "member": member, "purpose": turn["purpose"]}
+            if allow_review and turn["purpose"] == "review":
+                self._authorize_review(task, turn)
+                return context
             require(turn["purpose"] == "execution", "Execution turn required")
             require(
                 member["run_state"] != "stopping" and not member.get("pending_operation"),
@@ -298,7 +463,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     "Budget reservation conflict",
                 )
                 check_reserved_call(task, key, cost)
-                return member
+                return context
             require(
                 not any(item.get("turn_id") == str(turn["id"]) for item in reservations.values()),
                 "A model call is already reserved for this turn",
@@ -318,7 +483,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     tid,
                     {"ctf_control": {**task["ctf_control"], "budget_reservations": reservations}},
                 )
-            return member
+            return context
 
     async def mark_reservation_sent(self, tid, agent_id, generation, turn_id, reservation_id):
         """Fence a reservation before entering the provider call boundary."""
@@ -562,9 +727,17 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
     async def runtime_state(self, tid):
         """Return scheduling hints; claims and generation fences remain authoritative."""
         async with self.repo.engine.connect() as conn:
+            # Read the cursor first: later commits may appear in state, never be skipped by SSE.
+            event_version = (
+                await conn.execute(
+                    select(func.coalesce(func.max(s.events.c.version), 0)).where(
+                        s.events.c.task_id == tid
+                    )
+                )
+            ).scalar_one()
             task = await row(conn, s.tasks, tid)
             require(task["mode"] == "ctf", "Task mode is not CTF")
-            result: dict[str, Any] = {"task": task}
+            result: dict[str, Any] = {"task": task, "event_version": int(event_version)}
             for key, table in (("members", s.ctf_members), ("turns", s.ctf_turns)):
                 query = select(table).where(table.c.task_id == tid)
                 if key == "turns":
@@ -730,6 +903,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             operation_id = str(
                 uuid5(NAMESPACE_URL, f"ctf-idle:{tid}:{task['run_number']}:{progress}:{attempt}")
             )
+            diagnostics = await self._recovery_diagnostics(conn, tid, control)
             if attempt > limit:
                 if lead_blocked:
                     summary = (
@@ -748,6 +922,9 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                         "Coordination stalled: the completed board received a "
                         "final-summary reminder but no task conclusion."
                     )
+                if diagnostics["deferred_messages"] or diagnostics["blocked_members"]:
+                    summary += " Deferred input references and blocked diagnostics remain saved: "
+                    summary += json.dumps(diagnostics)
                 stored = {
                     **CtfConclusion.model_validate(
                         {
@@ -788,39 +965,13 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 "Review shared results and request the final task conclusion. "
                 "This is the only automatic summary reminder."
             )
-            deferred = (
-                (
-                    await conn.execute(
-                        select(s.ctf_messages.c.id, s.ctf_messages.c.recipient_id)
-                        .where(
-                            s.ctf_messages.c.task_id == tid,
-                            s.ctf_messages.c.status == "queued",
-                            s.ctf_messages.c.deferred.is_(True),
-                        )
-                        .order_by(
-                            s.ctf_messages.c.recipient_id, s.ctf_messages.c.recipient_sequence
-                        )
-                        .limit(100)
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            if deferred:
+            if diagnostics["deferred_messages"] or diagnostics["blocked_members"]:
                 body += " Deferred work needs a relevance decision; no messages were released. "
-                body += json.dumps(
-                    {
-                        "deferred_messages": [
-                            {
-                                "id": m["id"],
-                                "recipient_id": m["recipient_id"],
-                                "status": "queued",
-                                "deferred": True,
-                            }
-                            for m in deferred
-                        ]
-                    }
+                body += (
+                    "Lead can explicitly confirm relevant deferred messages "
+                    "or issue a smaller new instruction. "
                 )
+                body += json.dumps(diagnostics)
             await self._message(conn, tid, "system", "lead", body, operation_id, "instruction")
             if lead_blocked:
                 retries = dict(control.get("turn_retries", {}))
@@ -1149,10 +1300,12 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 },
             )
 
-    async def claim_turn(self, tid, agent_id, runtime_instance):
+    async def claim_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
             member = await row(conn, s.ctf_members, tid, agent_id)
+            if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
+                return None
             if (
                 task["ctf_control"]["phase"] != "running"
                 or member["lifecycle"] != "active"
@@ -1359,7 +1512,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         ).hexdigest()
 
         async def existing(conn):
-            condition = s.events.c.payload["observation_id"].astext == observation_id
+            condition = s.events.c.object_id == observation_id
             if kind == "initial_context":
                 condition = (s.events.c.payload["agent_id"].astext == agent_id) & (
                     s.events.c.payload["kind"].astext == kind
@@ -1369,7 +1522,8 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     select(s.events.c.payload)
                     .where(
                         s.events.c.task_id == tid,
-                        s.events.c.type == "agent.trace.recorded",
+                        # A fixed predicate also lets generic prepared plans use the partial index.
+                        s.events.c.type == literal_column("'agent.trace.recorded'"),
                         condition,
                     )
                     .limit(1)
@@ -1485,7 +1639,14 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 )
                 accepted.append(msg)
             saved = await self.sessions._save_session(
-                conn, tid, agent_id, session, opening_instructions, "native", expected_revision
+                conn,
+                tid,
+                agent_id,
+                session,
+                opening_instructions,
+                "native",
+                expected_revision,
+                return_session=False,
             )
             assignments = list(turn["assignment_message_ids"])
             for msg in accepted:
@@ -1537,7 +1698,98 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                         }
                     },
                 )
-            return saved
+            return {
+                "revision": saved["revision"],
+                "checkpoint_id": session.get("state", {}).get("bbx_checkpoint_id"),
+                "task_id": str(tid),
+                "agent_id": agent_id,
+                "turn_id": str(turn_id),
+                "generation": generation,
+                "purpose": turn["purpose"],
+                "delivered_message_ids": [msg["id"] for msg in accepted],
+            }
+
+    async def recovery_input_proofs(self, tid, agent_id, turn_id, generation, message_ids):
+        """Read bounded delivery/completion proofs without returning private message bodies."""
+        if not isinstance(message_ids, list) or len(message_ids) > 100:
+            raise HTTPException(422, "At most 100 message UUIDs are required")
+        try:
+            if any(not isinstance(mid, str) or str(UUID(mid)) != mid for mid in message_ids):
+                raise ValueError
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(422, "Message IDs must be canonical UUIDs") from exc
+        async with self.repo.engine.begin() as conn:
+            await self._task(conn, tid)
+            _, current = await self._fence(conn, tid, agent_id, generation, turn_id)
+            require(current["purpose"] == "execution", "Recovery proofs require execution turn")
+            if not message_ids:
+                return {"proofs": []}
+            messages, turns = s.ctf_messages.c, s.ctf_turns.c
+            one_shot = ((messages.sender_kind == "agent") & (messages.kind == "instruction")) | (
+                (messages.sender_kind == "system")
+                & (
+                    (
+                        (messages.kind == "turn_finished")
+                        & (messages.notification_purpose == "assignment_result")
+                    )
+                    | (
+                        (messages.kind == "instruction")
+                        & messages.notification_purpose.in_(
+                            ["turn_recovery", "context_continuation"]
+                        )
+                    )
+                )
+            )
+            query = (
+                select(
+                    *[
+                        messages[name]
+                        for name in (
+                            "id",
+                            "recipient_id",
+                            "sender_kind",
+                            "sender_id",
+                            "kind",
+                            "purpose",
+                            "session_revision",
+                            "delivered_turn_id",
+                            "claim_generation",
+                            "source_turn_id",
+                            "notification_purpose",
+                        )
+                    ],
+                    turns.generation.label("turn_generation"),
+                    turns.status.label("turn_status"),
+                    turns.end_reason,
+                )
+                .select_from(
+                    s.ctf_messages.join(
+                        s.ctf_turns,
+                        (messages.task_id == turns.task_id)
+                        & (messages.delivered_turn_id == turns.id)
+                        & (messages.recipient_id == turns.agent_id)
+                        & (messages.claim_turn_id == turns.id)
+                        & (messages.claim_generation == turns.generation),
+                    )
+                )
+                .where(
+                    messages.task_id == tid,
+                    messages.recipient_id == agent_id,
+                    messages.id.in_(message_ids),
+                    messages.purpose == "execution",
+                    messages.status == "delivered",
+                    messages.session_revision > 0,
+                    turns.purpose == "execution",
+                    turns.id != str(turn_id),
+                    turns.generation < generation,
+                    turns.status == "finished",
+                    turns.end_reason == "completed",
+                    one_shot,
+                )
+                .order_by(messages.recipient_sequence)
+            )
+            proofs = (await conn.execute(query)).mappings().all()
+            return {"proofs": [dict(proof) for proof in proofs]}
 
     async def _settle_turn_reservations(self, conn, tid, turn_id):
         turn = await row(conn, s.ctf_turns, tid, str(turn_id))
@@ -1604,39 +1856,69 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         return {"members": len(members), "request_count": count}
 
     async def _reconcile_usage_outbox(self, conn, tid, agent_id):
-        saved = await self.sessions._session(conn, tid, agent_id)
+        saved = (
+            (
+                await conn.execute(
+                    select(
+                        s.agent_sessions.c.session["state"]["ctf_usage_outbox"].label(
+                            "ctf_usage_outbox"
+                        ),
+                        s.agent_sessions.c.session["state"]["ctf_review_usage_outbox"].label(
+                            "ctf_review_usage_outbox"
+                        ),
+                        s.agent_sessions.c.session["state"]["ctf_steps"].label("ctf_steps"),
+                    ).where(
+                        s.agent_sessions.c.task_id == tid,
+                        s.agent_sessions.c.agent_id == agent_id,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
         if saved is None:
             return {"request_ids": []}
-        state = saved["session"].get("state", {})
+        state = {key: value for key, value in saved.items() if value is not None}
         confirmed = []
-        for entry in state.get("ctf_usage_outbox", []):
-            require(isinstance(entry, dict), "Invalid persisted usage entry")
-            reservation_id = str(entry.get("reservation_id", ""))
-            try:
-                original_turn_id, raw_step = reservation_id.rsplit(":", 1)
-                step = int(raw_step)
-                UUID(original_turn_id)
-            except (ValueError, TypeError):
-                raise HTTPException(409, "Invalid persisted usage call identity") from None
-            turn = await row(conn, s.ctf_turns, tid, original_turn_id)
-            require(
-                turn["agent_id"] == agent_id
-                and turn["purpose"] == "execution"
-                and entry.get("agent_id", agent_id) == agent_id
-                and entry.get("turn_id", original_turn_id) == original_turn_id
-                and entry.get("generation", turn["generation"]) == turn["generation"]
-                and 0 < step <= int(state.get("ctf_steps", {}).get(original_turn_id, 0)),
-                "Persisted usage call identity mismatch",
-            )
-            request_id = str(entry.get("request_id", ""))
-            require(bool(request_id), "Missing persisted usage request identity")
-            usage = Usage.model_validate(entry.get("usage")).model_dump(mode="json")
-            task = await row(conn, s.tasks, tid)
-            member = await row(conn, s.ctf_members, tid, agent_id)
-            await self._apply_usage(
-                conn, tid, task, member, turn, request_id, usage, reservation_id
-            )
-            confirmed.append(request_id)
+        for key, purpose in (
+            ("ctf_usage_outbox", "execution"),
+            ("ctf_review_usage_outbox", "review"),
+        ):
+            for entry in state.get(key, []):
+                require(isinstance(entry, dict), "Invalid persisted usage entry")
+                reservation_id = str(entry.get("reservation_id", ""))
+                try:
+                    original_turn_id, raw_step = reservation_id.rsplit(":", 1)
+                    step = int(raw_step)
+                    UUID(original_turn_id)
+                except (ValueError, TypeError):
+                    raise HTTPException(409, "Invalid persisted usage call identity") from None
+                turn = await row(conn, s.ctf_turns, tid, original_turn_id)
+                require(
+                    turn["agent_id"] == agent_id
+                    and turn["purpose"] == purpose
+                    and entry.get("agent_id", agent_id) == agent_id
+                    and entry.get("turn_id", original_turn_id) == original_turn_id
+                    and entry.get("generation", turn["generation"]) == turn["generation"]
+                    and 0 < step <= int(state.get("ctf_steps", {}).get(original_turn_id, 0)),
+                    "Persisted usage call identity mismatch",
+                )
+                request_id = str(entry.get("request_id", ""))
+                require(bool(request_id), "Missing persisted usage request identity")
+                if purpose == "review":
+                    require(
+                        isinstance(entry.get("request_id"), str)
+                        and bool(entry["request_id"])
+                        and ("generation" not in entry or type(entry["generation"]) is int),
+                        "Invalid persisted review usage identity",
+                    )
+                usage = Usage.model_validate(entry.get("usage")).model_dump(mode="json")
+                task = await row(conn, s.tasks, tid)
+                member = await row(conn, s.ctf_members, tid, agent_id)
+                await self._apply_usage(
+                    conn, tid, task, member, turn, request_id, usage, reservation_id
+                )
+                confirmed.append(request_id)
         return {"request_ids": confirmed}
 
     async def bill_usage(
@@ -1878,33 +2160,6 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     }
                 },
             )
-        if member["role"] != "lead" and assignments:
-            body = json.dumps(
-                {
-                    "assignment_message_ids": assignments[:50],
-                    "assignment_count": len(assignments),
-                    "result_ref": turn["id"],
-                    "end_reason": end_reason,
-                    "final_answer": None
-                    if turn["explicit_reply_ids"]
-                    else (answer[:2000] or "Interrupted; no final answer"),
-                    "truncated": len(answer) > 2000,
-                    "reply_refs": turn["explicit_reply_ids"][:50],
-                },
-                ensure_ascii=False,
-            )
-            await self._message(
-                conn,
-                tid,
-                "system",
-                "lead",
-                body,
-                str(uuid4()),
-                "turn_finished",
-                assignments[0],
-                source_turn_id=turn["id"],
-                notification_purpose="assignment_result",
-            )
         for message in leased:
             await patch(
                 conn,
@@ -1951,12 +2206,56 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
         )
         await self._emit(conn, tid, "turn.finished", member["id"], {"id": turn["id"], **values})
         await self._retire_checkpoint_barrier(conn, tid, turn)
+        recovery = {
+            "status": "recovery_not_requested",
+            "reason": end_reason,
+            "attempt": 0,
+            "limit": 0,
+        }
         if end_reason in {"step_limit", "context_blocked", "provider_transient"}:
-            await self._retry_limited_turn(conn, tid, member, turn, end_reason)
+            recovery = await self._retry_limited_turn(conn, tid, member, turn, end_reason)
+        elif end_reason == "context_limit":
+            recovery["status"] = "continuation_pending"
+            recovery["reason"] = "runner_reconciliation"
+        if member["role"] != "lead" and assignments:
+            body = json.dumps(
+                {
+                    "assignment_message_ids": assignments[:50],
+                    "assignment_count": len(assignments),
+                    "result_ref": turn["id"],
+                    "end_reason": end_reason,
+                    "final_answer": None
+                    if turn["explicit_reply_ids"]
+                    else (answer[:2000] or "Interrupted; no final answer"),
+                    "truncated": len(answer) > 2000,
+                    "reply_refs": turn["explicit_reply_ids"][:50],
+                    "recovery": recovery,
+                },
+                ensure_ascii=False,
+            )
+            await self._message(
+                conn,
+                tid,
+                "system",
+                "lead",
+                body,
+                str(uuid5(NAMESPACE_URL, f"ctf-assignment-result:{tid}:{turn['id']}")),
+                "turn_finished",
+                assignments[0],
+                source_turn_id=turn["id"],
+                notification_purpose="assignment_result",
+            )
         return {**turn, **values}
 
     async def _retry_limited_turn(self, conn, tid, member, turn, end_reason):
         """Continue the same assignment a bounded number of times per member and run."""
+        if end_reason not in {"step_limit", "context_blocked", "provider_transient"}:
+            return {
+                "status": "recovery_not_requested",
+                "reason": end_reason,
+                "attempt": 0,
+                "limit": 0,
+            }
         task = await row(conn, s.tasks, tid)
         control = task["ctf_control"]
         retries = dict(control.get("turn_retries", {}))
@@ -1988,6 +2287,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             exhausted = reason is None
             if exhausted and end_reason in {"provider_transient", "context_blocked"}:
                 label = "context" if end_reason == "context_blocked" else "provider"
+                diagnostics = await self._recovery_diagnostics(conn, tid, control, member["id"])
                 await self._message(
                     conn,
                     tid,
@@ -1995,8 +2295,10 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     "lead",
                     f"Member {member['id']} exhausted {limit} automatic {label} recoveries "
                     "in this run. Full saved history, records, ownership and queued inputs remain. "
-                    "Inspect the saved work and context diagnostics before requesting a smaller "
-                    "new instruction or an explicit resume; no further automatic retry is allowed.",
+                    "Inspect saved work; Lead can explicitly confirm relevant deferred messages "
+                    "or issue a smaller new instruction. Confirmation does not bypass a context "
+                    "block on the same old input. No further automatic retry is allowed. "
+                    + json.dumps(diagnostics),
                     str(uuid5(NAMESPACE_URL, f"ctf-{label}-exhausted:{tid}:{turn['id']}")),
                     deferred=member["role"] == "lead" or control["phase"] != "running",
                     source_turn_id=turn["id"],
@@ -2015,17 +2317,19 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             }
             LOGGER.warning("CTF turn recovery declined: %s", payload)
             await self._emit(conn, tid, "coordination.reminded", "system", payload)
-            return
+            return {key: payload[key] for key in ("status", "reason", "attempt", "limit")}
         counts[end_reason] = count + 1
         retries[member["id"]] = counts
         message_id = str(uuid5(NAMESPACE_URL, f"ctf-turn-retry:{tid}:{turn['id']}"))
         control = {**control, "turn_retries": retries}
+        ready_at = None
         if end_reason == "provider_transient":
+            ready_at = (now() + timedelta(seconds=2 ** (count + 1))).isoformat()
             control["turn_retry_delays"] = {
                 **control.get("turn_retry_delays", {}),
                 member["id"]: {
                     "message_id": message_id,
-                    "ready_at": (now() + timedelta(seconds=2 ** (count + 1))).isoformat(),
+                    "ready_at": ready_at,
                 },
             }
         await patch(conn, s.tasks, tid, {"ctf_control": control})
@@ -2061,6 +2365,14 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 "generation": turn["generation"],
             },
         )
+        return {
+            "status": "recovery_requested",
+            "reason": "bounded_retry",
+            "attempt": count + 1,
+            "limit": limit,
+            "message_id": message_id,
+            "ready_at": ready_at,
+        }
 
     async def finish_turn(self, tid, agent_id, turn_id, generation, end_reason, answer=""):
         async with self.repo.engine.begin() as conn:
@@ -2162,8 +2474,45 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                 "closing_request_id": str(request_id),
                 "epoch": control["epoch"] + 1,
             }
+            turns = [
+                {
+                    "turn_id": turn["id"],
+                    "member_id": turn["agent_id"],
+                    "generation": turn["generation"],
+                }
+                for turn in (
+                    await conn.execute(
+                        select(s.ctf_turns)
+                        .where(
+                            s.ctf_turns.c.task_id == tid,
+                            s.ctf_turns.c.status == "running",
+                            s.ctf_turns.c.purpose == "execution",
+                        )
+                        .order_by(s.ctf_turns.c.agent_id, s.ctf_turns.c.id)
+                    )
+                )
+                .mappings()
+                .all()
+            ]
             await patch(conn, s.tasks, tid, {"ctf_control": control, "ctf_conclusion": stored})
             await self._emit(conn, tid, "conclusion.requested", actor, {"conclusion": stored})
+            await self._emit(
+                conn,
+                tid,
+                "coordination.reminded",
+                actor,
+                {
+                    "kind": "closing_turn_cancellation",
+                    "status": "cancellation_requested",
+                    "reason": validated["end_reason"],
+                    "operation_id": str(request_id),
+                    "epoch": control["epoch"],
+                    "run_number": task["run_number"],
+                    "turn_count": len(turns),
+                    "turn_ids": [turn["turn_id"] for turn in turns],
+                    "turns": turns,
+                },
+            )
             return {"operation_id": str(request_id), "phase": "closing"}
 
     async def finalize_close(self, tid, drained, checkpoint_failure=None):
@@ -2368,6 +2717,17 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
             )
             pending = member.get("pending_operation")
             if pending:
+                if pending["target_generation"] != generation:
+                    require(
+                        turn_id is not None
+                        and execution is not None
+                        and execution.get("drained") is True
+                        and pending["target_generation"] == execution["generation"]
+                        and pending["boot_id"] in {None, execution["boot_id"]}
+                        and generation > execution["generation"],
+                        "Pending stop targets another generation",
+                    )
+                    pending = {**pending, "target_generation": generation, "boot_id": boot_id}
                 require(pending["boot_id"] in {None, boot_id}, "Pending stop targets another boot")
                 pending = {**pending, "boot_id": boot_id}
             await patch(
@@ -2507,6 +2867,11 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                         and turn["generation"] == member["generation"] == execution["generation"],
                         "Stale checkpoint failure settlement",
                     )
+                pending = {
+                    **pending,
+                    "settled_turn_id": turn["id"],
+                    "settled_turn_generation": turn["generation"],
+                }
                 await self._settle(conn, tid, member, turn, "stopped", "")
             removed = pending["kind"] == "remove"
             values = {
@@ -2563,6 +2928,7 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                     .mappings()
                     .all()
                 )
+                unassigned = []
                 for challenge in challenges:
                     data = challenge["data"]
                     updated = {
@@ -2571,10 +2937,15 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                             aid for aid in data.get("collaborator_ids", []) if aid != member_id
                         ],
                     }
-                    if data.get("owner_id") == member_id and data.get("work_status") != "completed":
+                    if data.get("owner_id") == member_id and data.get("work_status") not in {
+                        "completed",
+                        "cancelled",
+                    }:
                         updated.update(
                             owner_id=None, previous_owner_id=member_id, work_status="blocked"
                         )
+                        if not data.get("tombstone"):
+                            unassigned.append(challenge["id"])
                     if updated != data:
                         updated["revision"] = challenge["revision"] + 1
                         await self._board_event(
@@ -2586,6 +2957,30 @@ class CtfService(CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMi
                             "member_removed",
                             updated,
                         )
+                if unassigned:
+                    await self._message(
+                        conn,
+                        tid,
+                        "system",
+                        "lead",
+                        json.dumps(
+                            {
+                                "reason": "owner_removed",
+                                "previous_owner_id": member_id,
+                                "challenge_ids": sorted(unassigned)[:100],
+                                "challenge_count": len(unassigned),
+                                "truncated": len(unassigned) > 100,
+                            },
+                            sort_keys=True,
+                        ),
+                        str(
+                            uuid5(
+                                NAMESPACE_URL, f"ctf-owner-removed:{tid}:{member_id}:{request_id}"
+                            )
+                        ),
+                        notification_purpose="challenge_available",
+                        deferred=task["ctf_control"]["phase"] != "running",
+                    )
             await self._emit(
                 conn,
                 tid,

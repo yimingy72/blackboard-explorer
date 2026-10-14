@@ -107,6 +107,19 @@
       "default": false,
       "title": "Tombstone",
       "type": "boolean"
+    },
+    "solution_record_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solution Record Id"
     }
   },
   "required": [

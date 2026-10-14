@@ -1,6 +1,53 @@
 {
+  "$defs": {
+    "CtfProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "stage": {
+          "enum": [
+            "approach",
+            "attempt",
+            "breakthrough",
+            "result"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "title",
+        "summary"
+      ],
+      "title": "CtfProgress",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CtfProgress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "request_id": {
       "format": "uuid",
       "title": "Request Id",

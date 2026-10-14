@@ -18,6 +18,7 @@ from agent_framework import (
     Message,
     tool,
 )
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.models import Price, Usage
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
@@ -41,7 +42,9 @@ from bbx_runtime.testing.scripted_client import (
     ScriptToolCall,
     ScriptUsage,
 )
+from bbx_runtime.tool_failures import BlackboardToolFailure
 from openai import APIStatusError
+from usage_receipt_fixtures import heartbeat_ack
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles" / "default"
 
@@ -84,7 +87,7 @@ class FakeService:
         self.beats.append(kwargs)
         self.last_seen = kwargs["last_seen_version"]
         self.steps += kwargs["steps"]
-        return {"warning": None}
+        return {"warning": None, **heartbeat_ack(_task_id, _agent_id, kwargs)}
 
 
 class FakeBoard:
@@ -230,7 +233,14 @@ def run_context(
         task_id="00000000-0000-0000-0000-000000000001",
         agent_id="agent-1",
         task_type="explore",
-        state={"task": {"params": {"delta_max_lines": 1, "conclude_grace_calls": 3}}},
+        state={
+            "task": {
+                "params": {"delta_max_lines": 1, "conclude_grace_calls": 3},
+                "agent_profile": "default",
+                "agent_profile_version": 1,
+                "run_number": 1,
+            }
+        },
         profile=profile,
         service=cast(BlackboardClient, service),
         board=cast(BlackboardClient, board or FakeBoard()),
@@ -290,16 +300,16 @@ async def test_tool_log_records_failed_local_call_without_exposing_exception_det
             ScriptStep(text="retry later", expect_contains="工具调用失败"),
         ]
     )
-    response = await Agent(
-        client=client, tools=[failing_tool], middleware=[ToolLogMiddleware(ctx)]
-    ).run("start")
-    assert response.text == "retry later"
+    with pytest.raises(BlackboardToolFailure):
+        await Agent(client=client, tools=[failing_tool], middleware=[ToolLogMiddleware(ctx)]).run(
+            "start"
+        )
+    assert len(client.received_messages) == 1
     assert len(service.logged) == 1
     record = service.logged[0]
     assert record["tool"] == "failing_tool"
     assert "ValueError" in record["result_head"]
     assert "internal-only detail" not in record["result_head"]
-    assert f"[call_id: {record['id']}]" in message_text(client.received_messages[1])
     assert record["result_uri"] in objects.files
 
 
@@ -605,7 +615,7 @@ async def test_queued_user_messages_enter_next_model_call_once():
             self.revision += 1
             self.saved = session
             self.delivered.extend(deliveries)
-            return {"revision": self.revision}
+            return {"revision": self.revision, **usage_receipt_support(session)}
 
     service, board = MessageService(), FakeBoard()
     ctx = run_context(service, board=board)
@@ -695,7 +705,7 @@ async def test_message_arriving_after_final_model_call_remains_for_review():
             assert deliveries == []
             self.revision += 1
             self.saved = session
-            return {"revision": self.revision}
+            return {"revision": self.revision, **usage_receipt_support(session)}
 
         async def pending_conversations(self):
             if self.status != "finished":

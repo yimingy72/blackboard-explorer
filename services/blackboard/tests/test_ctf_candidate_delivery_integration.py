@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from bbx_blackboard.store import schema as s
+from ctf_solution_fixtures import solution
 from fastapi import HTTPException
 from sqlalchemy import update
 from test_ctf_integration import board_team
@@ -28,6 +29,8 @@ async def owned_challenge(ctf):
 
 
 def declaration(challenge, **fields):
+    if fields.get("work_status") == "completed":
+        fields.setdefault("solution", solution())
     return dict(
         challenge_id=challenge["id"],
         request_id=str(uuid4()),
@@ -58,9 +61,11 @@ async def test_owner_or_lead_atomic_delivery_and_idempotency(ctf, actor, status)
     current = await ctf.get_challenge(tid, challenge["id"])
     assert current["work_status"] == "completed"
     assert current["revision"] == challenge["revision"] + 1
-    assert len((await ctf.list_records(tid, challenge["id"]))["records"]) == 1
+    assert len((await ctf.list_records(tid, challenge["id"]))["records"]) == 2
     with pytest.raises(HTTPException, match="Request ID conflict"):
-        await ctf.record_candidate(tid, **identity, **{**payload, "work_status": "blocked"})
+        await ctf.record_candidate(
+            tid, **identity, **{**payload, "work_status": "blocked", "solution": None}
+        )
 
 
 async def test_collaborator_may_record_candidate_but_cannot_deliver_owner_work(ctf):
@@ -76,13 +81,41 @@ async def test_collaborator_may_record_candidate_but_cannot_deliver_owner_work(c
     )
     payload = declaration(challenge)
     with pytest.raises(HTTPException, match="Only the owner or Lead"):
-        await ctf.record_candidate(tid, **helper, **payload, work_status="completed")
+        await ctf.record_candidate(
+            tid, **helper, **payload, work_status="completed", solution=solution()
+        )
     assert await ctf.get_challenge(tid, challenge["id"]) == challenge
     assert not (await ctf.list_records(tid, challenge["id"]))["records"]
     await ctf.record_candidate(tid, **helper, **payload)
     current = await ctf.get_challenge(tid, challenge["id"])
     assert current["work_status"] == "in_progress"
     assert current["verification"]["status"] == "candidate"
+
+
+async def test_unassigned_member_cannot_bypass_record_permission_with_candidate(ctf):
+    tid, owner, helper, challenge = await owned_challenge(ctf)
+    record = dict(challenge_id=challenge["id"], request_id=str(uuid4()), body="Offline findings")
+    candidate = declaration(challenge)
+    with pytest.raises(HTTPException, match="ask Lead to add you to collaborator_ids"):
+        await ctf.append_record(tid, **helper, **record)
+    with pytest.raises(HTTPException, match="Only assigned members"):
+        await ctf.record_candidate(tid, **helper, **candidate)
+    assert await ctf.get_challenge(tid, challenge["id"]) == challenge
+    assert not (await ctf.list_records(tid, challenge["id"]))["records"]
+    challenge = await ctf.update_challenge(
+        tid,
+        "user",
+        challenge_id=challenge["id"],
+        request_id=str(uuid4()),
+        expected_revision=challenge["revision"],
+        action="collaborators",
+        collaborator_ids=[helper["actor"]],
+    )
+    await ctf.append_record(tid, **helper, **record)
+    await ctf.record_candidate(
+        tid, **helper, **{**candidate, "expected_revision": challenge["revision"]}
+    )
+    assert len((await ctf.list_records(tid, challenge["id"]))["records"]) == 2
 
 
 async def test_delivery_stale_revision_or_unregistered_artifact_writes_nothing(ctf):
@@ -112,7 +145,7 @@ async def test_delivery_rolls_back_record_when_challenge_write_fails(ctf, monkey
     assert not (await ctf.list_records(tid, challenge["id"]))["records"]
     monkeypatch.setattr(ctf, "_board_event", original)
     await ctf.record_candidate(tid, **owner, **payload)
-    assert len((await ctf.list_records(tid, challenge["id"]))["records"]) == 1
+    assert len((await ctf.list_records(tid, challenge["id"]))["records"]) == 2
 
 
 @pytest.mark.parametrize("source", ["user", "platform"])

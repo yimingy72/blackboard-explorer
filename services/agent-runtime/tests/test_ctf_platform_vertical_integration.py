@@ -231,6 +231,20 @@ async def test_fake_platform_rejection_correction_acceptance_and_explicit_finish
                 expected_revision=rejected["revision"],
                 action="set_status",
                 work_status="completed",
+                solution={
+                    "conclusion": "The fake submission was rejected; acceptance remains unresolved",
+                    "approach": "Compare the sample with the simulated platform response",
+                    "steps": [
+                        {
+                            "kind": "attempt",
+                            "title": "Omitted header",
+                            "result": "ruled_out",
+                            "summary": "The simulated response rejects this input",
+                        }
+                    ],
+                    "remaining": ["Correct the input and check the fake platform result"],
+                    "reproduction": "Use the retained simulated submission response",
+                },
             )
             with pytest.raises(RemoteError) as unverified:
                 await tool(
@@ -282,6 +296,20 @@ async def test_fake_platform_rejection_correction_acceptance_and_explicit_finish
                 expected_revision=accepted["revision"],
                 action="set_status",
                 work_status="completed",
+                solution={
+                    "conclusion": "The corrected input was accepted by the simulated platform only",
+                    "approach": "Compare both recorded fake submission responses",
+                    "steps": [
+                        {
+                            "kind": "result",
+                            "title": "Corrected input",
+                            "result": "supported",
+                            "summary": "The test-only response accepts the input",
+                            "record_ids": [record["id"] for record in platform_records],
+                        }
+                    ],
+                    "reproduction": "Read the two retained test-only response artifacts",
+                },
             )
             closing = await tool(
                 lead,

@@ -516,3 +516,5 @@ CTF终态生成独立总结，归档包含完整CTF状态、Session、mailbox、
 execution turn 结束后不能重写最后 checkpoint。未确认屏障退役为按 turn/轮次保存的 checkpoint_failures，保留已确认 Session、用量以及 unknown 预留；不能删标记后发布成功。收尾重试采用退避，最多八次普通重试或持续六十秒后升级；先确认本地写者退出和远端 drain，再恢复/结算，以 system_failure 关闭并保留执行环境和本地未确认快照。无法证明 drain 或持久层不可用时低频等待，不伪造终态。清理按本轮故障阻挡，显式续跑保留历史故障但不污染新轮。
 
 CTF 的 context_threshold 是输入预算参数，输入硬上限为 min(threshold, context_window − max_output_tokens) × 0.8，包含固定提示和工具 schema。达到硬上限的九成时主动尝试安全裁剪，六成仅为理想低水位。复用 MAF 的公开消息分组；仅已确认、无 replay 分组的纯文本派工可原文迁移到持久恢复前缀，并继续计入预算。完整历史、工具组及未知结果不改写或重放。阻塞保存真实分支、可裁范围、估计输入与末次单次 provider usage；自动恢复仍每成员每轮一次，发放、耗尽、禁用、延期和取消均留痕，耗尽先盘点在办成果。
+
+恢复耗尽与闲置通知附有界诊断及延期消息 ID，沿用 confirm_messages 显式确认仍适用的 queued/deferred 输入，不新增释放工具。cancelled 不复活，被阻塞的原输入仍受 admission 门禁，需较小新指令；成员操作与新指令不增加自动额度。终态旧标记的运维清理复用 task 锁和 clear_context_blocks，仅 closed 且无执行/复盘回合及成员操作时转存历史；不改变完成状态、Session、mailbox 或计数，操作幂等并记录既有事件。

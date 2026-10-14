@@ -6,12 +6,13 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 from bbx_contracts.models import Params
 
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 
 from .executor import ActionExecutor
 
@@ -60,13 +61,13 @@ class Sweeper:
                 and concluded is not None
                 and instant >= concluded + timedelta(minutes=self.params.grace_timeout)
             ):
-                await self._finish_stale(aid, "grace_timeout", agent)
+                await self._finish_stale(aid, "grace_timeout", agent, state.get("task", {}))
             elif heartbeat is not None and instant >= heartbeat + timedelta(
                 minutes=self.params.heartbeat_timeout
             ):
-                await self._finish_stale(aid, "heartbeat", agent)
+                await self._finish_stale(aid, "heartbeat", agent, state.get("task", {}))
 
-    async def _finish_stale(self, aid: str, reason: str, agent: dict) -> None:
+    async def _finish_stale(self, aid: str, reason: str, agent: dict, task: dict) -> None:
         expected_round = (
             int(agent.get("derive_round") or 1) if agent.get("task_type") == "derive" else None
         )
@@ -74,13 +75,21 @@ class Sweeper:
             aid, reason, *([expected_round] if expected_round is not None else [])
         ):
             return
+        reconcile = getattr(getattr(self.executor, "runner", None), "reconcile_final_receipt", None)
+        if asyncio.iscoroutinefunction(reconcile) and await reconcile(
+            self.executor.task_id, aid, agent, task
+        ):
+            return
+        finish_options: dict[str, Any] = (
+            {"expected_derive_round": expected_round} if expected_round is not None else {}
+        )
         try:
             await self.service.finish_agent(
                 self.executor.task_id,
                 aid,
                 {"accepted": False, "reason": f"Agent {reason} timeout"},
                 reason,
-                **({"expected_derive_round": expected_round} if expected_round is not None else {}),
+                **finish_options,
             )
         except RemoteError as error:
             if error.status != 422:
@@ -90,7 +99,9 @@ class Sweeper:
         while not self._stop.is_set():
             try:
                 await self.check_once()
-            except httpx.TransportError as error:
+            except (httpx.TransportError, ConnectionError, RemoteError) as error:
+                if not is_control_transport_error(error):
+                    raise
                 logger.warning(
                     "Task %s sweeper reconnecting phase=sweep error=%s",
                     self.executor.task_id,

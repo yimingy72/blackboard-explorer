@@ -69,6 +69,11 @@ def dispute_fields(facts: dict[str, dict[str, Any]]) -> dict[str, dict[str, int 
         for target in fact["disputes"]:
             if target in disputers:
                 disputers[target].append(fid)
+    relied_by = dict.fromkeys(facts, 0)
+    for fact in facts.values():
+        for target in set(fact["derived_from"]):
+            if target in facts and facts[target]["author"] != fact["author"]:
+                relied_by[target] += 1
     depths: dict[str, int] = {}
     for fid, fact in facts.items():
         depths[fid] = 1 + max((depths[x] for x in fact["disputes"]), default=-1)
@@ -79,9 +84,7 @@ def dispute_fields(facts: dict[str, dict[str, Any]]) -> dict[str, dict[str, int 
             if any(result[x]["status"] == "proposed" for x in disputers[fid])
             else "proposed",
             "depth": depths[fid],
-            "relied_by": sum(
-                x["author"] != fact["author"] and fid in x["derived_from"] for x in facts.values()
-            ),
+            "relied_by": relied_by[fid],
         }
     return result
 
@@ -509,11 +512,13 @@ def decide(
                 aid,
             )
         ]
-    if command == "heartbeat":
+    if command in {"heartbeat", "settle_usage"}:
         agent = _agent(state, data["agent_id"])
-        if agent["status"] not in {"running", "concluding"}:
+        if command == "heartbeat" and agent["status"] not in {"running", "concluding"}:
             fail("agent_inactive", "Agent 已结束，不能提交心跳。")
-        if any(data[key] < 0 for key in ("steps", "context_tokens", "last_seen_version")):
+        if command == "heartbeat" and any(
+            data[key] < 0 for key in ("steps", "context_tokens", "last_seen_version")
+        ):
             fail("invalid_progress", "心跳计数不能为负，请提交非负步数、上下文长度与版本。")
         delta = data["usage"]
         previous = task["usage"]
@@ -525,7 +530,8 @@ def decide(
                 actor,
                 {
                     **data,
-                    "reset_failure_streak": data["steps"] > 0
+                    "reset_failure_streak": command == "heartbeat"
+                    and data["steps"] > 0
                     and task["status"] not in {"finished", "failed", "stopped"}
                     and task.get("failure_window_kind") in {"model_transient", "model_error"},
                 },

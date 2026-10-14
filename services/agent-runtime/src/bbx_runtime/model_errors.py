@@ -147,14 +147,22 @@ def model_error_metadata(
     code = None
     request_id = None
     retry_after = None
-    if status_error is not None:
-        code = _bounded_identifier(status_error.code, _IDENTIFIER)
-        body = status_error.body
-        if code is None and isinstance(body, dict):
+    # HTTP 200 SSE errors are plain APIError, with no status or response headers.
+    api_error = status_error or next((item for item in chain if isinstance(item, APIError)), None)
+    if api_error is not None:
+        code = _bounded_identifier(api_error.code, _IDENTIFIER)
+        request_id = _bounded_identifier(getattr(api_error, "request_id", None), _REQUEST_ID)
+        body = api_error.body
+        if isinstance(body, dict):
             detail = body.get("error")
-            if isinstance(detail, dict):
-                code = _bounded_identifier(detail.get("code"), _IDENTIFIER)
-        request_id = _bounded_identifier(status_error.request_id, _REQUEST_ID)
+            detail = detail if isinstance(detail, dict) else body
+            code = code or _bounded_identifier(detail.get("code"), _IDENTIFIER)
+            request_id = (
+                request_id
+                or _bounded_identifier(detail.get("request_id"), _REQUEST_ID)
+                or _bounded_identifier(body.get("request_id"), _REQUEST_ID)
+            )
+    if status_error is not None:
         retry_after = _retry_after(status_error.response.headers.get("retry-after"))
 
     stream_error = next((item for item in chain if isinstance(item, ModelStreamError)), None)
@@ -189,6 +197,25 @@ def model_error_metadata(
         for item in chain
     ):
         category = "content_filter"
+    elif (
+        status in {401, 403}
+        or code
+        in {
+            "invalid_api_key",
+            "authentication_error",
+            "permission_denied",
+        }
+        or any(isinstance(item, ChatClientInvalidAuthException) for item in chain)
+    ):
+        category = "authentication"
+    elif status == 402:
+        category = "payment_required"
+    elif (
+        status == 400
+        or code in {"invalid_request", "invalid_request_error"}
+        or any(isinstance(item, ChatClientInvalidRequestException) for item in chain)
+    ):
+        category = "invalid_request"
     elif status == 429:
         category = "rate_limit"
     elif status == 408:
@@ -197,16 +224,10 @@ def model_error_metadata(
         category = "conflict"
     elif status is not None and status >= 500:
         category = "server_error"
-    elif status in {401, 403} or any(
-        isinstance(item, ChatClientInvalidAuthException) for item in chain
-    ):
-        category = "authentication"
-    elif status == 402:
-        category = "payment_required"
-    elif status == 400 or any(
-        isinstance(item, ChatClientInvalidRequestException) for item in chain
-    ):
-        category = "invalid_request"
+    elif status is None and code in {"rate_limit", "rate_limit_exceeded"}:
+        category = "rate_limit"
+    elif status is None and code == "server_error":
+        category = "server_error"
     elif stream_error is not None:
         category = stream_error.category
     elif any(isinstance(item, (APITimeoutError, httpx2.TimeoutException)) for item in chain):

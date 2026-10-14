@@ -5,7 +5,9 @@ from uuid import UUID
 
 from bbx_contracts import ctf as ctf_models
 from bbx_contracts.ctf import CtfDrainProof, CtfMemberOperationRequest
+from bbx_contracts.tool_errors import validation_issues
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import ValidationError
 
 from bbx_blackboard.auth import (
     issue_agent_token,
@@ -14,6 +16,26 @@ from bbx_blackboard.auth import (
     require_task_reader,
     require_user_or_service,
 )
+from bbx_blackboard.ctf_board import SOLUTION_DELIVERY_ERROR
+
+
+def invalid_request(error: ValueError, message: str) -> HTTPException:
+    if isinstance(error, ValidationError) and any(
+        item["loc"][:1] == ("solution",)
+        or "Solution is required only when completing challenge work" in item["msg"]
+        for item in error.errors(include_input=False, include_context=False)
+    ):
+        return HTTPException(
+            422,
+            {
+                **SOLUTION_DELIVERY_ERROR,
+                "fields": validation_issues(
+                    error, ctf_models.CtfChallengeUpdateRequest.model_json_schema()
+                ),
+            },
+        )
+    return HTTPException(422, message)
+
 
 router = APIRouter(prefix="/api/tasks/{task_id}/ctf", tags=["ctf"])
 
@@ -82,6 +104,7 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "read_review_artifact",
         "claim_turn",
         "claim_messages",
+        "recovery_input_proofs",
         "checkpoint",
         "checkpoint_failed",
         "record_observation",
@@ -110,6 +133,13 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
     if operation not in allowed:
         raise HTTPException(404, "Unknown CTF runtime operation")
     arguments = dict(body)
+    if operation == "recovery_input_proofs":
+        try:
+            arguments = ctf_models.CtfRecoveryInputProofRequest.model_validate(body).model_dump(
+                mode="json"
+            )
+        except ValueError as error:
+            raise HTTPException(422, "Valid recovery input identity is required") from error
     if operation == "reconcile_usage_outbox" and (
         set(arguments) != {"agent_id"}
         or not isinstance(arguments.get("agent_id"), str)
@@ -184,33 +214,27 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     identity = require_agent_writer(request, task_id)
     if identity.mode != "ctf" or identity.generation is None or identity.turn_id is None:
         raise HTTPException(403, "CTF execution token required")
-    if operation in {"list_challenges", "get_challenge", "list_records", "read_artifact"}:
-        try:
-            await service(request).authorize_review(
-                task_id, identity.agent_id, identity.generation, identity.turn_id
-            )
-        except HTTPException:
-            pass
-        else:
-            if operation == "read_artifact":
-                if set(body) - {"artifact_id", "offset", "limit"}:
-                    raise HTTPException(422, "Unexpected artifact arguments")
-                return await service(request).read_review_artifact(
-                    task_id,
-                    agent_id=identity.agent_id,
-                    generation=identity.generation,
-                    turn_id=identity.turn_id,
-                    **body,
-                )
-            return await board_tool(request, task_id, operation, body, identity)
-    member = await service(request).authorize_member(
+    context = await service(request).authorize_tool(
         task_id,
         identity.agent_id,
         identity.generation,
         identity.turn_id,
     )
-    data = await service(request).runtime_state(task_id)
-    task = data["task"]
+    if context["purpose"] == "review":
+        if operation not in {"list_challenges", "get_challenge", "list_records", "read_artifact"}:
+            raise HTTPException(403, "Tool is unavailable during review")
+        if operation == "read_artifact":
+            if set(body) - {"artifact_id", "offset", "limit"}:
+                raise HTTPException(422, "Unexpected artifact arguments")
+            return await service(request).read_review_artifact(
+                task_id,
+                agent_id=identity.agent_id,
+                generation=identity.generation,
+                turn_id=identity.turn_id,
+                **body,
+            )
+        return await board_tool(request, task_id, operation, body, identity)
+    task, member = context["task"], context["member"]
     profile = await request.app.state.profile_store.get(
         task["agent_profile"],
         task["agent_profile_version"],
@@ -224,6 +248,19 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     }.get(operation, operation)
     if builtin not in profile["worker_tools"][member["role"]]["builtin"]:
         raise HTTPException(403, "Tool is disabled in the task profile")
+    if operation in {"read_turn_result", "read_saved_tool_result", "list_deferred_messages"}:
+        model = {
+            "read_turn_result": ctf_models.CtfTurnResultReadRequest,
+            "read_saved_tool_result": ctf_models.CtfSavedToolResultReadRequest,
+            "list_deferred_messages": ctf_models.CtfDeferredMessagesReadRequest,
+        }[operation]
+        try:
+            arguments = model.model_validate(body).model_dump(mode="json")
+        except ValueError as error:
+            raise HTTPException(422, "Invalid readback page") from error
+        return await getattr(service(request), operation)(
+            task_id, actor=identity.agent_id, **arguments
+        )
     if operation == "confirm_messages":
         try:
             validated = ctf_models.CtfConfirmMessagesRequest.model_validate(body)
@@ -249,6 +286,8 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
         try:
             validated = model.model_validate(arguments).model_dump(mode="json")
         except ValueError as error:
+            if operation == "record_candidate":
+                raise invalid_request(error, "Invalid verification request") from error
             raise HTTPException(422, "Invalid verification request") from error
         return await getattr(service(request), operation)(
             task_id,
@@ -270,7 +309,8 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     }:
         return await board_tool(request, task_id, operation, body, identity)
     if operation in {"list_members", "list_team"}:
-        return [public_member({**member, "agent_id": member["id"]}) for member in data["members"]]
+        roster = await service(request).list_members(task_id)
+        return [public_member(member) for member in roster["members"]]
     lifecycle = {"stop_teammate": "stop", "resume_teammate": "resume", "remove_teammate": "remove"}
     if operation in lifecycle:
         if member["role"] != "lead":
@@ -413,6 +453,8 @@ async def board_tool(
     try:
         arguments = bodies[operation].model_validate(arguments).model_dump(mode="json")
     except ValueError as error:
+        if operation in {"update_challenge", "append_record"}:
+            raise invalid_request(error, "Invalid CTF board request") from error
         raise HTTPException(422, "Invalid CTF board request") from error
     if challenge_id is not None:
         arguments["challenge_id"] = challenge_id
@@ -498,6 +540,19 @@ async def records(
     return await service(request).list_records(
         task_id, str(challenge_id), limit=limit, offset=offset, after_version=after_version
     )
+
+
+@router.get("/challenges/{challenge_id}/records/{record_id}")
+async def record(
+    request: Request,
+    task_id: UUID,
+    challenge_id: UUID,
+    record_id: UUID,
+) -> dict[str, Any]:
+    require_task_reader(request, task_id)
+    if request.query_params:
+        raise HTTPException(422, "Unexpected query arguments")
+    return await service(request).get_record(task_id, str(challenge_id), str(record_id))
 
 
 @router.post("/challenges/{challenge_id}/records")

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -191,7 +192,10 @@ class Conversations:
         if found is None:
             raise HTTPException(404, "Agent session not found")
         return {
-            key: found[key] for key in ("session", "opening_instructions", "origin", "revision")
+            **{
+                key: found[key] for key in ("session", "opening_instructions", "origin", "revision")
+            },
+            **usage_receipt_support(found["session"]),
         }
 
     async def _save_session(
@@ -203,14 +207,22 @@ class Conversations:
         opening_instructions: str,
         origin: str,
         expected_revision: int,
+        *,
+        return_session: bool = True,
     ) -> dict[str, Any]:
-        existing = await self._session(conn, tid, aid)
-        revision = existing["revision"] if existing else 0
+        existing = (
+            await conn.execute(
+                select(s.agent_sessions.c.revision).where(
+                    s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
+                )
+            )
+        ).scalar_one_or_none()
+        revision = existing if existing is not None else 0
         if revision != expected_revision:
             raise HTTPException(409, "Session revision conflict")
         session = storage_safe(session)
         opening_instructions = storage_safe(opening_instructions)
-        if existing:
+        if existing is not None:
             await conn.execute(
                 update(s.agent_sessions)
                 .where(s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid)
@@ -233,11 +245,14 @@ class Conversations:
                     revision=1,
                 )
             )
+        if not return_session:
+            return {"revision": revision + 1}
         return {
             "session": session,
             "opening_instructions": opening_instructions,
             "origin": origin,
             "revision": revision + 1,
+            **usage_receipt_support(session),
         }
 
     async def put_session(
@@ -311,7 +326,17 @@ class Conversations:
                 .mappings()
                 .all()
             )
-            session = await self._session(conn, tid, aid)
+            session = (
+                (
+                    await conn.execute(
+                        select(s.agent_sessions.c.origin).where(
+                            s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
         return {
             "messages": [_public(row) for row in rows],
             "session_available": session is not None,

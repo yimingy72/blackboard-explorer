@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price
+from bbx_contracts.heartbeat import HeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
     ModelConfig,
@@ -37,6 +39,7 @@ from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.usage_receipts import reconcile_receipts, settle_receipt
 
 
 class ObjectStore(Protocol):
@@ -160,6 +163,8 @@ class BoardService:
         data: dict[str, Any],
         *,
         expected_derive_round: int | None = None,
+        expected_run_number: int | None = None,
+        expected_agent_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
@@ -170,6 +175,37 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
             self._check_derive_round(state.agents.get(target), expected_derive_round)
+            if command == "finish_agent" and (
+                expected_run_number is not None or expected_agent_run_id is not None
+            ):
+                if expected_run_number is None or expected_agent_run_id is None:
+                    raise RuleViolation(
+                        "invalid_finish_identity", "最终回执需同时指定任务轮次和 Agent。"
+                    )
+                if state.task["run_number"] != expected_run_number:
+                    raise RuleViolation("stale_task_run", "任务轮次已变化，旧回执不能写入本轮。")
+                agent = state.agents.get(target)
+                if agent is None or agent["id"] != expected_agent_run_id:
+                    raise RuleViolation("stale_agent_run", "Agent 身份已变化，旧回执不能写入本轮。")
+                if agent["status"] not in {"running", "concluding"}:
+                    if (
+                        json.dumps(agent["receipt"], sort_keys=True)
+                        != json.dumps(data["receipt"], sort_keys=True)
+                        or agent["end_reason"] != data["end_reason"]
+                    ):
+                        raise RuleViolation(
+                            "final_receipt_conflict", "已保存最终回执与补偿请求不一致。"
+                        )
+                    await reconcile_receipts(self, conn, tid, actor)
+                    return []
+            if command in {
+                "finish_agent",
+                "transition",
+                "submit_close",
+            } and await reconcile_receipts(
+                self, conn, tid, actor if command == "finish_agent" else None
+            ):
+                state = await self.repo.load(conn, tid)
             events = decide(state, command, actor, data)
             written = await self.repo.append(conn, tid, events)
             if command == "finish_agent":
@@ -233,6 +269,24 @@ class BoardService:
         refresh_tools: bool = False,
         actor: str = "user",
     ) -> None:
+        # Known historical charges commit even if the requested new budget is insufficient.
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task = (
+                (
+                    await conn.execute(
+                        select(s.tasks.c.mode, s.tasks.c.status, s.tasks.c.deleting).where(
+                            s.tasks.c.id == tid
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            if task["mode"] != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
+            if not task["deleting"] and task["status"] in {"finished", "failed", "stopped"}:
+                await reconcile_receipts(self, conn, tid)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             previous = (
@@ -527,7 +581,25 @@ class BoardService:
         requested_at: datetime | None = None,
         billing_mode: str | None = None,
         expected_derive_round: int | None = None,
+        request_id: UUID | str | None = None,
+        expected_run_number: int | None = None,
+        usage_known: bool = True,
     ) -> dict[str, Any]:
+        if request_id is not None:
+            request = HeartbeatRequest(
+                request_id=UUID(str(request_id)),
+                expected_run_number=expected_run_number,
+                expected_derive_round=expected_derive_round,
+                requested_at=requested_at,
+                steps=steps,
+                context_tokens=context_tokens,
+                usage=Usage.model_validate(usage),
+                usage_known=usage_known,
+                last_seen_version=last_seen_version,
+            )
+            async with self.repo.engine.begin() as conn:
+                await self.repo.lock(conn, tid)
+                return await settle_receipt(self, conn, tid, agent_id, request)
         delta = Usage.model_validate(usage)
         selected = Price.model_validate(price or {})
         pricing: dict[str, Any] = {}
@@ -591,6 +663,8 @@ class BoardService:
         end_reason: str,
         *,
         expected_derive_round: int | None = None,
+        expected_run_number: int | None = None,
+        expected_agent_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -598,6 +672,8 @@ class BoardService:
             agent_id,
             {"agent_id": agent_id, "receipt": receipt, "end_reason": end_reason},
             expected_derive_round=expected_derive_round,
+            expected_run_number=expected_run_number,
+            expected_agent_run_id=expected_agent_run_id,
         )
 
     async def submit_close(
@@ -719,7 +795,9 @@ class BoardService:
 
     async def state(self, tid: UUID) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:
-            state = await self.repo.load(conn, tid)
+            # Keep the cursor and every folded table in the same committed snapshot.
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
         fields = dispute_fields(state.facts)

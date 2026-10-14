@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "approach",
+        "attempt",
+        "breakthrough",
+        "result"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "result": {
+      "enum": [
+        "supported",
+        "ruled_out",
+        "inconclusive"
+      ],
+      "title": "Result",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "record_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Record Ids",
+      "type": "array"
+    },
+    "artifact_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Artifact Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "title",
+    "result",
+    "summary"
+  ],
+  "title": "CtfSolutionStep",
+  "type": "object"
+}

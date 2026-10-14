@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from agent_framework import Agent, AgentSession, tool
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.context import RunContext
@@ -13,6 +14,7 @@ from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
+from usage_receipt_fixtures import heartbeat_ack
 
 
 class Service:
@@ -44,6 +46,7 @@ class Service:
             "opening_instructions": body["opening_instructions"],
             "origin": body["origin"],
             "revision": current + 1,
+            **usage_receipt_support(body["session"]),
         }
         return self.saved
 
@@ -54,8 +57,9 @@ class Service:
     async def agent_messages(self, _task: str, _agent: str, *, status: str) -> dict[str, Any]:
         return {"messages": []}
 
-    async def heartbeat(self, _task: str, _agent: str, **body: Any) -> None:
+    async def heartbeat(self, _task: str, _agent: str, **body: Any) -> dict[str, Any]:
         self.board["agents"]["agent"]["steps"] += body["steps"]
+        return heartbeat_ack(_task, _agent, body)
 
     async def record_agent_trace(self, _task: str, _agent: str, body: dict[str, Any]) -> None:
         self.traces.append(body)
@@ -74,6 +78,9 @@ async def test_prompt_replaces_system_once_and_survives_restore() -> None:
     state = {
         "task": {
             "goal": "find cause",
+            "agent_profile": "default",
+            "agent_profile_version": 1,
+            "run_number": 1,
             "acceptance": [{"id": "A1", "desc": "show proof"}],
             "acceptance_state": {},
             "params": {},

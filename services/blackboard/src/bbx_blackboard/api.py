@@ -15,6 +15,7 @@ from uuid import UUID
 
 import anyio
 from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate, resolve_ctf_options
+from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
     Event,
@@ -24,13 +25,12 @@ from bbx_contracts.models import (
     PostIntentRequest,
     SubmitCloseRequest,
     TaskSpec,
-    Usage,
 )
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -212,13 +212,8 @@ class FailBody(BaseModel):
     error: str = Field(min_length=1, max_length=200)
 
 
-class HeartbeatBody(BaseModel):
-    requested_at: AwareDatetime | None = None
-    expected_derive_round: int | None = Field(default=None, ge=1)
-    steps: int = Field(ge=0)
-    context_tokens: int = Field(ge=0)
-    usage: Usage
-    last_seen_version: int = Field(ge=0)
+class HeartbeatBody(HeartbeatRequest):
+    model_config = ConfigDict(extra="ignore")
 
 
 class ConcludeBody(BaseModel):
@@ -234,6 +229,8 @@ class FinishBody(BaseModel):
     receipt: dict[str, Any]
     end_reason: str = Field(min_length=1)
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_run_number: int | None = Field(default=None, ge=1)
+    expected_agent_run_id: str | None = Field(default=None, min_length=1)
 
 
 class ClaimForBody(BaseModel):
@@ -586,21 +583,7 @@ def create_app(
                             await request.app.state.ctf_service.authorize_reader(
                                 tid, identity.agent_id, identity.generation
                             )
-                        elif suffix in {
-                            "/ctf/tools/list_challenges",
-                            "/ctf/tools/get_challenge",
-                            "/ctf/tools/list_records",
-                            "/ctf/tools/read_artifact",
-                        }:
-                            try:
-                                await request.app.state.ctf_service.authorize_review(
-                                    tid, identity.agent_id, identity.generation, identity.turn_id
-                                )
-                            except HTTPException:
-                                await request.app.state.ctf_service.authorize_member(
-                                    tid, identity.agent_id, identity.generation, identity.turn_id
-                                )
-                        else:
+                        elif not suffix.startswith("/ctf/tools/"):
                             await request.app.state.ctf_service.authorize_member(
                                 tid,
                                 identity.agent_id,
@@ -1491,9 +1474,16 @@ def create_app(
 
     @app.patch("/api/tasks/{task_id}/agents/{agent_id}", tags=["system"])
     async def heartbeat(
-        request: Request, task_id: UUID, agent_id: str, body: HeartbeatBody
+        request: Request,
+        task_id: UUID,
+        agent_id: str,
+        body: HeartbeatBody | ReceiptHeartbeatRequest,
     ) -> dict[str, Any]:
         require_service(request)
+        if isinstance(body, ReceiptHeartbeatRequest):
+            body = HeartbeatBody.model_validate(body.receipt.model_dump())
+        if body.request_id is not None:
+            return await _service(request).heartbeat(task_id, agent_id, **body.model_dump())
         board = await _service(request).state(task_id)
         agent = board["agents"].get(agent_id)
         if agent is None:
@@ -1513,7 +1503,7 @@ def create_app(
             requested_at=body.requested_at,
             billing_mode=task.get("billing_mode"),
             **(
-                {"expected_derive_round": body.expected_derive_round}
+                cast(dict[str, Any], {"expected_derive_round": body.expected_derive_round})
                 if body.expected_derive_round is not None
                 else {}
             ),
@@ -1569,11 +1559,7 @@ def create_app(
             agent_id,
             body.receipt,
             body.end_reason,
-            **(
-                {"expected_derive_round": body.expected_derive_round}
-                if body.expected_derive_round is not None
-                else {}
-            ),
+            **body.model_dump(exclude={"receipt", "end_reason"}, exclude_none=True),
         )
 
     @app.post("/api/tasks/{task_id}/intents/{intent_id}/system_close", tags=["system"])
