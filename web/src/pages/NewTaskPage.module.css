@@ -27,3 +27,5 @@
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 800px) { .layout { grid-template-columns: minmax(0,1fr); gap: 24px; } .sidebar { background: #fff; padding: 22px; border: 1px solid var(--color-line); border-radius: 12px; } }
 @media (max-width: 650px) { .page { padding: 16px 12px 30px; } .editor { padding: 18px; } .heading { gap: 6px; } .uploads > li { flex-wrap: wrap; } }
+
+.modelHeading { display:flex; align-items:center; gap:8px; }

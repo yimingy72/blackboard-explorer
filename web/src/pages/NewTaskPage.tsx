@@ -1,5 +1,5 @@
 import { Alert, Button, Collapse, Form, Input, Segmented, Select } from 'antd';
-import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -59,7 +59,7 @@ export default function NewTaskPage() {
                 void group.current?.then((id) => api.deleteInputGroup(id)).catch(() => { });
         };
     }, []);
-    const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels });
+    const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels, refetchOnWindowFocus: true });
     const providers = useQuery({ queryKey: ['platform-providers'], queryFn: api.listProviders });
     const selectedModel = models.data?.find((item) => item.name === modelId);
     const provider = providers.data?.find((item) => item.id === selectedModel?.config.provider);
@@ -176,15 +176,15 @@ export default function NewTaskPage() {
               <Form.Item label={`金额上限（${currencyLabel}）`} htmlFor="max-cost" required><Input id="max-cost" type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required prefix="¥" /></Form.Item>
               <div className={styles.settingsGrid}><Form.Item label="时长上限（分钟）" htmlFor="max-minutes" required><Input id="max-minutes" type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required /></Form.Item>
               {mode === 'ctf' ? <Form.Item label="队友上限（不含 Lead）" htmlFor="max-teammates"><Input id="max-teammates" type="number" min="0" step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required /></Form.Item> : <Form.Item label="并发 Agent 上限" htmlFor="max-agents" required><Input id="max-agents" type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required /></Form.Item>}</div>
-              <Form.Item label="模型" htmlFor="model" required><Select id="model" aria-label="平台模型" value={modelId || undefined} placeholder="选择模型" loading={models.isLoading} options={models.data?.filter((item) => item.enabled).map((item) => ({ value: item.name, label: item.label + (item.is_default ? ' · 默认' : '') })) ?? []} onChange={(value) => { setModelId(value); setReasoningEffort(''); }} /></Form.Item>
+              <Form.Item label={<span className={styles.modelHeading}>模型<Button type="text" size="small" icon={<ReloadOutlined />} aria-label="刷新模型" loading={models.isFetching} onClick={()=>{void models.refetch();void providers.refetch();}} /></span>} htmlFor="model" required><Select id="model" aria-label="平台模型" value={modelId || undefined} placeholder="选择模型" loading={models.isLoading} options={models.data?.filter((item) => item.enabled).map((item) => ({ value: item.name, label: item.label + (item.is_default ? ' · 默认' : '') })) ?? []} onChange={(value) => { setModelId(value); setReasoningEffort(''); }} /></Form.Item>
               {provider?.supports_reasoning_effort && <Form.Item label="推理强度" htmlFor="reasoning-effort"><Select id="reasoning-effort" aria-label="推理强度" value={reasoningEffort} onChange={setReasoningEffort} options={[{ value: '', label: `沿用模型配置（${selectedModel?.config.reasoning_effort === 'none' || selectedModel?.config.reasoning_effort === 'off' ? '不传参数' : selectedModel?.config.reasoning_effort}）` }, { value: 'none', label: '模型默认（不传参数）' }, ...efforts.map((value) => ({ value, label: value }))]} /></Form.Item>}
               {provider && !provider.supports_reasoning_effort && <p className={controls.hint}>该连接方式使用模型默认思考设置。</p>}
               {(models.isError || providers.isError) && !unauthorized && <Alert type="error" title="模型选项读取失败" action={<Button size="small" onClick={() => { void models.refetch(); void providers.refetch(); }}>重试</Button>} />}
-              {!models.isLoading && !models.data?.some((item) => item.enabled) && <Alert type="warning" title="当前没有可用模型" action={<Button href="/profiles">添加模型</Button>} />}
+              {!models.isLoading && !models.isError && !models.data?.some((item) => item.enabled) && <Alert type="warning" title="当前没有可用模型" description="在新标签配置模型，返回后刷新模型列表。" action={<Button href="/profiles?section=models" target="_blank" rel="noopener noreferrer">添加模型</Button>} />}
               <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />
             </aside>
           </div>
-          <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
+          <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
         </Form>
       </form>
     </div>;

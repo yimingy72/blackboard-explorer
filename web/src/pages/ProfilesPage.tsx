@@ -1,7 +1,7 @@
-import { Alert, App, Button, Checkbox, Collapse, Form, Input, Spin, Tabs, Segmented } from 'antd';
+import { Alert, App, Modal, Button, Checkbox, Collapse, Form, Input, Spin, Tabs, Segmented } from 'antd';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import WorkerPrompts from '../components/WorkerPrompts';
 import CtfSettings from '../ctf/CtfSettings';
 import { defaultTools, workers } from '../components/workerOptions';
@@ -43,7 +43,8 @@ export default function ProfilesPage() {
     const [drafts, setDrafts] = useState<Drafts | null>(null);
     const [runtime, setRuntime] = useState<RuntimeInput | null>(null);
     const [role, setRole] = useState<WorkerRole>('explore');
-    const [section, setSection] = useState<'worker' | 'ctf' | 'models' | 'mcp'>('worker');
+    const [params, setParams] = useSearchParams();
+    const [section, setSection] = useState<'worker' | 'ctf' | 'models' | 'mcp'>(() => { const value=params.get('section'); return value==='ctf'||value==='models'||value==='mcp'?value:'worker'; });
     const [catalogBusy, setCatalogBusy] = useState(false);
   const [catalogDirty, setCatalogDirty] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -63,6 +64,9 @@ export default function ProfilesPage() {
     const workerDirty = Boolean(snapshot && drafts && roles.some((item) => JSON.stringify(drafts[item]) !== JSON.stringify(workerDraft(snapshot.profile, item))));
     const runtimeDirty = Boolean(snapshot && runtime && JSON.stringify(runtime) !== JSON.stringify(runtimeDraft(snapshot.profile)));
     const dirty = workerDirty || runtimeDirty;
+    const busy = saving || catalogBusy;
+    const blocker = useBlocker(({currentLocation,nextLocation}) => (dirty || catalogDirty || busy) && currentLocation.pathname !== nextLocation.pathname && nextLocation.pathname !== '/login');
+    useEffect(() => { if (blocker.state === 'blocked' && !dirty && !catalogDirty && !busy) blocker.proceed(); }, [blocker, dirty, catalogDirty, busy]);
     useEffect(() => {
         if (!dirty && !catalogDirty)
             return;
@@ -81,6 +85,7 @@ export default function ProfilesPage() {
         }
         setCatalogDirty(false);
         setSection(next);
+        setParams({section:next},{replace:true});
         setError('');
         setNotice('');
     }
@@ -137,7 +142,8 @@ export default function ProfilesPage() {
     }
     const current = drafts?.[role];
     const currentDirty = Boolean(snapshot && current && JSON.stringify(current) !== JSON.stringify(workerDraft(snapshot.profile, role)));
-    return <div className={styles.page}>
+    return <div className={styles.page} onChangeCapture={()=>setNotice('')}>
+      <Modal title="离开配置页？" open={blocker.state==='blocked'} onCancel={()=>blocker.reset?.()} onOk={()=>{if(!busy)blocker.proceed?.();}} okText="放弃修改并离开" cancelText="继续编辑" okButtonProps={{disabled:busy}}><p>{busy?'配置正在保存，请稍候。':'尚未保存的修改会丢失。'}</p></Modal>
       <header className={styles.pageHeader}><h1>Agent 配置</h1></header>
       <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'models', label: '模型配置', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
       {section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
@@ -147,7 +153,7 @@ export default function ProfilesPage() {
         {settings.isError && !snapshot && <Alert type="error" title={`配置读取失败：${message(settings.error)}`} action={<Button onClick={() => void reload()}>重试</Button>} />}
         {snapshot && drafts && runtime && current && <>
           <section className={styles.directWorker}>
-            <div className={styles.directActions}><Segmented aria-label="Worker" value={role} disabled={saving} options={workers.map(item=>({value:item.id,label:item.id[0].toUpperCase()+item.id.slice(1)}))} onChange={value=>{setRole(value as WorkerRole);setError('');setNotice('');}} /><div className={styles.headerActions}><span className={controls.hint}>{currentDirty?'未保存':'下一次调用生效'}</span><Button size="small" type="primary" loading={saving} disabled={saving||!currentDirty} onClick={()=>void saveWorker()}>保存并应用</Button></div></div>
+            <div className={styles.directActions}><Segmented aria-label="Worker" value={role} disabled={saving} options={workers.map(item=>({value:item.id,label:item.id[0].toUpperCase()+item.id.slice(1)}))} onChange={value=>{setRole(value as WorkerRole);setError('');setNotice('');}} /><div className={styles.headerActions}><span className={controls.hint}>{currentDirty?'未保存':'下一次调用生效'}</span><Button aria-label="保存并应用" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!currentDirty} onClick={()=>void saveWorker()}>保存并应用</Button></div></div>
             <WorkerPrompts key={role} role={role} prompt={current.prompt} tools={current.tools} disabled={saving} onPromptChange={prompt=>setDrafts({...drafts,[role]:{...current,prompt}})} onToolsChange={tools=>setDrafts({...drafts,[role]:{...current,tools}})} />
           </section>
           <Collapse className={styles.runtimeDetails} items={[{ key: 'runtime', label: `全局调度与执行环境${runtimeDirty ? ' · 未保存' : ''}`, children: <Form component={false} disabled={saving}><div className={styles.formGrid}>
@@ -156,7 +162,7 @@ export default function ProfilesPage() {
             <label className={controls.field}><span className={controls.label}>CPU</span><Input type="number" min="0.1" step="any" value={runtime.exec_resources.cpus} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, cpus: Number(event.target.value) } })} /></label>
             <label className={controls.field}><span className={controls.label}>内存</span><Input value={runtime.exec_resources.mem} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, mem: event.target.value } })} /></label>
             <label className={controls.field}><span className={controls.label}>进程上限</span><Input type="number" min="1" step="1" value={runtime.exec_resources.pids} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, pids: Number(event.target.value) } })} /></label>
-            <div className={`${styles.editorActions} ${styles.wideField}`}><span className={controls.hint}>新任务生效</span><Button type="primary" loading={saving} disabled={saving||!runtimeDirty} onClick={() => void saveRuntime()}>保存全局设置</Button></div>
+            <div className={`${styles.editorActions} ${styles.wideField}`}><span className={controls.hint}>新任务生效</span><Button aria-label="保存全局设置" aria-busy={saving} type="primary" loading={saving} disabled={saving||!runtimeDirty} onClick={() => void saveRuntime()}>保存全局设置</Button></div>
           </div></Form> }]} />
         </>}
       </>}

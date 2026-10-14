@@ -228,8 +228,8 @@ export const api = {
   listMcpTools: (name: string, version: number) =>
     request<{ tools: McpTool[] }>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
   getReport: async (id: string, signal?: AbortSignal, run?: number) => (await textResponse(`${taskPath(id)}/report${run ? `?run=${run}` : ''}`, signal)).text(),
-  getWorkspaceTree: (id: string) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree`),
-  getWorkspaceFile: (id: string, path: string) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}`),
+  getWorkspaceTree: (id: string, run?: number) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree${run ? `?run=${run}` : ''}`),
+  getWorkspaceFile: (id: string, path: string, run?: number) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}${run ? `&run=${run}` : ''}`),
   evidenceUrl: (uri: string) => `/api/evidence?uri=${encodeURIComponent(uri)}`,
   getEvidencePreview: async (uri: string, signal?: AbortSignal) =>
     previewResponse(await textResponse(`/evidence?uri=${encodeURIComponent(uri)}`, signal)),

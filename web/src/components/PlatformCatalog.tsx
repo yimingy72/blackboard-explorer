@@ -1,4 +1,4 @@
-import { App, Button, Checkbox, Collapse, Alert, Empty, Form, Input, Select, Switch, Tag } from 'antd';
+import { App, Button, Checkbox, Collapse, Alert, Empty, Skeleton, Form, Input, Select, Switch, Tag } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput } from '../api/client';
@@ -41,12 +41,21 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
+    const [advanced, setAdvanced] = useState<string[]>([]);
+    const [priceError, setPriceError] = useState('');
+    const pricesRef = useRef<HTMLDivElement>(null);
     const [tools, setTools] = useState<McpTool[] | null>(null);
     const [loadingTools, setLoadingTools] = useState(false);
     const inspectSequence = useRef(0);
     const draft = kind === 'models' ? model : server;
     const dirty = Boolean(original) && (JSON.stringify(draft) !== original || name !== originalName);
     useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+    useEffect(() => { if (dirty) {setNotice('');inspectSequence.current+=1;setTools(null);setLoadingTools(false);} }, [dirty, model, server]);
+    useEffect(() => {
+        if (!priceError || !advanced.includes('prices')) return;
+        const frame=requestAnimationFrame(()=>{const input=pricesRef.current?.querySelector<HTMLInputElement>('[aria-invalid=true]');input?.focus({preventScroll:true});input?.scrollIntoView({block:'center'});});
+        return ()=>cancelAnimationFrame(frame);
+    }, [priceError, advanced]);
     const items = kind === 'models' ? models.data : servers.data;
     async function canLeave() { return !dirty || await new Promise<boolean>((resolve) => { modal.confirm({ title: '当前配置尚未保存，确定放弃本次修改吗？', okText: '放弃修改', cancelText: '继续编辑', onOk: () => resolve(true), onCancel: () => resolve(false) }); }); }
     async function choose(item: PlatformModel | McpServer, force = false) {
@@ -56,14 +65,16 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         setLoadingTools(false);
         setName(item.name);
         setOriginalName(item.name);
+        setPriceError('');
         if ('config' in item) {
             const next: PlatformModelInput = {
                 label: item.label, provider: item.config.provider as PlatformModelInput['provider'], model: item.config.model,
                 base_url: item.config.base_url, reasoning_effort: item.config.reasoning_effort,
                 supports_vision: item.config.supports_vision ?? null, context_window: item.config.context_window ?? null,
-                price: { ...blankModel.price, ...item.config.price, currency: 'CNY' }, provider_options: item.config.provider_options ?? {}, credentials: {}, enabled: item.enabled,
+                price: item.config.price.currency === 'CNY' ? { ...blankModel.price, ...item.config.price } : { ...blankModel.price }, provider_options: item.config.provider_options ?? {}, credentials: {}, enabled: item.enabled,
             };
             setModel(next);
+            setAdvanced(item.config.price.currency === 'CNY'?[]:['prices']);
             setOriginal(JSON.stringify(next));
         }
         else {
@@ -82,6 +93,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         inspectSequence.current += 1;
         setLoadingTools(false);
         setName('');
+        setPriceError('');setAdvanced(kind==='models'?['prices']:[]);
         setOriginalName('');
         setModel(blankModel);
         setServer(blankServer);
@@ -95,6 +107,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
             return;
         const validation = kind === 'models' ? validateModel() : validateServer();
         if (validation) { setError(validation); return; }
+        setPriceError('');
         setSaving(true); onBusyChange?.(true);
         setError('');
         setNotice('');
@@ -124,6 +137,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         }
     }
     async function inspect(item: McpServer) {
+        if(dirty || saving) return;
         const sequence = ++inspectSequence.current;
         setLoadingTools(true);
         setTools(null);
@@ -167,6 +181,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
     const setPrice = (key: 'cache_hit_per_m' | 'cache_miss_per_m' | 'output_per_m', value: string) => setModel({ ...model, price: { ...model.price, [key]: value === '' ? '' : Number(value) } });
     function validUrl(value: string) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol); } catch { return false; } }
     function validateModel(): string {
+        setPriceError('');
         if (!model.label.trim()) return '请填写显示名称。';
         if (!provider) return '请选择有效的 Provider。';
         if (!model.model.trim()) return '请填写模型 ID。';
@@ -174,7 +189,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         if (model.context_window != null && (!Number.isInteger(model.context_window) || model.context_window < 1)) return '上下文大小必须为正整数。';
         for (const field of provider.options_fields) if (field.required && !model.provider_options?.[field.name]?.trim()) return `请填写 ${field.label ?? field.name}。`;
         for (const field of provider.credential_fields) if (field.required && !provider.allow_no_auth && !configuredCredentials.includes(field.name) && !model.credentials?.[field.name]?.trim()) return `请填写 ${field.label ?? field.name}。`;
-        for (const key of ['cache_hit_per_m','cache_miss_per_m','output_per_m'] as const) if (model.price[key] === '' || !Number.isFinite(Number(model.price[key])) || Number(model.price[key]) < 0) return '请填写完整的非负计费单价。';
+        for (const key of ['cache_hit_per_m','cache_miss_per_m','output_per_m'] as const) if (model.price[key] === '' || !Number.isFinite(Number(model.price[key])) || Number(model.price[key]) < 0) {setPriceError(key);setAdvanced(keys=>[...new Set([...keys,'prices'])]);return '请填写完整的非负计费单价。';}
         return '';
     }
     function validateServer(): string {
@@ -184,8 +199,10 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
     }
     // Initialize the editor once; polling must never replace an unsaved draft.
     useEffect(() => { if (!original && items?.length) void choose(items.find(item => 'is_default' in item && item.is_default) ?? items[0], true); });
-    const prices = <div className={styles.formGrid}>
-      {([['cache_hit_per_m','缓存命中输入'],['cache_miss_per_m','缓存未命中输入'],['output_per_m','输出']] as const).map(([key,label]) => <label className={controls.field} key={key}><span className={controls.label}>{label} / 百万 token</span><Input aria-label={label} type="number" min="0" step="any" value={model.price[key] ?? ''} onChange={event=>setPrice(key,event.target.value)} prefix="¥" /></label>)}
+    const prices = <div ref={pricesRef} className={styles.formGrid}>
+      {active && 'config' in active && active.config.price.currency!=='CNY' && <Alert className={styles.wideField} type="warning" title="原配置不是人民币，请重新录入人民币单价。" description={`原单价（${active.config.price.currency} / 百万 token）：缓存命中 ${active.config.price.cache_hit_per_m}，未命中 ${active.config.price.cache_miss_per_m}，输出 ${active.config.price.output_per_m}。`} />}
+      {priceError && <p id="price-error" role="alert" className={`${controls.error} ${styles.wideField}`}>单价须为非负数；免费模型请明确填写 0。</p>}
+      {([['cache_hit_per_m','缓存命中输入'],['cache_miss_per_m','缓存未命中输入'],['output_per_m','输出']] as const).map(([key,label]) => <label className={controls.field} key={key}><span className={controls.label}>{label} / 百万 token</span><Input aria-label={label} aria-invalid={Boolean(priceError) && (model.price[key]===''||!Number.isFinite(Number(model.price[key]))||Number(model.price[key])<0)} aria-describedby={priceError?"price-error":undefined} type="number" min="0" step="any" value={model.price[key] ?? ''} onChange={event=>setPrice(key,event.target.value)} prefix="¥" /></label>)}
       <label className={controls.field}><span className={controls.label}>费用估算方式</span><Select aria-label="费用估算方式" value={model.price.billing_mode ?? 'fixed'} onChange={value=>setModel({...model,price:{...model.price,billing_mode:value}})} options={[{value:'fixed',label:'固定费率'},{value:'deepseek_schedule',label:'DeepSeek 官方峰谷时段'}]} /></label>
       <Checkbox checked={Boolean(model.price.off_peak)} onChange={event=>setModel({...model,price:{...model.price,off_peak:event.target.checked}})}>上方录入的是闲时单价</Checkbox>
       <div className={styles.wideField}><p className={controls.hint}>{model.price.billing_mode === 'deepseek_schedule' ? '按官方端点请求开始时刻估算峰谷价；网关请使用固定费率。' : '按固定单价估算。'} 实际扣款以服务商账单为准。</p></div>
@@ -195,11 +212,11 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
       <form className={styles.catalogForm} noValidate onSubmit={event=>{event.preventDefault();void save();}}>
         <header className={styles.contentHeader}>
           <div className={styles.connectionPicker}><Select aria-label={kind==='models'?'模型连接':'MCP 服务'} className={styles.resourceSelect} value={name || undefined} placeholder={original ? `新增${kind==='models'?'模型':'服务'}` : '选择连接'} loading={kind==='models'?models.isLoading:servers.isLoading} options={items?.map(item=>({value:item.name,label:item.label})) ?? []} onChange={value=>{const item=items?.find(entry=>entry.name===value);if(item)void choose(item);}} />{active && 'is_default' in active && active.is_default && <Tag>默认</Tag>}<Button type="text" icon={<PlusOutlined />} onClick={()=>void create()} disabled={saving}>新增{kind==='models'?'模型':'MCP 服务'}</Button></div>
-          {original && <div className={styles.headerActions}><Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}<Button size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
+          {original && <div className={styles.headerActions}><Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}<Button aria-label="保存" aria-busy={saving} size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
         </header>
         {error && <Alert type="error" title={error} showIcon className={styles.feedback} />}{notice && <Alert role="status" type="success" title={notice} showIcon className={styles.feedback} />}
         {(kind==='models'?models.isError:servers.isError) && <Alert type="error" title={`加载失败：${errorText(kind==='models'?models.error:servers.error)}`} action={<Button onClick={()=>{void (kind==='models'?models.refetch():servers.refetch());}}>重试</Button>} />}
-        {!original ? <Empty className={styles.emptyDetail} description={kind==='models'?'添加或选择模型':'添加或选择 MCP 服务'} /> : <div className={styles.catalogFields}>
+        {!original ? (kind==='models'?models.isLoading:servers.isLoading) ? <div className={styles.formSection} role="status" aria-label="正在读取配置"><Skeleton active={false} paragraph={{rows:5}} /></div> : (kind==='models'?models.isError:servers.isError) ? null : <Empty className={styles.emptyDetail} description={kind==='models'?'添加或选择模型':'添加或选择 MCP 服务'} /> : <div className={styles.catalogFields}>
           {kind==='models'?<>
           <div className={styles.formSection}><div className={styles.formGrid}>
             <label className={controls.field}><span className={controls.label}>显示名称</span><Input aria-label="显示名称" value={model.label} onChange={event=>setModel({...model,label:event.target.value})} /></label>
@@ -212,7 +229,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
             {provider?.supports_reasoning_effort?<label className={controls.field}><span className={controls.label}>推理强度</span><Select aria-label="推理强度" value={model.reasoning_effort} onChange={value=>setModel({...model,reasoning_effort:value})} options={[{value:'none',label:'模型默认（不传参数）'},...(model.reasoning_effort!=='none'&&!efforts.includes(model.reasoning_effort)?[{value:model.reasoning_effort,label:`${model.reasoning_effort}（当前兼容设置）`}]:[]),...efforts.map(value=>({value,label:value}))]} /></label>:<label className={controls.field}><span className={controls.label}>推理强度</span><Input value="模型默认" readOnly disabled /></label>}
             <label className={controls.field}><span className={controls.label}>图片输入</span><Select aria-label="图片输入" value={model.supports_vision==null?'auto':String(model.supports_vision)} onChange={value=>setModel({...model,supports_vision:value==='auto'?null:value==='true'})} options={[{value:'auto',label:'由模型接口判断'},{value:'true',label:'支持看图'},{value:'false',label:'仅文本'}]} /></label>
           </div>{providers.isError&&<Alert type="error" title="Provider 目录读取失败" action={<Button onClick={()=>void providers.refetch()}>重试</Button>} />}</div>
-          <Collapse className={styles.catalogAdvanced} ghost size="small" items={[{key:'prices',label:'人民币计费',forceRender:true,children:prices},{key:'help',label:'连接与上下文说明',children:<>{model.provider==='openai_compatible'&&<p className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</p>}<p className={controls.hint}>宿主机服务使用 host.docker.internal。凭据仅写入，留空保留已保存的值。</p><p className={controls.hint}>{model.context_window!=null&&Number.isInteger(model.context_window)&&model.context_window>0?`新任务交接阈值 ${Math.max(1,Math.floor(model.context_window*4/5)).toLocaleString()} token（80%），其余 20% 留给输出与黑板增量。`:'未设置时沿用全局交接阈值（默认 128,000 token）。'} 修改不会改变已有任务。</p></>}]} />
+          <Collapse activeKey={advanced} onChange={keys=>setAdvanced(Array.isArray(keys)?keys:[keys])} className={styles.catalogAdvanced} ghost size="small" items={[{key:'prices',label:'人民币计费',forceRender:true,children:prices},{key:'help',label:'连接与上下文说明',children:<>{model.provider==='openai_compatible'&&<p className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</p>}<p className={controls.hint}>宿主机服务使用 host.docker.internal。凭据仅写入，留空保留已保存的值。</p><p className={controls.hint}>{model.context_window!=null&&Number.isInteger(model.context_window)&&model.context_window>0?`新任务交接阈值 ${Math.max(1,Math.floor(model.context_window*4/5)).toLocaleString()} token（80%），其余 20% 留给输出与黑板增量。`:'未设置时沿用全局交接阈值（默认 128,000 token）。'} 修改不会改变已有任务。</p></>}]} />
           </>:<div className={styles.formSection}><div className={styles.formGrid}>
             <label className={controls.field}><span className={controls.label}>显示名称</span><Input aria-label="显示名称" value={server.label} onChange={event=>setServer({...server,label:event.target.value})} /></label>
             <label className={`${controls.field} ${styles.spanTwo}`}><span className={controls.label}>Streamable HTTP URL</span><Input aria-label="Streamable HTTP URL" value={server.url} onChange={event=>setServer({...server,url:event.target.value})} /></label>
@@ -220,7 +237,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
             <label className={controls.field}><span className={controls.label}>认证 Scheme</span><Input aria-label="认证 Scheme" value={server.auth_scheme} onChange={event=>setServer({...server,auth_scheme:event.target.value})} /></label>
             <label className={controls.field}><span className={controls.label}>认证密钥</span><Input.Password aria-label="认证密钥" autoComplete="new-password" value={server.secret??''} placeholder={active&&'has_secret' in active&&active.has_secret?'已保存；留空沿用当前密钥':'可留空'} onChange={event=>setServer({...server,secret:event.target.value})} /></label>
             {active&&'has_secret' in active&&active.has_secret&&<Checkbox className={styles.wideField} checked={Boolean(server.clear_secret)} onChange={event=>setServer({...server,clear_secret:event.target.checked})}>清除当前密钥</Checkbox>}
-          </div>{active&&'url' in active&&<Collapse ghost size="small" items={[{key:'tools',label:'工具清单',children:<><Button loading={loadingTools} disabled={saving||loadingTools} onClick={()=>void inspect(active)}>查看工具清单</Button>{tools&&(tools.length?<ul className={styles.toolList}>{tools.map(tool=><li key={tool.name}><strong>{tool.name}</strong><p>{tool.description}</p></li>)}</ul>:<p className={controls.hint}>该服务没有公开工具。</p>)}</>}]} />}</div>}
+          </div>{active&&'url' in active&&<Collapse ghost size="small" items={[{key:'tools',label:'工具清单',children:<>{dirty&&<p className={controls.hint}>先保存修改，再读取工具清单。</p>}<Button aria-label="查看工具清单" aria-busy={loadingTools} loading={loadingTools} disabled={saving||loadingTools||dirty} onClick={()=>void inspect(active)}>查看工具清单</Button>{tools&&(tools.length?<ul className={styles.toolList}>{tools.map(tool=><li key={tool.name}><strong>{tool.name}</strong><p>{tool.description}</p></li>)}</ul>:<p className={controls.hint}>该服务没有公开工具。</p>)}</>}]} />}</div>}
         </div>}
       </form></Form>
     </section>;

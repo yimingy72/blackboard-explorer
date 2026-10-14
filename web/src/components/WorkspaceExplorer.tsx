@@ -24,17 +24,18 @@ function treeOf(entries: WorkspaceEntry[]): TreeNode[] {
     }
     return roots;
 }
-export default function WorkspaceExplorer({ taskId, available }: {
+export default function WorkspaceExplorer({ taskId, available, run = 1 }: {
     taskId: string;
     available: boolean;
+    run?: number;
 }) {
     const [selection, setSelection] = useState<{
         taskId: string;
         path: string;
     } | null>(null);
-    const treeQuery = useQuery({ queryKey: ['workspace-tree', taskId], queryFn: () => api.getWorkspaceTree(taskId), enabled: available });
+    const treeQuery = useQuery({ queryKey: ['workspace-tree', taskId, run], queryFn: () => api.getWorkspaceTree(taskId, run), enabled: available });
     const selectedPath = available && selection?.taskId === taskId && treeQuery.data?.entries.some((entry) => entry.path === selection.path && entry.kind === 'file') ? selection.path : null;
-    const fileQuery = useQuery({ queryKey: ['workspace-file', taskId, selectedPath], queryFn: () => api.getWorkspaceFile(taskId, selectedPath!), enabled: selectedPath !== null });
+    const fileQuery = useQuery({ queryKey: ['workspace-file', taskId, run, selectedPath], queryFn: () => api.getWorkspaceFile(taskId, selectedPath!, run), enabled: selectedPath !== null });
     const tree = useMemo(() => treeOf(treeQuery.data?.entries ?? []), [treeQuery.data]);
     const nodes = (items:TreeNode[]): import('antd').TreeDataNode[] => items.map(node=>({key:node.path,title:node.path.split('/').at(-1)+(node.kind==='directory'?'/':node.kind==='link'?' · 链接不可预览':''),selectable:node.kind==='file',isLeaf:node.kind!=='directory',children:node.children.length?nodes(node.children):undefined}));
     if (!available)
@@ -51,7 +52,7 @@ export default function WorkspaceExplorer({ taskId, available }: {
           {fileQuery.data.binary ? <p className={styles.muted}>这是二进制文件，无法显示文字预览。请下载本轮归档查看。</p> : <pre tabIndex={0}>{fileQuery.data.text || '（空文件）'}</pre>}
         </>}
       </>}
-      <Button href={`/api/tasks/${encodeURIComponent(taskId)}/workspace`}>下载本轮归档</Button>
+      <Button href={`/api/tasks/${encodeURIComponent(taskId)}/workspace?run=${run}`}>下载本轮归档</Button>
     </section>
   </div>;
 }

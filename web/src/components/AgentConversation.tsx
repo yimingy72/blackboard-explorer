@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { api, type AgentMessage, type PreviewData } from '../api/client';
 import { agentEndReasonLabel, agentRole, agentStatusLabel, taskDuration } from '../board/agents';
-import { formatMoney } from '../pages/format';
+import { formatMoney, formatTime } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
 import type { BoardAgent, BoardEvent, BoardState, BoardToolCall } from '../board/types';
 import EvidenceViewer from './EvidenceViewer';
@@ -55,10 +55,6 @@ function ChatMessage({ message, onRetry }: {
 }) {
     const currency = useContext(TaskCurrency);
     return <><MessageBody text={message.content} />{message.role==='user'&&<p className={styles.recordNote}>{messageStatus[message.status]}{message.status==='failed'&&<> · {message.error||'请稍后重试'} <Button size="small" type="link" onClick={()=>onRetry(message.content)}>重新编辑</Button></>}</p>}{message.role==='assistant'&&message.usage?.cost!=null&&<p className={styles.recordNote}>本次复盘费用 {formatMoney(message.usage.cost,currency)}</p>}{message.role==='assistant'&&message.usage?.unavailable===true&&<p className={styles.recordNote}>回复已恢复，但本轮用量未能恢复。</p>}</>;
-}
-function formatTime(value: string) {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
 }
 function TraceBody({ entry, autoOpen=false }: {
     entry: TraceEntry;
@@ -144,7 +140,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     const hasTrace = entries.some((entry) => entry.type === 'trace');
     const elapsed = taskDuration(agent.startedAt, agent.finishedAt, historical ? events.at(-1)?.created_at : null, Date.now());
     const review = messages.data?.mode === 'review' || !['running', 'concluding'].includes(agent.status);
-    useEffect(() => { heading.current?.focus(); }, [taskId, agent.id]);
+    useEffect(() => { heading.current?.focus({preventScroll:true}); }, [taskId, agent.id]);
     async function send() {
         const content = draft.trim();
         if (historical || sending || !content || content.length > 20000)

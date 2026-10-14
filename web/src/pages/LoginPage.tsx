@@ -22,7 +22,7 @@ export default function LoginPage() {
         <Form.Item name="username" label="账号" rules={[{ required: true, whitespace: true, message: '请输入账号' }]}><Input autoFocus aria-invalid={invalidCredentials} aria-describedby={error?"login-error":undefined} autoComplete="username" /></Form.Item>
         <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}><Input.Password aria-invalid={invalidCredentials} aria-describedby={error?"login-error":undefined} autoComplete="current-password" /></Form.Item>
         {error && <Alert id="login-error" type="error" showIcon title={error} className={styles.error} />}
-        <Button type="primary" htmlType="submit" block loading={pending}>登录</Button>
+        <Button aria-label="登录" aria-busy={pending} type="primary" htmlType="submit" block loading={pending}>登录</Button>
       </Form>
     </section>
   </div></main>;
