@@ -1,0 +1,6 @@
+.chip { display:inline-flex; align-items:center; gap:4px; margin:0; padding:1px 5px; font-size:12px; line-height:18px; font-weight:500; white-space:nowrap; border-radius:6px; }
+.neutral { color:#5b697c; background:#f3f5f8; border-color:#dce2eb; }
+.active { color:#315faa; background:#edf3ff; border-color:#cfddf5; }
+.warning { color:#88550d; background:#fff5e3; border-color:#efdbb4; }
+.danger { color:#a23240; background:#fff0f1; border-color:#efc4ca; }
+.success { color:#27613e; background:#edf7f0; border-color:#cce3d2; }

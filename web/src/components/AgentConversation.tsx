@@ -12,6 +12,7 @@ import { api, type AgentMessage, type PreviewData } from '../api/client';
 import { agentEndReasonLabel, agentRole, agentStatusLabel, taskDuration } from '../board/agents';
 import { formatMoney, formatTime } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
+import { toolResultView } from '../board/toolResult';
 import type { BoardAgent, BoardEvent, BoardState, BoardToolCall } from '../board/types';
 import EvidenceViewer from './EvidenceViewer';
 import { readableProse } from './readable';
@@ -111,17 +112,17 @@ function TraceBody({ entry, autoOpen=false }: {
       {preview?.binary && <p>记录不是可显示的文本，请下载查看。</p>}
       {preview?.truncated && <p>正文过长，仅显示文件开头和结尾。下载可查看完整记录。</p>}
       {visibleText !== null && (entry.kind === 'model_output' && body ? <>
+        {body.reasoning&&<ReasoningBlock title="思考 · 模型返回"><MessageBody text={body.reasoning} /></ReasoningBlock>}
         {visibleText.trim() ? <MessageBody text={visibleText}/> : <p className={styles.recordNote}>本轮未返回正文。</p>}
         <Collapse className={styles.rawSource} size={"small"} ghost items={[{ key: "content", label: <>原始文本</>, children: <><pre tabIndex={0}>{visibleText}</pre></> }]}/>
       </> : <pre tabIndex={0}>{visibleText}</pre>)}
-      {body?.reasoning&&<ReasoningBlock title="实际返回的推理"><MessageBody text={body.reasoning} /></ReasoningBlock>}
-      {body && !body.reasoning && entry.kind === 'model_output' && <p className={styles.recordNote}>本轮模型未返回推理文本。</p>}
       {preview && !preview.binary && !preview.truncated && !body && <p role="alert">记录格式无法解析，请下载原始记录查看。</p>}
     </div>}
   </div>;
 }
 function ToolCall({call}:{call:BoardToolCall}) {
-  return <><ToolSteps steps={[{id:call.id,name:call.tool,content:<><h4>参数</h4><pre>{JSON.stringify(call.args,null,2)}</pre><h4>返回摘要</h4><pre>{call.resultHead||'无摘要'}</pre></>}]} />{call.resultUri&&<EvidenceViewer evidence={{type:'command_output',summary:`${call.tool} 的完整结果`,uri:call.resultUri,call_id:call.id}} />}</>;
+  const result=toolResultView(call.resultHead);
+  return <><ToolSteps steps={[{id:call.id,name:call.tool,status:result.failed?'error':'success',label:result.failed?'失败':'已记录',content:<><h4>参数</h4><pre>{JSON.stringify(call.args,null,2)}</pre><h4>返回摘要</h4><pre>{result.text||'无摘要'}</pre></>}]} />{call.resultUri&&<EvidenceViewer evidence={{type:'command_output',summary:`${call.tool} 的完整结果`,uri:call.resultUri,call_id:call.id}} />}</>;
 }
 export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, contribution, color, onSelect, draftValue, onDraftChange, clientState }: Props) {
     const currency = useContext(TaskCurrency);
@@ -166,7 +167,8 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`}>
       <header className={styles.header}><Avatar size={28} shape="square" style={{background:'var(--agent-tint,#eaf0fb)',color:'var(--agent-accent,#386ac0)'}}>{label.split(' ').at(-1)}</Avatar><div className={styles.identity}><h2 tabIndex={-1} ref={heading} title={agent.id}>{label}<small>{agentRole(agent)}{historical?' · 历史快照':''}</small></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div><InspectorActions onClose={onClose} closeLabel="关闭对话" menu={{items:[{key:'info',label:'运行信息'}],onClick:()=>setInfoOpen(true)}} /></header>
       {!hasTrace&&<p className={styles.empty}>{agent.status==='running'||agent.status==='concluding'?'对话记录尚未到达；工具调用会在此显示。':'此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
-      <Bubble.List className={styles.messages} autoScroll={!historical} role={{assistant:{variant:'borderless',styles:{root:{paddingBlock:6,paddingInlineEnd:0},content:{padding:0,minHeight:0},body:{gap:4},header:{marginBottom:2}}},user:{placement:'end',styles:{root:{paddingBlock:6,paddingInlineStart:'12%'},content:{padding:'7px 10px',minHeight:0},header:{marginBottom:2}}}}} items={entries.map(entry=>({
+      {agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
+      <Bubble.List className={styles.messages} autoScroll={!historical} role={{assistant:{variant:'borderless',styles:{root:{paddingBlock:6,paddingInlineEnd:0,width:"100%",minWidth:0},content:{padding:0,minHeight:0,width:"100%"},body:{gap:4,width:"100%",minWidth:0},header:{marginBottom:2}}},user:{placement:'end',styles:{root:{paddingBlock:6,paddingInlineStart:'12%'},content:{padding:'7px 10px',minHeight:0},header:{marginBottom:2}}}}} items={entries.map(entry=>({
         key:entry.type==='chat'?entry.message.id:`${entry.type}-${entry.version}`,role:entry.type==='chat'&&entry.message.role==='user'?'user':'assistant',typing:false,streaming:false,
         header:<div className={styles.entryHead}><strong>{entry.type==='chat'?entry.message.role==='user'?'你':'Agent 回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]+(entry.kind==='initial_context'&&entry.deriveRound?` · 第 ${entry.deriveRound} 轮`:'')}</strong><span>{entry.type!=='chat'?`v${entry.version} · `:''}{formatTime(entry.type==='chat'?entry.message.created_at:entry.type==='tool'?entry.call.createdAt:entry.at)}</span></div>,
         content:<article aria-label={`${entry.type==='chat'?entry.message.role==='user'?'用户消息':'Agent回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]} ${entry.type==='chat'?entry.message.id:'v'+entry.version}`}>{entry.type==='chat'?<ChatMessage message={entry.message} onRetry={text=>{setDraft(text);setSendError('');}} />:entry.type==='tool'?<ToolCall call={entry.call} />:<TraceBody entry={entry} autoOpen={autoExpanded.has(entry.version)} />}</article>,

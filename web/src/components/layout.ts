@@ -8,22 +8,14 @@ function loadEngine(): Promise<ELK> {
 }
 
 export const NODE_SIZE: Record<string, { width: number; height: number }> = {
-  goal: { width: 260, height: 176 },
-  fact: { width: 280, height: 144 },
-  intent: { width: 280, height: 164 },
-  agent: { width: 152, height: 68 },
+  goal: { width: 256, height: 128 },
+  fact: { width: 248, height: 128 },
+  intent: { width: 248, height: 136 },
+  agent: { width: 176, height: 64 },
 }
 
 const sizeOf = (node: GraphNode) => NODE_SIZE[node.type] ?? NODE_SIZE.fact
 const versionOf = (node: GraphNode) => Number(node.data.version ?? 0)
-
-function linksOf(id: string, edges: GraphEdge[]): string {
-  return edges
-    .filter((edge) => edge.source === id || edge.target === id)
-    .map((edge) => `${edge.source}:${edge.target}:${String(edge.data?.relation ?? '')}`)
-    .sort()
-    .join('|')
-}
 
 function overlaps(a: GraphNode, b: GraphNode): boolean {
   const first = sizeOf(a)
@@ -43,11 +35,13 @@ export function sameTopology(
   previousNodes: GraphNode[],
   previousEdges: GraphEdge[],
 ): boolean {
+  const nodeIds = new Set(previousNodes.map(node => node.id));
+  const edgeIds = new Set(previousEdges.map(edge => edge.id));
   return (
     nodes.length === previousNodes.length &&
     edges.length === previousEdges.length &&
-    nodes.every((node) => previousNodes.some((previous) => previous.id === node.id)) &&
-    edges.every((edge) => previousEdges.some((previous) => previous.id === edge.id))
+    nodes.every((node) => nodeIds.has(node.id)) &&
+    edges.every((edge) => edgeIds.has(edge.id))
   )
 }
 
@@ -55,12 +49,15 @@ export async function layoutGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
   previousNodes: GraphNode[] = [],
-  previousEdges: GraphEdge[] = [],
 ): Promise<GraphNode[]> {
   if (!nodes.length) return []
 
   const ordered = [...nodes].sort((a, b) => versionOf(a) - versionOf(b) || a.id.localeCompare(b.id))
   const nodeIds = new Set(nodes.map((node) => node.id))
+  const prior = new Map(previousNodes.map((node) => [node.id, node]))
+  if (nodes.every(node => prior.has(node.id))) {
+    return nodes.map(node => ({ ...node, position: prior.get(node.id)!.position }))
+  }
   const elk = await loadEngine()
   const layout = await elk.layout({
     id: 'board',
@@ -81,13 +78,12 @@ export async function layoutGraph(
   const otherX = Math.min(
     ...nodes.filter((node) => node.type !== 'goal').map((node) => children.get(node.id)?.x ?? 0),
   )
-  const prior = new Map(previousNodes.map((node) => [node.id, node]))
   const placed: GraphNode[] = []
   const pending: GraphNode[] = []
 
   for (const node of ordered) {
     const old = prior.get(node.id)
-    if (old && linksOf(node.id, edges) === linksOf(node.id, previousEdges)) {
+    if (old) {
       placed.push({ ...node, position: old.position })
     } else {
       const position = children.get(node.id)
@@ -100,7 +96,7 @@ export async function layoutGraph(
     }
   }
 
-  // New agents sit beside their held intent; existing unaffected nodes keep their coordinates.
+  // Position new nodes around the existing layout without moving the user's work.
   pending.sort((a, b) => Number(a.type === 'agent') - Number(b.type === 'agent'))
   for (const node of pending) {
     if (node.type === 'agent' && typeof node.data.intentId === 'string') {

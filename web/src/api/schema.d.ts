@@ -2216,13 +2216,45 @@ export interface components {
             context_tokens: number;
             /** Expected Derive Round */
             expected_derive_round?: number | null;
+            /** Expected Run Number */
+            expected_run_number?: number | null;
             /** Last Seen Version */
             last_seen_version: number;
+            /** Request Id */
+            request_id?: string | null;
             /** Requested At */
             requested_at?: string | null;
             /** Steps */
             steps: number;
             usage: components["schemas"]["Usage"];
+            /**
+             * Usage Known
+             * @default true
+             */
+            usage_known: boolean;
+        };
+        /** HeartbeatRequest */
+        HeartbeatRequest: {
+            /** Context Tokens */
+            context_tokens: number;
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
+            /** Expected Run Number */
+            expected_run_number?: number | null;
+            /** Last Seen Version */
+            last_seen_version: number;
+            /** Request Id */
+            request_id?: string | null;
+            /** Requested At */
+            requested_at?: string | null;
+            /** Steps */
+            steps: number;
+            usage: components["schemas"]["Usage"];
+            /**
+             * Usage Known
+             * @default true
+             */
+            usage_known: boolean;
         };
         /** ImportKey */
         ImportKey: {
@@ -2811,6 +2843,10 @@ export interface components {
              * @description 探索提示词模板正文快照
              */
             explore: string;
+        };
+        /** ReceiptHeartbeatRequest */
+        ReceiptHeartbeatRequest: {
+            receipt: components["schemas"]["HeartbeatRequest"];
         };
         /** ReconcileBody */
         ReconcileBody: {
@@ -4469,7 +4505,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HeartbeatBody"];
+                "application/json": components["schemas"]["HeartbeatBody"] | components["schemas"]["ReceiptHeartbeatRequest"];
             };
         };
         responses: {

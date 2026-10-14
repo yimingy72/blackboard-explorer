@@ -46,7 +46,7 @@ test('详情用 Markdown 展示正文和代码，缩略图紧凑且筛选全部�
   const reason = await page.getByText(/^结束原因：/).boundingBox();
   const stats = await page.getByLabel('运行统计', { exact: true }).boundingBox();
   expect(Math.abs((reason?.y ?? 0) - (stats?.y ?? 0))).toBeLessThanOrEqual(2);
-  const status = await page.getByText('已结束', { exact: true }).boundingBox();
+  const status = await page.locator('header').filter({has:page.getByRole('heading',{level:1})}).getByText('已结束', { exact: true }).boundingBox();
   expect(reason?.y).toBeGreaterThan((status?.y ?? 0) + (status?.height ?? 0));
   const boardBounds = await canvas.boundingBox();
   expect(boardBounds?.y).toBeGreaterThan((reason?.y ?? 0) + (reason?.height ?? 0));

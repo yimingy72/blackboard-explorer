@@ -29,6 +29,7 @@ test('事实详情展示六类证据，文本与命令输出可预览', async ({
   await canvas.getByRole('button', { name: /事实 F1，已提出/ }).click();
   const detail = page.getByRole('complementary', { name: '对象详情' });
   await expect(detail.getByRole('heading', { name: '观察事实 · F1' })).toBeVisible();
+  await detail.getByRole('tab', { name: '证据 6', exact: true }).click();
   for (const kind of ['文本', '命令输出', 'HTTP', '日志', '代码引用', '脚本']) {
     await expect(detail.getByRole('button').filter({ hasText: kind }).first()).toBeVisible();
   }

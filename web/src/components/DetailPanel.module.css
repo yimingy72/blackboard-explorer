@@ -72,3 +72,15 @@
 
 .top { padding:10px 14px; min-height:54px; }
 .body { padding:16px; }
+.objectHeading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.objectHeading h2 { margin:0; font-size:15px; line-height:1.5; font-weight:600; }
+.objectHeading h2:focus { outline:none; }
+.objectTabs { margin-top:9px; }
+.objectTabs .section:first-child { border-top:0; padding-top:0; margin-top:0; }
+.members { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 14px; }
+.compactMeta { display:flex; flex-wrap:wrap; gap:7px 14px; padding-top:14px; margin-top:14px; border-top:1px solid #e9edf4; color:var(--color-muted); font-size:12px; }
+.followingHeading { padding-top:18px; }
+.objectTabs .readingTools { margin-bottom:12px; }
+.objectTabs .readingTools button { padding:1px 7px; min-height:26px; font-size:12px; }
+.objectTabs .acceptance li { padding:9px 11px; }
+.objectTabs .markdown { font-size:14px; line-height:1.65; }
