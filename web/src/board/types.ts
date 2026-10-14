@@ -25,6 +25,7 @@ export interface BoardAcceptance {
 }
 
 export interface BoardTask {
+  usageIncomplete?: boolean;
   name?: string | null;
   initialAttachments?: import('../api/client').InitialAttachment[];
   goal: string;
@@ -83,6 +84,7 @@ export interface BoardIntent {
 }
 
 export interface BoardAgent {
+  usageIncomplete?: boolean;
   id: string;
   taskType: 'explore' | 'derive' | 'close';
   isSeed: boolean;

@@ -67,6 +67,12 @@ describe('openBoardStream', () => {
     expect(onEvent).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledTimes(2);
   });
+  it('delivers reactivation, continuation and accounting corrections without a reload', () => {
+    const source = new FakeEventSource(), received: BoardEvent[] = [];
+    openBoardStream(taskId, 0, { onEvent:event=>received.push(event), onConnection:vi.fn() }, ()=>source as unknown as EventSource);
+    for (const [index,type] of (['agent.reactivated','task.resumed','cost.reconciled'] as const).entries()) source.emit(type, JSON.stringify({version:index+1,task_id:taskId,type,payload:{},created_at:'2026-01-01T00:00:00Z'}));
+    expect(received.map(event=>event.type)).toEqual(['agent.reactivated','task.resumed','cost.reconciled']);
+  });
 
   it('reports a terminal CLOSED error instead of waiting for reconnect', () => {
     const source = new FakeEventSource();

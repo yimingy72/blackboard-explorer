@@ -33,13 +33,22 @@ export function conversationEntries(agentId: string, events: readonly BoardEvent
     .filter((call) => call.agentId === agentId && call.version <= cutoff)
     .map((call) => ({ type: 'tool', version: call.version, at: call.createdAt, call }));
   const chats: ChatEntry[] = [];
+  const messageEvents = new Map<string, BoardEvent>();
+  const messageProgress = new Map<string, BoardEvent>();
+  for (const event of events) {
+    if (!String(event.type).startsWith('agent.message.')) continue;
+    const id = event.payload?.id;
+    if (typeof id === 'string') { if (!messageEvents.has(id)) messageEvents.set(id, event); messageProgress.set(id, event); }
+    const replyTo = event.payload?.reply_to;
+    if (typeof replyTo === 'string') messageProgress.set(replyTo, event);
+  }
   for (const message of messages) {
     if (message.agent_id !== agentId) continue;
-    const event = events.find((item) => String(item.type).startsWith('agent.message.') && item.payload?.id === message.id);
+    const event = messageEvents.get(message.id);
     if (historical && !event) continue;
     let shown = message;
     if (historical) {
-      const progress = events.filter((item) => String(item.type).startsWith('agent.message.') && (item.payload?.id === message.id || item.payload?.reply_to === message.id)).at(-1);
+      const progress = messageProgress.get(message.id);
       const type = String(progress?.type);
       shown = { ...message, status: 'queued', error: null };
       if (type.endsWith('.failed')) shown.status = 'failed';

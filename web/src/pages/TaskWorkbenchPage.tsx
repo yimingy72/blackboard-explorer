@@ -210,7 +210,7 @@ export default function TaskWorkbenchPage() {
         taskId: string;
     }>();
     const navigate = useNavigate();
-    const task = useQuery({ queryKey: ['task-mode', taskId], queryFn: ({ signal }) => request<TaskView>(`/tasks/${encodeURIComponent(taskId!)}`, { signal }), enabled: Boolean(taskId), retry: false });
+    const task = useQuery({ queryKey: ['task', taskId], queryFn: ({ signal }) => request<TaskView>(`/tasks/${encodeURIComponent(taskId!)}`, { signal }), enabled: Boolean(taskId), retry: false });
     useEffect(() => { if (task.error instanceof ApiError && task.error.status === 401)
         navigate('/login', { replace: true }); }, [task.error, navigate]);
     if (!taskId)

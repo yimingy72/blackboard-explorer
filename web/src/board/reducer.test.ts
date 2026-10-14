@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { orderedEvents, reduce } from './reducer';
+import { advanceBoard, orderedEvents, reduce } from './reducer';
 import type { BoardEvent, BoardEventType } from './types';
 
 const tid = '11111111-1111-4111-8111-111111111111';
@@ -26,6 +26,30 @@ const created = event(1, 'task.created', {
 });
 
 describe('reduce', () => {
+  it('advances an immutable projection and preserves unrelated references', () => {
+    const history=[created,event(2,'agent.spawned',{id:'agent-1',task_type:'derive'}),event(3,'fact.posted',{id:'F1',kind:'observation',statement:'Observation',author:'agent-1',derived_from:[]})];
+    const before=reduce(history), snapshot=structuredClone(before);
+    const updates=[event(4,'agent.progress',{agent_id:'agent-1',steps:1,context_tokens:300,usage:{cost:.1}})];
+    const after=advanceBoard(before,updates);
+    expect(after).toEqual(reduce([...history,...updates]));
+    expect(before).toEqual(snapshot);
+    expect(after.facts).toBe(before.facts);
+    expect(after.intents).toBe(before.intents);
+    expect(after.agents['agent-1']).not.toBe(before.agents['agent-1']);
+  });
+  it('settles old usage without changing current steps or context and reactivates derive visibly', () => {
+    const history=[created,event(2,'agent.spawned',{id:'agent-1',task_type:'derive'}),event(3,'agent.progress',{agent_id:'agent-1',steps:2,context_tokens:100}),event(4,'agent.finished',{agent_id:'agent-1',end_reason:'normal'})];
+    const old=reduce(history);
+    const settled=advanceBoard(old,[event(5,'agent.progress',{agent_id:'agent-1',accounting_only:true,steps:99,context_tokens:999,usage:{cost:.2}})]);
+    expect(settled.agents['agent-1']).toMatchObject({status:'finished',steps:2,contextTokens:100,usage:{cost:.2}});
+    const resumed=advanceBoard(settled,[event(6,'agent.reactivated',{id:'agent-1',derive_parallel:true,derive_review:false})]);
+    expect(resumed.agents['agent-1']).toMatchObject({status:'running',steps:2,deriveParallel:true,finishedAt:null,endReason:null});
+    expect(old.agents['agent-1'].usage).toEqual({});
+  });
+  it('counts each different author once when references are repeated', () => {
+    const board=reduce([created,event(2,'fact.posted',{id:'F1',author:'agent-1',derived_from:[]}),event(3,'fact.posted',{id:'F2',author:'agent-2',derived_from:['F1','F1']})]);
+    expect(board.facts.F1.reliedBy).toBe(1);
+  });
   it('orders and deduplicates versions without changing inputs', () => {
     const facts = event(4, 'fact.posted', {
       id: 'F1', kind: 'observation', statement: 'Gateway returned 502', author: 'agent-1',

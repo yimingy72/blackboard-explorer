@@ -50,9 +50,31 @@ function numbers(value: unknown): Record<string, number> {
   );
 }
 
-export function reduce(events: readonly BoardEvent[]): BoardState {
-  const state = emptyBoard();
-  for (const event of orderedEvents(events)) {
+export function advanceBoard(previous: BoardState, events: readonly BoardEvent[]): BoardState {
+  const state = { ...previous, task: previous.task ? { ...previous.task } : null };
+  const factMap = () => { if (state.facts === previous.facts) state.facts = { ...state.facts }; };
+  const intentMap = () => { if (state.intents === previous.intents) state.intents = { ...state.intents }; };
+  const agentMap = () => { if (state.agents === previous.agents) state.agents = { ...state.agents }; };
+  const acceptanceMap = () => { if (state.acceptance === previous.acceptance) state.acceptance = { ...state.acceptance }; };
+  const factAt = (id: string) => {
+    if (!state.facts[id]) return undefined;
+    factMap(); return state.facts[id] = { ...state.facts[id] };
+  };
+  const intentAt = (id: string) => {
+    if (!state.intents[id]) return undefined;
+    intentMap(); const value = state.intents[id];
+    return state.intents[id] = { ...value, resultFacts: [...value.resultFacts] };
+  };
+  const agentAt = (id: string) => {
+    if (!state.agents[id]) return undefined;
+    agentMap(); const value = state.agents[id];
+    return state.agents[id] = { ...value, usage: { ...value.usage } };
+  };
+  const acceptanceAt = (id: string) => {
+    if (!state.acceptance[id]) return undefined;
+    acceptanceMap(); return state.acceptance[id] = { ...state.acceptance[id] };
+  };
+  for (const event of events) {
     const p = payload(event);
     switch (event.type) {
       case 'task.created': {
@@ -84,6 +106,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         };
         for (const item of acceptance) {
           const saved = initial[item.id];
+          acceptanceMap();
           state.acceptance[item.id] = {
             id: item.id,
             desc: item.desc,
@@ -144,10 +167,11 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         if (state.task) state.task.usage = numbers(p.usage);
         break;
       case 'cost.reconciled':
-        if (state.task) state.task.usage.cost = Number(p.cost) || 0;
+        if (state.task) state.task.usage = { ...state.task.usage, cost: Number(p.cost) || 0 };
         if (p.agent_costs && typeof p.agent_costs === 'object') {
           for (const [id, cost] of Object.entries(p.agent_costs)) {
-            if (state.agents[id]) state.agents[id].usage.cost = Number(cost) || 0;
+            const agent = agentAt(id);
+            if (agent) agent.usage.cost = Number(cost) || 0;
           }
         }
         break;
@@ -171,16 +195,17 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           satisfies: strings(p.satisfies),
           evidence: Array.isArray(p.evidence) ? p.evidence : [],
         };
+        factMap();
         state.facts[id] = fact;
-        for (const sourceId of derivedFrom) {
-          const source = state.facts[sourceId];
+        for (const sourceId of new Set(derivedFrom)) {
+          const source = factAt(sourceId);
           if (source && source.author !== author) source.reliedBy += 1;
         }
         break;
       }
       case 'fact.disputed':
       case 'fact.undisputed': {
-        const fact = state.facts[text(p.fact_id)];
+        const fact = factAt(text(p.fact_id));
         if (fact) fact.status = event.type === 'fact.disputed' ? 'disputed' : 'proposed';
         break;
       }
@@ -188,6 +213,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         const id = text(p.id);
         const claimed = p.claim === true;
         const author = text(p.author);
+        intentMap();
         state.intents[id] = {
           id,
           version: event.version,
@@ -206,22 +232,22 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           attempts: 0,
           notes: [],
         };
-        if (claimed && state.agents[author]) state.agents[author].intentId = id;
+        if (claimed) { const agent = agentAt(author); if (agent) agent.intentId = id; }
         break;
       }
       case 'intent.claimed': {
         const id = text(p.intent_id);
-        const intent = state.intents[id];
+        const intent = intentAt(id);
         const holder = text(p.holder);
         if (intent) {
           intent.status = 'claimed';
           intent.holder = holder;
         }
-        if (state.agents[holder]) state.agents[holder].intentId = id;
+        const agent = agentAt(holder); if (agent) agent.intentId = id;
         break;
       }
       case 'intent.released': {
-        const intent = state.intents[text(p.intent_id)];
+        const intent = intentAt(text(p.intent_id));
         const holder = text(p.holder);
         if (intent) {
           intent.status = 'open';
@@ -229,14 +255,14 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           if (p.counted === true) intent.attempts += 1;
           intent.notes = [...(intent.notes ?? []), { by: holder, at: event.created_at, text: text(p.note) }];
         }
-        if (state.agents[holder]) state.agents[holder].intentId = null;
+        const agent = agentAt(holder); if (agent) agent.intentId = null;
         break;
       }
       case 'intent.closed': {
-        const intent = state.intents[text(p.intent_id)];
+        const intent = intentAt(text(p.intent_id));
         if (intent) {
           if (intent.holder && state.agents[intent.holder]) {
-            state.agents[intent.holder].intentId = null;
+            const agent = agentAt(intent.holder); if (agent) agent.intentId = null;
           }
           intent.status = 'closed';
           intent.holder = null;
@@ -270,15 +296,17 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           startedAt: event.created_at,
           finishedAt: null,
         };
+        agentMap();
         state.agents[id] = agent;
         break;
       }
       case 'agent.progress': {
-        const agent = state.agents[text(p.agent_id)];
+        const agent = agentAt(text(p.agent_id));
         if (agent) {
-          if (typeof p.steps === 'number') agent.steps += p.steps;
-          if (typeof p.context_tokens === 'number') agent.contextTokens = p.context_tokens;
-          if (typeof p.last_seen_version === 'number') {
+          if (p.usage_known === false) { agent.usageIncomplete = true; if (state.task) state.task.usageIncomplete = true; }
+          if (p.accounting_only !== true && typeof p.steps === 'number') agent.steps += p.steps;
+          if (p.accounting_only !== true && typeof p.context_tokens === 'number') agent.contextTokens = p.context_tokens;
+          if (p.accounting_only !== true && typeof p.last_seen_version === 'number') {
             agent.lastSeenVersion = Math.max(agent.lastSeenVersion, p.last_seen_version);
           }
           if (p.usage) {
@@ -286,17 +314,33 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
               agent.usage[key] = (agent.usage[key] ?? 0) + amount;
             }
           }
-          if (typeof p.grace_left === 'number') agent.graceCallsLeft = p.grace_left;
+          if (p.accounting_only !== true && typeof p.grace_left === 'number') agent.graceCallsLeft = p.grace_left;
+        }
+        break;
+      }
+      case 'agent.reactivated': {
+        const agent = agentAt(text(p.id));
+        if (agent) {
+          agent.status = 'running';
+          agent.deriveParallel = p.derive_parallel === true;
+          agent.deriveReview = p.derive_review === true;
+          agent.intentId = null;
+          agent.endReason = null;
+          agent.receipt = null;
+          agent.concludeReason = null;
+          agent.graceCallsLeft = null;
+          agent.startedAt = event.created_at;
+          agent.finishedAt = null;
         }
         break;
       }
       case 'agent.conclude_requested': {
-        const agent = state.agents[text(p.agent_id)];
+        const agent = agentAt(text(p.agent_id));
         if (agent) { agent.status = 'concluding'; agent.concludeReason = nullableText(p.reason); }
         break;
       }
       case 'agent.finished': {
-        const agent = state.agents[text(p.agent_id)];
+        const agent = agentAt(text(p.agent_id));
         if (agent) {
           agent.status = p.end_reason === 'runtime_error' ? 'failed' : 'finished';
           agent.endReason = nullableText(p.end_reason);
@@ -308,6 +352,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
       }
       case 'tool_call.recorded': {
         const id = text(p.id);
+        if (state.toolCalls === previous.toolCalls) state.toolCalls = { ...state.toolCalls };
         state.toolCalls ??= {};
         state.toolCalls[id] = {
           id, agentId: text(p.agent_id), tool: text(p.tool),
@@ -328,7 +373,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
           completion_reason?: string | null;
         }>;
         for (const verdict of verdicts) {
-          const item = state.acceptance[verdict.id];
+          const item = acceptanceAt(verdict.id);
           if (!item) continue;
           item.status = verdict.verdict;
           item.reason = verdict.reason;
@@ -341,7 +386,7 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
         break;
       }
       case 'acceptance.reverted': {
-        const item = state.acceptance[text(p.id)];
+        const item = acceptanceAt(text(p.id));
         if (item) {
           item.status = 'unmet';
           item.missing = `支撑事实 ${text(p.fact_id)} 被争议`;
@@ -353,6 +398,10 @@ export function reduce(events: readonly BoardEvent[]): BoardState {
     if (state.task) state.task.version = event.version;
   }
   return state;
+}
+
+export function reduce(events: readonly BoardEvent[]): BoardState {
+  return advanceBoard(emptyBoard(), orderedEvents(events));
 }
 
 export const reduceBoard = reduce;
