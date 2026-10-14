@@ -1969,10 +1969,34 @@
             ],
             "title": "Expected Derive Round"
           },
+          "expected_run_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Run Number"
+          },
           "last_seen_version": {
             "minimum": 0.0,
             "title": "Last Seen Version",
             "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
           },
           "requested_at": {
             "anyOf": [
@@ -1993,6 +2017,11 @@
           },
           "usage": {
             "$ref": "#/components/schemas/Usage"
+          },
+          "usage_known": {
+            "default": true,
+            "title": "Usage Known",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2002,6 +2031,90 @@
           "last_seen_version"
         ],
         "title": "HeartbeatBody",
+        "type": "object"
+      },
+      "HeartbeatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "context_tokens": {
+            "minimum": 0.0,
+            "title": "Context Tokens",
+            "type": "integer"
+          },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
+          "expected_run_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Run Number"
+          },
+          "last_seen_version": {
+            "minimum": 0.0,
+            "title": "Last Seen Version",
+            "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "steps": {
+            "minimum": 0.0,
+            "title": "Steps",
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "usage_known": {
+            "default": true,
+            "title": "Usage Known",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "steps",
+          "context_tokens",
+          "usage",
+          "last_seen_version"
+        ],
+        "title": "HeartbeatRequest",
         "type": "object"
       },
       "ImportKey": {
@@ -3238,6 +3351,19 @@
           "close"
         ],
         "title": "PromptTemplates",
+        "type": "object"
+      },
+      "ReceiptHeartbeatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/HeartbeatRequest"
+          }
+        },
+        "required": [
+          "receipt"
+        ],
+        "title": "ReceiptHeartbeatRequest",
         "type": "object"
       },
       "ReconcileBody": {
@@ -6066,7 +6192,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HeartbeatBody"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/HeartbeatBody"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReceiptHeartbeatRequest"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },

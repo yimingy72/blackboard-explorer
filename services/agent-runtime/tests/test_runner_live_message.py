@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import AgentSession, Content, Message
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.models import Params
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
@@ -16,6 +17,7 @@ from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
+from usage_receipt_fixtures import heartbeat_ack
 
 PROFILE = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")[0]
 RECEIPT = '{"accepted":true,"data":{"posted":[],"excluded":[]}}'
@@ -76,6 +78,7 @@ class Service:
             "opening_instructions": self.opening,
             "origin": "native",
             "revision": self.revision,
+            **usage_receipt_support(self.session),
         }
 
     async def put_agent_session(
@@ -98,7 +101,7 @@ class Service:
         self.revision += 1
         for delivery in deliveries:
             self.delivered.append(delivery["id"])
-        return {"revision": self.revision}
+        return {"revision": self.revision, **usage_receipt_support(session)}
 
     async def agent_messages(self, _task_id, _agent_id, *, status):
         assert status == "queued"
@@ -124,7 +127,7 @@ class Service:
         self.run["steps"] += kwargs["steps"]
         self.run["last_seen_version"] = kwargs["last_seen_version"]
         self.run["context_tokens"] = kwargs["context_tokens"]
-        return {}
+        return heartbeat_ack(_task_id, _agent_id, kwargs)
 
     async def finish_agent(self, _task_id, _agent_id, receipt, end_reason, **_kwargs):
         self.finished = (receipt, end_reason)

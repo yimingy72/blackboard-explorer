@@ -16,11 +16,13 @@ from agent_framework import (
     Message,
 )
 from bbx_contracts.billing import add_usage
+from bbx_contracts.heartbeat import USAGE_RECEIPT_PROTOCOL, OrdinaryUsageReceipt
 from bbx_contracts.storage import storage_safe
 
-from bbx_runtime.billing import _usage
+from bbx_runtime.billing import _input_tokens, _usage, _usage_known
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.image_view import hydrate_image_messages, strip_image_history
+from bbx_runtime.usage_receipts import flush_ordinary_usage
 
 INTERRUPTED_TOOL_RESULT = (
     "此前工具执行中断或结果未保存，不能认为调用成功；原工具没有在复盘中重新执行。"
@@ -100,6 +102,10 @@ class SessionCheckpoint:
         self.review_claim: dict[str, str] | None = None
         self.expected_derive_round: int | None = None
         self.review_request: dict[str, Any] | None = None
+        self.usage_error: Exception | None = None
+        self.pending_usage_messages: list[Message] = []
+        self.ordinary_usage_request: dict[str, Any] | None = None
+        self.usage_receipt_protocol: int | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -120,7 +126,7 @@ class SessionCheckpoint:
             if error.status == 404:
                 return None
             raise
-        return cls(
+        checkpoint = cls(
             service,
             task_id,
             agent_id,
@@ -129,6 +135,8 @@ class SessionCheckpoint:
             origin=saved["origin"],
             revision=int(saved["revision"]),
         )
+        checkpoint.usage_receipt_protocol = saved.get("usage_receipt_protocol")
+        return checkpoint
 
     def stage_delivery(self, message_id: str, claim_token: str) -> None:
         self.deliveries.append({"id": message_id, "claim_token": claim_token})
@@ -137,6 +145,16 @@ class SessionCheckpoint:
         async with self._lock:
             history = self.session.state.get("in_memory", {})
             messages = history.get("messages", []) if isinstance(history, dict) else []
+            if self.pending_usage_messages:
+                history = self.session.state.setdefault("in_memory", {})
+                messages = history.setdefault("messages", [])
+                seen = {message.message_id for message in messages}
+                for message in self.pending_usage_messages:
+                    if message.message_id not in seen:
+                        messages.append(message)
+                        seen.add(message.message_id)
+                self.pending_usage_messages.clear()
+                repair_unpaired_tool_calls(self.session, include_interrupted=True)
             persisted_ids = {
                 message.message_id
                 for message in messages
@@ -189,10 +207,23 @@ class SessionCheckpoint:
                         cancelled = error
             saved = pending.result()
             self.revision = int(saved["revision"])
+            if (
+                type(saved.get("usage_receipt_protocol")) is int
+                and saved["usage_receipt_protocol"] == USAGE_RECEIPT_PROTOCOL
+            ):
+                self.usage_receipt_protocol = USAGE_RECEIPT_PROTOCOL
+            elif payload.get("state", {}).get("bbx_usage_outbox"):
+                self.usage_receipt_protocol = None
             self.delivered_message_ids.update(item["id"] for item in deliveries)
             self.deliveries = [item for item in self.deliveries if item not in deliveries]
             if cancelled is not None:
                 raise cancelled
+            self.usage_error = None
+            try:
+                await flush_ordinary_usage(self)
+            except Exception as error:
+                # The snapshot is confirmed; pending billing must not masquerade as data loss.
+                self.usage_error = error
 
 
 class CheckpointHistoryProvider(InMemoryHistoryProvider):
@@ -206,6 +237,8 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
     ) -> list[Message]:
+        if self.checkpoint.session.state.get("bbx_usage_outbox"):
+            await flush_ordinary_usage(self.checkpoint)
         messages = await super().get_messages(session_id, state=state, **kwargs)
 
         async def read_evidence(uri: str) -> bytes:
@@ -219,7 +252,37 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
     async def after_run(
         self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]
     ) -> None:
+        ordinary_request = self.checkpoint.ordinary_usage_request
+        response = context.response
+        if ordinary_request is not None and response is not None:
+            ordinary_request["on_complete"]()
+            usage, _ = _usage(
+                response.usage_details, ordinary_request["price"], ordinary_request["provider"]
+            )
+            receipt = OrdinaryUsageReceipt.model_validate(
+                {
+                    **ordinary_request["scope"],
+                    "request": {
+                        **ordinary_request["heartbeat"],
+                        "request_id": str(uuid4()),
+                        "usage": usage.model_dump(mode="json"),
+                        "usage_known": _usage_known(
+                            response.usage_details, ordinary_request["provider"]
+                        ),
+                        "context_tokens": _input_tokens(
+                            response.usage_details, ordinary_request["provider"]
+                        ),
+                    },
+                }
+            )
+            session.state.setdefault("bbx_usage_outbox", []).append(receipt.model_dump(mode="json"))
+            for index, message in enumerate(response.messages):
+                if not message.message_id:
+                    message.message_id = f"bbx-usage-response:{receipt.request.request_id}:{index}"
+            self.checkpoint.pending_usage_messages.extend(response.messages)
+            self.checkpoint.ordinary_usage_request = None
         await super().after_run(agent=agent, session=session, context=context, state=state)
+        self.checkpoint.pending_usage_messages.clear()
         saved_results = session.state.get("bbx_tool_results")
         if isinstance(saved_results, dict):
             for message in state.get("messages", []):
@@ -267,6 +330,16 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
                 for field, value in increments.items():
                     running[field] = int(running.get(field) or 0) + value
         await self.checkpoint.save()
+        if ordinary_request is not None and response is not None:
+            try:
+                await ordinary_request["trace_response"](response)
+            except Exception:
+                if self.checkpoint.usage_error is None:
+                    raise
+                # A trace failure must not replace the retained accounting failure.
+        if self.checkpoint.usage_error is not None:
+            vars(self.checkpoint.usage_error)["bbx_usage_settlement_error"] = True
+            raise self.checkpoint.usage_error
 
 
 class ToolResultCheckpointMiddleware(FunctionMiddleware):

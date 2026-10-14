@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price
+from bbx_contracts.heartbeat import HeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
     ModelConfig,
@@ -38,6 +39,7 @@ from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.usage_receipts import reconcile_receipts, settle_receipt
 
 
 class ObjectStore(Protocol):
@@ -194,7 +196,16 @@ class BoardService:
                         raise RuleViolation(
                             "final_receipt_conflict", "已保存最终回执与补偿请求不一致。"
                         )
+                    await reconcile_receipts(self, conn, tid, actor)
                     return []
+            if command in {
+                "finish_agent",
+                "transition",
+                "submit_close",
+            } and await reconcile_receipts(
+                self, conn, tid, actor if command == "finish_agent" else None
+            ):
+                state = await self.repo.load(conn, tid)
             events = decide(state, command, actor, data)
             written = await self.repo.append(conn, tid, events)
             if command == "finish_agent":
@@ -258,6 +269,24 @@ class BoardService:
         refresh_tools: bool = False,
         actor: str = "user",
     ) -> None:
+        # Known historical charges commit even if the requested new budget is insufficient.
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task = (
+                (
+                    await conn.execute(
+                        select(s.tasks.c.mode, s.tasks.c.status, s.tasks.c.deleting).where(
+                            s.tasks.c.id == tid
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            if task["mode"] != "blackboard":
+                raise HTTPException(409, "mode_mismatch")
+            if not task["deleting"] and task["status"] in {"finished", "failed", "stopped"}:
+                await reconcile_receipts(self, conn, tid)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             previous = (
@@ -552,7 +581,25 @@ class BoardService:
         requested_at: datetime | None = None,
         billing_mode: str | None = None,
         expected_derive_round: int | None = None,
+        request_id: UUID | str | None = None,
+        expected_run_number: int | None = None,
+        usage_known: bool = True,
     ) -> dict[str, Any]:
+        if request_id is not None:
+            request = HeartbeatRequest(
+                request_id=UUID(str(request_id)),
+                expected_run_number=expected_run_number,
+                expected_derive_round=expected_derive_round,
+                requested_at=requested_at,
+                steps=steps,
+                context_tokens=context_tokens,
+                usage=Usage.model_validate(usage),
+                usage_known=usage_known,
+                last_seen_version=last_seen_version,
+            )
+            async with self.repo.engine.begin() as conn:
+                await self.repo.lock(conn, tid)
+                return await settle_receipt(self, conn, tid, agent_id, request)
         delta = Usage.model_validate(usage)
         selected = Price.model_validate(price or {})
         pricing: dict[str, Any] = {}

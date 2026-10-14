@@ -512,11 +512,13 @@ def decide(
                 aid,
             )
         ]
-    if command == "heartbeat":
+    if command in {"heartbeat", "settle_usage"}:
         agent = _agent(state, data["agent_id"])
-        if agent["status"] not in {"running", "concluding"}:
+        if command == "heartbeat" and agent["status"] not in {"running", "concluding"}:
             fail("agent_inactive", "Agent 已结束，不能提交心跳。")
-        if any(data[key] < 0 for key in ("steps", "context_tokens", "last_seen_version")):
+        if command == "heartbeat" and any(
+            data[key] < 0 for key in ("steps", "context_tokens", "last_seen_version")
+        ):
             fail("invalid_progress", "心跳计数不能为负，请提交非负步数、上下文长度与版本。")
         delta = data["usage"]
         previous = task["usage"]
@@ -528,7 +530,8 @@ def decide(
                 actor,
                 {
                     **data,
-                    "reset_failure_streak": data["steps"] > 0
+                    "reset_failure_streak": command == "heartbeat"
+                    and data["steps"] > 0
                     and task["status"] not in {"finished", "failed", "stopped"}
                     and task.get("failure_window_kind") in {"model_transient", "model_error"},
                 },

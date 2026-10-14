@@ -438,22 +438,34 @@ class BlackboardClient:
         last_seen_version: int,
         requested_at: datetime | None = None,
         expected_derive_round: int | None = None,
+        request_id: str | None = None,
+        expected_run_number: int | None = None,
+        usage_known: bool = True,
     ) -> dict[str, Any]:
+        payload = {
+            "steps": steps,
+            "context_tokens": context_tokens,
+            "usage": _body(usage),
+            "last_seen_version": last_seen_version,
+            **({"requested_at": requested_at.isoformat()} if requested_at else {}),
+            **(
+                {"expected_derive_round": expected_derive_round}
+                if expected_derive_round is not None
+                else {}
+            ),
+            **({"request_id": request_id} if request_id is not None else {}),
+            **({"usage_known": usage_known} if request_id is not None else {}),
+            **(
+                {"expected_run_number": expected_run_number}
+                if expected_run_number is not None
+                else {}
+            ),
+        }
         return await self._json(
             "PATCH",
             self._agent(task_id, agent_id),
-            json={
-                "steps": steps,
-                "context_tokens": context_tokens,
-                "usage": _body(usage),
-                "last_seen_version": last_seen_version,
-                **({"requested_at": requested_at.isoformat()} if requested_at else {}),
-                **(
-                    {"expected_derive_round": expected_derive_round}
-                    if expected_derive_round is not None
-                    else {}
-                ),
-            },
+            # Older servers reject this shape before additive billing, even during mixed rollout.
+            json={"receipt": payload} if request_id is not None else payload,
         )
 
     async def conclude(

@@ -24,6 +24,16 @@ def _input_tokens(details: Mapping[str, Any] | None, provider: str | None = None
     return total
 
 
+def _usage_known(details: Mapping[str, Any] | None, provider: str | None = None) -> bool:
+    if not details or details.get("output_token_count") is None:
+        return False
+    return details.get("input_token_count") is not None or (
+        not _separate_cache_input(provider)
+        and details.get("prompt_cache_hit_tokens") is not None
+        and details.get("prompt_cache_miss_tokens") is not None
+    )
+
+
 def _usage(
     details: Mapping[str, Any] | None, price: Price, provider: str | None = None
 ) -> tuple[Usage, str | None]:

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -191,7 +192,10 @@ class Conversations:
         if found is None:
             raise HTTPException(404, "Agent session not found")
         return {
-            key: found[key] for key in ("session", "opening_instructions", "origin", "revision")
+            **{
+                key: found[key] for key in ("session", "opening_instructions", "origin", "revision")
+            },
+            **usage_receipt_support(found["session"]),
         }
 
     async def _save_session(
@@ -248,6 +252,7 @@ class Conversations:
             "opening_instructions": opening_instructions,
             "origin": origin,
             "revision": revision + 1,
+            **usage_receipt_support(session),
         }
 
     async def put_session(

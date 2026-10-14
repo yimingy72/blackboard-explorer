@@ -46,6 +46,7 @@ from bbx_runtime.recovery import (
 )
 from bbx_runtime.tool_failures import BlackboardToolFailure, tool_error_content
 from bbx_runtime.trace import model_content, record_trace
+from bbx_runtime.usage_receipts import flush_ordinary_usage
 
 DIGEST_TYPES = {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
 VERDICT_TYPES = {"acceptance.judged", "acceptance.reverted"}
@@ -485,9 +486,25 @@ class BoardSyncMiddleware(ChatMiddleware):
         permit: ModelCallPermit | None = None
         deadline = self.recovery_deadline
         deadline_metadata = self.recovery_metadata
+        completed_model = False
+
+        def complete_model() -> None:
+            nonlocal completed_model
+            completed_model = True
+            if self.recovery and permit:
+                self.recovery.succeeded(permit)
+                self.recovery_deadline = None
+
+        async def trace_response(response: ChatResponse) -> None:
+            output, reasoning = model_content(response)
+            await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
 
         async def before_model() -> None:
             nonlocal permit, deadline, deadline_metadata, requested_at, started_at
+            if self.ctx.checkpoint is not None and self.ctx.checkpoint.session.state.get(
+                "bbx_usage_outbox"
+            ):
+                await flush_ordinary_usage(self.ctx.checkpoint)
             if self.recovery:
                 delayed = self.recovery.paused and (
                     permit is None or permit.episode is not self.recovery.episode
@@ -521,9 +538,42 @@ class BoardSyncMiddleware(ChatMiddleware):
                     deadline_metadata = self.recovery_metadata or permit.episode.metadata
             requested_at = datetime.now(UTC)
             started_at = monotonic()
+            if self.ctx.checkpoint is not None:
+                selected, _ = effective_price(
+                    model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
+                )
+                self.ctx.checkpoint.ordinary_usage_request = {
+                    "price": selected,
+                    "provider": model.provider,
+                    "on_complete": complete_model,
+                    "trace_response": trace_response,
+                    "heartbeat": {
+                        "steps": 1,
+                        "last_seen_version": last_seen,
+                        "requested_at": requested_at,
+                        "expected_run_number": self.ctx.state["task"].get("run_number") or 1,
+                        "expected_derive_round": (
+                            self.ctx.expected_derive_round
+                            or board["agents"][self.ctx.agent_id].get("derive_round")
+                            or 1
+                        )
+                        if self.ctx.task_type == "derive"
+                        else None,
+                    },
+                    "scope": {
+                        "task_id": self.ctx.task_id,
+                        "agent_id": self.ctx.agent_id,
+                        "task_type": self.ctx.task_type,
+                        "profile_name": self.ctx.state["task"]["agent_profile"],
+                        "profile_version": self.ctx.state["task"]["agent_profile_version"],
+                        "billing_mode": board.get("task", {}).get("billing_mode"),
+                    },
+                }
 
         async def record_error(error: Exception) -> None:
-            if isinstance(error, RecoveryExhausted):
+            if isinstance(error, RecoveryExhausted) or getattr(
+                error, "bbx_usage_settlement_error", False
+            ):
                 return
             metadata = model_error_metadata(
                 error,
@@ -544,11 +594,8 @@ class BoardSyncMiddleware(ChatMiddleware):
             await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
 
         async def record(response: ChatResponse) -> ChatResponse:
-            if self.recovery and permit:
-                self.recovery.succeeded(permit)
-                self.recovery_deadline = None
-            output, reasoning = model_content(response)
-            await record_trace(self.ctx, "model_output", step, output, reasoning=reasoning)
+            if self.ctx.checkpoint is None:
+                complete_model()
             details = response.usage_details
             price, _ = effective_price(
                 model, requested_at, mode_override=board.get("task", {}).get("billing_mode")
@@ -557,9 +604,7 @@ class BoardSyncMiddleware(ChatMiddleware):
             if self.price_warning and not self._warned_missing_price:
                 logger.warning("Model price is not configured; cost is recorded as zero")
                 self._warned_missing_price = True
-            await self.ctx.service.heartbeat(
-                self.ctx.task_id,
-                self.ctx.agent_id,
+            heartbeat: dict[str, Any] = dict(
                 steps=1,
                 context_tokens=_input_tokens(details, model.provider),
                 usage=usage,
@@ -571,12 +616,16 @@ class BoardSyncMiddleware(ChatMiddleware):
                     else {}
                 ),
             )
+            if self.ctx.checkpoint is None:
+                await self.ctx.service.heartbeat(self.ctx.task_id, self.ctx.agent_id, **heartbeat)
+            if self.ctx.checkpoint is None:
+                await trace_response(response)
             return response
 
         try:
             await before_model()
         except BaseException:
-            finish_pending_images(messages, injection, sent=False)
+            finish_pending_images(messages, injection, sent=completed_model)
             if self.recovery and permit:
                 self.recovery.release(permit)
             raise
@@ -585,7 +634,7 @@ class BoardSyncMiddleware(ChatMiddleware):
             async with timeout:
                 await call_next()
         except BaseException as error:
-            finish_pending_images(messages, injection, sent=False)
+            finish_pending_images(messages, injection, sent=completed_model)
             if self.recovery and permit:
                 self.recovery.release(permit)
             if isinstance(error, TimeoutError) and timeout.expired():
@@ -622,7 +671,7 @@ class BoardSyncMiddleware(ChatMiddleware):
                         await record_error(error)
                     raise
                 finally:
-                    finish_pending_images(messages, injection, sent=sent)
+                    finish_pending_images(messages, injection, sent=sent or completed_model)
                 await record(result)
 
             context.result = ResponseStream(

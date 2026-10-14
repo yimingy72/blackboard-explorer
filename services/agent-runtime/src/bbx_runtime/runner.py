@@ -505,7 +505,8 @@ class AgentRunner:
                         except Exception as error:
                             failure = sync.take_failure()
                             if (
-                                checkpoint is None
+                                getattr(error, "bbx_usage_settlement_error", False) is True
+                                or checkpoint is None
                                 or failure is None
                                 or recoveries >= MAX_AGENT_RECOVERIES
                             ):
@@ -629,8 +630,9 @@ class AgentRunner:
                 else "grace_timeout"
             )
         except Exception as error:
-            metadata = getattr(error, "bbx_model_error", None)
-            if not isinstance(metadata, dict):
+            usage_failure = getattr(error, "bbx_usage_settlement_error", False) is True
+            metadata = None if usage_failure else getattr(error, "bbx_model_error", None)
+            if not usage_failure and not isinstance(metadata, dict):
                 classified = model_error_metadata(error)
                 metadata = classified if classified["category"] != "unknown" else None
             if isinstance(metadata, dict):
@@ -651,7 +653,7 @@ class AgentRunner:
                         }
                     },
                 )
-                reason = f"运行失败：{safe_type}"
+                reason = "费用登记待恢复" if usage_failure else f"运行失败：{safe_type}"
             receipt = {"accepted": False, "reason": reason}
             if isinstance(metadata, dict):
                 receipt["error"] = metadata

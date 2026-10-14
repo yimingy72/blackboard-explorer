@@ -419,7 +419,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         )
     elif kind == "agent.progress":
         agent = await row(conn, s.agent_runs, tid, p["agent_id"])
-        values: dict[str, Any] = {"last_heartbeat_at": stamp}
+        values: dict[str, Any] = {} if p.get("accounting_only") else {"last_heartbeat_at": stamp}
         if "steps" in p:
             values["steps"] = agent["steps"] + p["steps"]
         if "context_tokens" in p:
