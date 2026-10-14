@@ -194,7 +194,12 @@ class TaskSupervisor:
 
     async def recover(self) -> None:
         for listed in await self.service.list_tasks():
+            if self.stopping.is_set():
+                return
             tid = str(listed["id"])
+            # A partial startup retry must not finish agents launched by this instance.
+            if tid in self.loops or tid in self.ctf_tasks:
+                continue
             if listed.get("mode", "blackboard") == "ctf":
                 if listed["status"] == "running":
                     await self._ctf().recover(tid)
@@ -203,6 +208,8 @@ class TaskSupervisor:
             state = await self.service.state(tid)
             # No previous Python coroutine can survive the exclusive runtime lock handoff.
             for aid, agent in state["agents"].items():
+                if self.stopping.is_set():
+                    return
                 if agent["status"] in ACTIVE:
                     reconcile = getattr(self.runner, "reconcile_final_receipt", None)
                     if asyncio.iscoroutinefunction(reconcile) and await reconcile(
@@ -237,6 +244,8 @@ class TaskSupervisor:
                     continue
                 await self._start(state, handle)
             except Exception as error:
+                if is_control_transport_error(error):
+                    raise
                 LOGGER.error("Recovery failed for task %s: %s", tid, type(error).__name__)
                 await self._fail_if_active(tid, "执行环境丢失或无法恢复")
 
@@ -592,8 +601,28 @@ class TaskSupervisor:
                     await self._fail_if_active(tid, "调度循环异常退出")
 
     async def run(self) -> None:
-        async with self.tick_lock:
-            await self.recover()
+        attempts = 0
+        while not self.stopping.is_set():
+            try:
+                async with self.tick_lock:
+                    await self.recover()
+            except Exception as error:
+                if not is_control_transport_error(error):
+                    raise
+                attempts += 1
+                LOGGER.warning(
+                    "Task startup recovery deferred attempt=%s error_type=%s",
+                    attempts,
+                    type(error).__name__,
+                )
+                try:
+                    await asyncio.wait_for(
+                        self.stopping.wait(), timeout=min(2 ** min(attempts, 5), 30)
+                    )
+                except TimeoutError:
+                    pass
+            else:
+                break
         while not self.stopping.is_set():
             try:
                 await self.tick()

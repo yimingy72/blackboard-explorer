@@ -41,6 +41,7 @@ from bbx_runtime.testing.scripted_client import (
     ScriptToolCall,
     ScriptUsage,
 )
+from bbx_runtime.tool_failures import BlackboardToolFailure
 from openai import APIStatusError
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles" / "default"
@@ -290,16 +291,16 @@ async def test_tool_log_records_failed_local_call_without_exposing_exception_det
             ScriptStep(text="retry later", expect_contains="工具调用失败"),
         ]
     )
-    response = await Agent(
-        client=client, tools=[failing_tool], middleware=[ToolLogMiddleware(ctx)]
-    ).run("start")
-    assert response.text == "retry later"
+    with pytest.raises(BlackboardToolFailure):
+        await Agent(client=client, tools=[failing_tool], middleware=[ToolLogMiddleware(ctx)]).run(
+            "start"
+        )
+    assert len(client.received_messages) == 1
     assert len(service.logged) == 1
     record = service.logged[0]
     assert record["tool"] == "failing_tool"
     assert "ValueError" in record["result_head"]
     assert "internal-only detail" not in record["result_head"]
-    assert f"[call_id: {record['id']}]" in message_text(client.received_messages[1])
     assert record["result_uri"] in objects.files
 
 

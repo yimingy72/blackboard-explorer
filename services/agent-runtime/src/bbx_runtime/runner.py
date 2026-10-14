@@ -28,7 +28,12 @@ from bbx_runtime.clients.blackboard import is_control_transport_error
 from bbx_runtime.context import CloseMode, RunContext, TaskType
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
-from bbx_runtime.middleware import BoardSyncMiddleware, GraceGateMiddleware, ToolLogMiddleware
+from bbx_runtime.middleware import (
+    BoardSyncMiddleware,
+    GraceGateMiddleware,
+    ToolArgumentFeedbackMiddleware,
+    ToolLogMiddleware,
+)
 from bbx_runtime.model_errors import OPENAI_PROVIDERS, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
@@ -52,6 +57,8 @@ from bbx_runtime.session import (
     repair_unpaired_tool_calls,
 )
 from bbx_runtime.settings import Settings
+from bbx_runtime.single_dispatch import SingleDispatchExecutionTool
+from bbx_runtime.tool_failures import propagate_tool_failure
 from bbx_runtime.tools import make_board_tools
 from bbx_runtime.trace import record_trace
 
@@ -390,7 +397,7 @@ class AgentRunner:
                         trust_env=False, timeout=httpx.Timeout(600, connect=10)
                     )
                 tools.append(
-                    MCPStreamableHTTPTool(
+                    SingleDispatchExecutionTool(
                         name="exec",
                         url=f"{envd.base_url}/mcp",
                         static_headers={**envd.headers, "X-Agent-Id": agent_id},
@@ -429,6 +436,7 @@ class AgentRunner:
                 middleware=[
                     ToolLogMiddleware(ctx),
                     GraceGateMiddleware(ctx),
+                    ToolArgumentFeedbackMiddleware(),
                     sync,
                 ],
                 require_per_service_call_history_persistence=checkpoint is not None,
@@ -481,19 +489,20 @@ class AgentRunner:
                             set(checkpoint.delivered_message_ids) if checkpoint else set()
                         )
                         try:
-                            if model.provider in OPENAI_PROVIDERS:
-                                stream = agent.run(
-                                    prompt,
-                                    stream=True,
-                                    session=session,
-                                    options=model_run_options(model),
-                                )
-                                response = await stream.get_final_response()
-                            else:
-                                response = await agent.run(
-                                    prompt, session=session, options=model_run_options(model)
-                                )
-                        except Exception:
+                            with propagate_tool_failure():
+                                if model.provider in OPENAI_PROVIDERS:
+                                    stream = agent.run(
+                                        prompt,
+                                        stream=True,
+                                        session=session,
+                                        options=model_run_options(model),
+                                    )
+                                    response = await stream.get_final_response()
+                                else:
+                                    response = await agent.run(
+                                        prompt, session=session, options=model_run_options(model)
+                                    )
+                        except Exception as error:
                             failure = sync.take_failure()
                             if (
                                 checkpoint is None
