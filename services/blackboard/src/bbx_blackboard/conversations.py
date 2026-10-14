@@ -321,7 +321,17 @@ class Conversations:
                 .mappings()
                 .all()
             )
-            session = await self._session(conn, tid, aid)
+            session = (
+                (
+                    await conn.execute(
+                        select(s.agent_sessions.c.origin).where(
+                            s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
         return {
             "messages": [_public(row) for row in rows],
             "session_available": session is not None,

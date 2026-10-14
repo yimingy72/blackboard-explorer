@@ -611,7 +611,9 @@ class Repository:
         if found.scalar_one_or_none() is None:
             raise KeyError(f"task {tid} does not exist")
 
-    async def load(self, conn: AsyncConnection, tid: UUID) -> BoardState:
+    async def load(
+        self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
+    ) -> BoardState:
         task = await row(conn, s.tasks, tid)
         task["version"] = (
             await conn.execute(
@@ -645,7 +647,7 @@ class Repository:
             await mapped(s.facts),
             await mapped(s.intents),
             await mapped(s.agent_runs),
-            await mapped(s.tool_calls),
+            await mapped(s.tool_calls) if include_tool_calls else {},
             {x["kind"]: x["value"] for x in counts},
         )
 

@@ -69,6 +69,11 @@ def dispute_fields(facts: dict[str, dict[str, Any]]) -> dict[str, dict[str, int 
         for target in fact["disputes"]:
             if target in disputers:
                 disputers[target].append(fid)
+    relied_by = dict.fromkeys(facts, 0)
+    for fact in facts.values():
+        for target in set(fact["derived_from"]):
+            if target in facts and facts[target]["author"] != fact["author"]:
+                relied_by[target] += 1
     depths: dict[str, int] = {}
     for fid, fact in facts.items():
         depths[fid] = 1 + max((depths[x] for x in fact["disputes"]), default=-1)
@@ -79,9 +84,7 @@ def dispute_fields(facts: dict[str, dict[str, Any]]) -> dict[str, dict[str, int 
             if any(result[x]["status"] == "proposed" for x in disputers[fid])
             else "proposed",
             "depth": depths[fid],
-            "relied_by": sum(
-                x["author"] != fact["author"] and fid in x["derived_from"] for x in facts.values()
-            ),
+            "relied_by": relied_by[fid],
         }
     return result
 

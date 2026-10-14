@@ -748,7 +748,9 @@ class BoardService:
 
     async def state(self, tid: UUID) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:
-            state = await self.repo.load(conn, tid)
+            # Keep the cursor and every folded table in the same committed snapshot.
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
         fields = dispute_fields(state.facts)
