@@ -9,7 +9,11 @@ export type CtfChallenge = {
   requirements?: string | null; external_id?: string | null; owner_id: string | null;
   collaborator_ids: string[]; work_status: string; revision: number; tombstone?: boolean;
   verification: Record<string, unknown>; target: Record<string, unknown>;
+  solution_record_id?: string | null;
 };
+export type CtfProgress = { stage: 'approach' | 'attempt' | 'breakthrough' | 'result'; title: string; summary: string };
+export type CtfSolutionStep = { kind: CtfProgress['stage']; title: string; result: 'supported' | 'ruled_out' | 'inconclusive'; summary: string; record_ids: string[]; artifact_ids: string[] };
+export type CtfSolution = { conclusion: string; approach: string; steps: CtfSolutionStep[]; remaining: string[]; reproduction: string };
 export type CtfArtifact = { id: string; uri: string; filename: string; path: string; size: number; sha256: string; created_version?: number };
 export type CtfRecord = {
   id: string; challenge_id: string; author_id: string; kind: string; body: string;
@@ -17,6 +21,8 @@ export type CtfRecord = {
   attempted_routes?: string | null; observations_and_basis?: string | null;
   failure_conditions?: string | null; current_blocker?: string | null; help_needed?: string | null;
   no_artifacts_reason?: string | null;
+  progress?: CtfProgress | null; solution?: CtfSolution | null;
+  solution_run_number?: number | null; solution_challenge_revision?: number | null;
 };
 export type CtfMessage = {
   id: string; sender_id: string; sender_kind: string; recipient_id: string; kind: string;

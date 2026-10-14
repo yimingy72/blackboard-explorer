@@ -1,0 +1,6 @@
+.chip { display:inline-flex; align-items:center; gap:4px; margin:0; padding:2px 6px; font-size:12px; line-height:18px; font-weight:500; white-space:nowrap; border-radius:6px; }
+.pending,.cancelled,.archived { color:#5b697c; background:#f3f5f8; border-color:#dce2eb; }
+.working { color:#315faa; background:#edf3ff; border-color:#cfddf5; }
+.blocked { color:#88550d; background:#fff5e3; border-color:#efdbb4; }
+.delivered { color:#25686f; background:#eaf6f6; border-color:#c6e2e5; }
+.solved { color:#27613e; background:#edf7f0; border-color:#cce3d2; }

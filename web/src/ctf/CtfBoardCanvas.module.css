@@ -1,38 +1,69 @@
-.canvas { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: auto; background: var(--color-bg); }
-.canvas :global(.react-flow) { width: 100%; height: auto; flex: 1 1 auto; min-height: 0; }
-.canvas :global(.react-flow__pane) { cursor: grab; }
-.canvas :global(.react-flow__node) { z-index: 3; border: 0; background: transparent; width: 240px; pointer-events: all; }
-.canvas :global(.react-flow__edge-path) { transition: stroke var(--duration-fast) var(--ease-out); }
-.node { position: relative; width: 100%; }
-.nodeButton { position: relative; z-index: 1; width: 100%; text-align: left; border: 1px solid var(--color-line); border-radius: 12px; background: var(--color-bg); color: var(--color-ink); box-shadow: var(--shadow-raised); padding: 14px; pointer-events: auto; transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
-.nodeButton:hover, .selected .nodeButton { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-soft); }
-.handle { width: 8px; height: 8px; border: 2px solid var(--color-bg); background: var(--color-line-strong); opacity: .8; }
-.agent { min-height: 70px; }
-.agent .nodeButton { display: flex; align-items: center; gap: 10px; }
-.lead .nodeButton { border-color: var(--color-primary); }
-.agentMark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: var(--color-info-soft); color: var(--color-info); font-size: 14px; font-weight: 700; }
-.lead .agentMark { background: var(--color-primary-soft); color: var(--color-primary); }
-.nodeCopy { min-width: 0; flex: 1; }
-.nodeCopy strong, .nodeCopy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nodeCopy strong { font-size: 13px; }
-.nodeCopy small { margin-top: 4px; color: var(--color-muted); font-size: 11px; }
-.nodeCount { color: var(--color-success); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
-.task { min-height: 142px; }
-.taskHeader { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.nodeType { color: var(--color-subtle); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.taskStatus, .verification { color: var(--color-muted); font-size: 10px; }
-.taskTitle, .taskDetail, .candidate { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.taskTitle { margin-top: 8px; font-size: 14px; }
-.taskDetail { margin-top: 5px; color: var(--color-muted); font-size: 11px; }
-.verification { margin-top: 13px; color: var(--color-warning); }
-.verification.accepted { color: var(--color-success); }
-.verification.rejected { color: var(--color-danger); }
-.candidate { margin-top: 5px; color: var(--color-ink); font-family: var(--font-mono); font-size: 10px; }
-.legend { position: absolute; left: 18px; bottom: 16px; display: flex; gap: 14px; padding: 7px 10px; border: 1px solid var(--color-line); border-radius: 8px; background: oklch(1 0 0 / .9); color: var(--color-muted); font-size: 10px; box-shadow: var(--shadow-raised); }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
-.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px dashed var(--color-primary); }
-.legend .collaborateLine { border-top-color: var(--color-info); border-top-style: dotted; }
-.controls :global(button) { background: var(--color-bg); border: 1px solid var(--color-line); color: var(--color-ink); }
-.minimap { right: 12px; bottom: 12px; background: var(--color-surface); border: 1px solid var(--color-line); opacity: .94; border-radius: 6px; overflow: hidden; }
-.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-muted); font-size: 13px; pointer-events: none; }
-@media (max-width: 650px) { .canvas { min-height: 0; } .canvas :global(.react-flow__node) { width: 240px; } .legend { left: 10px; bottom: 10px; } }
+.canvas { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; background:#f8fafc; }
+.canvas :global(.react-flow) { width:100%; flex:1; min-height:0; }
+.canvas :global(.react-flow__pane),.canvas :global(.react-flow__node) { cursor:grab; }
+.canvas :global(.react-flow__node) { border:0; background:transparent; }
+.canvas :global(.react-flow__edge-path) { transition:stroke 180ms var(--ease-out); }
+.node { position:relative; height:100%; width:100%; }
+.nodeButton { width:100%; height:100%; padding:12px 14px; border:1px solid #d9e2ef; border-radius:10px; background:#fff; color:var(--color-ink); text-align:left; cursor:grab; transition:border-color 180ms var(--ease-out),background-color 180ms var(--ease-out); }
+.nodeButton:active { cursor:grabbing; }
+.nodeButton:hover,.related .nodeButton { border-color:#9eb7df; }
+.selected .nodeButton { border-color:var(--color-primary); background:#f2f6ff; box-shadow:0 0 0 2px #386ac014; }
+.agent .nodeButton { display:flex; align-items:center; gap:10px; border-radius:35px; padding:12px; }
+.lead .nodeButton { border-color:#89a9da; border-radius:40px; padding-inline:15px 43px; }
+.agentMark { display:grid; place-items:center; flex:none; width:32px; height:32px; border-radius:50%; background:#eaf0f8; color:#3b526e; font-size:14px; font-weight:600; }
+.lead .agentMark { width:42px; height:42px; background:var(--color-primary); color:#fff; font-size:18px; }
+.nodeCopy { min-width:0; }
+.nodeCopy strong,.nodeCopy small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nodeCopy strong { font-size:14px; font-weight:600; }
+.lead .nodeCopy strong { font-size:18px; }
+.nodeCopy small { font-size:12px; color:#596b82; margin-top:4px; }
+.dispatch { position:absolute; top:23px; right:12px; width:32px; height:32px; border:0; border-radius:50%; display:grid; place-items:center; background:#edf3fc; color:var(--color-primary); cursor:pointer; }
+.handle { width:5px; height:5px; border:0; background:#9eb4d6; opacity:0; }
+.selected .handle,.node:hover .handle { opacity:1; }
+.task .nodeButton { display:flex; flex-direction:column; gap:5px; }
+.taskHeader { display:flex; justify-content:space-between; align-items:center; gap:8px; min-height:16px; }
+.taskHeader code { font:12px var(--font-mono); max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#596b82; }
+.taskCategory { display:flex; gap:4px; align-items:center; font-size:12px; color:#63758e; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.taskStatus { font-size:12px; color:#4e6584; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.taskStates { display:flex; min-width:0; align-items:center; gap:6px; }
+.accepted { color:#28724c; }.warning { color:#8c5d14; }.simulated { color:#596b82; }
+.taskTitle { font-size:14px; line-height:1.4; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.progress { font-size:12px; line-height:1.5; color:#596b82; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.taskFoot { display:flex; gap:10px; border-top:1px solid #edf1f6; padding-top:6px; margin-top:auto; color:#596b82; font-size:12px; }
+.taskFoot > span { white-space:nowrap; }
+.participantMarks { display:flex; align-items:center; margin-right:auto; min-width:0; }
+.participantMarks > span { display:inline-grid; place-items:center; width:21px; height:21px; border-radius:50%; border:2px solid #fff; margin-left:-4px; background:#eaf0fb; color:#4268a1; font-size:10px; }
+.participantMarks > span:first-child { margin-left:0; }
+.participantMarks > small { font-size:12px; margin-left:3px; }
+.legend { position:absolute; left:18px; bottom:67px; display:flex; gap:14px; align-items:center; color:#596b82; font-size:12px; pointer-events:none; }
+.legend span { display:flex; gap:6px; align-items:center; }
+.legend i { width:22px; border-top:1px solid #aebed5; }
+.legend .claimLine { border-top-color:var(--color-primary); }.legend .collaborateLine { border-top:1px dashed var(--color-primary); }
+.controls { position:absolute; left:16px; bottom:16px; display:flex; padding:2px; border:1px solid var(--color-line); border-radius:7px; background:#fff; }
+.controls button { min-width:32px; padding-inline:8px; }
+.canvasActions { position:absolute; top:12px; right:12px; display:flex; padding:2px; border:1px solid var(--color-line); border-radius:7px; background:#fff; }
+.minimap { right:12px; bottom:12px; border:1px solid #dce4ef; border-radius:6px; background:#fff; overflow:hidden; }
+.empty { position:absolute; inset:0; display:grid; place-items:center; color:var(--color-muted); font-size:14px; pointer-events:none; }
+@media(max-width:899px) { .controls button,.canvasActions button { min-width:44px; min-height:44px; } .legend { display:none; } .dispatch { width:44px; height:44px; top:17px; right:6px; } .lead .nodeButton { padding-right:50px; } }
+@media(prefers-reduced-motion:reduce) { .nodeButton,.canvas :global(.react-flow__edge-path) { transition:none; } }
+
+.locateLabel { display:block; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.bottomBar { position:absolute; left:16px; right:128px; bottom:16px; display:flex; align-items:center; gap:10px; pointer-events:none; }
+.bottomBar > * { pointer-events:auto; }
+.bottomBar .controls { position:static; flex:none; }
+.saveStatus { font-size:12px; color:#526b86; background:#f8fafce8; }
+.pin { position:absolute; top:-7px; right:-6px; width:24px; height:24px; display:grid; place-items:center; border:1px solid #abc1df; border-radius:50%; background:#fff; color:#386ac0; cursor:pointer; }
+.lead .nodeButton { box-shadow:0 0 0 8px #f8fafc,0 0 0 9px #e1e9f4; }
+.edgeLabel { position:absolute; padding:2px 7px; background:#f8fafcf5; border:1px solid #e4ebf3; border-radius:12px; color:#416785; font-size:12px; line-height:16px; pointer-events:none; }
+.activityFlash .nodeButton { animation:progress-flash 600ms ease-out 1; }
+.successFlash .nodeButton { animation:accepted-flash 700ms ease-out 1; }
+.taskTitle,.taskHeader,.progress,.taskFoot { flex-shrink:0; }
+.task .nodeButton { padding:8px 12px; gap:3px; }
+.taskTitle { font-size:15px; line-height:21px; }
+.taskHeader { line-height:16px; }
+.taskFoot { line-height:16px; padding-top:4px; }
+@keyframes progress-flash { from { box-shadow:0 0 0 4px #568dcc25; } to { box-shadow:0 0 0 0 #568dcc00; } }
+@keyframes accepted-flash { from { box-shadow:0 0 0 5px #408d6635; border-color:#73aa8b; } to { box-shadow:0 0 0 0 #408d6600; } }
+@media(max-width:899px) { .bottomBar { left:10px; right:118px; bottom:10px; flex-wrap:wrap; gap:6px; } .saveStatus { display:none; } .bottomBar .controls button { min-width:32px; } .pin { width:30px; height:30px; } }
+@media(prefers-reduced-motion:reduce) { .pulse { display:none; } .activityFlash .nodeButton,.successFlash .nodeButton { animation:none; } }
