@@ -136,3 +136,5 @@ Ant Design 按项目 6.6.5 查阅公开 API，CLI lint 无问题。临时更新 
 生成前端类型取自最终后端 OpenAPI；后端工作树里较旧的前端副本不覆盖最终 UI。未纳入旧的预览方案及其专用浏览器用例，也未提交 `.data/`、构建输出、日志、数据库备份或 `.env`。改动前的完整差异及未跟踪文件备份保留在两工作树忽略的 `.data/blackboard-refresh/git-publication/`。
 
 最终合并、检查和远端同步状态记录在 `docs/HANDOFF.md` 第 0 节。此次 Git 发布不重启运行服务，不调用真实模型或靶机，不改现有任务与配置。
+
+后端及前端合并分别为 `a397c02`、`d7a9937`。main 的148个后端/94个前端改动路径与已验证源文件一致，候选部署清单的非静态后端文件无差异，最终OpenAPI重新生成的TypeScript也完全一致。main追加执行 `make check`：**1971 passed**、Pyright **0 errors/0 warnings**；`pnpm check`：**117 passed**。首次前端检查仅因主工作树未安装已声明组件依赖失败，`pnpm install --frozen-lockfile`恢复后通过；锁文件和依赖版本不变。已验证同版的340项隔离集成与36项Mock浏览器未为Git发布重复运行。
