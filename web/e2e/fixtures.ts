@@ -118,7 +118,7 @@ async function json(route: Route, value: unknown, status = 200) {
 /** Installs fixtures before navigation. Every /api request is handled here, including failures. */
 export async function installMockApi(page: Page, options: { largeGraph?: boolean; workerPrompt?: string } = {}) {
   const unexpected: string[] = [];
-  const events = options.largeGraph ? largeGraphEvents() : ordinaryEvents();
+  const events = structuredClone(options.largeGraph ? largeGraphEvents() : ordinaryEvents());
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
   const modelSaves: Record<string, unknown>[] = [];
   const workerSaves: Record<string, unknown>[] = [];
@@ -149,6 +149,8 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   let inputSequence = 0;
 
   await page.addInitScript(() => {
+    const sources: EventTarget[] = [];
+    Object.defineProperty(window, '__bbxMockEventSources', { value: sources });
     class MockEventSource extends EventTarget {
       static readonly CONNECTING = 0;
       static readonly OPEN = 1;
@@ -156,9 +158,10 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       readyState = 1;
       constructor() {
         super();
+        sources.push(this);
         queueMicrotask(() => this.dispatchEvent(new Event('open')));
       }
-      close() { this.readyState = 2; }
+      close() { this.readyState = 2; sources.splice(sources.indexOf(this), 1); }
     }
     Object.defineProperty(window, 'EventSource', { value: MockEventSource });
   });
@@ -334,4 +337,12 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
   return { unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
+}
+
+/** Send a synthetic event through the same listener path as the mocked SSE source. */
+export async function pushMockBoardEvent(page: Page, event: MockEvent) {
+  await page.evaluate((incoming) => {
+    const sources = (window as unknown as { __bbxMockEventSources: EventTarget[] }).__bbxMockEventSources;
+    for (const source of sources) source.dispatchEvent(new MessageEvent(incoming.type, { data: JSON.stringify(incoming) }));
+  }, event);
 }

@@ -50,21 +50,26 @@ test('题目分类键盘切换、文件预览和讨论入口保持上下文', as
   const overview = panel.getByRole('tab', { name: /概览$/ });
   await overview.focus();
   await overview.press('ArrowRight');
-  await expect(panel.getByRole('tab', { name: /记录\s*3/ })).toBeFocused();
+  await expect(panel.getByRole('tab', { name: /解题流程$/ })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(panel.getByRole('tab', { name: /记录\s*3/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.getByRole('tab', { name: /解题流程$/ })).toHaveAttribute('aria-selected', 'true');
+  await panel.getByRole('button', { name: '历史共享记录', exact: true }).click();
   await expect(panel.getByRole('tabpanel')).toContainText('空输入导致解码失败');
+  await panel.getByRole('tab', { name: /解题流程$/ }).focus();
   await page.keyboard.press('End');
   await expect(panel.getByRole('tab', { name: /文件\s*1/ })).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(panel.getByRole('tab', { name: /文件\s*1/ })).toHaveAttribute('aria-selected', 'true');
   await panel.getByRole('button', { name: /probe.py/ }).click();
-  await panel.getByRole('button').filter({ hasText: '文件信息' }).click();
-  await expect(panel).toContainText('/workspace/shared/probe.py');
-  await panel.getByRole('button', { name: /^文件 .*probe\.py/ }).click();
-  await expect(panel.getByRole('link', { name: '下载完整证据' })).toHaveAttribute('href', new RegExp('probe.py'));
-  await expect(panel).toContainText('Mock public evidence');
-  await panel.getByRole('button', { name: /与 Lead 讨论/ }).click();
+  const file = page.getByRole('dialog', { name: 'probe.py', exact: true });
+  await file.getByRole('button').filter({ hasText: '文件信息' }).click();
+  await expect(file).toContainText('/workspace/shared/probe.py');
+  await file.getByRole('button', { name: /^文件 .*probe\.py/ }).click();
+  await expect(file.getByRole('link', { name: '下载完整证据' })).toHaveAttribute('href', new RegExp('probe.py'));
+  await expect(file).toContainText('Mock public evidence');
+  await file.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(panel.getByRole('button', { name: /与 Lead 讨论/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Agent：Lead' }).press('Enter');
   await expect(page.getByRole('complementary', { name: 'Lead 会话' })).toContainText('已分派两道模拟题');
   await expect(page.getByRole('complementary', { name: /^题目详情：| 会话$/ })).toHaveCount(1);
   expect(mock.unexpected).toEqual([]);
@@ -75,9 +80,11 @@ test('画布缩放和平移在轮询、选择节点和关闭面板后保留', as
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/tasks/${CTF_ID}`);
   const viewport = page.locator('.react-flow__viewport');
-  await expect(page.locator('.react-flow__node')).toHaveCount(6);
+  await expect(page.locator('.react-flow__node')).toHaveCount(5);
   const initial = await viewport.getAttribute('style');
+  const initialScale = await viewport.evaluate(element => new DOMMatrixReadOnly((element as HTMLElement).style.transform).a);
   await page.getByRole('button', { name: '放大画布' }).click();
+  await expect.poll(() => viewport.evaluate(element => new DOMMatrixReadOnly((element as HTMLElement).style.transform).a)).toBeCloseTo(Math.min(1.5, initialScale * 1.2), 4);
   await expect(viewport).not.toHaveAttribute('style', initial ?? '');
   const zoomed = await viewport.getAttribute('style');
   await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/ctf/state'));
@@ -110,20 +117,24 @@ test('CTF 在 1440、768 和 390px 保留大画布、会话与题目实际截图
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/tasks/${CTF_ID}`);
-    await expect(page.locator('.react-flow__node')).toHaveCount(6);
+    await expect(page.locator('.react-flow__node')).toHaveCount(5);
     await expect(page.getByRole('complementary', { name: /^题目详情：| 会话$/ })).toHaveCount(0);
-    await page.screenshot({ animations: 'disabled', path: `${output}/ctf-canvas-${width}.png` });
-    await page.getByRole('button', { name: 'Agent：Web 分析员' }).click();
-    const agent = page.getByRole('complementary', { name: 'Web 分析员 会话' });
-    await expect(agent.getByRole('textbox')).toBeInViewport();
     if (width >= 1024) await expect.poll(() => page.getByRole('main', { name: 'CTF 团队协作画布' }).evaluate((element) => {
       const board = element.getBoundingClientRect();
       const nodes = [...element.querySelectorAll('.react-flow__node')];
-      return nodes.length === 6 && nodes.every((node) => {
+      return nodes.length === 5 && nodes.every((node) => {
         const bounds = node.getBoundingClientRect();
         return bounds.left >= board.left - 1 && bounds.right <= board.right + 1 && bounds.top >= board.top - 1 && bounds.bottom <= board.bottom + 1;
       });
     })).toBe(true);
+    const viewport = page.locator('.react-flow__viewport');
+    const transform = await viewport.getAttribute('style');
+    await page.screenshot({ animations: 'disabled', path: `${output}/ctf-canvas-${width}.png` });
+    await page.getByRole('button', { name: 'Agent：Web 分析员' }).click();
+    const agent = page.getByRole('complementary', { name: 'Web 分析员 会话' });
+    await expect(agent.getByRole('textbox')).toBeInViewport();
+    // Initial fit is allowed; opening an inspector must preserve the user's reading view.
+    await expect(viewport).toHaveAttribute('style', transform ?? '');
     await agent.getByRole('button', { name: /^read_artifact/ }).click();
     await expect(agent).toContainText('公开结果：空输入解码失败');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -134,7 +145,8 @@ test('CTF 在 1440、768 和 390px 保留大画布、会话与题目实际截图
     const challenge = page.getByRole('complementary', { name: /^题目详情：/ });
     await expect(challenge.getByRole('tab', { name: /概览$/ })).toHaveAttribute('aria-selected', 'true');
     await page.screenshot({ animations: 'disabled', path: `${output}/ctf-overview-${width}.png` });
-    await challenge.getByRole('tab', { name: /记录/ }).click();
+    await challenge.getByRole('tab', { name: /解题流程$/ }).click();
+  await challenge.getByRole('button', { name: '历史共享记录', exact: true }).click();
     await expect(challenge).toContainText('空输入导致解码失败');
     await page.screenshot({ animations: 'disabled', path: `${output}/ctf-records-${width}.png` });
     await challenge.getByRole('button', { name: '关闭详情' }).click();

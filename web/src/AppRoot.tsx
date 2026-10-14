@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp } from 'antd';
 import { XProvider } from '@ant-design/x';
@@ -21,7 +20,7 @@ export default function AppRoot() {
     return () => media.removeEventListener('change', update);
   }, []);
   useEffect(() => { const media = matchMedia('(max-width: 899px)'); const update = () => setNarrow(media.matches); media.addEventListener('change', update); return () => media.removeEventListener('change', update); }, []);
-  return <XProvider locale={{ ...zhCN, ...xZhCN }} virtual={false} button={{autoInsertSpace:false}} theme={appTheme(reduced, narrow)}>
-    <AntApp><QueryClientProvider client={queryClient}><BrowserRouter><App /></BrowserRouter></QueryClientProvider></AntApp>
+  return <XProvider locale={{ ...zhCN, ...xZhCN }} virtual={false} wave={{disabled:true}} button={{autoInsertSpace:false}} theme={appTheme(reduced, narrow)}>
+    <AntApp><QueryClientProvider client={queryClient}><App /></QueryClientProvider></AntApp>
   </XProvider>;
 }

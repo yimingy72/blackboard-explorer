@@ -36,10 +36,11 @@ describe('CTF workbench boundaries', () => {
     expect(memberStatus({ ...member, lifecycle: 'removed' })).toContain('历史保留');
   });
   it('distinguishes owner claims, manual and simulated platform verification', () => {
-    expect(workLabels.completed).toBe('负责人已完成');
+    expect(workLabels.completed).toBe('已交付');
     expect(verificationLabel({ status: 'accepted', source: 'platform', test_only: true })).toBe('模拟平台 · 已通过');
     expect(verificationLabel({ status: 'accepted', source: 'user' })).toBe('人工 · 已通过');
     expect(verificationLabel({ status: 'candidate', source: 'member' })).toBe('候选答案');
+    expect(verificationLabel({ status: 'accepted', source: 'agent' })).toBe('验证来源待核实');
   });
   it('deduplicates mailbox messages already stored in session and retains pending messages', () => {
     const session = { revision: 2, session: { state: { in_memory: { messages: [
@@ -137,6 +138,21 @@ describe('CTF workbench boundaries', () => {
       { id: 'text-items', name: 'text_tool', arguments: {}, result: [{ type: 'text', text: 'line one\nline two' }, { type: 'text', text: 'second item' }], status: 'completed' },
       { id: 'normal-result', name: 'result_tool', arguments: {}, result: null, status: 'failed' },
     ]);
+  });
+  it('marks explicit CTF domain refusals as failures without treating arbitrary JSON output as errors', () => {
+    const feedback = JSON.stringify({ error: { code: 'revision_conflict' } });
+    const session = { revision: 1, session: { state: { in_memory: { messages: [
+      { role: 'assistant', message_id: 'calls', contents: [
+        { type: 'function_call', call_id: 'refused', name: 'update_challenge', arguments: {} },
+        { type: 'function_call', call_id: 'ordinary', name: 'execute_command', arguments: {} },
+      ] },
+      { role: 'tool', contents: [
+        { type: 'function_result', call_id: 'refused', result: feedback, items: [{ type: 'text', text: feedback, additional_properties: { ctf_tool_error: 'revision_conflict' } }] },
+        { type: 'function_result', call_id: 'ordinary', result: feedback, items: [{ type: 'text', text: feedback }] },
+      ] },
+    ] } } } };
+    const [entry] = conversationEntries(session, [], member.id);
+    expect(entry.toolCalls.map(call => call.status)).toEqual(['failed', 'completed']);
   });
   it('uses saved checkpoint results for pending calls while preserving history results', () => {
     const session = { revision: 1, session: { state: {

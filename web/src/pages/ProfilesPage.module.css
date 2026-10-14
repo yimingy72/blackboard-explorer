@@ -10,7 +10,7 @@
 .directActions, .contentHeader { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--color-line); flex-wrap: wrap; }
 .directActions > span { font-size: 12px; color: var(--color-muted); }
 .roleTabs { padding: 0 22px; }
-.headingCode { font-size: 11px; margin-left: 5px; color: var(--color-muted); font-weight: 400; }
+.headingCode { font-size: 12px; margin-left: 5px; color: var(--color-muted); font-weight: 400; }
 .dirtyDot { color: var(--color-primary); }
 .workerContent { min-width: 0; display: grid; gap: 12px; padding-bottom: 22px; }
 .workerHeading, .workerHeading h2 { margin: 0; }
@@ -23,7 +23,7 @@
 .toolFieldset legend { font-weight: 500; font-size: 13px; padding: 0 8px 0 0; }
 .toolChecks { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px 16px; }
 .checkRow { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 13px; flex-wrap: wrap; overflow-wrap: anywhere; }
-.checkRow small { font-size: 11px; color: var(--color-muted); }
+.checkRow small { font-size: 12px; color: var(--color-muted); }
 .mcpChoice { display: grid; gap: 10px; justify-items: start; padding: 12px 0; }
 .mcpChoice .toolChecks { grid-template-columns: 1fr; }
 .variableHelp { font-size: 12px; color: var(--color-muted); }
@@ -32,7 +32,7 @@
 .catalogList { min-width: 0; position: sticky; top: 80px; }
 .catalogMenuLabel { display: grid; gap: 2px; padding: 4px 0; }
 .catalogMenuLabel strong { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
-.catalogMenuLabel small { font-size: 11px; color: var(--color-muted); }
+.catalogMenuLabel small { font-size: 12px; color: var(--color-muted); }
 .columnHeading { display: flex; justify-content: space-between; padding: 0 12px 12px; color: var(--color-muted); }
 .columnHeading h2 { margin: 0; font-size: 12px; font-weight: 500; }
 .columnHeading span { font-size: 12px; }

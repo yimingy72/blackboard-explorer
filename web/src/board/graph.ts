@@ -9,6 +9,7 @@ export type GraphRelation =
   | 'resolves'
   | 'disputes'
   | 'retry_of'
+  | 'authored'
   | 'claim';
 
 export interface GraphNodeData extends Record<string, unknown> {
@@ -29,11 +30,19 @@ export interface GraphNodeData extends Record<string, unknown> {
   intentId?: string | null;
   steps?: number;
   contextTokens?: number;
+  history?: boolean;
+  pinned?: boolean;
+  related?: boolean;
+  activity?: string;
   acceptance?: Array<{ id: string; status: 'met' | 'unmet' }>;
 }
 
 export interface GraphEdgeData extends Record<string, unknown> {
   relation: GraphRelation;
+  emphasized?: boolean;
+  dimmed?: boolean;
+  label?: string;
+  signal?: { id: string; kind: string; reverse?: boolean };
 }
 
 export type GraphNode = Node<GraphNodeData, 'goal' | 'fact' | 'intent' | 'agent'>;
@@ -42,9 +51,13 @@ export type GraphEdge = Edge<GraphEdgeData>;
 export function deriveGraph(state: BoardState, numbers: Record<string, number> = {}): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
+  const edgeIds = new Set<string>();
   const edge = (relation: GraphRelation, source: string, target: string, color: string, dash?: string) => {
+    const id = `${relation}:${source}:${target}`;
+    if (edgeIds.has(id)) return;
+    edgeIds.add(id);
     edges.push({
-      id: `${relation}:${source}:${target}`,
+      id,
       source,
       target,
       type: 'smoothstep',
@@ -88,6 +101,7 @@ export function deriveGraph(state: BoardState, numbers: Record<string, number> =
         author: fact.author,
         provenance: fact.provenance,
         reliedBy: fact.reliedBy,
+        result: fact.result,
       },
     });
     for (const source of fact.derivedFrom) {
@@ -131,7 +145,6 @@ export function deriveGraph(state: BoardState, numbers: Record<string, number> =
   });
 
   Object.values(state.agents)
-    .filter((agent) => agent.status === 'running' || agent.status === 'concluding')
     .forEach((agent, index) => {
       nodes.push({
         id: agent.id,
@@ -146,12 +159,17 @@ export function deriveGraph(state: BoardState, numbers: Record<string, number> =
           intentId: agent.intentId,
           steps: agent.steps,
           contextTokens: agent.contextTokens,
+          history: agent.status === 'finished' || agent.status === 'failed',
         },
       });
       if (agent.intentId && state.intents[agent.intentId]) {
         edge('claim', agent.id, agent.intentId, 'var(--color-muted)', '2 4');
       }
     });
+
+  for (const object of [...Object.values(state.facts), ...Object.values(state.intents)]) {
+    if (state.agents[object.author]) edge('authored', object.author, object.id, 'var(--color-primary)', '3 5');
+  }
 
   for (const node of nodes) {
     const owner = node.type === 'agent' ? node.id : node.data.author;

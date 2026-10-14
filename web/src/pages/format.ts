@@ -3,7 +3,7 @@ const taskStatus: Record<string, string> = {
   provisioning: '准备中',
   running: '运行中',
   closing: '收尾中',
-  finished: '已完成',
+  finished: '已结束',
   failed: '失败',
   stopped: '已停止',
 };
@@ -31,4 +31,9 @@ export function formatMoney(value: unknown, currency?: string | null): string {
 
 export function taskTitle(task: { name?: string | null; goal?: string | null }): string {
   return task.name?.trim() || task.goal?.trim().replace(/\s+/g, ' ').slice(0, 100) || '探索任务';
+}
+
+export function formatTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "—" : new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date);
 }

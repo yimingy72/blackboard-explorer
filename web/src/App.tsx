@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Outlet, Route, RouterProvider, createBrowserRouter, createRoutesFromElements, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Avatar, Button, Drawer, Dropdown, Layout, Menu, Result, Spin, Tooltip } from 'antd';
 import { ApartmentOutlined, AppstoreOutlined, DownOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import { api } from './api/client';
@@ -36,10 +36,9 @@ function AppShell() {
     catch { setLogoutError('退出失败，请重试。'); }
     finally { setLoggingOut(false); }
   }
-  const selected = workbench ? 'canvas' : pathname.startsWith('/profiles') ? 'profiles' : pathname === '/tasks/new' ? 'new' : 'tasks';
+  const selected = pathname.startsWith('/profiles') ? 'profiles' : 'tasks';
   const items = [
     { key: 'tasks', icon: <AppstoreOutlined />, label: <Link to="/tasks" aria-current={selected === 'tasks' ? 'page' : undefined}>任务</Link> },
-    ...(workbench ? [{ key: 'canvas', icon: <ApartmentOutlined />, label: <Link to={pathname} aria-current="page">协作画布</Link> }] : []),
     { key: 'profiles', icon: <SettingOutlined />, label: <Link to="/profiles" aria-current={selected === 'profiles' ? 'page' : undefined}>Agent 配置</Link> },
   ];
   const navigation = (full: boolean, id: string) => <>
@@ -50,7 +49,7 @@ function AppShell() {
   const closeNavigation = () => {restoreNavigationFocus.current=true;setExpanded(false);};
   return <Layout className={`${styles.app} ${workbench ? styles.workbench : ''}`}>
     <a href="#main-content" className={styles.skipLink}>跳到主要内容</a>
-    <Layout.Sider className={styles.sidebar} width={208} collapsedWidth={60} collapsed={narrow || !expanded} trigger={null} theme="light" styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%' } }}>
+    <Layout.Sider className={styles.sidebar} width={208} collapsedWidth={60} collapsed={narrow || !expanded} trigger={null} theme="light" style={{transition:'none'}} styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%' } }}>
       <Link to="/tasks" className={styles.brand} aria-label="黑板探索，前往任务列表"><ApartmentOutlined />{!narrow && expanded && <span>黑板探索</span>}</Link>
       {navigation(!narrow && expanded, 'workspace-navigation')}
       <div className={styles.sidebarBottom}><Tooltip title={expanded ? '收起导航' : '展开导航'} placement="right"><Button ref={toggle} type="text" className={styles.toggle} icon={expanded ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-label={expanded ? '收起导航' : '展开导航'} aria-expanded={expanded} aria-controls={narrow ? 'workspace-navigation-drawer' : 'workspace-navigation'} onClick={() => {restoreNavigationFocus.current=false;setExpanded(!expanded);}}>{expanded && !narrow ? '收起导航' : null}</Button></Tooltip></div>
@@ -64,12 +63,11 @@ function AppShell() {
   </Layout>;
 }
 function Loading({ text }: { text: string }) { return <div className={styles.routeLoading} role="status"><Spin /><span>{text}</span></div>; }
-export default function App() {
-  return <Routes><Route path="/" element={<Navigate to="/tasks" replace />} /><Route path="/login" element={<LoginPage />} />
+const router = createBrowserRouter(createRoutesFromElements(<><Route path="/" element={<Navigate to="/tasks" replace />} /><Route path="/login" element={<LoginPage />} />
     <Route element={<AppShell />}><Route path="/tasks" element={<TasksPage />} /><Route path="/tasks/new" element={<NewTaskPage />} />
       <Route path="/tasks/:taskId" element={<Suspense fallback={<Loading text="正在打开工作台…" />}><TaskWorkbenchPage /></Suspense>} />
       <Route path="/tasks/:taskId/report" element={<Suspense fallback={<Loading text="正在读取报告…" />}><ReportPage /></Suspense>} />
       <Route path="/profiles" element={<Suspense fallback={<Loading text="正在读取配置…" />}><ProfilesPage /></Suspense>} />
       <Route path="*" element={<Result status="404" title="页面不存在" extra={<Button href="/tasks" type="primary">返回任务列表</Button>} />} />
-    </Route></Routes>;
-}
+    </Route></>));
+export default function App() { return <RouterProvider router={router} />; }

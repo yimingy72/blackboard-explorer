@@ -33,6 +33,10 @@ export async function expandSection(control: Locator) {
 }
 
 export async function taskAction(page: Page, name: string) {
+  if (name === '查看报告') {
+    await page.getByRole('button', { name, exact: true }).click();
+    return;
+  }
   await page.getByRole('button', { name: '更多任务操作', exact: true }).click();
   const item = page.getByRole('menuitem', { name, exact: true });
   await item.click();

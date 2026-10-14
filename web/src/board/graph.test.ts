@@ -56,17 +56,17 @@ describe('deriveGraph', () => {
     const past = { ...changed, facts: { F1: changed.facts.F1 }, intents: {} };
     expect(agentContributions(past, [])['agent-1']).toEqual({ facts: ['F1'], intents: [], judgments: 0 });
   });
-  it('shows task-local labels on active Agent nodes while keeping graph IDs', () => {
+  it('keeps active and historical Agent identities available with task-local labels', () => {
     const { nodes } = deriveGraph(state, { 'agent-1': 2, 'agent-2': 1 });
     expect(nodes.find((node) => node.id === 'agent-1')?.data.label).toBe('Agent 2');
     expect(nodes.find((node) => node.id === 'I1')?.data.holder).toBe('Agent 2');
-    expect(nodes.some((node) => node.id === 'agent-2')).toBe(false);
+    expect(nodes.find((node) => node.id === 'agent-2')?.data).toMatchObject({ label: 'Agent 1', history: true });
   });
-  it('emits semantic nodes and all six directed relationship edges', () => {
+  it('keeps semantic relations and adds explicit author contributions', () => {
     const { nodes, edges } = deriveGraph(state);
     expect(nodes.map((node) => [node.id, node.type])).toEqual([
       ['goal', 'goal'], ['F1', 'fact'], ['F2', 'fact'], ['F3', 'fact'],
-      ['I1', 'intent'], ['I2', 'intent'], ['agent-1', 'agent'],
+      ['I1', 'intent'], ['I2', 'intent'], ['agent-1', 'agent'], ['agent-2', 'agent'],
     ]);
     expect(nodes.find((node) => node.id === 'goal')?.position.x).toBe(0);
     expect(nodes.find((node) => node.id === 'goal')?.data.acceptance).toEqual([{ id: 'A1', status: 'unmet' }]);
@@ -80,7 +80,7 @@ describe('deriveGraph', () => {
       status: 'running', taskType: 'explore', isSeed: true, intentId: 'I1',
     });
     expect(new Set(edges.map((edge) => edge.data?.relation))).toEqual(new Set([
-      'derived_from', 'based_on', 'resolves', 'disputes', 'retry_of', 'claim',
+      'derived_from', 'based_on', 'resolves', 'disputes', 'retry_of', 'claim', 'authored',
     ]));
     expect(edges.find((edge) => edge.data?.relation === 'derived_from')).toMatchObject({ source: 'F1', target: 'F2' });
     expect(edges.find((edge) => edge.data?.relation === 'resolves')).toMatchObject({ source: 'I1', target: 'F2' });

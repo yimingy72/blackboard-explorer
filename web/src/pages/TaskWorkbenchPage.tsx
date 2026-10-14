@@ -5,6 +5,7 @@ import {createAgentClientState,type AgentClientState} from '../components/agentC
 import Icon from '../components/Icon';
 import { taskTitle } from './format';
 import { TaskCurrency } from './currency';
+import { taskListUrl } from './taskNavigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -160,18 +161,19 @@ function BlackboardWorkbenchPage() {
         : activeDuration(task?.active_seconds ?? 0, task?.active_since, now);
     return <TaskCurrency.Provider value={task?.cost_currency ?? null}><div className={styles.page}>
       <header className={styles.header}><div className={styles.titleRow}>
-        <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate('/tasks')} />
+        <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
-        <Tag color={status === 'running' ? 'processing' : status === 'finished' ? 'success' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
+        <Tag color={status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
         <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{formatMoney(usedCost,task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span></div>
-        <div className={styles.actions}><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...(reportUri ? [{key:'report',label:'查看报告'}] : []),...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')setRecordsOpen(true);if(key==='report')navigate(`/tasks/${encodeURIComponent(taskId)}/report`);if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
+        <div className={styles.actions}><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')setRecordsOpen(true);if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
+          {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
           {['finished','failed','stopped'].includes(status) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=crypto.randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
-          {status==='created' && <Button type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
-          {['created','provisioning','running'].includes(status) && <Button danger loading={action==='stop'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('stop')}>停止</Button>}
+          {status==='created' && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
+          {['created','provisioning','running'].includes(status) && <Button aria-label="停止" aria-busy={action==='stop'} danger loading={action==='stop'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('stop')}>停止</Button>}
         </div>
       </div>
       {task && task.run_number>1 && (task.runs?.length??0)>0 && <nav className={styles.runHistory} aria-label="历史轮次">{task.runs?.map(run=><span key={run.run_number}>第{run.run_number}轮 {run.report_uri&&<Link to={`/tasks/${encodeURIComponent(taskId)}/report?run=${run.run_number}`}>报告</Link>} {run.workspace_uri&&<a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace?run=${run.run_number}`}>归档</a>}</span>)}</nav>}
-      <div className={styles.runSummary}>{explanation&&<p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}<span className={styles.runStats} aria-label="运行统计">对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span></div>
+      <div className={styles.runSummary}>{explanation&&<p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}<span className={styles.runStats} aria-label="运行统计">{boardTask?.usageIncomplete&&<span title="模型未提供完整用量，金额仅包含已记录部分。">用量不完整 · </span>}对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span></div>
       {version!==null&&<Alert type="warning" title={`历史回放 · v${version}`} description={`已接收 ${board.events.length-viewEvents.length} 条后续事件；当前视图只读。`} action={<Button onClick={()=>setVersion(null)}>返回实时</Button>} />}
       {(actionError || (board.error&&!unauthorized))&&<Alert type="error" title={actionError||board.error?.message} action={board.error?<Button onClick={()=>window.location.reload()}>重新连接</Button>:undefined} />}
       {board.connection==='reconnecting'&&!board.error&&<Alert type="warning" title="实时连接暂时中断，正在自动重连" />}
@@ -186,7 +188,7 @@ function BlackboardWorkbenchPage() {
 
       <InspectorLayout hideOnMobile={goalOpen} label={selectedAgent ? 'Agent 对话' : '对象详情'} onClose={() => selectedAgent ? closeAgent(selectedAgent.id) : setSelectedId(null)} inspector={selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id,numbers)} events={viewEvents} state={viewState} historical={version!==null} onClose={()=>closeAgent(selectedAgent.id)} clientState={clientStates.current[selectedAgent.id]??=createAgentClientState()} draftValue={drafts[selectedAgent.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selectedAgent.id]:value}))} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version!==null} agentNumbers={numbers} /> : null}>
         <TaskGoal key={taskId} open={goalOpen} goal={boardTask?.goal??(version===null?task?.goal:'')??''} context={boardTask?.domain_context??null} files={boardTask?.initialAttachments??(version===null?task?.initial_attachments:[])??[]} requirements={boardTask?.acceptance.length?<ul>{boardTask.acceptance.map(item=><li key={item.id}>{item.id} · {item.desc}</li>)}</ul>:undefined} onClose={closeGoal} />
-        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
+        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
       </InspectorLayout>
       <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} onRestoreFocus={()=>taskMenuButton.current?.focus({preventScroll:true})} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers}/>
       <Modal title="续跑任务" open={resumeOpen} onCancel={() => { if(!resuming) setResumeOpen(false); }} footer={null} closable={!resuming} mask={{closable:!resuming}} keyboard={!resuming}>
@@ -208,7 +210,7 @@ export default function TaskWorkbenchPage() {
         taskId: string;
     }>();
     const navigate = useNavigate();
-    const task = useQuery({ queryKey: ['task-mode', taskId], queryFn: ({ signal }) => request<TaskView>(`/tasks/${encodeURIComponent(taskId!)}`, { signal }), enabled: Boolean(taskId), retry: false });
+    const task = useQuery({ queryKey: ['task', taskId], queryFn: ({ signal }) => request<TaskView>(`/tasks/${encodeURIComponent(taskId!)}`, { signal }), enabled: Boolean(taskId), retry: false });
     useEffect(() => { if (task.error instanceof ApiError && task.error.status === 401)
         navigate('/login', { replace: true }); }, [task.error, navigate]);
     if (!taskId)

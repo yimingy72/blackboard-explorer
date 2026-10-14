@@ -13,10 +13,10 @@
 .requirements .prose { font-size:13px; }
 .requirements ul { margin:0; padding-left:18px; font-size:13px; line-height:1.6; }
 .files h3 { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:500; color:var(--color-muted); margin:0 0 5px; }
-.files h3 > span:last-child { margin-left:auto; font-size:11px; }
+.files h3 > span:last-child { margin-left:auto; font-size:12px; }
 .file { width:100%; padding:3px 0; display:flex; align-items:center; gap:8px; justify-content:start; font-size:12px; }
 .file > span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.file small { color:var(--color-muted); margin-left:auto; white-space:nowrap; font-size:11px; }
+.file small { color:var(--color-muted); margin-left:auto; white-space:nowrap; font-size:12px; }
 .file > span:last-child { color:var(--color-muted); font-size:10px; }
 .context { margin:8px 0 0 -10px; max-width:720px; }
 .context .prose { font-size:12px; color:var(--color-muted); }

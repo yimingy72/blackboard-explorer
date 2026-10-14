@@ -6,7 +6,7 @@
 .brand > span:last-child:not(:first-child) { font-size:15px; font-weight:600; }
 .newTask { width:calc(100% - 20px); margin:0 10px 12px; }
 .recent { display:grid; gap:4px; padding:20px 10px 0; }
-.recent > span { font-size:11px; color:var(--color-muted); padding:0 12px 6px; }
+.recent > span { font-size:12px; color:var(--color-muted); padding:0 12px 6px; }
 .recent a { display:flex; align-items:center; gap:9px; padding:7px 12px; color:var(--color-ink); font-size:12px; text-decoration:none; border-radius:6px; }
 .recent a:hover { background:var(--color-surface); }
 .recent a > span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

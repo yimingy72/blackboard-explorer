@@ -18,6 +18,22 @@ function created(taskId: string, version: number): BoardEvent {
 }
 
 describe('board event store', () => {
+  it('advances new events without mutating past snapshots and repairs an older gap',()=>{
+    useBoardStore.getState().reset(taskOne);
+    const first=created(taskOne,1);
+    useBoardStore.getState().append(taskOne,[first]);
+    const before=useBoardStore.getState().state;
+    const ended={...first,version:3,type:'task.finished' as const,payload:{}};
+    useBoardStore.getState().append(taskOne,[ended]);
+    expect(before.task?.status).toBe('created');
+    const endedState=useBoardStore.getState().state;
+    useBoardStore.getState().append(taskOne,[ended]);
+    expect(useBoardStore.getState().state).toBe(endedState);
+    useBoardStore.getState().append(taskOne,[{...first,version:2,type:'task.running' as const,payload:{}}]);
+    expect(useBoardStore.getState().events.map(event=>event.version)).toEqual([1,2,3]);
+    expect(useBoardStore.getState().state.task?.status).toBe('finished');
+    useBoardStore.getState().reset(null);
+  });
   it('preserves the full ordered log, drops duplicates, and clears on task switch', () => {
     useBoardStore.getState().reset(taskOne);
     const first = created(taskOne, 1);

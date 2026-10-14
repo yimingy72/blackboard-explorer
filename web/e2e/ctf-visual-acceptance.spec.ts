@@ -41,7 +41,7 @@ test('CTF desktop 1920/1440 keeps the board readable and the inspector reversibl
   const default1920 = await layoutMetrics(page);
   expect(default1920.overflowX).toBeLessThanOrEqual(1);
   expect(default1920.overlapsMinimap).toBe(false);
-  expect(default1920.nodeCount).toBe(6);
+  expect(default1920.nodeCount).toBe(5);
   expect(default1920.cardOverflow).toBe(0);
   await page.screenshot({ path: `${screenshots}/visual-1920-default.png`, fullPage: true });
 
@@ -62,8 +62,9 @@ test('CTF desktop 1920/1440 keeps the board readable and the inspector reversibl
 
   await page.getByRole('button', { name: '任务：模拟 Web 题' }).click();
   const detail = page.getByRole('complementary', { name: /^题目详情：/ });
-  await detail.getByRole('tab', { name: /记录/ }).click();
-  await expect(detail).toContainText('候选记录');
+  await detail.getByRole('tab', { name: '解题流程', exact: true }).click();
+  await detail.getByRole('button', { name: '历史共享记录', exact: true }).click();
+  await expect(detail).toContainText('结果记录');
   await expect(detail).toContainText('FLAG{mock-second}');
   await page.screenshot({ path: `${screenshots}/visual-1440-task-open.png`, fullPage: true });
   await detail.getByRole('button', { name: '关闭详情' }).click();
@@ -91,8 +92,9 @@ test('CTF long content, empty task, history and failure metadata remain readable
   expect((await layoutMetrics(page)).cardOverflow).toBe(0);
   const empty = page.getByRole('complementary', { name: /^题目详情：/ });
   await expect(empty).toContainText('尚未分派');
-  await empty.getByRole('tab', { name: /记录/ }).click();
-  await expect(empty).toContainText('还没有共享记录');
+  await empty.getByRole('tab', { name: '解题流程', exact: true }).click();
+  await empty.getByRole('button', { name: '历史共享记录', exact: true }).click();
+  await expect(empty).toContainText('尚无共享记录');
   await empty.getByRole('tab', { name: /文件/ }).click();
   await expect(empty).toContainText('尚无登记文件');
   await empty.getByRole('button', { name: '关闭详情' }).click();

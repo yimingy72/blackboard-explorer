@@ -2,13 +2,15 @@ import { Alert, Button, Dropdown, Empty, Modal, Spin, Tag } from 'antd';
 import InspectorLayout from '../components/InspectorLayout';
 import TaskGoal from '../components/TaskGoal';
 import {createAgentClientState,type AgentClientState} from '../components/agentClientState';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { taskListUrl } from '../pages/taskNavigation';
 import { ApiError, type TaskView } from '../api/client';
-import { formatMoney, taskTitle } from '../pages/format';
+import { formatMoney, taskTitle, formatDate } from '../pages/format';
 import { activeDuration } from '../board/agents';
 import { ctfApi } from './api';
+import { challengeTimeline } from './progress';
 import { acceptCursor, phaseLabels } from './view';
 import type { CtfEvent } from './types';
 import { useAction } from './useAction';
@@ -24,10 +26,13 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     initialTask: TaskView;
 }) {
     const navigate = useNavigate();
+    const location = useLocation();
     const queryClient = useQueryClient();
     const [memberId, setMemberId] = useState<string | null>(null);
     const [challengeId, setChallengeId] = useState<string | null>(null);
-    const [dialog, setDialog] = useState<'events' | 'recovery' | null>(null);
+    const [dialog, setDialog] = useState<'events' | 'recovery' | 'dispatch' | null>(null);
+    const dispatchTrigger = useRef<HTMLElement | null>(null);
+    const dispatchNavigated = useRef(false);
     const [goalOpen,setGoalOpen]=useState(false);
     const goalButton=useRef<HTMLButtonElement|HTMLAnchorElement>(null);
     const clientStates=useRef<Record<string,AgentClientState>>({});
@@ -39,6 +44,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     const returnNode = useRef<string | null>(null);
     const [connection, setConnection] = useState('connecting');
     const [streamRevision, setStreamRevision] = useState(0);
+    const [assignmentEvents, setAssignmentEvents] = useState<CtfEvent[]>([]);
     const [operation, setOperation] = useState<'start' | 'stop'>('start');
     const statusAction = useAction();
     const cursor = useRef(0);
@@ -72,6 +78,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
                 if (next === cursor.current)
                     return;
                 cursor.current = next;
+                if (event.type === 'ctf.challenge.updated') setAssignmentEvents((current) => [...current, event].slice(-64));
                 if (!timer)
                     timer = setTimeout(() => { timer = undefined; if (alive)
                         void queryClient.invalidateQueries({ queryKey: ['ctf', taskId] }); }, 250);
@@ -105,6 +112,9 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     const items = challenges.data?.challenges ?? state.data?.challenges ?? [];
     const challenge = items.find((item) => item.id === challengeId);
     const records = state.data?.records ?? [];
+    const boardEvents = useMemo(() => [...(eventHistory.data ?? []), ...assignmentEvents], [eventHistory.data, assignmentEvents]);
+    const dispatchEntries = dialog === 'dispatch' ? items.flatMap((item) => challengeTimeline(item.id, records, eventHistory.data ?? [], members).filter((entry) => entry.type !== 'record').map((entry) => ({ entry, challenge: item }))).sort((a, b) => b.entry.version - a.entry.version) : [];
+    const memberName = (id: string) => members.find((member) => member.id === id)?.display_name ?? (id === 'system' ? '系统' : id === 'user' ? '用户' : id);
     const selectedGraphId = challenge ? 'challenge:' + challenge.id : selected ? 'agent:' + selected.id : null;
     const inspectorOpen = Boolean(challenge || selected);
     const terminal = ['finished', 'stopped', 'failed'].includes(phase);
@@ -140,24 +150,29 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     }
     return <div className={styles.page}>
       <header className={styles.header}>
-        <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate('/tasks')} />
+        <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(task)}>{taskTitle(task)}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={phase === 'running' ? 'processing' : phase === 'failed' ? 'error' : 'default'}>{phaseLabels[phase] ?? phase}</Tag>
         <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 {activeDuration(task.active_seconds ?? 0, task.active_since, now)}</span><span>{formatMoney(task.usage?.cost ?? 0, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
         <div className={styles.actions}><Button ref={goalButton} size="small" type="text" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button>{task.report_uri && <Button href={`/api/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" icon={<Icon name="external" />}>报告</Button>}
-          {phase === 'created' && <Button type="primary" loading={statusAction.busy && operation === 'start'} disabled={statusAction.busy} onClick={() => void changeStatus('start')}>启动任务</Button>}
-          {['created','provisioning','running'].includes(phase) && <Button danger disabled={statusAction.busy} loading={statusAction.busy && operation === 'stop'} onClick={() => void changeStatus('stop')}>停止任务</Button>}
+          {phase === 'created' && <Button aria-label="启动任务" aria-busy={statusAction.busy && operation === 'start'} type="primary" loading={statusAction.busy && operation === 'start'} disabled={statusAction.busy} onClick={() => void changeStatus('start')}>启动任务</Button>}
+          {['created','provisioning','running'].includes(phase) && <Button aria-label="停止任务" aria-busy={statusAction.busy && operation === 'stop'} danger disabled={statusAction.busy} loading={statusAction.busy && operation === 'stop'} onClick={() => void changeStatus('stop')}>停止任务</Button>}
           <Dropdown trigger={['click']} menu={{ items: [{ key: 'refresh', label: '刷新', icon: <Icon name="refresh" /> }, { key: 'events', label: '系统事件' }, ...(terminal ? [{ key: 'recovery', label: '收尾与恢复' }] : [])], onClick: ({ key }) => key === 'refresh' ? refresh() : setDialog(key as 'events' | 'recovery') }}><Button type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
         </div>
       </header>
       <div className={styles.runSummary} role="status"><span>{activeItems.length} 个题目 · {members.length} 个 Agent</span>{verified > 0 && <Tag color="success">{verified} 已验证</Tag>}{candidates > 0 && <Tag color="warning">{candidates} 候选待验</Tag>}<span className={styles.endReason}>{failure ? String(failure.summary ?? '系统执行失败') : terminal ? conclusionLabels[conclusionReason] ?? conclusionReason : phase === 'closing' ? '正在保存结果' : ''}</span>{failure && <code title={String(failure.correlation_id ?? '')}>追踪 {String(failure.correlation_id ?? '').slice(0,8)}</code>}</div>
       {statusAction.error && <Alert type="error" title={statusAction.error} showIcon />}{state.error && <Alert type="error" title={state.error.message} action={<Button onClick={() => void state.refetch()}>重试</Button>} />}
       <div ref={workspace} className={styles.workspace}>
-        <InspectorLayout hideOnMobile={goalOpen} label={challenge ? '题目详情' : `${selected?.display_name} 会话详情`} onClose={closeInspector} inspector={challenge ? <ChallengePanel key={taskId + ':' + challenge.id} taskId={taskId} challenge={challenge} members={members} allRecords={records} phase={phase} onBack={closeInspector} onDiscuss={(id) => select('agent',id)} /> : selected ? <Conversation key={taskId + ':' + selected.id} taskId={taskId} member={selected} members={members} phase={phase} onClose={closeInspector} clientState={clientStates.current[selected.id]??=createAgentClientState()} draftValue={drafts[selected.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selected.id]:value}))} /> : null}>
+        <InspectorLayout hideOnMobile={goalOpen} label={challenge ? '题目详情' : `${selected?.display_name} 会话详情`} onClose={closeInspector} inspector={challenge ? <ChallengePanel key={taskId + ':' + challenge.id} taskId={taskId} challenge={challenge} members={members} allRecords={records} events={eventHistory.data ?? []} historyLoading={eventHistory.isLoading} historyError={eventHistory.error?.message} onRetryHistory={() => void eventHistory.refetch()} phase={phase} onBack={closeInspector} onDiscuss={(id) => select('agent',id)} /> : selected ? <Conversation key={taskId + ':' + selected.id} taskId={taskId} member={selected} members={members} phase={phase} onClose={closeInspector} clientState={clientStates.current[selected.id]??=createAgentClientState()} draftValue={drafts[selected.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selected.id]:value}))} /> : null}>
           <TaskGoal key={taskId} open={goalOpen} goal={task.goal} requirements={task.completion_requirements} context={task.domain_context} files={task.initial_attachments} onClose={closeGoal} />
-          <main className={styles.canvasRegion} aria-label="CTF 团队协作画布">{challenges.error && <Alert type="error" title={challenges.error.message} action={<Button onClick={() => void challenges.refetch()}>重试</Button>} />}<CtfBoardCanvas members={members} challenges={items} records={records} selected={selectedGraphId} phase={phase} onSelect={(next) => select(next.kind,next.id)} /></main>
+          <main className={styles.canvasRegion} aria-label="CTF 团队协作画布">{challenges.error && <Alert type="error" title={challenges.error.message} action={<Button onClick={() => void challenges.refetch()}>重试</Button>} />}<CtfBoardCanvas taskId={taskId} ready={Boolean(state.data && challenges.data)} events={boardEvents} members={members} challenges={items} records={records} selected={selectedGraphId} phase={phase} onSelect={(next) => select(next.kind,next.id)} onOpenDispatch={() => { dispatchTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setDialog('dispatch'); }} /></main>
         </InspectorLayout>
       </div>
+      <Modal title="调度记录" open={dialog === 'dispatch'} onCancel={() => setDialog(null)} footer={null} width={680} focusable={{ focusTriggerAfterClose: false }} afterClose={() => { if (dispatchNavigated.current) workspace.current?.querySelector<HTMLElement>('[data-inspector-panel] h2')?.focus({ preventScroll: true }); else dispatchTrigger.current?.focus({ preventScroll: true }); dispatchNavigated.current = false; }}>
+        {eventHistory.isLoading && <p role="status"><Spin /> 正在读取调度记录…</p>}{eventHistory.error && <Alert type="error" title={eventHistory.error.message} action={<Button onClick={() => void eventHistory.refetch()}>重试</Button>} />}
+        {!eventHistory.isLoading && !eventHistory.error && !dispatchEntries.length && <Empty description="尚无已保存的分配变化" />}
+        <ol className={styles.dispatchEntries}>{dispatchEntries.map(({ entry, challenge: item }) => <li key={entry.id}><div><strong>{item.title}</strong><time>{entry.createdAt ? formatDate(entry.createdAt) : `v${entry.version}`}</time></div><p>{memberName(entry.actorId)} · {entry.title}</p>{entry.detail && <p>{entry.detail}</p>}<Button type="text" onClick={() => { dispatchNavigated.current = true; setDialog(null); select('challenge', item.id); }}>查看题目<Icon name="arrow" /></Button></li>)}</ol>
+      </Modal>
       <Modal title="系统事件" open={dialog === 'events'} onCancel={() => setDialog(null)} footer={null} width={720}>{eventHistory.isLoading && <p role="status"><Spin /> 正在读取事件…</p>}{eventHistory.error && <Alert type="error" title={eventHistory.error.message} action={<Button onClick={() => void eventHistory.refetch()}>重试</Button>} />}{!eventHistory.isLoading && !eventHistory.error && !eventHistory.data?.length && <Empty description="尚无事件记录" />}<ol className={styles.systemEvents}>{(eventHistory.data ?? []).slice(-100).reverse().map((event) => <li key={event.version}><code>v{event.version}</code><strong>{event.type}</strong><span>{event.actor}</span></li>)}</ol></Modal>
       <Modal title="收尾与恢复" open={dialog === 'recovery'} onCancel={() => setDialog(null)} footer={null} width={900} destroyOnHidden><RecoveryPanel taskId={taskId} task={task} challenges={items} onClose={() => setDialog(null)} /></Modal>
     </div>;

@@ -21,7 +21,7 @@ describe('incremental layout', () => {
       ? { ...node, position: { x: 810, y: 140 } }
       : node)
 
-    const next = await layoutGraph([goal, firstFact, secondFact], [], moved, [])
+    const next = await layoutGraph([goal, firstFact, secondFact], [], moved)
     expect(next.find((node) => node.id === 'F1')?.position).toEqual({ x: 810, y: 140 })
     expect(next.find((node) => node.id === 'F2')?.position).not.toEqual({ x: 810, y: 140 })
     expect(sameTopology([goal, firstFact], [], moved, [])).toBe(true)
@@ -34,5 +34,15 @@ describe('incremental layout', () => {
     expect(sameTopology([goal, firstFact], [
       { id: 'based_on:F1:I1', source: 'F1', target: 'I1' },
     ], [goal, firstFact], [])).toBe(false)
+  })
+
+  it('keeps dragged nodes when a new relation is added', async () => {
+    const first = await layoutGraph([goal, firstFact], [])
+    const moved = first.map(node => node.id === 'F1' ? { ...node, position: { x: 810, y: 140 } } : node)
+    const next = await layoutGraph([goal, firstFact, secondFact], [{ id: 'supports:F1:F2', source: 'F1', target: 'F2' }], moved)
+    for (const node of moved) expect(next.find(item => item.id === node.id)?.position).toEqual(node.position)
+    const added = next.find(node => node.id === 'F2')!
+    const existing = next.find(node => node.id === 'F1')!
+    expect(added.position.x >= existing.position.x + 280 || added.position.x + 280 <= existing.position.x || added.position.y >= existing.position.y + 144 || added.position.y + 144 <= existing.position.y).toBe(true)
   })
 })

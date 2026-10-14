@@ -1,12 +1,12 @@
-.viewer { min-width: 0; container-type: inline-size; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-bg); }
+.viewer { width:100%; min-width: 0; container-type: inline-size; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-bg); }
 .viewer[open] { border-color: var(--color-line-strong); }
 .summary { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 11px 12px; cursor: pointer; font-size: var(--text-sm); line-height: 1.65; }
 .summary:hover { background: var(--color-surface); }
 .kind { flex: none; color: var(--color-primary); font-weight: 700; }
 .summaryText { min-width: 0; flex: 1; overflow-wrap: anywhere; }
-.auto { flex: none; color: var(--color-muted); font-size: 0.72rem; }
+.auto { flex: none; color: var(--color-muted); font-size: var(--text-xs); }
 .body { padding: 12px; border-top: 1px solid var(--color-line); }
-.metadata { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 10px; color: var(--color-muted); font-size: 0.72rem; overflow-wrap: anywhere; }
+.metadata { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 10px; color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .download { display: inline-block; margin-bottom: 10px; color: var(--color-primary); font-size: 0.78rem; font-weight: 650; text-underline-offset: 3px; }
 .notice, .truncated, .invalid { margin: 8px 0; color: var(--color-muted); font-size: 0.78rem; line-height: 1.55; }
 .truncated { padding: 10px 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-warning-soft); color: var(--color-warning); }

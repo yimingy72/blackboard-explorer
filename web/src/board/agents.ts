@@ -22,11 +22,12 @@ export function agentContributions(state: BoardState, events: readonly BoardEven
 
 export function agentNumbers(events: readonly BoardEvent[]): Record<string, number> {
   const numbers: Record<string, number> = {};
+  let nextNumber = 1;
   for (const event of [...events].sort((a, b) => a.version - b.version)) {
     if (event.type !== 'agent.spawned') continue;
     const id = event.payload?.id;
     if (typeof id === 'string' && id && numbers[id] === undefined) {
-      numbers[id] = Object.keys(numbers).length + 1;
+      numbers[id] = nextNumber++;
     }
   }
   return numbers;

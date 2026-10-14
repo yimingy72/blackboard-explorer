@@ -952,6 +952,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/records/{record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Record */
+        get: operations["record_api_tasks__task_id__ctf_challenges__challenge_id__records__record_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/verification/manual": {
         parameters: {
             query?: never;
@@ -1697,6 +1714,13 @@ export interface components {
                 [key: string]: components["schemas"]["WorkerTools"];
             };
         };
+        /** CtfAssignmentInstruction */
+        CtfAssignmentInstruction: {
+            /** Body */
+            body: string;
+            /** Recipient Id */
+            recipient_id: string;
+        };
         /** CtfBudget */
         CtfBudget: {
             /** Max Cost */
@@ -1746,6 +1770,8 @@ export interface components {
             collaborator_ids?: string[] | null;
             /** Expected Revision */
             expected_revision: number;
+            /** Instructions */
+            instructions?: components["schemas"]["CtfAssignmentInstruction"][] | null;
             /** Owner Id */
             owner_id?: string | null;
             /**
@@ -1753,6 +1779,7 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
+            solution?: components["schemas"]["CtfSolution"] | null;
             /** Work Status */
             work_status?: ("in_progress" | "blocked" | "completed" | "cancelled") | null;
         };
@@ -1889,6 +1916,18 @@ export interface components {
             /** Tool Name */
             tool_name: string;
         };
+        /** CtfProgress */
+        CtfProgress: {
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "approach" | "attempt" | "breakthrough" | "result";
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+        };
         /** CtfPromptTemplates */
         CtfPromptTemplates: {
             /** Lead */
@@ -1908,11 +1947,46 @@ export interface components {
              * @enum {string}
              */
             kind: "note" | "correction";
+            progress?: components["schemas"]["CtfProgress"] | null;
             /**
              * Request Id
              * Format: uuid
              */
             request_id: string;
+        };
+        /** CtfSolution */
+        CtfSolution: {
+            /** Approach */
+            approach: string;
+            /** Conclusion */
+            conclusion: string;
+            /** Remaining */
+            remaining?: string[];
+            /** Reproduction */
+            reproduction: string;
+            /** Steps */
+            steps: components["schemas"]["CtfSolutionStep"][];
+        };
+        /** CtfSolutionStep */
+        CtfSolutionStep: {
+            /** Artifact Ids */
+            artifact_ids?: string[];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "approach" | "attempt" | "breakthrough" | "result";
+            /** Record Ids */
+            record_ids?: string[];
+            /**
+             * Result
+             * @enum {string}
+             */
+            result: "supported" | "ruled_out" | "inconclusive";
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
         };
         /** CtfTaskCreate */
         CtfTaskCreate: {
@@ -2115,8 +2189,12 @@ export interface components {
         FinishBody: {
             /** End Reason */
             end_reason: string;
+            /** Expected Agent Run Id */
+            expected_agent_run_id?: string | null;
             /** Expected Derive Round */
             expected_derive_round?: number | null;
+            /** Expected Run Number */
+            expected_run_number?: number | null;
             /** Receipt */
             receipt: {
                 [key: string]: unknown;
@@ -2138,13 +2216,45 @@ export interface components {
             context_tokens: number;
             /** Expected Derive Round */
             expected_derive_round?: number | null;
+            /** Expected Run Number */
+            expected_run_number?: number | null;
             /** Last Seen Version */
             last_seen_version: number;
+            /** Request Id */
+            request_id?: string | null;
             /** Requested At */
             requested_at?: string | null;
             /** Steps */
             steps: number;
             usage: components["schemas"]["Usage"];
+            /**
+             * Usage Known
+             * @default true
+             */
+            usage_known: boolean;
+        };
+        /** HeartbeatRequest */
+        HeartbeatRequest: {
+            /** Context Tokens */
+            context_tokens: number;
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
+            /** Expected Run Number */
+            expected_run_number?: number | null;
+            /** Last Seen Version */
+            last_seen_version: number;
+            /** Request Id */
+            request_id?: string | null;
+            /** Requested At */
+            requested_at?: string | null;
+            /** Steps */
+            steps: number;
+            usage: components["schemas"]["Usage"];
+            /**
+             * Usage Known
+             * @default true
+             */
+            usage_known: boolean;
         };
         /** ImportKey */
         ImportKey: {
@@ -2733,6 +2843,10 @@ export interface components {
              * @description 探索提示词模板正文快照
              */
             explore: string;
+        };
+        /** ReceiptHeartbeatRequest */
+        ReceiptHeartbeatRequest: {
+            receipt: components["schemas"]["HeartbeatRequest"];
         };
         /** ReconcileBody */
         ReconcileBody: {
@@ -4391,7 +4505,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HeartbeatBody"];
+                "application/json": components["schemas"]["HeartbeatBody"] | components["schemas"]["ReceiptHeartbeatRequest"];
             };
         };
         responses: {
@@ -5383,6 +5497,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_api_tasks__task_id__ctf_challenges__challenge_id__records__record_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

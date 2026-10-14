@@ -1,6 +1,6 @@
 import type { CtfEvent, CtfMember, CtfMessage, CtfReasoning, CtfSession, CtfToolCall } from './types';
 
-export const workLabels: Record<string, string> = { pending: '待领取', in_progress: '进行中', blocked: '需要增援', completed: '负责人已完成', cancelled: '已取消' };
+export const workLabels: Record<string, string> = { pending: '待领取', in_progress: '进行中', blocked: '需要增援', completed: '已交付', cancelled: '已取消' };
 export const phaseLabels: Record<string, string> = { created: '待启动', provisioning: '准备中', running: '进行中', closing: '收尾中', finished: '已结束', stopped: '已停止', failed: '失败' };
 export function memberStatus(member: CtfMember): string {
   if (member.lifecycle === 'removed') return '已移除 · 历史保留';
@@ -24,6 +24,7 @@ export function canSend(phase: string, member: CtfMember): boolean {
 }
 export function verificationLabel(verification: Record<string, unknown>): string {
   const status = String(verification.status ?? 'unknown');
+  if (status === 'accepted' && !['platform', 'user'].includes(String(verification.source))) return '验证来源待核实';
   const label = ({ unknown: '待核实', candidate: '候选答案', accepted: '已通过', rejected: '未通过', pending: '待验证' } as Record<string, string>)[status] ?? status;
   const source = verification.source === 'platform' ? (verification.test_only ? '模拟平台' : '平台') : verification.source === 'user' ? '人工' : '待核实';
   return verification.source === 'platform' || verification.source === 'user' ? `${source} · ${label}` : label;
@@ -49,7 +50,7 @@ function applyToolResult(call: CtfToolCall, content: Record<string, unknown>): b
   if (content.result === undefined && !validItems && !hasException) return false;
   call.result = toolValue(content.result !== undefined ? content.result : validItems ? content.items : content.exception);
   const items = validItems ? (content.items as unknown[]).map(object) : [];
-  call.status = hasException || items.some((value) => value.type === 'error') ? 'failed' : 'completed';
+  call.status = hasException || items.some((value) => value.type === 'error' || typeof object(value.additional_properties).ctf_tool_error === 'string') ? 'failed' : 'completed';
   return true;
 }
 export type ChatEntry = { id: string; speaker: string; body: string; assistant: boolean; delivery?: CtfMessage; tools: number; reasoning: CtfReasoning[]; toolCalls: CtfToolCall[] };

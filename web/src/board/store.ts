@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 import { api } from '../api/client';
 import { openBoardStream, type StreamConnection } from '../api/events';
-import { emptyBoard, orderedEvents, reduceBoard } from './reducer';
+import { advanceBoard, emptyBoard, orderedEvents, reduceBoard } from './reducer';
 import type { BoardEvent, BoardState } from './types';
 
 interface BoardStore {
@@ -39,11 +39,17 @@ export const useBoardStore = create<BoardStore>((set) => ({
   append: (taskId, incoming) =>
     set((current) => {
       if (current.taskId !== taskId) return current;
-      const events = orderedEvents([
-        ...current.events,
-        ...incoming.filter((event) => event.task_id === taskId),
-      ]);
-      if (events.length === current.events.length) return current;
+      const batch = orderedEvents(incoming.filter((event) => event.task_id === taskId));
+      const latest = current.events.at(-1)?.version ?? 0;
+      if (!batch.length) return current;
+      if (batch.every(event => event.version > latest)) {
+        return { events: [...current.events, ...batch], state: advanceBoard(current.state, batch) };
+      }
+      // Reconnects may repeat events or supply a previously missing older version.
+      const known = new Set(current.events.map(event => event.version));
+      const fresh = batch.filter(event => !known.has(event.version));
+      if (!fresh.length) return current;
+      const events = orderedEvents([...current.events, ...fresh]);
       return { events, state: reduceBoard(events) };
     }),
   setLoading: (taskId, loading) =>

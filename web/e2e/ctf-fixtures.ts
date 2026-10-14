@@ -95,6 +95,11 @@ export async function installCtfApi(page: Page, options: { evidenceText?: string
     if (suffix === '/events') return json(id === CTF_ID ? events : []);
     if (suffix === '/stream') return route.fulfill({ contentType: 'text/event-stream', body: ': mock keepalive\n\n' });
     if (suffix.endsWith('/records')) return json({ records: id === CTF_ID ? records.filter((record) => suffix.includes(`/challenges/${record.challenge_id}/`)) : [], next_offset: null });
+    const recordRoute = suffix.match(/^\/ctf\/challenges\/([^/]+)\/records\/([^/]+)$/);
+    if (recordRoute && request.method() === 'GET') {
+      const record = records.find(item => item.challenge_id === recordRoute[1] && item.id === recordRoute[2]);
+      return record ? json(record) : json({ detail: 'Record not found' }, 404);
+    }
     if (suffix === '/ctf/artifacts/artifact-1') return json(artifact);
     const memberRoute = suffix.match(/^\/agents\/([^/]+)\/(messages|session)$/);
     if (memberRoute) {

@@ -12,8 +12,8 @@ type Draft = {
 type Settings = Awaited<ReturnType<typeof api.getCtfWorkerSettings>>;
 type Binding = NonNullable<Settings['profile']['platform_tools']>[number];
 const roles: Role[] = ['lead', 'teammate'];
-const common = ['list_members', 'send_message', 'execute_command', 'list_challenges', 'get_challenge', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate'];
-const builtin = { lead: [...common, 'create_teammate', 'stop_teammate', 'resume_teammate', 'remove_teammate', 'finish_task', 'set_verification_required', 'confirm_messages'], teammate: common };
+const common = ['list_members', 'send_message', 'execute_command', 'list_challenges', 'get_challenge', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate', 'read_turn_result', 'read_saved_tool_result'];
+const builtin = { lead: [...common, 'create_teammate', 'stop_teammate', 'resume_teammate', 'remove_teammate', 'finish_task', 'set_verification_required', 'confirm_messages', 'list_deferred_messages'], teammate: common };
 const from = (value: Settings, role: Role): Draft => ({ prompt: value.profile.prompt_templates[role], tools: value.profile.worker_tools[role] });
 export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     onDirtyChange: (dirty: boolean) => void;
@@ -82,9 +82,12 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
         setError('');
         setNotice('');
         try {
-            const saved = await api.saveCtfWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools, bindings);
+            const other = role==='lead'?'teammate':'lead';
+            const uses = (tools:WorkerTools, item:Binding) => tools.mcp_servers?.some(server=>server.name===item.server_name&&server.version===item.server_version&&server.allowed_tools?.includes(item.tool_name));
+            const submittedBindings=bindings.filter(item=>uses(drafts[role].tools,item)||uses(snapshot.profile.worker_tools[other],item));
+            const saved = await api.saveCtfWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools, submittedBindings);
             setSnapshot(saved);
-            setBindings(saved.profile.platform_tools ?? []);
+            setBindings([...(saved.profile.platform_tools ?? []),...bindings.filter(item=>!submittedBindings.includes(item)&&uses(drafts[other].tools,item))]);
             setDrafts((current) => current ? { ...current, [role]: from(saved, role) } : null);
             setNotice('CTF 配置已保存，仅用于之后创建的任务。');
         }
@@ -118,13 +121,13 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     if (!snapshot || !drafts)
         return <section aria-label="CTF 配置">{query.isError ? <p role="alert" className={controls.error}>CTF 配置读取失败。<Button className={controls.button} onClick={() => void query.refetch()} htmlType={"button"}>重试</Button></p> : <p role="status">正在读取 CTF 配置…</p>}</section>;
     const current = drafts[role];
-    const updateTools = (tools: WorkerTools) => setDrafts({ ...drafts, [role]: { ...current, tools } });
+    const updateTools = (tools: WorkerTools) => { setNotice('');setDrafts({ ...drafts, [role]: { ...current, tools } }); };
     const selected = current.tools.mcp_servers ?? [];
     const available = [...(servers.data ?? []), ...selected.filter((bound) => !servers.data?.some((item) => item.name === bound.name && item.version === bound.version)).map((bound) => ({ ...bound, label: bound.name, enabled: false }))];
-    return <section aria-label="CTF 角色配置">
+    return <section aria-label="CTF 角色配置" onChangeCapture={()=>setNotice('')}>
     {error && <p className={styles.errorBanner} role="alert">{error} <Button onClick={() => void reload()} htmlType={"button"}>重新读取</Button></p>}
     {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
-    <div className={styles.directWorker}><div className={styles.directActions}><Segmented aria-label="CTF 角色" value={role} disabled={saving} options={[{value:'lead',label:'Lead · 团队负责人'},{value:'teammate',label:'队友 · Teammate'}]} onChange={value=>{setRole(value as Role);setError('');setNotice('');setInspection(null);setLoading('');sequence.current+=1;}} /><div className={styles.headerActions}><span className={controls.hint}>新任务生效</span><Button size="small" type="primary" loading={saving} disabled={saving||!changed(role)&&!bindingsDirty} onClick={()=>void save()}>保存 CTF 配置</Button></div></div>
+    <div className={styles.directWorker}><div className={styles.directActions}><Segmented aria-label="CTF 角色" value={role} disabled={saving} options={[{value:'lead',label:'Lead · 团队负责人'},{value:'teammate',label:'队友 · Teammate'}]} onChange={value=>{setRole(value as Role);setError('');setNotice('');setInspection(null);setLoading('');sequence.current+=1;}} /><div className={styles.headerActions}><span className={controls.hint}>新任务生效</span><Button aria-label="保存 CTF 配置" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!changed(role)&&!bindingsDirty} onClick={()=>void save()}>保存 CTF 配置</Button></div></div>
         <Form component={false} disabled={saving}><div className={styles.workerContent}>
 
           <div className={styles.workerForm}><section className={styles.promptColumn}><label className={controls.label} htmlFor={`ctf-prompt-${role}`}>{role === 'lead' ? 'Lead' : '队友'}完整系统提示词</label>
@@ -153,7 +156,7 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
             {selected.flatMap((server) => (server.allowed_tools ?? []).map((name) => {
             const existing = bindings.find((item) => item.server_name === server.name && item.server_version === server.version && item.tool_name === name);
             const binding: Binding = existing ?? { server_name: server.name, server_version: server.version, tool_name: name, purpose: 'unknown', result_adapter: 'none', read_only: false };
-            const update = (patch: Partial<Binding>) => setBindings((items) => [...items.filter((item) => !(item.server_name === server.name && item.server_version === server.version && item.tool_name === name)), { ...binding, ...patch }]);
+            const update = (patch: Partial<Binding>) => {setNotice('');setBindings((items) => [...items.filter((item) => !(item.server_name === server.name && item.server_version === server.version && item.tool_name === name)), { ...binding, ...patch }]);};
             return <div className={styles.platformBinding} key={`${server.name}@${server.version}/${name}`}>
                 <strong>{server.name}@{server.version} / {name}</strong>
                 <label className={controls.field}><span className={controls.label}>用途</span><Select className={controls.select} aria-label={`${name} 用途`} value={binding.purpose} onChange={(value) => { const purpose = value as Binding['purpose']; update({ purpose, read_only: ['connect', 'status'].includes(purpose) && binding.read_only }); }} options={[{ value: "unknown", label: <>未分类（不启用）</> }, ...(role === 'lead' ? [{ value: "management", label: "靶机管理" }, { value: "connect", label: "连接信息" }] : []), { value: "submit", label: <>提交候选答案</> }, { value: "status", label: <>查询验证状态</> }]} disabled={saving} style={{ minWidth: 0, width: "100%" }}/></label>
