@@ -6,7 +6,8 @@ RUN if [ -n "$DEBIAN_MIRROR" ]; then \
         sed -i "s|http://deb.debian.org/debian-security|${DEBIAN_MIRROR}-security|g; s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
             /etc/apt/sources.list.d/debian.sources; \
     fi \
-    && apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates tshark wireshark-common libseccomp2 \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} uv
 

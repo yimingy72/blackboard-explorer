@@ -11,6 +11,7 @@ import socket
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -19,6 +20,7 @@ import docker
 import httpx
 from bbx_contracts.ctf import CtfAgentProfile
 from bbx_contracts.models import AgentProfile
+from bbx_contracts.traffic import TrafficManifest
 from bbx_objects import ObjectStore
 from docker.errors import NotFound
 
@@ -30,10 +32,12 @@ from bbx_runtime.execenv.archive import (
     initial_attachments,
 )
 from bbx_runtime.settings import Settings
+from bbx_runtime.traffic.collector import TrafficCollector
 
 MANAGED = "bbx.managed"
 TASK_ID = "bbx.task-id"
 ROLE = "bbx.role"
+TRAFFIC_REQUIRED = "bbx.traffic-required"
 LOGGER = logging.getLogger(__name__)
 
 # One fixed destination per relay, supplied when the container starts.
@@ -80,6 +84,7 @@ class ExecEnvHandle:
     base_url: str
     token: str = field(repr=False)
     relay_id: str | None = None
+    traffic_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,7 @@ class ExecEnvManager:
         self.settings = settings
         self.docker = docker_client or docker.from_env()
         self.objects = objects or object_store(settings)
+        self.traffic_collectors: dict[str, TrafficCollector] = {}
 
     @staticmethod
     def _task(task_id: UUID | str) -> UUID:
@@ -185,10 +191,13 @@ class ExecEnvManager:
         token = task_token(self.settings.envd_token_secret.get_secret_value(), task_id)
         environment = {
             "ENVD_TOKEN": token,
+            "ENVD_TASK_ID": str(task_id),
             "PRIVILEGED_PREFIXES": ",".join(profile.privileged_allowlist),
+            "ENVD_TRAFFIC_ENABLED": str(self.settings.traffic_enabled).lower(),
+            "ENVD_TRAFFIC_MAX_BYTES": str(self.settings.traffic_max_bytes),
         }
         if isinstance(profile, CtfAgentProfile):
-            environment.update(ENVD_MODE="ctf", ENVD_TASK_ID=str(task_id))
+            environment.update(ENVD_MODE="ctf")
         if self.settings.exec_egress_mode == "proxy":
             proxy = self.settings.egress_proxy_url
             if not proxy:
@@ -202,9 +211,17 @@ class ExecEnvManager:
             name=name,
             detach=True,
             network=getattr(network, "name", self.settings.exec_network),
-            labels=self._labels(task_id, "envd"),
+            labels={
+                **self._labels(task_id, "envd"),
+                TRAFFIC_REQUIRED: str(self.settings.traffic_enabled).lower(),
+            },
             environment=environment,
-            cap_add=["NET_ADMIN"],
+            cap_add=["NET_ADMIN", *(["SYS_ADMIN"] if self.settings.traffic_enabled else [])],
+            sysctls=(
+                {"net.ipv4.ip_forward": "1", "net.ipv6.conf.all.forwarding": "1"}
+                if self.settings.traffic_enabled
+                else {}
+            ),
             devices=["/dev/net/tun:/dev/net/tun:rwm"],
             read_only=False,
             nano_cpus=int(profile.exec_resources.cpus * 1_000_000_000),
@@ -264,6 +281,7 @@ class ExecEnvManager:
             base_url=base_url,
             token=task_token(self.settings.envd_token_secret.get_secret_value(), task_id),
             relay_id=relay.id if relay is not None else None,
+            traffic_required=envd.labels.get(TRAFFIC_REQUIRED) == "true",
         )
 
     async def wait_healthy(self, handle: ExecEnvHandle, timeout: float = 30) -> None:
@@ -346,6 +364,87 @@ class ExecEnvManager:
         async with EnvdClient(handle.base_url, handle.token) as envd:
             return await envd.create_user(agent_id)
 
+    async def start_traffic(self, handle: ExecEnvHandle, task: dict[str, Any]) -> None:
+        """Gate first dispatch on capture readiness and its durable initial manifest."""
+        tid, run = str(handle.task_id), int(task.get("run_number") or 1)
+        previous = self.traffic_collectors.get(tid)
+        if previous is not None:
+            if previous.run == run and not previous.stopped:
+                return
+            await previous.close()
+            self.traffic_collectors.pop(tid, None)
+        client = EnvdClient(handle.base_url, handle.token)
+        try:
+            # Existing images without this capability have no recoverable capture history.
+            if (await client.health()).get("traffic") is not True:
+                if handle.traffic_required:
+                    raise RuntimeError(
+                        "New execution image lacks required traffic capture capability"
+                    )
+                await client.close()
+                return
+            if not self.settings.traffic_enabled:
+                status = await client.traffic("status")
+                if (
+                    not status.get("source_id")
+                    or status.get("task_id") != tid
+                    or status.get("run", status.get("run_number")) != run
+                ):
+                    await client.close()
+                    return
+                # Disabling new capture must not discard an existing source's pending files.
+            collector = TrafficCollector(
+                client,
+                self.objects,
+                tid,
+                run,
+                poll_seconds=self.settings.traffic_poll_seconds,
+                max_bytes=self.settings.traffic_max_bytes,
+            )
+            await collector.start()
+        except BaseException:
+            await client.close()
+            raise
+        self.traffic_collectors[tid] = collector
+
+    async def finish_traffic(
+        self, task_id: UUID | str, *, discard: bool = False, run_number: int | None = None
+    ) -> None:
+        tid = str(task_id)
+        collector = self.traffic_collectors.get(tid)
+        if collector is not None:
+            await collector.close(discard=discard)
+            self.traffic_collectors.pop(tid, None)
+        elif not discard and run_number is not None:
+            uri = f"traffic/{tid}/run-{run_number}/manifest.json"
+            if await self.objects.exists(uri):
+                manifest = TrafficManifest.model_validate_json(await self.objects.get(uri))
+                if str(manifest.task_id) != tid or manifest.run != run_number:
+                    raise ValueError("Traffic manifest ownership mismatch")
+                if manifest.finished_at is None:
+                    timestamp = datetime.now(UTC).isoformat()
+                    missing = (
+                        "Execution capture unavailable; final fragments could not be confirmed"
+                    )
+                    updated = manifest.model_dump(mode="json")
+                    updated.update(
+                        status="partial",
+                        error=manifest.error or missing,
+                        finished_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                    await self.objects.put(
+                        uri, json.dumps(updated).encode(), content_type="application/json"
+                    )
+
+    async def suspend_traffic(self) -> None:
+        for collector in list(self.traffic_collectors.values()):
+            try:
+                await collector.suspend()
+            except Exception as error:
+                LOGGER.warning("Traffic shutdown flush deferred (%s)", type(error).__name__)
+        self.traffic_collectors.clear()
+
     async def ensure_initial_inputs(
         self, handle: ExecEnvHandle, attachments: list[dict[str, Any]]
     ) -> None:
@@ -380,6 +479,7 @@ class ExecEnvManager:
     async def archive_to_store(
         self, handle: ExecEnvHandle, run_number: int = 1, *, uri: str | None = None
     ) -> ArchiveResult:
+        await self.finish_traffic(handle.task_id)
         uri = uri or (
             f"workspace/{handle.task_id}.tar.zst"
             if run_number == 1
@@ -402,6 +502,7 @@ class ExecEnvManager:
 
     async def archive_task(self, task_id: UUID | str, data: dict[str, Any]) -> ArchiveResult:
         task = self._task(task_id)
+        await self.finish_traffic(task)
         run_number = data.get("run_number")
         if not isinstance(run_number, int) or run_number < 1:
             raise ValueError("Invalid archive run number")
@@ -453,6 +554,7 @@ class ExecEnvManager:
 
     async def destroy(self, task_id: UUID | str) -> None:
         task = self._task(task_id)
+        await self.finish_traffic(task)
         for role in ("relay", "envd"):
             container = await self._role(task, role)
             if container is not None:
@@ -461,6 +563,7 @@ class ExecEnvManager:
     async def destroy_confirmed(self, task_id: str, container_id: str) -> None:
         """Remove exactly the recorded execution container, then verify its absence."""
         task = self._task(task_id)
+        await self.finish_traffic(task)
         try:
             container = await asyncio.to_thread(self.docker.containers.get, container_id)
         except NotFound:

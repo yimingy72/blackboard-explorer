@@ -1,0 +1,110 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "collecting",
+        "complete",
+        "partial",
+        "error",
+        "archived"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "https": {
+      "enum": [
+        "enabled",
+        "unavailable"
+      ],
+      "title": "Https",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "record_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Record Count",
+      "type": "integer"
+    },
+    "captured_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Captured Bytes",
+      "type": "integer"
+    },
+    "dropped_packets": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Dropped Packets",
+      "type": "integer"
+    },
+    "preview_dropped": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Preview Dropped",
+      "type": "integer"
+    },
+    "pending_chunks": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Pending Chunks",
+      "type": "integer"
+    },
+    "last_packet_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Packet At"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "status",
+    "https",
+    "started_at",
+    "updated_at"
+  ],
+  "title": "TrafficCapture",
+  "type": "object"
+}

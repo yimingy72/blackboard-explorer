@@ -63,6 +63,7 @@ from bbx_runtime.models import (
 )
 from bbx_runtime.session import ToolResultCheckpointMiddleware
 from bbx_runtime.settings import Settings
+from bbx_runtime.traffic.observation import observation_context, runtime_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,7 @@ class CtfRunner:
         if envd is None and not review:
             instructions += "\n执行容器尚未连接，execute_command不可用。"
         client = None
+        credentials: dict[str, str] = {}
         answer, reason = "", "completed"
         response = None
         checkpoint = None
@@ -328,6 +330,18 @@ class CtfRunner:
             )
             await history.flush_usage()
             with (
+                observation_context(
+                    task_id,
+                    int(task.get("run_number") or 1),
+                    member["id"],
+                    turn_id=turn["id"],
+                    secrets=runtime_secrets(
+                        self.settings,
+                        *credentials.values(),
+                        *platform.observation_secrets,
+                        getattr(getattr(envd, "envd", None), "token", ""),
+                    ),
+                ),
                 propagate_tool_failure(),
                 provider_call_boundary(
                     client, mailbox.enter_provider, history.prepare_provider_messages

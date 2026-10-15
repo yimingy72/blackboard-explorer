@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "pcap",
+      "default": "pcap",
+      "title": "Kind",
+      "type": "string"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
+    "name": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "content_type": {
+      "default": "application/vnd.tcpdump.pcap",
+      "enum": [
+        "application/vnd.tcpdump.pcap",
+        "application/octet-stream"
+      ],
+      "title": "Content Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "size_bytes"
+  ],
+  "title": "TrafficFile",
+  "type": "object"
+}

@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "TrafficPacketNode": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "maxLength": 4096,
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Length"
+        },
+        "data_source_id": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Data Source Id",
+          "type": "integer"
+        },
+        "filter_expr": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter Expr"
+        },
+        "generated": {
+          "default": false,
+          "title": "Generated",
+          "type": "boolean"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/TrafficPacketNode"
+          },
+          "maxItems": 512,
+          "title": "Children",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TrafficPacketNode",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "layers": {
+      "items": {
+        "$ref": "#/$defs/TrafficPacketNode"
+      },
+      "maxItems": 512,
+      "title": "Layers",
+      "type": "array"
+    },
+    "raw_hex": {
+      "default": "",
+      "maxLength": 32768,
+      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+      "title": "Raw Hex",
+      "type": "string"
+    },
+    "raw_truncated": {
+      "default": false,
+      "title": "Raw Truncated",
+      "type": "boolean"
+    },
+    "tree_truncated": {
+      "default": false,
+      "title": "Tree Truncated",
+      "type": "boolean"
+    },
+    "decode_error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decode Error"
+    }
+  },
+  "title": "TrafficPacketDetail",
+  "type": "object"
+}

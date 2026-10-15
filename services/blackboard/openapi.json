@@ -1596,6 +1596,18 @@
         "title": "DeliveryBody",
         "type": "object"
       },
+      "DisplayFilterRequest": {
+        "properties": {
+          "display_filter": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Display Filter",
+            "type": "string"
+          }
+        },
+        "title": "DisplayFilterRequest",
+        "type": "object"
+      },
       "Event": {
         "additionalProperties": false,
         "properties": {
@@ -4080,6 +4092,1511 @@
           "tool"
         ],
         "title": "ToolCallBody",
+        "type": "object"
+      },
+      "TrafficCapture": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Captured Bytes",
+            "type": "integer"
+          },
+          "dropped_packets": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Dropped Packets",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "https": {
+            "enum": [
+              "enabled",
+              "unavailable"
+            ],
+            "title": "Https",
+            "type": "string"
+          },
+          "last_packet_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Packet At"
+          },
+          "pending_chunks": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Pending Chunks",
+            "type": "integer"
+          },
+          "preview_dropped": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Preview Dropped",
+            "type": "integer"
+          },
+          "record_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "collecting",
+              "complete",
+              "partial",
+              "error",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "https",
+          "started_at",
+          "updated_at"
+        ],
+        "title": "TrafficCapture",
+        "type": "object"
+      },
+      "TrafficFile": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "content_type": {
+            "default": "application/vnd.tcpdump.pcap",
+            "enum": [
+              "application/vnd.tcpdump.pcap",
+              "application/octet-stream"
+            ],
+            "title": "Content Type",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "pcap",
+            "default": "pcap",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "size_bytes"
+        ],
+        "title": "TrafficFile",
+        "type": "object"
+      },
+      "TrafficListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "enum": [
+              "recorded",
+              "not_recorded"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "capture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficCapture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficFile"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficRecordSummary"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "run": {
+            "minimum": 1.0,
+            "title": "Run",
+            "type": "integer"
+          },
+          "snapshot_seq": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Snapshot Seq",
+            "type": "integer"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "run",
+          "availability"
+        ],
+        "title": "TrafficListResponse",
+        "type": "object"
+      },
+      "TrafficMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "body_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Body Bytes",
+            "type": "integer"
+          },
+          "body_encoding": {
+            "default": "omitted",
+            "enum": [
+              "utf-8",
+              "base64",
+              "omitted"
+            ],
+            "title": "Body Encoding",
+            "type": "string"
+          },
+          "body_preview": {
+            "default": "",
+            "title": "Body Preview",
+            "type": "string"
+          },
+          "body_truncated": {
+            "default": false,
+            "title": "Body Truncated",
+            "type": "boolean"
+          },
+          "headers": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 256,
+            "title": "Headers",
+            "type": "array"
+          }
+        },
+        "title": "TrafficMessage",
+        "type": "object"
+      },
+      "TrafficNativeCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "available_bytes": {
+            "minimum": 0.0,
+            "title": "Available Bytes",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "decryption": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Decryption",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "packet_count": {
+            "minimum": 0.0,
+            "title": "Packet Count",
+            "type": "integer"
+          },
+          "source_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "packet_count",
+          "available_bytes",
+          "complete",
+          "decryption"
+        ],
+        "title": "TrafficNativeCoverage",
+        "type": "object"
+      },
+      "TrafficNativeDataSource": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minimum": 0.0,
+            "title": "Id",
+            "type": "integer"
+          },
+          "length": {
+            "minimum": 0.0,
+            "title": "Length",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 256,
+            "title": "Name",
+            "type": "string"
+          },
+          "raw_hex": {
+            "maxLength": 32768,
+            "pattern": "^(?:[0-9a-fA-F]{2})*$",
+            "title": "Raw Hex",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "length",
+          "raw_hex",
+          "truncated"
+        ],
+        "title": "TrafficNativeDataSource",
+        "type": "object"
+      },
+      "TrafficNativeFrameDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "data_sources": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficNativeDataSource"
+            },
+            "title": "Data Sources",
+            "type": "array"
+          },
+          "decode_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decode Error"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficPacketNode"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "source_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_number": {
+            "minimum": 1.0,
+            "title": "Source Number",
+            "type": "integer"
+          },
+          "tree_truncated": {
+            "default": false,
+            "title": "Tree Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_number",
+          "revision",
+          "columns",
+          "layers",
+          "data_sources"
+        ],
+        "title": "TrafficNativeFrameDetail",
+        "type": "object"
+      },
+      "TrafficNativePacket": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "attribution": {
+            "enum": [
+              "exact",
+              "shared",
+              "unknown"
+            ],
+            "title": "Attribution",
+            "type": "string"
+          },
+          "background": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "foreground": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Foreground"
+          },
+          "source_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_number": {
+            "minimum": 1.0,
+            "title": "Source Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_number",
+          "attribution",
+          "columns"
+        ],
+        "title": "TrafficNativePacket",
+        "type": "object"
+      },
+      "TrafficNativePacketPage": {
+        "additionalProperties": false,
+        "properties": {
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          },
+          "query_id": {
+            "format": "uuid",
+            "title": "Query Id",
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficNativePacket"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query_id",
+          "revision",
+          "records",
+          "total"
+        ],
+        "title": "TrafficNativePacketPage",
+        "type": "object"
+      },
+      "TrafficNativeQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "display_filter": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Display Filter",
+            "type": "string"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run"
+          }
+        },
+        "title": "TrafficNativeQueryRequest",
+        "type": "object"
+      },
+      "TrafficNativeQueryView": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficNativeCoverage"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "display_filter": {
+            "title": "Display Filter",
+            "type": "string"
+          },
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "matched_packets": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Matched Packets",
+            "type": "integer"
+          },
+          "requested_revision": {
+            "title": "Requested Revision",
+            "type": "string"
+          },
+          "reset_required": {
+            "default": false,
+            "title": "Reset Required",
+            "type": "boolean"
+          },
+          "results_truncated": {
+            "default": false,
+            "title": "Results Truncated",
+            "type": "boolean"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "run": {
+            "title": "Run",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "ready",
+              "partial",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run",
+          "status",
+          "requested_revision",
+          "display_filter"
+        ],
+        "title": "TrafficNativeQueryView",
+        "type": "object"
+      },
+      "TrafficObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 128,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "retry_visibility": {
+            "default": "unknown",
+            "enum": [
+              "known",
+              "unknown"
+            ],
+            "title": "Retry Visibility",
+            "type": "string"
+          },
+          "scope": {
+            "default": "logical_call",
+            "enum": [
+              "wire",
+              "logical_call"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Span Id"
+          },
+          "status": {
+            "default": "unknown",
+            "maxLength": 128,
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "title": "TrafficObservation",
+        "type": "object"
+      },
+      "TrafficPacketDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "decode_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decode Error"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficPacketNode"
+            },
+            "maxItems": 512,
+            "title": "Layers",
+            "type": "array"
+          },
+          "raw_hex": {
+            "default": "",
+            "maxLength": 32768,
+            "pattern": "^(?:[0-9a-fA-F]{2})*$",
+            "title": "Raw Hex",
+            "type": "string"
+          },
+          "raw_truncated": {
+            "default": false,
+            "title": "Raw Truncated",
+            "type": "boolean"
+          },
+          "tree_truncated": {
+            "default": false,
+            "title": "Tree Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "TrafficPacketDetail",
+        "type": "object"
+      },
+      "TrafficPacketMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_length": {
+            "minimum": 0.0,
+            "title": "Captured Length",
+            "type": "integer"
+          },
+          "direction": {
+            "default": "unknown",
+            "enum": [
+              "inbound",
+              "outbound",
+              "loopback",
+              "unknown"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "frame_length": {
+            "minimum": 0.0,
+            "title": "Frame Length",
+            "type": "integer"
+          },
+          "info": {
+            "default": "",
+            "maxLength": 2048,
+            "title": "Info",
+            "type": "string"
+          },
+          "interface": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interface"
+          },
+          "native_frame_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Frame Number"
+          },
+          "number": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "source_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "number",
+          "frame_length",
+          "captured_length"
+        ],
+        "title": "TrafficPacketMeta",
+        "type": "object"
+      },
+      "TrafficPacketNode": {
+        "additionalProperties": false,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/TrafficPacketNode"
+            },
+            "maxItems": 512,
+            "title": "Children",
+            "type": "array"
+          },
+          "data_source_id": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Data Source Id",
+            "type": "integer"
+          },
+          "filter_expr": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter Expr"
+          },
+          "generated": {
+            "default": false,
+            "title": "Generated",
+            "type": "boolean"
+          },
+          "label": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Label",
+            "type": "string"
+          },
+          "length": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TrafficPacketNode",
+        "type": "object"
+      },
+      "TrafficRecordDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "application_protocol": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Protocol"
+          },
+          "attribution": {
+            "default": "unknown",
+            "enum": [
+              "exact",
+              "shared",
+              "unknown"
+            ],
+            "title": "Attribution",
+            "type": "string"
+          },
+          "destination_ip": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Destination Ip",
+            "type": "string"
+          },
+          "destination_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Port"
+          },
+          "id": {
+            "pattern": "^r-[1-9][0-9]{0,18}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "packet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficPacketMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "packet_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficPacketDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plaintext": {
+            "default": "not_applicable",
+            "enum": [
+              "decoded",
+              "encrypted",
+              "not_applicable"
+            ],
+            "title": "Plaintext",
+            "type": "string"
+          },
+          "protocol": {
+            "maxLength": 64,
+            "title": "Protocol",
+            "type": "string"
+          },
+          "record_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "packet",
+                  "http",
+                  "logical"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Kind"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficMessage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Request Bytes",
+            "type": "integer"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficMessage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "response_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Response Bytes",
+            "type": "integer"
+          },
+          "seq": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "source_ip": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Source Ip",
+            "type": "string"
+          },
+          "source_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Port"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "transport_protocol": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Protocol"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "timestamp",
+          "protocol"
+        ],
+        "title": "TrafficRecordDetail",
+        "type": "object"
+      },
+      "TrafficRecordSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "application_protocol": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Protocol"
+          },
+          "attribution": {
+            "default": "unknown",
+            "enum": [
+              "exact",
+              "shared",
+              "unknown"
+            ],
+            "title": "Attribution",
+            "type": "string"
+          },
+          "destination_ip": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Destination Ip",
+            "type": "string"
+          },
+          "destination_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Port"
+          },
+          "id": {
+            "pattern": "^r-[1-9][0-9]{0,18}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "packet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficPacketMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plaintext": {
+            "default": "not_applicable",
+            "enum": [
+              "decoded",
+              "encrypted",
+              "not_applicable"
+            ],
+            "title": "Plaintext",
+            "type": "string"
+          },
+          "protocol": {
+            "maxLength": 64,
+            "title": "Protocol",
+            "type": "string"
+          },
+          "record_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "packet",
+                  "http",
+                  "logical"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Kind"
+          },
+          "request_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Request Bytes",
+            "type": "integer"
+          },
+          "response_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Response Bytes",
+            "type": "integer"
+          },
+          "seq": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "source_ip": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Source Ip",
+            "type": "string"
+          },
+          "source_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Port"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "transport_protocol": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Protocol"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "timestamp",
+          "protocol"
+        ],
+        "title": "TrafficRecordSummary",
         "type": "object"
       },
       "UploadResult": {
@@ -9549,6 +11066,700 @@
         "summary": "Tool Call",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic": {
+      "get": {
+        "operationId": "list_traffic_api_tasks__task_id__traffic_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "protocol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Protocol"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "packet",
+                    "http",
+                    "logical"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "inbound",
+                    "outbound",
+                    "loopback",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Traffic",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/files/{file_id}": {
+      "get": {
+        "operationId": "traffic_file_api_tasks__task_id__traffic_files__file_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Traffic File",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/native/check": {
+      "post": {
+        "operationId": "check_filter_api_tasks__task_id__traffic_native_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisplayFilterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Check Filter Api Tasks  Task Id  Traffic Native Check Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Filter",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/native/queries": {
+      "post": {
+        "operationId": "create_query_api_tasks__task_id__traffic_native_queries_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrafficNativeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficNativeQueryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Query",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}": {
+      "get": {
+        "operationId": "query_status_api_tasks__task_id__traffic_native_queries__query_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seen_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Seen Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficNativeQueryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Status",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}/packets": {
+      "get": {
+        "operationId": "query_packets_api_tasks__task_id__traffic_native_queries__query_id__packets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 64,
+              "title": "Revision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficNativePacketPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Packets",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}/sources/{source_id}/frames/{number}": {
+      "get": {
+        "operationId": "query_frame_api_tasks__task_id__traffic_native_queries__query_id__sources__source_id__frames__number__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "number",
+            "required": true,
+            "schema": {
+              "title": "Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 64,
+              "title": "Revision",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficNativeFrameDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Frame",
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/traffic/records/{record_id}": {
+      "get": {
+        "operationId": "traffic_record_api_tasks__task_id__traffic_records__record_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "pattern": "^r-[1-9][0-9]{0,18}$",
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficRecordDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Traffic Record",
+        "tags": [
+          "traffic"
         ]
       }
     },

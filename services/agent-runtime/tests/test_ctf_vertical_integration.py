@@ -435,6 +435,7 @@ async def test_replacement_uses_persisted_execution_boot_over_restarted_daemon(
             manager.archive_to_store = AsyncMock(side_effect=archive)
             manager.destroy_confirmed = AsyncMock(side_effect=destroy)
             manager.provision = AsyncMock(side_effect=provision)
+            manager.start_traffic = AsyncMock()
             supervisor = TaskSupervisor(
                 Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted")),
                 board,
@@ -443,6 +444,8 @@ async def test_replacement_uses_persisted_execution_boot_over_restarted_daemon(
             )
             returned = await supervisor._replace_ctf_envd(tid)
             assert returned.base_url == fresh.base_url
+            manager.start_traffic.assert_awaited_once()
+            assert manager.start_traffic.call_args.args[0] == fresh
             assert phase_checks == ["begin", "archive_saved", "destroyed"]
             final = await ctf.state(tid)
             replacement = final["task"]["ctf_control"]["replacement"]

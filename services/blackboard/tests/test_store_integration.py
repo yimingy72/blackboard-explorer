@@ -937,6 +937,9 @@ async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
                 f"workspace/{first}.tar.zst",
                 f"workspace/{first}/run-1.tar.zst",
                 f"workspace/{first}/run-2.tar.zst",
+                f"traffic/{first}/run-1/manifest.json",
+                f"traffic/{first}/run-2/pcap/raw",
+                f"traffic/{first}/run-2/checkpoint.json",
                 f"evidence/{second}/agent-1/keep",
                 f"toolcalls/{second}/agent-1/keep.json",
                 f"traces/{second}/agent-1/keep.json",
@@ -944,6 +947,8 @@ async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
                 f"reports/{second}/run-1.md",
                 f"workspace/{second}.tar.zst",
                 f"workspace/{second}/run-1.tar.zst",
+                f"traffic/{second}/run-1/manifest.json",
+                f"traffic/{second}/run-2/pcap/raw",
             }
             self.fail_once = True
 
@@ -972,6 +977,8 @@ async def test_delete_purge_retries_and_preserves_other_tasks(board_service):
         f"reports/{second}/run-1.md",
         f"workspace/{second}.tar.zst",
         f"workspace/{second}/run-1.tar.zst",
+        f"traffic/{second}/run-1/manifest.json",
+        f"traffic/{second}/run-2/pcap/raw",
     }
     assert await board_service.state(second) == other_state
     assert (await store.get_session(second, other_aid))["session"] == {"other": True}

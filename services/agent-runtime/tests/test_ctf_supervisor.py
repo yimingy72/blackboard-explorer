@@ -13,6 +13,10 @@ def supervisor(rows):
     service.list_tasks = AsyncMock(return_value=rows)
     service.pending_deletions = AsyncMock(return_value=[])
     manager = Mock()
+    manager.start_traffic = AsyncMock()
+    manager.finish_traffic = AsyncMock()
+    manager.suspend_traffic = AsyncMock()
+    manager.find = AsyncMock(return_value=None)
     instance = TaskSupervisor(
         Settings.model_construct(max_running_tasks=1), service, manager, Mock()
     )

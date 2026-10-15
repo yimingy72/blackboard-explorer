@@ -54,12 +54,15 @@ from bbx_blackboard.ctf_api import router as ctf_router
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
 from bbx_blackboard.input_groups import router as inputs_router
+from bbx_blackboard.native import NativeAnalysisCache
+from bbx_blackboard.native_api import router as native_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.traffic import router as traffic_router
 from bbx_blackboard.worker_settings import (
     model_context_threshold,
     override_reasoning_effort,
@@ -518,6 +521,7 @@ def create_app(
             app.state.dispatcher = SSEDispatcher(settings)
         await app.state.dispatcher.start()
         cleanup = asyncio.create_task(app.state.input_groups.run_cleanup())
+        await app.state.native_cache.initialize()
         try:
             yield
         finally:
@@ -525,6 +529,7 @@ def create_app(
             with suppress(asyncio.CancelledError):
                 await cleanup
             await app.state.workspace_cache.close()
+            await app.state.native_cache.close()
             await app.state.dispatcher.stop()
             if own_engine:
                 await app.state.engine.dispose()
@@ -532,6 +537,8 @@ def create_app(
     app = FastAPI(title="Blackboard API", version="1.0.0", lifespan=lifespan)
     app.include_router(billing_router)
     app.include_router(inputs_router)
+    app.include_router(traffic_router)
+    app.include_router(native_router)
     app.state.settings = settings
     app.state.engine = engine
     app.state.objects = objects
@@ -551,6 +558,7 @@ def create_app(
         else None
     )
     app.state.workspace_cache = WorkspaceArchiveCache()
+    app.state.native_cache = NativeAnalysisCache()
 
     async def ctf_boundary(request: Request) -> Response | None:
         if request.app.state.engine is None and request.app.state.ctf_service is None:
@@ -619,7 +627,13 @@ def create_app(
                         "/workspace/file",
                     }
                     conversation = bool(re.fullmatch(r"/agents/[^/]+/(messages|session)", suffix))
-                    if not suffix.startswith("/ctf/") and suffix not in common and not conversation:
+                    traffic = suffix == "/traffic" or suffix.startswith("/traffic/")
+                    if (
+                        not suffix.startswith("/ctf/")
+                        and suffix not in common
+                        and not conversation
+                        and not traffic
+                    ):
                         raise HTTPException(409, "mode_mismatch")
                     if identity.kind == "agent" and suffix in {
                         "/archive-data",
@@ -1001,6 +1015,7 @@ def create_app(
         require_service(request)
         result = await _conversations(request).purge(task_id, request.app.state.objects)
         await request.app.state.workspace_cache.invalidate_task(task_id)
+        await request.app.state.native_cache.invalidate_task(task_id)
         return result
 
     @app.get("/api/tasks/{task_id}/archive-data", tags=["system"])

@@ -88,6 +88,8 @@ class TaskSupervisor:
             profile = CtfAgentProfile.model_validate(document.get("profile", document))
             handle = await self.manager.provision(tid, profile, task.get("resume_workspace_uri"))
         await self.manager.wait_healthy(handle)
+        if hasattr(self.manager, "start_traffic"):
+            await self.manager.start_traffic(handle, task)
         await self.manager.ensure_initial_inputs(handle, task.get("initial_attachments", []))
         return EnvdClient(handle.base_url, handle.token)
 
@@ -160,6 +162,8 @@ class TaskSupervisor:
                 phase="ready",
                 new_boot_id=status["boot_id"],
             )
+            if hasattr(self.manager, "start_traffic"):
+                await self.manager.start_traffic(handle, task)
         except BaseException:
             await client.close()
             raise
@@ -182,6 +186,8 @@ class TaskSupervisor:
         tid = str(state["task"]["id"])
         if tid in self.loops or self.stopping.is_set():
             return
+        if hasattr(self.manager, "start_traffic"):
+            await self.manager.start_traffic(handle, state["task"])
         attachments = state["task"].get("initial_attachments", [])
         if attachments:
             await self.manager.ensure_initial_inputs(handle, attachments)
@@ -360,6 +366,15 @@ class TaskSupervisor:
             await self._drain(tid, state)
         state = await self.service.state(tid)
         ctf = state["task"].get("mode") == "ctf"
+        # Recover capture ownership after a runtime restart, including terminal tasks.
+        if hasattr(self.manager, "start_traffic"):
+            handle = await self.manager.find(tid)
+            if handle is not None:
+                await self.manager.start_traffic(handle, state["task"])
+        if hasattr(self.manager, "finish_traffic"):
+            await self.manager.finish_traffic(
+                tid, run_number=int(state["task"].get("run_number") or 1)
+            )
         if not state["task"].get("workspace_uri"):
             if ctf:
                 await self._ctf().service.runtime(tid, "cleanup_status", phase="archiving")
@@ -408,6 +423,8 @@ class TaskSupervisor:
         if loop := self.loops.pop(tid, None):
             await loop.stop(reason="runtime_restart")
             await self.loop_tasks.pop(tid)
+        if hasattr(self.manager, "finish_traffic"):
+            await self.manager.finish_traffic(tid, discard=True)
         await self.manager.destroy(tid)
         # Purge can commit before its HTTP response is lost. The destroyed handle
         # must not keep a deleted task's slot reserved in the startup cache.
@@ -656,3 +673,5 @@ class TaskSupervisor:
         self.loop_tasks.clear()
         self.pending_starts.clear()
         self.start_retries.clear()
+        if hasattr(self.manager, "suspend_traffic"):
+            await self.manager.suspend_traffic()

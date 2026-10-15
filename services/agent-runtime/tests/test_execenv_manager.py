@@ -153,10 +153,16 @@ async def test_provision_idempotent_with_direct_egress_and_relay(
     assert "ports" not in envd.kwargs
     assert "cap_drop" not in envd.kwargs
     assert envd.kwargs["environment"]["PRIVILEGED_PREFIXES"] == ""
+    assert envd.kwargs["environment"]["ENVD_TASK_ID"] == str(task_id)
+    assert envd.kwargs["environment"]["ENVD_TRAFFIC_ENABLED"] == "true"
     assert not any("PROXY" in key.upper() for key in envd.kwargs["environment"])
     assert "security_opt" not in envd.kwargs
     assert not envd.kwargs.get("privileged", False)
-    assert envd.kwargs["cap_add"] == ["NET_ADMIN"]
+    assert envd.kwargs["cap_add"] == ["NET_ADMIN", "SYS_ADMIN"]
+    assert envd.kwargs["sysctls"] == {
+        "net.ipv4.ip_forward": "1",
+        "net.ipv6.conf.all.forwarding": "1",
+    }
     assert envd.kwargs["devices"] == ["/dev/net/tun:/dev/net/tun:rwm"]
     assert envd.kwargs["nano_cpus"] == 2_000_000_000
     assert relay.kwargs["network"] == "bridge"
@@ -540,3 +546,116 @@ async def test_confirmed_destruction_checks_identity_and_post_remove_absence(mon
     await manager.destroy_confirmed(str(task_id), handle.container_id)
     await manager.destroy_confirmed(str(task_id), handle.container_id)
     assert all(item.id != handle.container_id for item in fake.containers.items)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [False, True])
+async def test_global_capture_disable_preserves_pending_existing_source(
+    monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    from bbx_runtime.execenv import ExecEnvHandle
+
+    task_id = uuid4()
+    client = AsyncMock()
+    client.health.return_value = {"status": "ok", "traffic": True}
+    client.traffic.return_value = (
+        {"source_id": "source", "task_id": str(task_id), "run": 2} if existing else {}
+    )
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: client)
+    capture = AsyncMock()
+    monkeypatch.setattr(manager_module, "TrafficCollector", lambda *_args, **_kwargs: capture)
+    config = settings().model_copy(update={"traffic_enabled": False})
+    manager = ExecEnvManager(
+        config, docker_client=cast(Any, Docker()), objects=cast(Any, Objects())
+    )
+    handle = ExecEnvHandle(task_id, "container", "envd", "http://envd", "test")
+    await manager.start_traffic(handle, {"run_number": 2})
+    if existing:
+        capture.start.assert_awaited_once()
+        assert str(task_id) in manager.traffic_collectors
+    else:
+        capture.start.assert_not_awaited()
+        assert not manager.traffic_collectors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("required", [False, True])
+async def test_legacy_capture_is_not_fabricated_and_new_capture_cannot_silently_skip(
+    monkeypatch: pytest.MonkeyPatch, required: bool
+) -> None:
+    from bbx_runtime.execenv import ExecEnvHandle
+
+    client = AsyncMock()
+    client.health.return_value = {"status": "ok"}
+    monkeypatch.setattr(manager_module, "EnvdClient", lambda *_: client)
+    manager = ExecEnvManager(
+        settings(), docker_client=cast(Any, Docker()), objects=cast(Any, Objects())
+    )
+    handle = ExecEnvHandle(
+        uuid4(), "container", "envd", "http://envd", "test", traffic_required=required
+    )
+    if required:
+        with pytest.raises(RuntimeError, match="required traffic"):
+            await manager.start_traffic(handle, {"run_number": 1})
+    else:
+        await manager.start_traffic(handle, {"run_number": 1})
+    assert not manager.traffic_collectors
+    client.traffic.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disabled_capture_never_adds_namespace_admin_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    fake = Docker()
+    manager = ExecEnvManager(
+        settings().model_copy(update={"traffic_enabled": False}),
+        docker_client=cast(Any, fake),
+        objects=cast(Any, Objects()),
+    )
+    monkeypatch.setattr(manager, "wait_healthy", AsyncMock())
+    task_id = uuid4()
+    await manager.provision(task_id, profile)
+    envd = fake.containers.items[0]
+    assert envd.kwargs["cap_add"] == ["NET_ADMIN"]
+    assert envd.kwargs["sysctls"] == {}
+    assert envd.kwargs["environment"]["ENVD_TASK_ID"] == str(task_id)
+    assert envd.kwargs["environment"]["ENVD_TRAFFIC_ENABLED"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_lost_capture_environment_cannot_leave_archived_task_collecting() -> None:
+    from types import SimpleNamespace
+
+    task_id = uuid4()
+    manifest = {
+        "schema_version": 1,
+        "task_id": str(task_id),
+        "run": 2,
+        "status": "collecting",
+        "https": "enabled",
+        "started_at": "2026-10-15T00:00:00Z",
+        "updated_at": "2026-10-15T00:00:00Z",
+        "finished_at": None,
+        "record_count": 0,
+        "captured_bytes": 4,
+        "dropped_packets": 0,
+        "error": None,
+        "chunks": [],
+        "files": [],
+    }
+    objects = SimpleNamespace(
+        exists=AsyncMock(return_value=True),
+        get=AsyncMock(return_value=json.dumps(manifest).encode()),
+        put=AsyncMock(),
+    )
+    manager = ExecEnvManager(
+        settings(), docker_client=cast(Any, Docker()), objects=cast(Any, objects)
+    )
+    await manager.finish_traffic(task_id, run_number=2)
+    uri, content = objects.put.call_args.args
+    stored = json.loads(content)
+    assert uri == f"traffic/{task_id}/run-2/manifest.json"
+    assert stored["status"] == "partial" and stored["finished_at"]
+    assert "could not be confirmed" in stored["error"]

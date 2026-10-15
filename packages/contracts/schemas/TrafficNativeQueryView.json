@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "TrafficNativeCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "packet_count": {
+          "minimum": 0,
+          "title": "Packet Count",
+          "type": "integer"
+        },
+        "available_bytes": {
+          "minimum": 0,
+          "title": "Available Bytes",
+          "type": "integer"
+        },
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "decryption": {
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "title": "Decryption",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "source_id",
+        "packet_count",
+        "available_bytes",
+        "complete",
+        "decryption"
+      ],
+      "title": "TrafficNativeCoverage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "run": {
+      "title": "Run",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "building",
+        "ready",
+        "partial",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revision"
+    },
+    "requested_revision": {
+      "title": "Requested Revision",
+      "type": "string"
+    },
+    "display_filter": {
+      "title": "Display Filter",
+      "type": "string"
+    },
+    "engine_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Engine Version"
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/TrafficNativeCoverage"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "matched_packets": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Matched Packets",
+      "type": "integer"
+    },
+    "results_truncated": {
+      "default": false,
+      "title": "Results Truncated",
+      "type": "boolean"
+    },
+    "reset_required": {
+      "default": false,
+      "title": "Reset Required",
+      "type": "boolean"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "id",
+    "run",
+    "status",
+    "requested_revision",
+    "display_filter"
+  ],
+  "title": "TrafficNativeQueryView",
+  "type": "object"
+}

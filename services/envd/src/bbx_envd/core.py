@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from bbx_envd.settings import Settings
+from bbx_envd.traffic import TrafficCapture
 
 WORKSPACE = Path("/workspace")
 AGENT_ID = re.compile(r"agent-[0-9]{1,6}\Z")
@@ -141,6 +142,7 @@ async def execute_command(
     *,
     command_id: str | None = None,
     process_started: Callable[[asyncio.subprocess.Process], None] | None = None,
+    traffic: TrafficCapture | None = None,
 ) -> dict[str, object]:
     home = agent_home(agent_id)
     if not 1 <= timeout_sec <= settings.command_timeout_max:
@@ -157,15 +159,42 @@ async def execute_command(
         "privileged_requested": privileged,
         "started_at": utc_now(),
     }
+    network_prefix: list[str] = []
+    if traffic is not None and traffic.networks is not None:
+        if traffic.state is None or (
+            traffic.state["status"] != "collecting" and not traffic.limited
+        ):
+            raise ValueError("Traffic capture must be started before command execution")
+        if not traffic.limited and f"raw:{agent_id}" not in traffic.raw_ready:
+            raise ValueError("Agent packet capture is not ready; command was not executed")
+        network_prefix = traffic.networks.prefix(agent_id)
+        execution["network"] = traffic.networks.agents[agent_id]
     audit_command({**execution, "status": "started"})
     status = "completed"
     exit_code: int | None = None
     try:
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-            args = ["runuser", "-u", agent_id, "--"]
+            args = [*network_prefix, "runuser", "-u", agent_id, "--"]
             if privileged:
                 args += ["sudo", "-n", "--"]
             args += ["bash", "-lc", command]
+            environment = {
+                key: value
+                for key, value in os.environ.items()
+                if key
+                not in {
+                    "ENVD_TOKEN",
+                    "ENVD_TOKEN_SECRET",
+                    "SSLKEYLOGFILE",
+                    "MITMPROXY_SSLKEYLOGFILE",
+                }
+            }
+            if traffic is not None:
+                if traffic.networks is not None:
+                    environment.update(traffic.networks.environment(agent_id))
+                environment.update(
+                    traffic.command_environment(agent_id, str(execution["command_id"]))
+                )
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     *args,
@@ -173,11 +202,7 @@ async def execute_command(
                     stdout=out,
                     stderr=err,
                     start_new_session=True,
-                    env={
-                        key: value
-                        for key, value in os.environ.items()
-                        if key not in {"ENVD_TOKEN", "ENVD_TOKEN_SECRET"}
-                    },
+                    env=environment,
                 )
             )
             try:
@@ -230,6 +255,8 @@ async def execute_command(
             exit_code=exit_code,
         )
         audit_command(execution)
+    if traffic is not None:
+        stdout, stderr = traffic.redact_output(stdout), traffic.redact_output(stderr)
     shown_out, shown_err, truncated = truncate_streams(stdout, stderr)
     full_output_path: str | None = None
     if truncated:
@@ -407,6 +434,7 @@ class CtfCommandRegistry:
         timeout_sec: int,
         privileged: bool,
         settings: Settings,
+        traffic: TrafficCapture | None = None,
     ) -> dict[str, object]:
         body = {**metadata, "agent_id": agent_id}
         registration = self.registered(body)
@@ -433,6 +461,7 @@ class CtfCommandRegistry:
                     privileged,
                     settings,
                     command_id=command_id,
+                    traffic=traffic,
                     process_started=lambda process: registration.processes.__setitem__(
                         command_id, process
                     ),

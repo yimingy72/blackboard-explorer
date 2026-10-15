@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "minimum": 0,
+      "title": "Id",
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 256,
+      "title": "Name",
+      "type": "string"
+    },
+    "length": {
+      "minimum": 0,
+      "title": "Length",
+      "type": "integer"
+    },
+    "raw_hex": {
+      "maxLength": 32768,
+      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+      "title": "Raw Hex",
+      "type": "string"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "length",
+    "raw_hex",
+    "truncated"
+  ],
+  "title": "TrafficNativeDataSource",
+  "type": "object"
+}

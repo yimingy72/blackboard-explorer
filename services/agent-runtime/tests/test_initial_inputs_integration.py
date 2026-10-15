@@ -116,6 +116,8 @@ async def test_initial_inputs_restore_restart_and_archive_resume(monkeypatch):
                 exec_network=network.name,
                 exec_access_mode="relay",
                 exec_egress_mode="direct",
+                # This scenario validates input restoration, not traffic collection startup.
+                traffic_enabled=False,
             )
             profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
             manager = ExecEnvManager(settings, docker_client=docker_client, objects=objects)

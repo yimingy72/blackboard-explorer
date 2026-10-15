@@ -76,6 +76,7 @@ async def run_command(args: argparse.Namespace, settings: ControlSettings) -> in
                 if task["status"] == "created":
                     await service.start_task(task_id)
                 handle = await manager.provision(task_id, profile)
+                await manager.start_traffic(handle, task)
                 if task["status"] in {"created", "provisioning"}:
                     await service.transition(task_id, "running")
             registered = await service.register_agent(
@@ -108,6 +109,7 @@ async def run_command(args: argparse.Namespace, settings: ControlSettings) -> in
             print(json.dumps({"agent_id": agent_id, **result.__dict__}, ensure_ascii=False))
             return 1 if result.end_reason == "runtime_error" else 0
         finally:
+            await manager.suspend_traffic()
             manager.docker.close()
 
 

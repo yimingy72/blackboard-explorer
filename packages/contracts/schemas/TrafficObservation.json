@@ -1,0 +1,90 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "scope": {
+      "default": "logical_call",
+      "enum": [
+        "wire",
+        "logical_call"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "trace_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Id"
+    },
+    "span_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Span Id"
+    },
+    "parent_span_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Span Id"
+    },
+    "attributes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 128,
+      "title": "Attributes",
+      "type": "object"
+    },
+    "status": {
+      "default": "unknown",
+      "maxLength": 128,
+      "title": "Status",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "retry_visibility": {
+      "default": "unknown",
+      "enum": [
+        "known",
+        "unknown"
+      ],
+      "title": "Retry Visibility",
+      "type": "string"
+    }
+  },
+  "title": "TrafficObservation",
+  "type": "object"
+}

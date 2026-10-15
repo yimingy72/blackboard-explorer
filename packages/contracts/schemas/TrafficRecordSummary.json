@@ -1,0 +1,297 @@
+{
+  "$defs": {
+    "TrafficPacketMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "number": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "native_frame_number": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Frame Number"
+        },
+        "frame_length": {
+          "minimum": 0,
+          "title": "Frame Length",
+          "type": "integer"
+        },
+        "captured_length": {
+          "minimum": 0,
+          "title": "Captured Length",
+          "type": "integer"
+        },
+        "direction": {
+          "default": "unknown",
+          "enum": [
+            "inbound",
+            "outbound",
+            "loopback",
+            "unknown"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interface"
+        },
+        "info": {
+          "default": "",
+          "maxLength": 2048,
+          "title": "Info",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "number",
+        "frame_length",
+        "captured_length"
+      ],
+      "title": "TrafficPacketMeta",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^r-[1-9][0-9]{0,18}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "seq": {
+      "maximum": 9223372036854775807,
+      "minimum": 1,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "attribution": {
+      "default": "unknown",
+      "enum": [
+        "exact",
+        "shared",
+        "unknown"
+      ],
+      "title": "Attribution",
+      "type": "string"
+    },
+    "record_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "packet",
+            "http",
+            "logical"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Record Kind"
+    },
+    "packet": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TrafficPacketMeta"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "protocol": {
+      "maxLength": 64,
+      "title": "Protocol",
+      "type": "string"
+    },
+    "transport_protocol": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Transport Protocol"
+    },
+    "application_protocol": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Application Protocol"
+    },
+    "source_ip": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Source Ip",
+      "type": "string"
+    },
+    "source_port": {
+      "anyOf": [
+        {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Port"
+    },
+    "destination_ip": {
+      "default": "",
+      "maxLength": 128,
+      "title": "Destination Ip",
+      "type": "string"
+    },
+    "destination_port": {
+      "anyOf": [
+        {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Destination Port"
+    },
+    "method": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Method"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "status_code": {
+      "anyOf": [
+        {
+          "maximum": 599,
+          "minimum": 100,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status Code"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "request_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Request Bytes",
+      "type": "integer"
+    },
+    "response_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Response Bytes",
+      "type": "integer"
+    },
+    "plaintext": {
+      "default": "not_applicable",
+      "enum": [
+        "decoded",
+        "encrypted",
+        "not_applicable"
+      ],
+      "title": "Plaintext",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "seq",
+    "timestamp",
+    "protocol"
+  ],
+  "title": "TrafficRecordSummary",
+  "type": "object"
+}
