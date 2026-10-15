@@ -151,3 +151,13 @@ Postgres/MinIO 未重建或清理。更新前后任务 17、Session 99，任务�
 2. `feat(traffic): capture attributed packets and archive native analysis inputs`：contracts/schema、envd netns/采集/原生字节与 keylog、runtime 上传/归档、镜像及关联测试/依赖。
 3. `feat(traffic): analyze captures with isolated native Wireshark workers`：blackboard 分析缓存/受限子进程/API、鉴权清理、OpenAPI、原生真实引擎测试。
 4. `feat(web): unify live traffic and native packet inspection`：统一 Drawer、原生查询/筛选、协议树与多数据源字节、前端测试及使用文档/本报告。
+
+## Git 发布补充 · 2026-10-15
+
+按用户明确指令完成分组提交并合并main，合并提交 `aec9f62`：
+
+- `5c169de`：已交付的首页及统一交互基线，35个前端文件和原任务/报告；ui-rebuild原工作树保持。
+- `4fd4da8`：流量采集、Agent归属、HTTPS/MinIO归档和Wireshark原生解析。采集与解析共享契约和调用链，实际合为完整后端提交，替代上方建议的两个后端提交。
+- `acf5625`：统一前端、原生过滤/详情、API类型与测试，以及本报告/使用说明。
+
+合并无冲突；合并树与已提交任务分支完全相同，140个接受验证的候选文件hash一致。沿用同版2129普通/345集成/129前端及12项浏览器检查；此次仅Git发布和交接记录更新，无产品代码变更，不重跑模型、靶场或完整集成。未提交`.env`、原始包、私有keylog、`.data`或构建产物；本地部署与任务/会话/配置保持。推送目标 `origin/main`，最终远端一致性由发布检查记录核验，见HANDOFF第0.5节。
