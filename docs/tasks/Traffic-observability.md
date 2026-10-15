@@ -9,6 +9,7 @@
 3. 复用 MAF OpenTelemetry 记录服务侧模型/工具逻辑调用；记录与原始网络包有明确来源区别，Agent/轮次上下文不串扰，流式输出不因采集被缓冲。
 4. 统一用户鉴权查询：`GET /api/tasks/{id}/traffic?run=&agent_id=&protocol=&q=&before=&limit=`、`/traffic/records/{record_id}?run=`、`/traffic/files/{file_id}?run=`。只接受固定命名规则，详情限额脱敏、原始包流式下载，跨任务/轮次、坏清单与缺文件正确拒绝。
 5. 前端任务顶部及 Agent 会话提供流量入口，共用紧凑 Drawer：轮次/Agent/协议/搜索、分页列表、请求响应/调用详情及原始包下载；旧任务、采集中、已归档、部分缺失、错误状态清楚，保留工作台和草稿。
+6. 用户追加 Wireshark 式实时逐包要求：网络默认逐包列表，上方表格、下方协议树和 hex/ASCII；Agent/端点/协议/长度/Info可筛选查看，暂停仅暂停跟随。以官方 tshark 同时保存原包和实时EK输出，不等待十秒封片才显示；packet详情按批保存避免逐包对象爆炸，after增量不漏页，高负载/存储阻塞如实显示积压或预览丢失。
 
 ## 数据契约
 
