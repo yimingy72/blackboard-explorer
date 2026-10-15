@@ -4,7 +4,7 @@
 
 ## 范围与完成标准
 
-1. envd 复用 dumpcap/tshark 与单个 mitmdump，采集全接口原始包、HTTP/HTTPS 请求响应，使用每命令随机代理身份关联 Agent；支持 sudo/常见客户端信任任务 CA。没有解码、归属未知、丢包、容量或工具失败必须显式展示，不能归为完整。
+1. envd 复用 dumpcap/tshark 与单个 mitmdump；同一 Ubuntu 内每 Agent 专属 netns/veth，在命令前建立身份并启动命名空间内全接口采集。TCP/UDP/ICMP、IPv6、localhost/自建 TUN 通过 source 归属；HTTPS 通过每命令随机代理身份解码并关联命令，支持 sudo/常见客户端信任任务 CA。失败不得退回共享 root 网络执行。文件/依赖仍共享，跨 Agent 服务通过明确地址访问。
 2. 两模式在首命令前启动、后台上传、结束先封存确认再销毁；重启/同轮容器替换去重、续跑按轮次隔离。原始片、详情与清单存 MinIO，删除任务清理全轮次；失败可重试，不静默销毁未上传文件。
 3. 复用 MAF OpenTelemetry 记录服务侧模型/工具逻辑调用；记录与原始网络包有明确来源区别，Agent/轮次上下文不串扰，流式输出不因采集被缓冲。
 4. 统一用户鉴权查询：`GET /api/tasks/{id}/traffic?run=&agent_id=&protocol=&q=&before=&limit=`、`/traffic/records/{record_id}?run=`、`/traffic/files/{file_id}?run=`。只接受固定命名规则，详情限额脱敏、原始包流式下载，跨任务/轮次、坏清单与缺文件正确拒绝。
@@ -21,5 +21,5 @@
 
 - 普通单测覆盖解析、脱敏、归属、顺序、错误、限额、路径和生命周期；`make check` 不调用真实模型。依赖 Docker 的测试用任务前缀和随机端口，结束清理。
 - 本地合成 HTTP/HTTPS 服务验证请求响应、代理身份、并发双 Agent、sudo、任务 CA、流式透传、归档及删除；不会连接真实靶机或模型，不读写 `.env`。
-- Docker Desktop 上 cgroup/eBPF 和任意 TLS 实现不是预先承诺的支持范围；本次可移植基线使用代理身份，直连网络包仍保存但无法证实 Agent 时标 unknown。原始包包含原始数据，只有展示副本脱敏。
+- 用户要求普通 TCP/UDP 等也必须归属，采用 netns source 绑定而非自研 eBPF；共享网关和共同 VPN 外层标 shared，不猜 Agent。证明 Agent 子进程/sudo 仍在专属网络、不能获得 envd 新增 SYS_ADMIN；IPv4/IPv6/动态接口、DNS 和跨 Agent 服务必须做合成验证。原始包包含原始数据，只有展示副本脱敏。
 - 不更改全局 CA、宿主机网络或 Docker 配置。报告列实际检查、未覆盖项、部署与提交划分。
