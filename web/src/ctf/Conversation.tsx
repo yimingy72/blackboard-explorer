@@ -14,12 +14,13 @@ import ReasoningBlock from '../components/ReasoningBlock';
 import ToolSteps from '../components/ToolSteps';
 import {createAgentClientState,type AgentClientState} from '../components/agentClientState';
 import styles from './CtfWorkbench.module.css';
-export default function Conversation({ taskId, member, members, phase, onClose, draftValue, onDraftChange, clientState }: {
+export default function Conversation({ taskId, member, members, phase, onClose, onTraffic, draftValue, onDraftChange, clientState }: {
     taskId: string;
     member: CtfMember;
     members: CtfMember[];
     phase: string;
     onClose: () => void;
+    onTraffic?: () => void;
     clientState?:AgentClientState;
     draftValue?:string;
     onDraftChange?:(value:string)=>void;
@@ -63,7 +64,7 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
     }
     const error = messages.error ?? session.error;
     return <aside className={styles.conversation} aria-label={`${member.display_name} 会话`}>
-      <header className={styles.panelHeader}><Avatar size={28} shape="square" style={{background:'#eaf0fb',color:'#386ac0'}}>{member.role==='lead'?'L':member.display_name.slice(0,1).toUpperCase()}</Avatar><div className={styles.panelIdentity}><h2 tabIndex={-1}>{member.display_name}</h2><p>{review?'本轮已结束 · 复盘问答':memberStatus(member)}</p></div><InspectorActions onClose={onClose} menu={member.role!=='lead'&&member.lifecycle!=='removed'&&phase==='running'?{items:[{key:'state',label:member.lifecycle==='stopped'?'恢复成员':'停止成员',disabled:memberAction.busy||member.run_state==='stopping'},{key:'remove',label:'移除',danger:true,disabled:memberAction.busy||member.run_state==='stopping'}],onClick:({key})=>key==='remove'?setRemoving(true):void manage(member.lifecycle==='stopped'?'resume':'stop')}:undefined} /></header>
+      <header className={styles.panelHeader}><Avatar size={28} shape="square" style={{background:'#eaf0fb',color:'#386ac0'}}>{member.role==='lead'?'L':member.display_name.slice(0,1).toUpperCase()}</Avatar><div className={styles.panelIdentity}><h2 tabIndex={-1}>{member.display_name}</h2><p>{review?'本轮已结束 · 复盘问答':memberStatus(member)}</p></div><InspectorActions onClose={onClose} onTraffic={onTraffic} menu={member.role!=='lead'&&member.lifecycle!=='removed'&&phase==='running'?{items:[{key:'state',label:member.lifecycle==='stopped'?'恢复成员':'停止成员',disabled:memberAction.busy||member.run_state==='stopping'},{key:'remove',label:'移除',danger:true,disabled:memberAction.busy||member.run_state==='stopping'}],onClick:({key})=>key==='remove'?setRemoving(true):void manage(member.lifecycle==='stopped'?'resume':'stop')}:undefined} /></header>
       <Modal title={`移除 ${member.display_name}？`} open={removing} onCancel={() => { if (!memberAction.busy) setRemoving(false); }} onOk={() => void manage('remove')} okText="确认移除" cancelText="取消" confirmLoading={memberAction.busy} okButtonProps={{danger:true}} cancelButtonProps={{disabled:memberAction.busy}} closable={!memberAction.busy} mask={{closable:!memberAction.busy}} keyboard={!memberAction.busy}><p>系统会先停止执行，会话和记录继续保留。</p>{memberAction.error && <Alert type="error" title={memberAction.error} />}</Modal>
       {memberAction.error && !removing && <Alert type="error" title={memberAction.error} showIcon />}
       {error && <Alert type="error" title={error.message} action={<Button onClick={() => { void messages.refetch(); void session.refetch(); }}>重新读取会话</Button>} />}

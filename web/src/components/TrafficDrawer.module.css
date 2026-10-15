@@ -1,0 +1,2 @@
+.title { display:inline-flex; align-items:center; gap:9px; font-size:15px; font-weight:600; letter-spacing:.01em; }
+.title > span { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:7px; color:var(--color-primary); background:var(--color-primary-soft); font-size:15px; }

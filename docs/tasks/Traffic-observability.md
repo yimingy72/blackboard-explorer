@@ -1,15 +1,17 @@
 # 任务流量采集、Agent 归属与 HTTPS 解码
 
-用户于 2026-10-15 批准设计并开发，补充明确 HTTPS 解码也是本次交付要求。设计正本见《黑板系统实现架构》9.2。开发分支 `feature/traffic-observability`，工作树 `~/bbx-wt/traffic-observability`；此前已交付的首页样式保持。
+用户于 2026-10-15 批准设计并开发，补充明确 HTTPS 解码、协议流量 Agent 归属、统一逐包界面及 Wireshark 原生过滤也是本次交付要求。设计正本见《黑板系统实现架构》9.2–9.4。开发分支 `feature/traffic-observability`，工作树 `~/bbx-wt/traffic-observability`；此前已交付的首页样式保持。
 
 ## 范围与完成标准
 
 1. envd 复用 dumpcap/tshark 与单个 mitmdump；同一 Ubuntu 内每 Agent 专属 netns/veth，在命令前建立身份并启动命名空间内全接口采集。TCP/UDP/ICMP、IPv6、localhost/自建 TUN 通过 source 归属；HTTPS 通过每命令随机代理身份解码并关联命令，支持 sudo/常见客户端信任任务 CA。失败不得退回共享 root 网络执行。文件/依赖仍共享，跨 Agent 服务通过明确地址访问。
 2. 两模式在首命令前启动、后台上传、结束先封存确认再销毁；重启/同轮容器替换去重、续跑按轮次隔离。原始片、详情与清单存 MinIO，删除任务清理全轮次；失败可重试，不静默销毁未上传文件。
 3. 复用 MAF OpenTelemetry 记录服务侧模型/工具逻辑调用；记录与原始网络包有明确来源区别，Agent/轮次上下文不串扰，流式输出不因采集被缓冲。
-4. 统一用户鉴权查询：`GET /api/tasks/{id}/traffic?run=&agent_id=&protocol=&q=&before=&limit=`、`/traffic/records/{record_id}?run=`、`/traffic/files/{file_id}?run=`。只接受固定命名规则，详情限额脱敏、原始包流式下载，跨任务/轮次、坏清单与缺文件正确拒绝。
+4. 统一用户鉴权查询：`GET /api/tasks/{id}/traffic?run=&agent_id=&protocol=&kind=&direction=&q=&before=&after=&limit=`、`/traffic/records/{record_id}?run=`、`/traffic/files/{file_id}?run=`。只接受固定命名规则，详情限额脱敏、原始包流式下载，跨任务/轮次、坏清单与缺文件正确拒绝。
 5. 前端任务顶部及 Agent 会话提供流量入口，共用紧凑 Drawer：轮次/Agent/协议/搜索、分页列表、请求响应/调用详情及原始包下载；旧任务、采集中、已归档、部分缺失、错误状态清楚，保留工作台和草稿。
 6. 用户追加 Wireshark 式实时逐包要求：网络默认逐包列表，上方表格、下方协议树和 hex/ASCII；Agent/端点/协议/长度/Info可筛选查看，暂停仅暂停跟随。以官方 tshark 同时保存原包和实时EK输出，不等待十秒封片才显示；packet详情按批保存避免逐包对象爆炸，after增量不漏页，高负载/存储阻塞如实显示积压或预览丢失。
+7. 最新要求替代第 5/6 项旧筛选与标签方案：数据包、HTTP/HTTPS 事务及逻辑调用统一列表；使用官方 sharkd 执行 Wireshark 显示过滤器并原生校验。过滤时只对实际包匹配，逻辑记录没有包语义；按 Agent/采集源建立重组上下文，完整原生解析随输入 revision 更新，不把 EK 关键词匹配当作完整过滤器。
+8. 原生详情显示真实协议层级与字段标签、字段过滤表达式、生成字段、data source 与字节范围；原始、解密、重组字节可切换，跨数据源不错误高亮。原生 PCAPNG 字节片和 mitmdump 私有 keylog 增量归档、哈希校验、发布后 ACK，停止前排空；解析隔离、进程/磁盘/时间/结果限额和缺失状态必须明确。
 
 ## 数据契约
 

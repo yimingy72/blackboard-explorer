@@ -26,6 +26,7 @@ type Props = {
     state: BoardState;
     historical: boolean;
     onClose: () => void;
+    onTraffic?: () => void;
     contribution?: {
         facts: string[];
         intents: string[];
@@ -125,7 +126,7 @@ function ToolCall({call}:{call:BoardToolCall}) {
   const result=toolResultView(call.resultHead);
   return <><ToolSteps steps={[{id:call.id,name:call.tool,status:result.failed?'error':'success',label:result.failed?'失败':'已记录',content:<><h4>参数</h4><pre>{JSON.stringify(call.args,null,2)}</pre><h4>返回摘要</h4><pre>{result.text||'无摘要'}</pre></>}]} />{call.resultUri&&<EvidenceViewer evidence={{type:'command_output',summary:`${call.tool} 的完整结果`,uri:call.resultUri,call_id:call.id}} />}</>;
 }
-export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, contribution, color, onSelect, draftValue, onDraftChange, clientState }: Props) {
+export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, onTraffic, contribution, color, onSelect, draftValue, onDraftChange, clientState }: Props) {
     const currency = useContext(TaskCurrency);
     const heading = useRef<HTMLHeadingElement>(null);
     const queryClient = useQueryClient();
@@ -166,7 +167,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     }
     const autoExpanded = new Set(entries.filter(entry=>entry.type==='trace'&&entry.kind==='model_output').slice(-6).map(entry=>entry.type==='trace'?entry.version:0));
     return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`}>
-      <header className={styles.header}><Avatar size={28} shape="square" style={{background:'var(--agent-tint,#eaf0fb)',color:'var(--agent-accent,#386ac0)'}}>{label.split(' ').at(-1)}</Avatar><div className={styles.identity}><h2 tabIndex={-1} ref={heading} title={agent.id}>{label}<small>{agentRole(agent)}{historical?' · 历史快照':''}</small></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div><InspectorActions onClose={onClose} closeLabel="关闭对话" menu={{items:[{key:'info',label:'运行信息'}],onClick:()=>setInfoOpen(true)}} /></header>
+      <header className={styles.header}><Avatar size={28} shape="square" style={{background:'var(--agent-tint,#eaf0fb)',color:'var(--agent-accent,#386ac0)'}}>{label.split(' ').at(-1)}</Avatar><div className={styles.identity}><h2 tabIndex={-1} ref={heading} title={agent.id}>{label}<small>{agentRole(agent)}{historical?' · 历史快照':''}</small></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div><InspectorActions onClose={onClose} onTraffic={onTraffic} closeLabel="关闭对话" menu={{items:[{key:'info',label:'运行信息'}],onClick:()=>setInfoOpen(true)}} /></header>
       {!hasTrace&&<p className={styles.empty}>{agent.status==='running'||agent.status==='concluding'?'对话记录尚未到达；工具调用会在此显示。':'此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
       {agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
       <Bubble.List className={styles.messages} autoScroll={!historical} role={{assistant:{variant:'borderless',styles:{root:{paddingBlock:6,paddingInlineEnd:0,width:"100%",minWidth:0},content:{padding:0,minHeight:0,width:"100%"},body:{gap:4,width:"100%",minWidth:0},header:{marginBottom:2}}},user:{placement:'end',styles:{root:{paddingBlock:6,paddingInlineStart:'12%'},content:{padding:'7px 10px',minHeight:0},header:{marginBottom:2}}}}} items={entries.map(entry=>({
