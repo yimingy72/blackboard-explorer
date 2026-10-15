@@ -1,17 +1,19 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Button, Form, Input } from 'antd';
 import { ApartmentOutlined } from '@ant-design/icons';
 import { api, ApiError } from '../api/client';
 import styles from './LoginPage.module.css';
 export default function LoginPage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate(); const location = useLocation();
   const [pending, setPending] = useState(false); const [error, setError] = useState('');
   const [invalidCredentials, setInvalidCredentials] = useState(false);
   async function submit({ username, password }: { username: string; password: string }) {
     if (pending) return;
     setError(''); setInvalidCredentials(false); setPending(true);
-    try { await api.login(username.trim(), password); const target = (location.state as { from?: string } | null)?.from; navigate(target?.startsWith('/') && !target.startsWith('//') ? target : '/tasks', { replace: true }); }
+    try { await api.login(username.trim(), password); queryClient.clear(); const target = (location.state as { from?: string } | null)?.from; navigate(target?.startsWith('/') && !target.startsWith('//') ? target : '/tasks', { replace: true }); }
     catch (cause) { setInvalidCredentials(cause instanceof ApiError && [401,403].includes(cause.status)); setError(cause instanceof ApiError ? cause.message : '无法连接黑板服务，请稍后重试。'); }
     finally { setPending(false); }
   }
