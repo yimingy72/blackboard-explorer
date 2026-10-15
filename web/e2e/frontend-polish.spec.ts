@@ -128,7 +128,7 @@ test('MCP清单的慢请求不能覆盖后选择的服务，加载状态明确',
     await page.getByRole('checkbox', { name: '资料检索', exact: true }).check();
     await page.getByRole('checkbox', { name: '分析工具', exact: true }).check();
     await page.getByRole('button', { name: '读取 资料检索 工具清单', exact: true }).click();
-    await expect(page.getByRole('button', { name: '正在读取 资料检索 工具…' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '读取 资料检索 工具清单', exact: true })).toBeDisabled();
     await page.getByRole('button', { name: '读取 分析工具 工具清单', exact: true }).click();
     await expect(page.getByRole('checkbox', { name: /current_tool/ })).toBeVisible();
     const response = page.waitForResponse((value) => value.url().includes('/reference/versions/1/tools'));
@@ -175,7 +175,7 @@ test('Agent回复按Markdown阅读且保留原文，窄屏输入和桌面长页�
   await page.getByRole('button', { name: '保存并应用' }).click();
   await expect(page.getByRole('status')).toContainText('已保存并应用');
   await page.goto('/tasks');
-  await expect(page.getByRole('link', { name: `查看任务：${GOAL}` })).toBeVisible();
+  await expect(page.getByRole('link', { name: GOAL, exact: true })).toBeVisible();
 });
 
 test('中等断点保存栏不被导航遮挡，短屏Agent发送按钮能完整点击', async ({ page }) => {

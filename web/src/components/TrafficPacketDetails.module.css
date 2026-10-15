@@ -1,0 +1,28 @@
+.details { height:100%; min-height:0; min-width:0; }
+.protocolPane,.bytesPane { display:flex; flex-direction:column; height:100%; min-width:0; min-height:0; background:var(--color-panel,#fff); }
+.paneHeader { display:flex; align-items:center; gap:8px; height:38px; min-height:38px; padding:0 12px; background:#f6f8fb; border-bottom:1px solid var(--color-line); font-size:12px; }
+.paneHeader > span:first-child { font-weight:600; color:var(--color-ink); white-space:nowrap; }
+.paneHeader > :last-child { margin-left:auto; }
+.paneHeader > :nth-child(2) { margin-right:0; font-size:12px; }
+.sourceSelect { flex:1; min-width:0; max-width:300px; }
+.treeViewport { flex:1; overflow:auto; min-height:0; padding:8px 10px; }
+.treeViewport > div { min-width:max-content; }
+.fieldLabel { font:12px/24px var(--font-mono); white-space:nowrap; color:var(--color-ink); }
+.fieldLabel[data-generated=true] { color:#53667f; }
+.fieldLabel[data-severity=Error],.fieldLabel[data-severity=error] { color:var(--color-danger); }
+.fieldLabel[data-severity=Warn],.fieldLabel[data-severity=warning] { color:var(--color-warning); }
+.fieldFooter,.byteFooter { display:flex; align-items:center; gap:8px; min-height:30px; border-top:1px solid var(--color-line); padding:5px 12px; font-size:12px; color:var(--color-muted); background:#fafbfd; }
+.fieldFooter > code { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:12px var(--font-mono); color:var(--color-primary); }
+.fieldFooter > span { white-space:nowrap; }
+.byteFooter > span:last-child { margin-left:auto; }
+.hexViewport { flex:1; min-height:0; overflow:auto; padding:8px 14px 12px; font:12px/24px var(--font-mono); font-variant-numeric:tabular-nums; }
+.hexHeader,.hexRow { display:grid; grid-template-columns:5ch 47ch 16ch; column-gap:16px; width:max-content; white-space:pre; }
+.hexHeader { font-size:12px; line-height:25px; padding-bottom:4px; margin-bottom:4px; color:var(--color-muted); border-bottom:1px solid var(--color-line); }
+.hexHeader > span:nth-child(2) { font-size:12px; }
+.hexRow > span { color:#62768d; }
+.hexRow > code { font:inherit; }
+.hexRow > code:last-child { color:#56677e; border-left:1px solid var(--color-line); padding-left:12px; }
+.hexRow mark { background:#d8e7ff; color:#204d96; border-radius:2px; }
+.placeholder { height:100%; display:grid; place-items:center; font-size:12px; color:var(--color-muted); }
+.empty { margin:12px 0; color:var(--color-muted); font-size:12px; }
+@media(max-width:680px) { .paneHeader { padding:0 10px; height:46px; min-height:46px; } .treeViewport { padding:5px 8px; } .hexViewport { padding:5px 10px; } .sourceSelect { max-width:220px; } }

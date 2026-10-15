@@ -1,3 +1,4 @@
+import LoadingState from '../components/LoadingState';
 import { Button, Checkbox, Collapse, Input, Select, Segmented, App, Form } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -119,7 +120,7 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
         }
     }
     if (!snapshot || !drafts)
-        return <section aria-label="CTF 配置">{query.isError ? <p role="alert" className={controls.error}>CTF 配置读取失败。<Button className={controls.button} onClick={() => void query.refetch()} htmlType={"button"}>重试</Button></p> : <p role="status">正在读取 CTF 配置…</p>}</section>;
+        return <section aria-label="CTF 配置">{query.isError ? <p role="alert" className={controls.error}>CTF 配置读取失败。<Button className={controls.button} onClick={() => void query.refetch()} htmlType={"button"}>重试</Button></p> : <LoadingState label="正在读取 CTF 配置…" />}</section>;
     const current = drafts[role];
     const updateTools = (tools: WorkerTools) => { setNotice('');setDrafts({ ...drafts, [role]: { ...current, tools } }); };
     const selected = current.tools.mcp_servers ?? [];
@@ -127,7 +128,7 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     return <section aria-label="CTF 角色配置" onChangeCapture={()=>setNotice('')}>
     {error && <p className={styles.errorBanner} role="alert">{error} <Button onClick={() => void reload()} htmlType={"button"}>重新读取</Button></p>}
     {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
-    <div className={styles.directWorker}><div className={styles.directActions}><Segmented aria-label="CTF 角色" value={role} disabled={saving} options={[{value:'lead',label:'Lead · 团队负责人'},{value:'teammate',label:'队友 · Teammate'}]} onChange={value=>{setRole(value as Role);setError('');setNotice('');setInspection(null);setLoading('');sequence.current+=1;}} /><div className={styles.headerActions}><span className={controls.hint}>新任务生效</span><Button aria-label="保存 CTF 配置" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!changed(role)&&!bindingsDirty} onClick={()=>void save()}>保存 CTF 配置</Button></div></div>
+    <div className={styles.directWorker}><div className={styles.directActions}><Segmented size="small" aria-label="CTF 角色" value={role} disabled={saving} options={[{value:'lead',label:'Lead'},{value:'teammate',label:'队友'}]} onChange={value=>{setRole(value as Role);setError('');setNotice('');setInspection(null);setLoading('');sequence.current+=1;}} /><div className={styles.headerActions}><span className={`${controls.hint} ${styles.applyHint}`}>新任务生效</span><Button aria-label="保存 CTF 配置" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!changed(role)&&!bindingsDirty} onClick={()=>void save()}>保存 CTF 配置</Button></div></div>
         <Form component={false} disabled={saving}><div className={styles.workerContent}>
 
           <div className={styles.workerForm}><section className={styles.promptColumn}><label className={controls.label} htmlFor={`ctf-prompt-${role}`}>{role === 'lead' ? 'Lead' : '队友'}完整系统提示词</label>
@@ -140,7 +141,7 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
             const key = `${server.name}@${server.version}`;
             return <div className={styles.mcpChoice} key={key}>
                 <label className={styles.checkRow}><Checkbox checked={Boolean(bound)} disabled={saving || !server.enabled && !bound} onChange={(event) => updateTools({ ...current.tools, mcp_servers: event.target.checked ? [...selected.filter((item) => item.name !== server.name), { name: server.name, version: server.version, allowed_tools: [] }] : selected.filter((item) => item !== bound) })}/>{server.label} · v{server.version}{!server.enabled && <small>已停用</small>}</label>
-                {bound && <><Button className={controls.button} disabled={saving || loading === key} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{loading === key ? '正在读取…' : `读取 ${server.label} 工具清单`}</Button>
+                {bound && <><Button className={controls.button} disabled={saving || loading === key} loading={loading === key} aria-busy={loading === key} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{`读取 ${server.label} 工具清单`}</Button>
                   {inspection?.key === key && <div className={styles.toolChecks}>{inspection.tools.map((item) => <label className={styles.checkRow} key={item.name}><Checkbox checked={bound.allowed_tools == null || bound.allowed_tools.includes(item.name)} onChange={(event) => {
                                 const allowed = bound.allowed_tools ?? inspection.tools.map((tool) => tool.name);
                                 updateTools({ ...current.tools, mcp_servers: selected.map((entry) => entry === bound ? { ...entry, allowed_tools: event.target.checked ? [...new Set([...allowed, item.name])] : allowed.filter((name) => name !== item.name) } : entry) });

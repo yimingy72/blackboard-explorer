@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "headers": {
+      "items": {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "string"
+          }
+        ],
+        "type": "array"
+      },
+      "maxItems": 256,
+      "title": "Headers",
+      "type": "array"
+    },
+    "body_preview": {
+      "default": "",
+      "title": "Body Preview",
+      "type": "string"
+    },
+    "body_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Body Bytes",
+      "type": "integer"
+    },
+    "body_encoding": {
+      "default": "omitted",
+      "enum": [
+        "utf-8",
+        "base64",
+        "omitted"
+      ],
+      "title": "Body Encoding",
+      "type": "string"
+    },
+    "body_truncated": {
+      "default": false,
+      "title": "Body Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "TrafficMessage",
+  "type": "object"
+}

@@ -1,0 +1,569 @@
+{
+  "$defs": {
+    "TrafficCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "collecting",
+            "complete",
+            "partial",
+            "error",
+            "archived"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "https": {
+          "enum": [
+            "enabled",
+            "unavailable"
+          ],
+          "title": "Https",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "record_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Record Count",
+          "type": "integer"
+        },
+        "captured_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Captured Bytes",
+          "type": "integer"
+        },
+        "dropped_packets": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dropped Packets",
+          "type": "integer"
+        },
+        "preview_dropped": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Preview Dropped",
+          "type": "integer"
+        },
+        "pending_chunks": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Pending Chunks",
+          "type": "integer"
+        },
+        "last_packet_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Packet At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "status",
+        "https",
+        "started_at",
+        "updated_at"
+      ],
+      "title": "TrafficCapture",
+      "type": "object"
+    },
+    "TrafficFile": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pcap",
+          "default": "pcap",
+          "title": "Kind",
+          "type": "string"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "content_type": {
+          "default": "application/vnd.tcpdump.pcap",
+          "enum": [
+            "application/vnd.tcpdump.pcap",
+            "application/octet-stream"
+          ],
+          "title": "Content Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "size_bytes"
+      ],
+      "title": "TrafficFile",
+      "type": "object"
+    },
+    "TrafficPacketMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "number": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "native_frame_number": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Frame Number"
+        },
+        "frame_length": {
+          "minimum": 0,
+          "title": "Frame Length",
+          "type": "integer"
+        },
+        "captured_length": {
+          "minimum": 0,
+          "title": "Captured Length",
+          "type": "integer"
+        },
+        "direction": {
+          "default": "unknown",
+          "enum": [
+            "inbound",
+            "outbound",
+            "loopback",
+            "unknown"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interface"
+        },
+        "info": {
+          "default": "",
+          "maxLength": 2048,
+          "title": "Info",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "number",
+        "frame_length",
+        "captured_length"
+      ],
+      "title": "TrafficPacketMeta",
+      "type": "object"
+    },
+    "TrafficRecordSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^r-[1-9][0-9]{0,18}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "attribution": {
+          "default": "unknown",
+          "enum": [
+            "exact",
+            "shared",
+            "unknown"
+          ],
+          "title": "Attribution",
+          "type": "string"
+        },
+        "record_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "packet",
+                "http",
+                "logical"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Kind"
+        },
+        "packet": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrafficPacketMeta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protocol": {
+          "maxLength": 64,
+          "title": "Protocol",
+          "type": "string"
+        },
+        "transport_protocol": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transport Protocol"
+        },
+        "application_protocol": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Application Protocol"
+        },
+        "source_ip": {
+          "default": "",
+          "maxLength": 128,
+          "title": "Source Ip",
+          "type": "string"
+        },
+        "source_port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Port"
+        },
+        "destination_ip": {
+          "default": "",
+          "maxLength": 128,
+          "title": "Destination Ip",
+          "type": "string"
+        },
+        "destination_port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Destination Port"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "status_code": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status Code"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "request_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Request Bytes",
+          "type": "integer"
+        },
+        "response_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Response Bytes",
+          "type": "integer"
+        },
+        "plaintext": {
+          "default": "not_applicable",
+          "enum": [
+            "decoded",
+            "encrypted",
+            "not_applicable"
+          ],
+          "title": "Plaintext",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "timestamp",
+        "protocol"
+      ],
+      "title": "TrafficRecordSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "run": {
+      "minimum": 1,
+      "title": "Run",
+      "type": "integer"
+    },
+    "availability": {
+      "enum": [
+        "recorded",
+        "not_recorded"
+      ],
+      "title": "Availability",
+      "type": "string"
+    },
+    "capture": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TrafficCapture"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/TrafficRecordSummary"
+      },
+      "title": "Records",
+      "type": "array"
+    },
+    "next_before": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Before"
+    },
+    "snapshot_seq": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Snapshot Seq",
+      "type": "integer"
+    },
+    "next_after": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next After"
+    },
+    "has_more": {
+      "default": false,
+      "title": "Has More",
+      "type": "boolean"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/TrafficFile"
+      },
+      "title": "Files",
+      "type": "array"
+    }
+  },
+  "required": [
+    "task_id",
+    "run",
+    "availability"
+  ],
+  "title": "TrafficListResponse",
+  "type": "object"
+}

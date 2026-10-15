@@ -1,10 +1,10 @@
 .page { max-width: 1160px; margin: auto; padding: 24px 28px 40px; }
-.heading { display: flex; gap: 16px; align-items: center; margin-bottom: 24px; }
+.heading { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
 .heading h1 { font-size: 22px; font-weight: 600; margin: 0; }
 .form { min-width: 0; }
 .modePicker { margin-bottom: 20px; }
 .layout { display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 32px; }
-.editor { min-width: 0; background: #fff; padding: 26px; border: 1px solid var(--color-line); border-radius: 12px; }
+.editor { min-width: 0; background: #fff; padding: 20px; border: 1px solid var(--color-line); border-radius: 12px; }
 .sidebar { min-width: 0; }
 .sidebar h2, .acceptance h2, .attachmentHeading h2 { font-size: 14px; font-weight: 600; margin: 0 0 16px; }
 .settingsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -29,3 +29,5 @@
 @media (max-width: 650px) { .page { padding: 16px 12px 30px; } .editor { padding: 18px; } .heading { gap: 6px; } .uploads > li { flex-wrap: wrap; } }
 
 .modelHeading { display:flex; align-items:center; gap:8px; }
+
+@media(max-width:650px) { .heading h1 { font-size:20px; } }

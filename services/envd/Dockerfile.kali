@@ -38,7 +38,7 @@ ARG PIP_INDEX_URL=
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        tini zstd util-linux sudo passwd ca-certificates curl wget git jq unzip zip xz-utils \
-       iproute2 openvpn \
+       iproute2 openvpn dnsmasq-base iptables \
        python3.13 python3.13-venv python3.13-dev \
        build-essential gdb file socat netcat-openbsd binutils strace ltrace patchelf ripgrep \
        tshark tcpdump binwalk \
@@ -56,7 +56,7 @@ RUN groupadd bbx-agents \
        'Defaults log_year' \
        'Defaults log_exit_status' \
        'Defaults loglinelen=0' \
-       'Defaults env_keep += "HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy"' \
+       'Defaults env_keep += "HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE NODE_EXTRA_CA_CERTS GIT_SSL_CAINFO BBX_AGENT_IP BBX_AGENT_IPV6 BBX_TASK_GATEWAY"' \
        > /etc/sudoers.d/bbx-agents \
     && chmod 440 /etc/sudoers.d/bbx-agents \
     && visudo -cf /etc/sudoers
@@ -64,7 +64,9 @@ RUN groupadd bbx-agents \
 COPY services/envd /opt/envd/source
 RUN python3.13 -m venv /opt/envd/venv \
     && /opt/envd/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} /opt/envd/source \
-    && chmod -R a-w /opt/envd
+    && python3.13 -m venv /opt/traffic/venv \
+    && /opt/traffic/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} mitmproxy==12.2.3 \
+    && chmod -R a-w /opt/envd /opt/traffic
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]

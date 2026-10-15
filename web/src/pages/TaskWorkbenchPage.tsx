@@ -1,5 +1,8 @@
 import { Alert, Button, Checkbox, Dropdown, Input, Modal, Tag } from 'antd';
 import InspectorLayout from '../components/InspectorLayout';
+import LoadingState from '../components/LoadingState';
+import TrafficDrawer from '../components/TrafficDrawer';
+import { ApiOutlined } from '@ant-design/icons';
 import TaskGoal from '../components/TaskGoal';
 import {createAgentClientState,type AgentClientState} from '../components/agentClientState';
 import Icon from '../components/Icon';
@@ -36,6 +39,7 @@ function BlackboardWorkbenchPage() {
     const location = useLocation();
     const queryClient = useQueryClient();
     const [recordsOpen, setRecordsOpen] = useState(false);
+    const [trafficAgent, setTrafficAgent] = useState<string | null | undefined>(undefined);
     const [goalOpen,setGoalOpen]=useState(false);
     const goalButton=useRef<HTMLButtonElement|HTMLAnchorElement>(null);
     const taskMenuButton=useRef<HTMLButtonElement|HTMLAnchorElement>(null);
@@ -137,7 +141,7 @@ function BlackboardWorkbenchPage() {
     if (!taskId)
         return null;
     if (board.taskId !== taskId || (taskQuery.isLoading && board.loading))
-        return <div className={styles.loading} role="status" aria-label="正在加载任务"><span className={controls.skeleton}/><span className={controls.skeleton}/><span className={controls.skeleton}/></div>;
+        return <LoadingState page label="任务内容加载中" lines={6} />;
     if (taskQuery.isError && !unauthorized)
         return <div className={styles.errorState} role="alert"><h1>无法打开任务</h1><p>{taskQuery.error instanceof ApiError ? taskQuery.error.message : '请稍后重试。'}</p><div><Button className={controls.button} onClick={() => void taskQuery.refetch()} htmlType={"button"}>重试</Button><Link to="/tasks" className={controls.button}>返回任务列表</Link></div></div>;
     const task = taskQuery.data;
@@ -165,7 +169,7 @@ function BlackboardWorkbenchPage() {
         <h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
         <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{formatMoney(usedCost,task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span></div>
-        <div className={styles.actions}><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')setRecordsOpen(true);if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
+        <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')setRecordsOpen(true);if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
           {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
           {['finished','failed','stopped'].includes(status) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=crypto.randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
           {status==='created' && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
@@ -186,10 +190,11 @@ function BlackboardWorkbenchPage() {
         agentButtons.current.delete(agent.id); }} className={styles.agentItem} style={agentStyle(numbers[agent.id])} aria-pressed={selectedId === agent.id} onClick={() => setSelectedId(agent.id)} htmlType={"button"}><span>{agentLabel(agent.id, numbers)}</span><small>{agentRole(agent)} · {agentStatusLabel[agent.status]}</small><small className={styles.contribution}>{contributions[agent.id]?.facts.length ?? 0} Fact · {contributions[agent.id]?.intents.length ?? 0} Intent{contributions[agent.id]?.judgments ? ` · ${contributions[agent.id].judgments} 次裁定` : ''}</small></Button>) : <span className={styles.agentEmpty}>尚无 Agent，任务启动后会出现在这里。</span>}</div>
       </div>
 
-      <InspectorLayout hideOnMobile={goalOpen} label={selectedAgent ? 'Agent 对话' : '对象详情'} onClose={() => selectedAgent ? closeAgent(selectedAgent.id) : setSelectedId(null)} inspector={selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id,numbers)} events={viewEvents} state={viewState} historical={version!==null} onClose={()=>closeAgent(selectedAgent.id)} clientState={clientStates.current[selectedAgent.id]??=createAgentClientState()} draftValue={drafts[selectedAgent.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selectedAgent.id]:value}))} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version!==null} agentNumbers={numbers} /> : null}>
+      <InspectorLayout hideOnMobile={goalOpen} label={selectedAgent ? 'Agent 对话' : '对象详情'} onClose={() => selectedAgent ? closeAgent(selectedAgent.id) : setSelectedId(null)} inspector={selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id,numbers)} events={viewEvents} state={viewState} historical={version!==null} onClose={()=>closeAgent(selectedAgent.id)} onTraffic={() => setTrafficAgent(selectedAgent.id)} clientState={clientStates.current[selectedAgent.id]??=createAgentClientState()} draftValue={drafts[selectedAgent.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selectedAgent.id]:value}))} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version!==null} agentNumbers={numbers} /> : null}>
         <TaskGoal key={taskId} open={goalOpen} goal={boardTask?.goal??(version===null?task?.goal:'')??''} context={boardTask?.domain_context??null} files={boardTask?.initialAttachments??(version===null?task?.initial_attachments:[])??[]} requirements={boardTask?.acceptance.length?<ul>{boardTask.acceptance.map(item=><li key={item.id}>{item.id} · {item.desc}</li>)}</ul>:undefined} onClose={closeGoal} />
-        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
+        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <LoadingState page label="黑板关系图加载中" lines={5} /> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
       </InspectorLayout>
+      <TrafficDrawer taskId={taskId} currentRun={task?.run_number ?? boardTask?.runNumber ?? 1} runs={task?.runs?.map(run => run.run_number) ?? []} agents={agents.map(agent => ({ id: agent.id, name: agentLabel(agent.id, numbers) }))} open={trafficAgent !== undefined} initialAgentId={trafficAgent} onClose={() => setTrafficAgent(undefined)} />
       <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} onRestoreFocus={()=>taskMenuButton.current?.focus({preventScroll:true})} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers}/>
       <Modal title="续跑任务" open={resumeOpen} onCancel={() => { if(!resuming) setResumeOpen(false); }} footer={null} closable={!resuming} mask={{closable:!resuming}} keyboard={!resuming}>
         <form className={styles.resumeForm} onSubmit={(event) => void resume(event)}>
@@ -216,7 +221,7 @@ export default function TaskWorkbenchPage() {
     if (!taskId)
         return <p role="alert">未指定任务。</p>;
     if (task.isLoading)
-        return <p role="status">正在读取任务…</p>;
+        return <LoadingState page label="任务信息加载中" lines={6} />;
     if (!task.data)
         return <div role="alert"><p>{task.error?.message ?? '无法读取任务。'}</p><Button className={controls.button} onClick={() => void task.refetch()} htmlType={"button"}>重试</Button> <Link to="/tasks">返回任务列表</Link></div>;
     return task.data.mode === 'ctf' ? <CtfWorkbench key={taskId} taskId={taskId} initialTask={task.data}/> : <BlackboardWorkbenchPage key={taskId}/>;

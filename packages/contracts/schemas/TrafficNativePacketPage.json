@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "TrafficNativePacket": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_number": {
+          "minimum": 1,
+          "title": "Source Number",
+          "type": "integer"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "attribution": {
+          "enum": [
+            "exact",
+            "shared",
+            "unknown"
+          ],
+          "title": "Attribution",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Background"
+        },
+        "foreground": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Foreground"
+        }
+      },
+      "required": [
+        "source_id",
+        "source_number",
+        "attribution",
+        "columns"
+      ],
+      "title": "TrafficNativePacket",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "query_id": {
+      "format": "uuid",
+      "title": "Query Id",
+      "type": "string"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/TrafficNativePacket"
+      },
+      "title": "Records",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    },
+    "next_offset": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Offset"
+    }
+  },
+  "required": [
+    "query_id",
+    "revision",
+    "records",
+    "total"
+  ],
+  "title": "TrafficNativePacketPage",
+  "type": "object"
+}

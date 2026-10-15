@@ -27,6 +27,9 @@ class Settings(ControlSettings):
     egress_proxy_url: str = "http://egress-proxy:8888"
     max_running_tasks: int = Field(default=1, ge=1)
     otel_enabled: bool = False
+    traffic_enabled: bool = True
+    traffic_poll_seconds: float = Field(default=1, ge=0.1, le=60)
+    traffic_max_bytes: int = Field(default=2 * 1024**3, ge=1024**2)
 
 
 class SchedulerSettings(Settings):

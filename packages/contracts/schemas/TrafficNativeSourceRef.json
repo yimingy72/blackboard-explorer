@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_id": {
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "revision": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Revision",
+      "type": "string"
+    },
+    "available_bytes": {
+      "minimum": 0,
+      "title": "Available Bytes",
+      "type": "integer"
+    },
+    "packet_count": {
+      "minimum": 0,
+      "title": "Packet Count",
+      "type": "integer"
+    },
+    "complete": {
+      "default": false,
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "last_packet_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Packet At"
+    }
+  },
+  "required": [
+    "source_id",
+    "revision",
+    "available_bytes",
+    "packet_count"
+  ],
+  "title": "TrafficNativeSourceRef",
+  "type": "object"
+}

@@ -9,7 +9,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
             /etc/apt/sources.list.d/ubuntu.sources; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
-    bash build-essential ca-certificates curl git jq passwd python3 python3-venv tini util-linux zstd \
+    bash build-essential ca-certificates curl git jq passwd python3 python3-venv tini util-linux zstd tshark dnsmasq-base iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # Keep the common toolchain layer cached; HTTPS is available after CA installation.
@@ -29,7 +29,7 @@ RUN groupadd bbx-agents \
        'Defaults log_year' \
        'Defaults log_exit_status' \
        'Defaults loglinelen=0' \
-       'Defaults env_keep += "HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy"' \
+       'Defaults env_keep += "HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy SSL_CERT_FILE REQUESTS_CA_BUNDLE CURL_CA_BUNDLE NODE_EXTRA_CA_CERTS GIT_SSL_CAINFO BBX_AGENT_IP BBX_AGENT_IPV6 BBX_TASK_GATEWAY"' \
        > /etc/sudoers.d/bbx-agents \
     && chmod 440 /etc/sudoers.d/bbx-agents \
     && visudo -cf /etc/sudoers
@@ -37,7 +37,9 @@ RUN groupadd bbx-agents \
 COPY services/envd /opt/envd/source
 RUN python3 -m venv /opt/envd/venv \
     && /opt/envd/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} /opt/envd/source \
-    && chmod -R a-w /opt/envd
+    && python3 -m venv /opt/traffic/venv \
+    && /opt/traffic/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} mitmproxy==12.2.3 \
+    && chmod -R a-w /opt/envd /opt/traffic
 
 ENV PATH="/opt/envd/venv/bin:${PATH}"
 EXPOSE 8080

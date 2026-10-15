@@ -1411,6 +1411,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/traffic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Traffic */
+        get: operations["list_traffic_api_tasks__task_id__traffic_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Traffic File */
+        get: operations["traffic_file_api_tasks__task_id__traffic_files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/native/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check Filter */
+        post: operations["check_filter_api_tasks__task_id__traffic_native_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/native/queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Query */
+        post: operations["create_query_api_tasks__task_id__traffic_native_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query Status */
+        get: operations["query_status_api_tasks__task_id__traffic_native_queries__query_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}/packets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query Packets */
+        get: operations["query_packets_api_tasks__task_id__traffic_native_queries__query_id__packets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/native/queries/{query_id}/sources/{source_id}/frames/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query Frame */
+        get: operations["query_frame_api_tasks__task_id__traffic_native_queries__query_id__sources__source_id__frames__number__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/traffic/records/{record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Traffic Record */
+        get: operations["traffic_record_api_tasks__task_id__traffic_records__record_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/uploads": {
         parameters: {
             query?: never;
@@ -2061,6 +2197,14 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** DisplayFilterRequest */
+        DisplayFilterRequest: {
+            /**
+             * Display Filter
+             * @default
+             */
+            display_filter: string;
         };
         /** Event */
         Event: {
@@ -3115,6 +3259,551 @@ export interface components {
             result_uri?: string | null;
             /** Tool */
             tool: string;
+        };
+        /** TrafficCapture */
+        TrafficCapture: {
+            /**
+             * Captured Bytes
+             * @default 0
+             */
+            captured_bytes: number;
+            /**
+             * Dropped Packets
+             * @default 0
+             */
+            dropped_packets: number;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Https
+             * @enum {string}
+             */
+            https: "enabled" | "unavailable";
+            /** Last Packet At */
+            last_packet_at?: string | null;
+            /**
+             * Pending Chunks
+             * @default 0
+             */
+            pending_chunks: number;
+            /**
+             * Preview Dropped
+             * @default 0
+             */
+            preview_dropped: number;
+            /**
+             * Record Count
+             * @default 0
+             */
+            record_count: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "collecting" | "complete" | "partial" | "error" | "archived";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** TrafficFile */
+        TrafficFile: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Content Type
+             * @default application/vnd.tcpdump.pcap
+             * @enum {string}
+             */
+            content_type: "application/vnd.tcpdump.pcap" | "application/octet-stream";
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default pcap
+             * @constant
+             */
+            kind: "pcap";
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Source Id */
+            source_id?: string | null;
+        };
+        /** TrafficListResponse */
+        TrafficListResponse: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "recorded" | "not_recorded";
+            capture?: components["schemas"]["TrafficCapture"] | null;
+            /** Files */
+            files?: components["schemas"]["TrafficFile"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next After */
+            next_after?: number | null;
+            /** Next Before */
+            next_before?: number | null;
+            /** Records */
+            records?: components["schemas"]["TrafficRecordSummary"][];
+            /** Run */
+            run: number;
+            /**
+             * Snapshot Seq
+             * @default 0
+             */
+            snapshot_seq: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** TrafficMessage */
+        TrafficMessage: {
+            /**
+             * Body Bytes
+             * @default 0
+             */
+            body_bytes: number;
+            /**
+             * Body Encoding
+             * @default omitted
+             * @enum {string}
+             */
+            body_encoding: "utf-8" | "base64" | "omitted";
+            /**
+             * Body Preview
+             * @default
+             */
+            body_preview: string;
+            /**
+             * Body Truncated
+             * @default false
+             */
+            body_truncated: boolean;
+            /** Headers */
+            headers?: [
+                string,
+                string
+            ][];
+        };
+        /** TrafficNativeCoverage */
+        TrafficNativeCoverage: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Available Bytes */
+            available_bytes: number;
+            /** Complete */
+            complete: boolean;
+            /**
+             * Decryption
+             * @enum {string}
+             */
+            decryption: "available" | "unavailable";
+            /** Error */
+            error?: string | null;
+            /** Packet Count */
+            packet_count: number;
+            /** Source Id */
+            source_id: string;
+        };
+        /** TrafficNativeDataSource */
+        TrafficNativeDataSource: {
+            /** Id */
+            id: number;
+            /** Length */
+            length: number;
+            /** Name */
+            name: string;
+            /** Raw Hex */
+            raw_hex: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** TrafficNativeFrameDetail */
+        TrafficNativeFrameDetail: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Columns */
+            columns: string[];
+            /** Data Sources */
+            data_sources: components["schemas"]["TrafficNativeDataSource"][];
+            /** Decode Error */
+            decode_error?: string | null;
+            /** Layers */
+            layers: components["schemas"]["TrafficPacketNode"][];
+            /** Revision */
+            revision: string;
+            /** Source Id */
+            source_id: string;
+            /** Source Number */
+            source_number: number;
+            /**
+             * Tree Truncated
+             * @default false
+             */
+            tree_truncated: boolean;
+        };
+        /** TrafficNativePacket */
+        TrafficNativePacket: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Attribution
+             * @enum {string}
+             */
+            attribution: "exact" | "shared" | "unknown";
+            /** Background */
+            background?: string | null;
+            /** Columns */
+            columns: string[];
+            /** Foreground */
+            foreground?: string | null;
+            /** Source Id */
+            source_id: string;
+            /** Source Number */
+            source_number: number;
+        };
+        /** TrafficNativePacketPage */
+        TrafficNativePacketPage: {
+            /** Next Offset */
+            next_offset?: number | null;
+            /**
+             * Query Id
+             * Format: uuid
+             */
+            query_id: string;
+            /** Records */
+            records: components["schemas"]["TrafficNativePacket"][];
+            /** Revision */
+            revision: string;
+            /** Total */
+            total: number;
+        };
+        /** TrafficNativeQueryRequest */
+        TrafficNativeQueryRequest: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Display Filter
+             * @default
+             */
+            display_filter: string;
+            /** Run */
+            run?: number | null;
+        };
+        /** TrafficNativeQueryView */
+        TrafficNativeQueryView: {
+            /** Coverage */
+            coverage?: components["schemas"]["TrafficNativeCoverage"][];
+            /** Display Filter */
+            display_filter: string;
+            /** Engine Version */
+            engine_version?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Matched Packets
+             * @default 0
+             */
+            matched_packets: number;
+            /** Requested Revision */
+            requested_revision: string;
+            /**
+             * Reset Required
+             * @default false
+             */
+            reset_required: boolean;
+            /**
+             * Results Truncated
+             * @default false
+             */
+            results_truncated: boolean;
+            /** Revision */
+            revision?: string | null;
+            /** Run */
+            run: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "building" | "ready" | "partial" | "error";
+        };
+        /** TrafficObservation */
+        TrafficObservation: {
+            /** Attributes */
+            attributes?: {
+                [key: string]: string;
+            };
+            /** Error */
+            error?: string | null;
+            /** Parent Span Id */
+            parent_span_id?: string | null;
+            /**
+             * Retry Visibility
+             * @default unknown
+             * @enum {string}
+             */
+            retry_visibility: "known" | "unknown";
+            /**
+             * Scope
+             * @default logical_call
+             * @enum {string}
+             */
+            scope: "wire" | "logical_call";
+            /** Span Id */
+            span_id?: string | null;
+            /**
+             * Status
+             * @default unknown
+             */
+            status: string;
+            /** Trace Id */
+            trace_id?: string | null;
+        };
+        /** TrafficPacketDetail */
+        TrafficPacketDetail: {
+            /** Decode Error */
+            decode_error?: string | null;
+            /** Layers */
+            layers?: components["schemas"]["TrafficPacketNode"][];
+            /**
+             * Raw Hex
+             * @default
+             */
+            raw_hex: string;
+            /**
+             * Raw Truncated
+             * @default false
+             */
+            raw_truncated: boolean;
+            /**
+             * Tree Truncated
+             * @default false
+             */
+            tree_truncated: boolean;
+        };
+        /** TrafficPacketMeta */
+        TrafficPacketMeta: {
+            /** Captured Length */
+            captured_length: number;
+            /**
+             * Direction
+             * @default unknown
+             * @enum {string}
+             */
+            direction: "inbound" | "outbound" | "loopback" | "unknown";
+            /** Frame Length */
+            frame_length: number;
+            /**
+             * Info
+             * @default
+             */
+            info: string;
+            /** Interface */
+            interface?: string | null;
+            /** Native Frame Number */
+            native_frame_number?: number | null;
+            /** Number */
+            number: number;
+            /** Source Id */
+            source_id: string;
+        };
+        /** TrafficPacketNode */
+        TrafficPacketNode: {
+            /** Children */
+            children?: components["schemas"]["TrafficPacketNode"][];
+            /**
+             * Data Source Id
+             * @default 0
+             */
+            data_source_id: number;
+            /** Filter Expr */
+            filter_expr?: string | null;
+            /**
+             * Generated
+             * @default false
+             */
+            generated: boolean;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Length */
+            length?: number | null;
+            /** Name */
+            name: string;
+            /** Offset */
+            offset?: number | null;
+            /** Severity */
+            severity?: string | null;
+            /** Value */
+            value?: string | null;
+        };
+        /** TrafficRecordDetail */
+        TrafficRecordDetail: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Application Protocol */
+            application_protocol?: string | null;
+            /**
+             * Attribution
+             * @default unknown
+             * @enum {string}
+             */
+            attribution: "exact" | "shared" | "unknown";
+            /**
+             * Destination Ip
+             * @default
+             */
+            destination_ip: string;
+            /** Destination Port */
+            destination_port?: number | null;
+            /** Id */
+            id: string;
+            /** Method */
+            method?: string | null;
+            observation?: components["schemas"]["TrafficObservation"] | null;
+            packet?: components["schemas"]["TrafficPacketMeta"] | null;
+            packet_detail?: components["schemas"]["TrafficPacketDetail"] | null;
+            /**
+             * Plaintext
+             * @default not_applicable
+             * @enum {string}
+             */
+            plaintext: "decoded" | "encrypted" | "not_applicable";
+            /** Protocol */
+            protocol: string;
+            /** Record Kind */
+            record_kind?: ("packet" | "http" | "logical") | null;
+            request?: components["schemas"]["TrafficMessage"] | null;
+            /**
+             * Request Bytes
+             * @default 0
+             */
+            request_bytes: number;
+            response?: components["schemas"]["TrafficMessage"] | null;
+            /**
+             * Response Bytes
+             * @default 0
+             */
+            response_bytes: number;
+            /** Seq */
+            seq: number;
+            /**
+             * Source Ip
+             * @default
+             */
+            source_ip: string;
+            /** Source Port */
+            source_port?: number | null;
+            /** Status Code */
+            status_code?: number | null;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Transport Protocol */
+            transport_protocol?: string | null;
+            /** Url */
+            url?: string | null;
+        };
+        /** TrafficRecordSummary */
+        TrafficRecordSummary: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Application Protocol */
+            application_protocol?: string | null;
+            /**
+             * Attribution
+             * @default unknown
+             * @enum {string}
+             */
+            attribution: "exact" | "shared" | "unknown";
+            /**
+             * Destination Ip
+             * @default
+             */
+            destination_ip: string;
+            /** Destination Port */
+            destination_port?: number | null;
+            /** Id */
+            id: string;
+            /** Method */
+            method?: string | null;
+            packet?: components["schemas"]["TrafficPacketMeta"] | null;
+            /**
+             * Plaintext
+             * @default not_applicable
+             * @enum {string}
+             */
+            plaintext: "decoded" | "encrypted" | "not_applicable";
+            /** Protocol */
+            protocol: string;
+            /** Record Kind */
+            record_kind?: ("packet" | "http" | "logical") | null;
+            /**
+             * Request Bytes
+             * @default 0
+             */
+            request_bytes: number;
+            /**
+             * Response Bytes
+             * @default 0
+             */
+            response_bytes: number;
+            /** Seq */
+            seq: number;
+            /**
+             * Source Ip
+             * @default
+             */
+            source_ip: string;
+            /** Source Port */
+            source_port?: number | null;
+            /** Status Code */
+            status_code?: number | null;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Transport Protocol */
+            transport_protocol?: string | null;
+            /** Url */
+            url?: string | null;
         };
         /** UploadResult */
         UploadResult: {
@@ -6446,6 +7135,291 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_traffic_api_tasks__task_id__traffic_get: {
+        parameters: {
+            query?: {
+                run?: number | null;
+                agent_id?: string | null;
+                protocol?: string | null;
+                q?: string | null;
+                kind?: ("packet" | "http" | "logical") | null;
+                direction?: ("inbound" | "outbound" | "loopback" | "unknown") | null;
+                before?: number | null;
+                after?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    traffic_file_api_tasks__task_id__traffic_files__file_id__get: {
+        parameters: {
+            query?: {
+                run?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_filter_api_tasks__task_id__traffic_native_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisplayFilterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_query_api_tasks__task_id__traffic_native_queries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrafficNativeQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficNativeQueryView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_status_api_tasks__task_id__traffic_native_queries__query_id__get: {
+        parameters: {
+            query?: {
+                seen_revision?: string | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficNativeQueryView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_packets_api_tasks__task_id__traffic_native_queries__query_id__packets_get: {
+        parameters: {
+            query: {
+                revision: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficNativePacketPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_frame_api_tasks__task_id__traffic_native_queries__query_id__sources__source_id__frames__number__get: {
+        parameters: {
+            query: {
+                revision: string;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                query_id: string;
+                source_id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficNativeFrameDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    traffic_record_api_tasks__task_id__traffic_records__record_id__get: {
+        parameters: {
+            query?: {
+                run?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficRecordDetail"];
                 };
             };
             /** @description Validation Error */

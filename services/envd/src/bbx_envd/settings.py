@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     archive_exclude: str = "**/.git/objects/,**/node_modules/,**/__pycache__/,**/target/,**/*.o"
     envd_mode: Literal["blackboard", "ctf"] = "blackboard"
     envd_task_id: UUID | None = None
+    envd_traffic_enabled: bool = False
+    envd_traffic_max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=65536)
+    envd_traffic_max_records: int = Field(default=1000000, ge=1)
 
     @model_validator(mode="after")
     def ctf_task_identity(self) -> "Settings":

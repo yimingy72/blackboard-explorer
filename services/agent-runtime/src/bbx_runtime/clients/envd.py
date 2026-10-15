@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -61,6 +63,64 @@ class EnvdClient:
 
     async def audit(self) -> dict[str, Any]:
         return (await self._response("GET", "/audit")).json()
+
+    async def native_traffic(self) -> dict[str, Any]:
+        data = bytearray()
+        async with self._http.stream(
+            "GET", f"{self.base_url}/traffic/native", headers=self.headers
+        ) as response:
+            await self._check(response)
+            async for block in response.aiter_bytes(chunk_size=65536):
+                data.extend(block)
+                if len(data) > 64 * 1024 * 1024:
+                    raise ValueError("Native capture listing exceeds 64 MiB")
+        value = await asyncio.to_thread(json.loads, data)
+        if not isinstance(value, dict):
+            raise ValueError("Invalid native capture listing")
+        return value
+
+    async def native_ack(self, identifiers: list[str]) -> None:
+        await self._response("POST", "/traffic/native/ack", json={"parts": identifiers})
+
+    @asynccontextmanager
+    async def native_stream(self, identifier: str) -> AsyncIterator[httpx.Response]:
+        import re
+
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", identifier):
+            raise ValueError("Invalid native traffic part")
+        async with self._http.stream(
+            "GET", f"{self.base_url}/traffic/native/parts/{identifier}", headers=self.headers
+        ) as response:
+            yield await self._check(response)
+
+    async def traffic(self, operation: str, **payload: Any) -> dict[str, Any]:
+        if operation not in {
+            "start",
+            "status",
+            "seal",
+            "stop",
+            "limit",
+            "chunks",
+            "artifacts",
+            "ack",
+        }:
+            raise ValueError("Unknown traffic operation")
+        method = "GET" if operation in {"status", "chunks", "artifacts"} else "POST"
+        kwargs = {"json": payload} if method == "POST" else {}
+        return (await self._response(method, f"/traffic/{operation}", **kwargs)).json()
+
+    @asynccontextmanager
+    async def traffic_stream(self, kind: str, identifier: str) -> AsyncIterator[httpx.Response]:
+        import re
+
+        if kind not in {"chunks", "artifacts"} or not re.fullmatch(
+            r"[a-zA-Z0-9_-]{1,80}", identifier
+        ):
+            raise ValueError("Invalid traffic file")
+        async with self._http.stream(
+            "GET", f"{self.base_url}/traffic/{kind}/{identifier}", headers=self.headers
+        ) as response:
+            yield await self._check(response)
 
     async def create_user(self, agent_id: str) -> dict[str, str]:
         return (await self._response("POST", "/users", json={"agent_id": agent_id})).json()

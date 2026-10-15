@@ -61,6 +61,7 @@ from bbx_runtime.single_dispatch import SingleDispatchExecutionTool
 from bbx_runtime.tool_failures import propagate_tool_failure
 from bbx_runtime.tools import make_board_tools
 from bbx_runtime.trace import record_trace
+from bbx_runtime.traffic.observation import observation_context, runtime_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,10 @@ class RunResult:
 
 
 async def external_mcp_tools(
-    service: BlackboardClient, bindings: list[Any], http_client: httpx.AsyncClient
+    service: BlackboardClient,
+    bindings: list[Any],
+    http_client: httpx.AsyncClient,
+    observation_secrets: list[str] | None = None,
 ) -> list[MCPStreamableHTTPTool]:
     """Build Explore-only tools from immutable platform server versions."""
     result: list[MCPStreamableHTTPTool] = []
@@ -92,6 +96,8 @@ async def external_mcp_tools(
             secret = credentials.get("secret")
             if not isinstance(secret, str) or not secret:
                 raise ValueError("MCP server credential is unavailable")
+            if observation_secrets is not None:
+                observation_secrets.append(secret)
             headers[server["auth_header"]] = f"{server['auth_scheme']} {secret}".strip()
         result.append(
             MCPStreamableHTTPTool(
@@ -298,6 +304,8 @@ class AgentRunner:
         expected_derive_round: int | None = None,
     ) -> RunResult:
         owned_client = None
+        credentials: dict[str, str] = {}
+        observation_secrets: list[str] = []
         envd = None
         mcp_http = envd_http_client
         external_mcp_http: httpx.AsyncClient | None = None
@@ -409,7 +417,9 @@ class AgentRunner:
                     trust_env=False, timeout=httpx.Timeout(600, connect=10)
                 )
                 tools.extend(
-                    await external_mcp_tools(self.service, worker.mcp_servers, external_mcp_http)
+                    await external_mcp_tools(
+                        self.service, worker.mcp_servers, external_mcp_http, observation_secrets
+                    )
                 )
             recovery = (
                 self._recovery_gates.setdefault(
@@ -419,206 +429,221 @@ class AgentRunner:
                 else None
             )
             sync = BoardSyncMiddleware(ctx, recovery)
-            async with Agent(
-                client=client,
-                name=agent_id,
-                tools=tools,
-                context_providers=[
-                    OpeningContextProvider(ctx, checkpoint),
-                    *(
-                        [DeriveHistoryProvider(checkpoint)]
-                        if checkpoint and task_type == "derive"
-                        else [CheckpointHistoryProvider(checkpoint)]
-                        if checkpoint
-                        else []
-                    ),
-                ],
-                middleware=[
-                    ToolLogMiddleware(ctx),
-                    GraceGateMiddleware(ctx),
-                    ToolArgumentFeedbackMiddleware(),
-                    sync,
-                ],
-                require_per_service_call_history_persistence=checkpoint is not None,
-            ) as agent:
-                async with asyncio.timeout(run_limit):
-                    session = checkpoint.session if checkpoint else agent.create_session()
-                    prompt: str | Message | list[Message] = Message(
-                        role="user",
-                        message_id=f"bbx-start-{agent_id}",
-                        contents=[Content.from_text("开始。")],
-                    )
-                    if task_type == "derive":
-                        round_number = int(run.get("derive_round") or 1)
-                        mode_name = (
-                            "完成复核"
-                            if run.get("derive_review")
-                            else "并行推导"
-                            if run.get("derive_parallel")
-                            else "静止推导"
-                        )
-                        previous = run.get("previous_receipt") or {}
-                        detail = previous.get("data") if isinstance(previous, dict) else None
-                        excluded = detail.get("excluded") if isinstance(detail, dict) else None
-                        note = (
-                            f"开始第 {round_number} 轮推导。本轮模式：{mode_name}。"
-                            f"当前黑板版本：{task.get('version', 0)}；"
-                            f"本轮起点版本：{run.get('round_start_version', 0)}。\n"
-                            f"最新验收状态：{task.get('acceptance_state', {})}。\n"
-                            "沿用当前会话已知的目标、证据和先前分析。"
-                            "黑板变化将附加到本次未发送的消息。"
-                            "旧轮次回执和结束指令仅属历史，不代表本轮已完成。"
-                            "请针对新变化与上轮排除方向分析，"
-                            "仅将本轮实际提交的意图写入本轮回执。"
-                        )
-                        if run.get("derive_review"):
-                            note += (
-                                "\n请复核目标范围、完成证据和未验证事项。"
-                                "若无必要方向，posted 留空且 excluded 写具体排除理由。"
-                            )
-                        if excluded:
-                            note += f"\n上轮排除理由：{excluded}"
-                        prompt = Message(
+            with observation_context(
+                task_id,
+                int(run_number or 1),
+                agent_id,
+                secrets=runtime_secrets(
+                    self.settings,
+                    *credentials.values(),
+                    *observation_secrets,
+                    envd.token if envd is not None else "",
+                ),
+            ):
+                async with Agent(
+                    client=client,
+                    name=agent_id,
+                    tools=tools,
+                    context_providers=[
+                        OpeningContextProvider(ctx, checkpoint),
+                        *(
+                            [DeriveHistoryProvider(checkpoint)]
+                            if checkpoint and task_type == "derive"
+                            else [CheckpointHistoryProvider(checkpoint)]
+                            if checkpoint
+                            else []
+                        ),
+                    ],
+                    middleware=[
+                        ToolLogMiddleware(ctx),
+                        GraceGateMiddleware(ctx),
+                        ToolArgumentFeedbackMiddleware(),
+                        sync,
+                    ],
+                    require_per_service_call_history_persistence=checkpoint is not None,
+                ) as agent:
+                    async with asyncio.timeout(run_limit):
+                        session = checkpoint.session if checkpoint else agent.create_session()
+                        prompt: str | Message | list[Message] = Message(
                             role="user",
-                            message_id=f"bbx-derive-round-{round_number}",
-                            contents=[Content.from_text(note)],
+                            message_id=f"bbx-start-{agent_id}",
+                            contents=[Content.from_text("开始。")],
                         )
-                    recoveries = 0
-                    while True:
-                        confirmed_before = (
-                            set(checkpoint.delivered_message_ids) if checkpoint else set()
-                        )
-                        try:
-                            with propagate_tool_failure():
-                                if model.provider in OPENAI_PROVIDERS:
-                                    stream = agent.run(
-                                        prompt,
-                                        stream=True,
-                                        session=session,
-                                        options=model_run_options(model),
+                        if task_type == "derive":
+                            round_number = int(run.get("derive_round") or 1)
+                            mode_name = (
+                                "完成复核"
+                                if run.get("derive_review")
+                                else "并行推导"
+                                if run.get("derive_parallel")
+                                else "静止推导"
+                            )
+                            previous = run.get("previous_receipt") or {}
+                            detail = previous.get("data") if isinstance(previous, dict) else None
+                            excluded = detail.get("excluded") if isinstance(detail, dict) else None
+                            note = (
+                                f"开始第 {round_number} 轮推导。本轮模式：{mode_name}。"
+                                f"当前黑板版本：{task.get('version', 0)}；"
+                                f"本轮起点版本：{run.get('round_start_version', 0)}。\n"
+                                f"最新验收状态：{task.get('acceptance_state', {})}。\n"
+                                "沿用当前会话已知的目标、证据和先前分析。"
+                                "黑板变化将附加到本次未发送的消息。"
+                                "旧轮次回执和结束指令仅属历史，不代表本轮已完成。"
+                                "请针对新变化与上轮排除方向分析，"
+                                "仅将本轮实际提交的意图写入本轮回执。"
+                            )
+                            if run.get("derive_review"):
+                                note += (
+                                    "\n请复核目标范围、完成证据和未验证事项。"
+                                    "若无必要方向，posted 留空且 excluded 写具体排除理由。"
+                                )
+                            if excluded:
+                                note += f"\n上轮排除理由：{excluded}"
+                            prompt = Message(
+                                role="user",
+                                message_id=f"bbx-derive-round-{round_number}",
+                                contents=[Content.from_text(note)],
+                            )
+                        recoveries = 0
+                        while True:
+                            confirmed_before = (
+                                set(checkpoint.delivered_message_ids) if checkpoint else set()
+                            )
+                            try:
+                                with propagate_tool_failure():
+                                    if model.provider in OPENAI_PROVIDERS:
+                                        stream = agent.run(
+                                            prompt,
+                                            stream=True,
+                                            session=session,
+                                            options=model_run_options(model),
+                                        )
+                                        response = await stream.get_final_response()
+                                    else:
+                                        response = await agent.run(
+                                            prompt,
+                                            session=session,
+                                            options=model_run_options(model),
+                                        )
+                            except Exception as error:
+                                failure = sync.take_failure()
+                                if (
+                                    getattr(error, "bbx_usage_settlement_error", False) is True
+                                    or checkpoint is None
+                                    or failure is None
+                                    or recoveries >= MAX_AGENT_RECOVERIES
+                                ):
+                                    raise
+                                recoveries += 1
+                                await record_trace(
+                                    ctx,
+                                    "board_update",
+                                    failure.step,
+                                    "[连接恢复] 模型连接暂断，等待有界恢复；"
+                                    "沿用同一 Agent、Intent 与已保存会话。"
+                                    f"本次运行累计恢复 {recoveries}/{MAX_AGENT_RECOVERIES}，"
+                                    "等待仍计入任务活动时间。",
+                                )
+                                await sync.check_recovery_control()
+                                restored = await SessionCheckpoint.load(
+                                    self.service, task_id, agent_id
+                                )
+                                if (
+                                    restored is None
+                                    or restored.revision != checkpoint.revision
+                                    or restored.session.session_id != checkpoint.session.session_id
+                                ):
+                                    raise RemoteError(409, "Recovery checkpoint changed") from None
+                                # Providers keep the checkpoint object; replace only its
+                                # session with the confirmed snapshot. Unconfirmed delivery
+                                # ids and claim tokens remain on that same checkpoint.
+                                checkpoint.session = session = restored.session
+                                checkpoint.opening_instructions = restored.opening_instructions
+                                repair_unpaired_tool_calls(session, include_interrupted=True)
+                                sync.reset_failed_injections()
+                                sync.recovery_metadata = failure.metadata
+                                sync.recovery_deadline = (
+                                    failure.episode.deadline
+                                    if failure.episode is not None
+                                    else monotonic() + RECOVERY_SECONDS
+                                )
+                                if failure.episode is None:
+                                    await asyncio.sleep(RECOVERY_BACKOFF[recoveries - 1])
+                                await sync.check_recovery_control()
+                                persisted = {
+                                    message.message_id
+                                    for message in session.state.get("in_memory", {}).get(
+                                        "messages", []
                                     )
-                                    response = await stream.get_final_response()
-                                else:
-                                    response = await agent.run(
-                                        prompt, session=session, options=model_run_options(model)
-                                    )
-                        except Exception as error:
-                            failure = sync.take_failure()
-                            if (
-                                getattr(error, "bbx_usage_settlement_error", False) is True
-                                or checkpoint is None
-                                or failure is None
-                                or recoveries >= MAX_AGENT_RECOVERIES
+                                }
+                                prompt = [
+                                    *(
+                                        message
+                                        for message in failure.inputs
+                                        if message.message_id not in persisted
+                                    ),
+                                    Message(
+                                        role="user",
+                                        message_id=f"bbx-recovery-{agent_id}-{recoveries}",
+                                        contents=[
+                                            Content.from_text(
+                                                "此前模型连接中断。请沿用已保存会话继续当前任务，"
+                                                "遵守最新结束指令与原回执格式。"
+                                                "已执行或结果未知的旧工具调用不得重新执行。"
+                                            )
+                                        ],
+                                    ),
+                                ]
+                                # A new MAF run owns a fresh stream aggregator. Never
+                                # retry inside a stream whose fragments have been yielded.
+                                continue
+                            receipt = parse_receipt(response.text, task_type)
+                            if not (
+                                "raw_text" in receipt
+                                and checkpoint
+                                and checkpoint.delivered_message_ids - confirmed_before
                             ):
-                                raise
-                            recoveries += 1
+                                break
+                            latest = await self.service.state(task_id)
+                            current = latest["agents"][agent_id]
+                            if current["status"] not in {"running", "concluding"}:
+                                break
+                            step_limit = (
+                                ctx.params.seed_max_steps
+                                if current.get("is_seed") and not _ever_claimed(latest, current)
+                                else ctx.params.explore_max_steps
+                            )
+                            limit_reached = task_type == "explore" and (
+                                int(current.get("steps") or 0) >= step_limit
+                                or int(current.get("context_tokens") or 0)
+                                >= ctx.params.context_threshold
+                            )
+                            handoff = (
+                                current["status"] == "concluding"
+                                or latest["task"]["status"] != "running"
+                                or limit_reached
+                            )
+                            note = (
+                                "刚才的自然语言答复已回应用户，但不是任务回执。"
+                                "若用户要求暂停或结束，或者系统已进入结束阶段，请停止探索，"
+                                "立即按原任务格式返回有效交接回执。"
+                                if handoff
+                                else "刚才的自然语言答复已回应用户，但不是任务回执。"
+                                "若用户要求暂停或结束，请按原任务格式返回有效交接回执；"
+                                "否则继续当前任务。不要因进度问答结束本次任务。"
+                            )
                             await record_trace(
                                 ctx,
                                 "board_update",
-                                failure.step,
-                                "[连接恢复] 模型连接暂断，等待有界恢复；"
-                                "沿用同一 Agent、Intent 与已保存会话。"
-                                f"本次运行累计恢复 {recoveries}/{MAX_AGENT_RECOVERIES}，"
-                                "等待仍计入任务活动时间。",
+                                int(current.get("steps") or 0) + 1,
+                                "[运行控制]\n" + note,
                             )
-                            await sync.check_recovery_control()
-                            restored = await SessionCheckpoint.load(self.service, task_id, agent_id)
-                            if (
-                                restored is None
-                                or restored.revision != checkpoint.revision
-                                or restored.session.session_id != checkpoint.session.session_id
-                            ):
-                                raise RemoteError(409, "Recovery checkpoint changed") from None
-                            # Providers keep the checkpoint object; replace only its
-                            # session with the confirmed snapshot. Unconfirmed delivery
-                            # ids and claim tokens remain on that same checkpoint.
-                            checkpoint.session = session = restored.session
-                            checkpoint.opening_instructions = restored.opening_instructions
-                            repair_unpaired_tool_calls(session, include_interrupted=True)
-                            sync.reset_failed_injections()
-                            sync.recovery_metadata = failure.metadata
-                            sync.recovery_deadline = (
-                                failure.episode.deadline
-                                if failure.episode is not None
-                                else monotonic() + RECOVERY_SECONDS
+                            prompt = Message(
+                                role="user",
+                                message_id=f"bbx-control-{uuid4()}",
+                                contents=[Content.from_text(note)],
                             )
-                            if failure.episode is None:
-                                await asyncio.sleep(RECOVERY_BACKOFF[recoveries - 1])
-                            await sync.check_recovery_control()
-                            persisted = {
-                                message.message_id
-                                for message in session.state.get("in_memory", {}).get(
-                                    "messages", []
-                                )
-                            }
-                            prompt = [
-                                *(
-                                    message
-                                    for message in failure.inputs
-                                    if message.message_id not in persisted
-                                ),
-                                Message(
-                                    role="user",
-                                    message_id=f"bbx-recovery-{agent_id}-{recoveries}",
-                                    contents=[
-                                        Content.from_text(
-                                            "此前模型连接中断。请沿用已保存会话继续当前任务，"
-                                            "遵守最新结束指令与原回执格式。"
-                                            "已执行或结果未知的旧工具调用不得重新执行。"
-                                        )
-                                    ],
-                                ),
-                            ]
-                            # A new MAF run owns a fresh stream aggregator. Never
-                            # retry inside a stream whose fragments have been yielded.
-                            continue
-                        receipt = parse_receipt(response.text, task_type)
-                        if not (
-                            "raw_text" in receipt
-                            and checkpoint
-                            and checkpoint.delivered_message_ids - confirmed_before
-                        ):
-                            break
-                        latest = await self.service.state(task_id)
-                        current = latest["agents"][agent_id]
-                        if current["status"] not in {"running", "concluding"}:
-                            break
-                        step_limit = (
-                            ctx.params.seed_max_steps
-                            if current.get("is_seed") and not _ever_claimed(latest, current)
-                            else ctx.params.explore_max_steps
-                        )
-                        limit_reached = task_type == "explore" and (
-                            int(current.get("steps") or 0) >= step_limit
-                            or int(current.get("context_tokens") or 0)
-                            >= ctx.params.context_threshold
-                        )
-                        handoff = (
-                            current["status"] == "concluding"
-                            or latest["task"]["status"] != "running"
-                            or limit_reached
-                        )
-                        note = (
-                            "刚才的自然语言答复已回应用户，但不是任务回执。"
-                            "若用户要求暂停或结束，或者系统已进入结束阶段，请停止探索，"
-                            "立即按原任务格式返回有效交接回执。"
-                            if handoff
-                            else "刚才的自然语言答复已回应用户，但不是任务回执。"
-                            "若用户要求暂停或结束，请按原任务格式返回有效交接回执；"
-                            "否则继续当前任务。不要因进度问答结束本次任务。"
-                        )
-                        await record_trace(
-                            ctx,
-                            "board_update",
-                            int(current.get("steps") or 0) + 1,
-                            "[运行控制]\n" + note,
-                        )
-                        prompt = Message(
-                            role="user",
-                            message_id=f"bbx-control-{uuid4()}",
-                            contents=[Content.from_text(note)],
-                        )
-            end_reason = "normal" if receipt.get("accepted") else "refused"
+                end_reason = "normal" if receipt.get("accepted") else "refused"
         except asyncio.CancelledError as error:
             cancelled = True
             cancellation_error = error

@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "run": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "display_filter": {
+      "default": "",
+      "maxLength": 4096,
+      "title": "Display Filter",
+      "type": "string"
+    }
+  },
+  "title": "TrafficNativeQueryRequest",
+  "type": "object"
+}

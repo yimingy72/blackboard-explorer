@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react';
 import { Button, Dropdown, Tooltip, type MenuProps } from 'antd';
-import { CloseOutlined, EllipsisOutlined, FullscreenExitOutlined, FullscreenOutlined } from '@ant-design/icons';
+import { ApiOutlined, CloseOutlined, EllipsisOutlined, FullscreenExitOutlined, FullscreenOutlined } from '@ant-design/icons';
 import { useInspector } from './inspectorContext';
 import styles from './InspectorLayout.module.css';
 
-export default function InspectorActions({ onClose, closeLabel = '关闭详情', menu }: {
+export default function InspectorActions({ onClose, closeLabel = '关闭详情', menu, onTraffic }: {
   onClose: () => void;
   closeLabel?: string;
   menu?: MenuProps;
+  onTraffic?: () => void;
 }) {
   const { wide, narrow, toggleWide } = useInspector();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -21,6 +22,7 @@ export default function InspectorActions({ onClose, closeLabel = '关闭详情',
       moreButton.current?.focus({ preventScroll: true });
     }
   }}>
+    {onTraffic && <Tooltip title="查看 Agent 流量"><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} aria-label="查看 Agent 流量" onClick={onTraffic} /></Tooltip>}
     {!narrow && <Tooltip title={widthLabel}><Button type="text" size="small" icon={wide ? <FullscreenExitOutlined /> : <FullscreenOutlined />} aria-label={widthLabel} onClick={toggleWide} /></Tooltip>}
     {menu && <Dropdown autoFocus trigger={['click']} open={menuOpen} onOpenChange={setMenuOpen} menu={{ ...menu, onClick: info => { setMenuOpen(false); menu.onClick?.(info); } }}>
       <Tooltip title="更多操作"><Button ref={moreButton} type="text" size="small" icon={<EllipsisOutlined />} aria-label="更多会话操作" aria-haspopup="menu" aria-expanded={menuOpen} /></Tooltip>

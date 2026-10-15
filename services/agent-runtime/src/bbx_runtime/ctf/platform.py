@@ -54,6 +54,7 @@ class PlatformAdapter:
         self.catalog_cache = catalog_cache or PlatformCatalogCache()
         self.connections: dict[str, MCPStreamableHTTPTool] = {}
         self.connection_locks: dict[str, asyncio.Lock] = {}
+        self.observation_secrets: list[str] = []
 
     @staticmethod
     def identity(server: dict, headers: dict, **scope: Any) -> str:
@@ -182,6 +183,7 @@ class PlatformAdapter:
                 secret = credentials.get("secret")
                 if not isinstance(secret, str) or not secret:
                     raise ValueError("MCP credential is unavailable")
+                self.observation_secrets.append(secret)
                 headers[server["auth_header"]] = f"{server['auth_scheme']} {secret}".strip()
 
             async def load_catalog(server=server, headers=headers):

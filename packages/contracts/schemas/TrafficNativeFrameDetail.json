@@ -1,0 +1,226 @@
+{
+  "$defs": {
+    "TrafficNativeDataSource": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "name": {
+          "maxLength": 256,
+          "title": "Name",
+          "type": "string"
+        },
+        "length": {
+          "minimum": 0,
+          "title": "Length",
+          "type": "integer"
+        },
+        "raw_hex": {
+          "maxLength": 32768,
+          "pattern": "^(?:[0-9a-fA-F]{2})*$",
+          "title": "Raw Hex",
+          "type": "string"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "length",
+        "raw_hex",
+        "truncated"
+      ],
+      "title": "TrafficNativeDataSource",
+      "type": "object"
+    },
+    "TrafficPacketNode": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "maxLength": 4096,
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Length"
+        },
+        "data_source_id": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Data Source Id",
+          "type": "integer"
+        },
+        "filter_expr": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter Expr"
+        },
+        "generated": {
+          "default": false,
+          "title": "Generated",
+          "type": "boolean"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/TrafficPacketNode"
+          },
+          "maxItems": 512,
+          "title": "Children",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TrafficPacketNode",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "source_id": {
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "source_number": {
+      "minimum": 1,
+      "title": "Source Number",
+      "type": "integer"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "string"
+    },
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "layers": {
+      "items": {
+        "$ref": "#/$defs/TrafficPacketNode"
+      },
+      "title": "Layers",
+      "type": "array"
+    },
+    "data_sources": {
+      "items": {
+        "$ref": "#/$defs/TrafficNativeDataSource"
+      },
+      "title": "Data Sources",
+      "type": "array"
+    },
+    "tree_truncated": {
+      "default": false,
+      "title": "Tree Truncated",
+      "type": "boolean"
+    },
+    "decode_error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decode Error"
+    }
+  },
+  "required": [
+    "source_id",
+    "source_number",
+    "revision",
+    "columns",
+    "layers",
+    "data_sources"
+  ],
+  "title": "TrafficNativeFrameDetail",
+  "type": "object"
+}

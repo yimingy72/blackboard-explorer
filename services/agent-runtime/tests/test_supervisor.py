@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -573,3 +573,34 @@ async def test_terminal_during_provision_keeps_slot_until_cleanup(
     assert service.states["second"]["task"]["status"] == "provisioning"
     assert ("provision", "second") not in manager.calls
     assert "first" in manager.handles
+
+
+@pytest.mark.asyncio
+async def test_traffic_manifest_is_a_dispatch_gate() -> None:
+    service = Service([task("captured", "running")])
+    manager: Any = Manager()
+    manager.start_traffic = AsyncMock(side_effect=OSError("initial manifest unavailable"))
+    owner = supervisor(service, manager)
+    with pytest.raises(OSError):
+        await owner._start(
+            service.states["captured"], cast(ExecEnvHandle, SimpleNamespace(task_id="captured"))
+        )
+    assert "captured" not in owner.loops
+    manager.start_traffic.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_traffic_flush_failure_retains_environment_and_archive_retries() -> None:
+    service = Service([task("captured", "finished")])
+    manager: Any = Manager()
+    manager.handles["captured"] = SimpleNamespace(task_id="captured")
+    manager.start_traffic = AsyncMock()
+    manager.finish_traffic = AsyncMock(side_effect=[OSError("MinIO unavailable"), None])
+    owner = supervisor(service, manager)
+    with pytest.raises(OSError):
+        await owner._cleanup_task("captured", service.states["captured"])
+    assert "captured" in manager.handles
+    assert not any(call[0] in {"archive", "destroy"} for call in manager.calls)
+    await owner._cleanup_task("captured", service.states["captured"])
+    assert "captured" not in manager.handles
+    assert manager.finish_traffic.await_count == 2

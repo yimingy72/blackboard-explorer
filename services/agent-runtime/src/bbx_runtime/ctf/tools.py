@@ -231,7 +231,12 @@ def build_tools(
         timeout_sec: Annotated[int, Field(ge=1)] = 120,
         privileged: bool = False,
     ) -> str:
-        """Execute in this member's fenced workspace; timeout uses the configured envd maximum."""
+        """Execute in this member's fenced workspace; timeout uses the configured envd maximum.
+
+        When BBX_AGENT_IP is set, localhost belongs to this Agent's network namespace.
+        For cross-Agent services, bind to 0.0.0.0 and read peer IPs from
+        /workspace/shared/network.json. BBX_TASK_GATEWAY identifies the shared gateway.
+        """
         await service.runtime(
             task_id,
             "authorize_member",

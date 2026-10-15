@@ -104,6 +104,8 @@ async def test_execenv_lifecycle_with_archive(
                 exec_network=network.name,
                 exec_access_mode="relay",
                 exec_egress_mode=egress_mode,
+                # Archive/network semantics are independent of the traffic integration scenario.
+                traffic_enabled=False,
             )
             profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
             manager = ExecEnvManager(settings, docker_client=docker_client, objects=objects)
@@ -124,6 +126,8 @@ async def test_execenv_lifecycle_with_archive(
             )
             assert envd_container.labels["bbx.task-id"] == str(task_id)
             assert "PRIVILEGED_PREFIXES=" in envd_container.attrs["Config"]["Env"]
+            assert "ENVD_TRAFFIC_ENABLED=false" in envd_container.attrs["Config"]["Env"]
+            assert not handle.traffic_required
             proxy_vars = [
                 item
                 for item in envd_container.attrs["Config"]["Env"]

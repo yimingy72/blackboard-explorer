@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "TrafficChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "first_seq": {
+          "minimum": 1,
+          "title": "First Seq",
+          "type": "integer"
+        },
+        "last_seq": {
+          "minimum": 1,
+          "title": "Last Seq",
+          "type": "integer"
+        },
+        "count": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "local_chunk_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Local Chunk Id"
+        },
+        "detail_storage": {
+          "default": "record",
+          "enum": [
+            "record",
+            "chunk"
+          ],
+          "title": "Detail Storage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "first_seq",
+        "last_seq",
+        "count"
+      ],
+      "title": "TrafficChunk",
+      "type": "object"
+    },
+    "TrafficFile": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pcap",
+          "default": "pcap",
+          "title": "Kind",
+          "type": "string"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "content_type": {
+          "default": "application/vnd.tcpdump.pcap",
+          "enum": [
+            "application/vnd.tcpdump.pcap",
+            "application/octet-stream"
+          ],
+          "title": "Content Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "size_bytes"
+      ],
+      "title": "TrafficFile",
+      "type": "object"
+    },
+    "TrafficNativeSourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "revision": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "available_bytes": {
+          "minimum": 0,
+          "title": "Available Bytes",
+          "type": "integer"
+        },
+        "packet_count": {
+          "minimum": 0,
+          "title": "Packet Count",
+          "type": "integer"
+        },
+        "complete": {
+          "default": false,
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "last_packet_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Packet At"
+        }
+      },
+      "required": [
+        "source_id",
+        "revision",
+        "available_bytes",
+        "packet_count"
+      ],
+      "title": "TrafficNativeSourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "collecting",
+        "complete",
+        "partial",
+        "error",
+        "archived"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "https": {
+      "enum": [
+        "enabled",
+        "unavailable"
+      ],
+      "title": "Https",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "record_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Record Count",
+      "type": "integer"
+    },
+    "captured_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Captured Bytes",
+      "type": "integer"
+    },
+    "dropped_packets": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Dropped Packets",
+      "type": "integer"
+    },
+    "preview_dropped": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Preview Dropped",
+      "type": "integer"
+    },
+    "pending_chunks": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Pending Chunks",
+      "type": "integer"
+    },
+    "last_packet_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Packet At"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "run": {
+      "minimum": 1,
+      "title": "Run",
+      "type": "integer"
+    },
+    "last_seq": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Last Seq",
+      "type": "integer"
+    },
+    "chunks": {
+      "items": {
+        "$ref": "#/$defs/TrafficChunk"
+      },
+      "maxItems": 100000,
+      "title": "Chunks",
+      "type": "array"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/TrafficFile"
+      },
+      "maxItems": 10000,
+      "title": "Files",
+      "type": "array"
+    },
+    "native": {
+      "items": {
+        "$ref": "#/$defs/TrafficNativeSourceRef"
+      },
+      "maxItems": 256,
+      "title": "Native",
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "https",
+    "started_at",
+    "updated_at",
+    "task_id",
+    "run"
+  ],
+  "title": "TrafficManifest",
+  "type": "object"
+}

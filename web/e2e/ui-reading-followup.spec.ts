@@ -94,7 +94,9 @@ test('回放首轮归档时目录、同路径文件缓存和下载地址都保�
   await firstRequest;
   try {
     await expect(preview).not.toContainText('ROUND_2_READING_SENTINEL');
-    await expect(preview.getByRole('status')).toHaveText('正在读取文件…');
+    const loading = preview.getByRole('status', { name: '正在读取文件…', exact: true });
+    await expect(loading).toBeVisible();
+    await expect(loading).toHaveText('');
     await expect(preview.getByRole('link', { name: '下载本轮归档', exact: true })).toHaveAttribute('href', `/api/tasks/${TASK_ID}/workspace?run=1`);
   } finally { releaseFirst(); }
   await expect(preview.locator('pre')).toHaveText('ROUND_1_READING_SENTINEL');
@@ -121,7 +123,7 @@ test('报告正文成功但任务信息失败时显示短 ID 和可恢复错误'
   await expect(page.getByRole('article')).toContainText('连接池上限');
   await expect(page.getByRole('alert')).toContainText('任务信息读取失败');
   await expect(page.locator('header').filter({ has: page.getByRole('heading', { name: '第 1 轮报告', exact: true }) })).toContainText(TASK_ID.slice(0, 8));
-  await expect(page.getByText('正在读取任务…', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('status', { name: '任务信息加载中', exact: true })).toHaveCount(0);
   await capture(page, 'report-task-error.png');
   failed = false;
   await page.getByRole('button', { name: '重试任务信息', exact: true }).click();

@@ -24,9 +24,7 @@
 .agentItem small { font-size:12px; color:var(--color-muted); white-space:nowrap; }
 .agentEmpty { font-size:12px; color:var(--color-muted); }
 .canvasArea { flex:1; min-width:0; min-height:0; overflow:hidden; background:var(--color-surface); }
-.canvasLoading { display:flex; gap:30px; padding:18vh 10%; }
 .canvasLoading span { width:22%; height:95px; }
-.loading { max-width:1100px; margin:40px auto; padding:28px; display:grid; gap:16px; }
 .loading span { height:42px; }
 .errorState { max-width:650px; padding:60px 24px; margin:auto; }
 .errorState h1 { font-size:20px; margin:0 0 10px; }

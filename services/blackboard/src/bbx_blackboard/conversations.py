@@ -739,7 +739,13 @@ class Conversations:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
-        for prefix in (f"evidence/{tid}/", f"toolcalls/{tid}/", f"traces/{tid}/", f"inputs/{tid}/"):
+        for prefix in (
+            f"evidence/{tid}/",
+            f"toolcalls/{tid}/",
+            f"traces/{tid}/",
+            f"inputs/{tid}/",
+            f"traffic/{tid}/",
+        ):
             for key in await objects.list(prefix):
                 await objects.remove(key)
         for key in [f"reports/{tid}.md", f"workspace/{tid}.tar.zst"]:

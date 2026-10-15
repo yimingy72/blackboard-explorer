@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Source Id",
+      "type": "string"
+    },
+    "number": {
+      "maximum": 9223372036854775807,
+      "minimum": 1,
+      "title": "Number",
+      "type": "integer"
+    },
+    "native_frame_number": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Frame Number"
+    },
+    "frame_length": {
+      "minimum": 0,
+      "title": "Frame Length",
+      "type": "integer"
+    },
+    "captured_length": {
+      "minimum": 0,
+      "title": "Captured Length",
+      "type": "integer"
+    },
+    "direction": {
+      "default": "unknown",
+      "enum": [
+        "inbound",
+        "outbound",
+        "loopback",
+        "unknown"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "interface": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Interface"
+    },
+    "info": {
+      "default": "",
+      "maxLength": 2048,
+      "title": "Info",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_id",
+    "number",
+    "frame_length",
+    "captured_length"
+  ],
+  "title": "TrafficPacketMeta",
+  "type": "object"
+}
