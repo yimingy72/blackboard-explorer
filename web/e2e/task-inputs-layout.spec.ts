@@ -48,14 +48,14 @@ test('列表仅一次总数，名称与ID同行，完整长目标按需展开', 
   await page.route(`**/api/tasks/${TASK_ID}`, (route) => route.fulfill({ json: task }));
   mock.events[0].payload = { ...mock.events[0].payload, name: task.name, goal };
   await page.goto('/tasks');
-  await expect(page.getByText('8 项任务', { exact: true })).toHaveCount(1);
-  const row = page.getByRole('row').filter({ hasText: '月度核对' });
+  await expect(page.getByRole('radio', { name: /^全部\s*8$/ })).toHaveCount(1);
+  const row = page.getByRole('listitem', { name: task.name, exact: true });
   const id = await row.getByText(TASK_ID.slice(0, 8)).boundingBox();
   const name = await row.getByRole('link', { name: task.name, exact: true }).boundingBox();
   expect(Math.abs((id?.y ?? 0) - (name?.y ?? 0))).toBeLessThan(6);
   await page.screenshot({ path: test.info().outputPath('named-tasks-desktop.png'), fullPage: true });
   await page.getByLabel('查找任务').fill(TASK_ID.slice(0, 8));
-  await expect(page.getByRole('row')).toHaveCount(2);
+  await expect(page.getByRole('list', { name: '任务列表', exact: true }).getByRole('listitem')).toHaveCount(1);
   await row.getByRole('link', { name: task.name, exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(task.name);
   await page.getByRole('button', { name: '查看任务目标', exact: true }).click();

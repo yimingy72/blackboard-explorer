@@ -1,3 +1,4 @@
+import LoadingState from './LoadingState';
 import { Button, Collapse } from 'antd';
 import { useEffect, useState } from 'react';
 import { api, type PreviewData } from '../api/client';
@@ -92,7 +93,7 @@ export default function EvidenceViewer({ evidence, initiallyOpen=false }: {
           </div>)}
         {!uri ? <p className={styles.notice}>这条证据没有可下载的持久化对象。</p> : (<>
             <a className={styles.download} href={api.evidenceUrl(uri)} download>下载完整证据</a>
-            {loading && <p role="status" className={styles.notice}>正在加载证据预览…</p>}
+            {loading && <LoadingState label="正在加载证据预览…" />}
             {error && <div role="alert" className={styles.error}><p>预览失败：{error}</p><Button onClick={() => setRetry((count) => count + 1)} htmlType={"button"}>重试</Button></div>}
             {preview && (<div className={styles.preview}>
                 {preview.truncated && <p className={styles.truncated}>文件共 {formatBytes(preview.size)}；仅显示开头和结尾。可下载完整文件。</p>}

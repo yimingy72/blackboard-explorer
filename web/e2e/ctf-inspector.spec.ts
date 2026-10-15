@@ -170,7 +170,9 @@ test('系统事件读取失败明确反馈，重试后恢复事件列表', async
     await openCtfMenu(page);
     await page.getByRole('menuitem', { name: '系统事件', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '系统事件', exact: true });
-    await expect(dialog.getByRole('status')).toContainText('正在读取事件');
+    const loading = dialog.getByRole('status', { name: '正在读取事件…', exact: true });
+    await expect(loading).toBeVisible();
+    await expect(loading).toHaveText('');
     await expect(dialog).not.toContainText('尚无事件记录');
     release();
     await expect(dialog.getByRole('alert')).toContainText('模拟事件读取暂时失败');

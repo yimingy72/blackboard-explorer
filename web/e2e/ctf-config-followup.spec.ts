@@ -66,13 +66,13 @@ test('CTF 解绑当前角色唯一 MCP 服务时不提交孤儿工具用途', as
 
 test('CTF 保存保留另一角色共享用途，并延后提交其未保存工具用途', async ({ page }) => {
   const { mock, saves } = await installSettings(page, true);
-  await selectMode(page, '队友 · Teammate');
+  await selectMode(page, '队友');
   await page.getByRole('checkbox', { name: /分析工具/ }).check();
   await page.getByRole('button', { name: '读取 分析工具 工具清单', exact: true }).click();
   await page.getByRole('checkbox', { name: /submit/ }).check();
   await selectOption(page, page.getByLabel('submit 用途'), '提交候选答案');
 
-  await selectMode(page, 'Lead · 团队负责人');
+  await selectMode(page, 'Lead');
   await page.getByRole('checkbox', { name: /资料检索/ }).uncheck();
   await page.getByRole('button', { name: '保存 CTF 配置', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('CTF 配置已保存');
@@ -80,7 +80,7 @@ test('CTF 保存保留另一角色共享用途，并延后提交其未保存工�
   expect(saves[0]).toMatchObject({ role: 'lead', expected_revision: 3, tools: { mcp_servers: [] } });
   expect(saves[0].platform_tools).toEqual([shared]);
 
-  await selectMode(page, '队友 · Teammate');
+  await selectMode(page, '队友');
   await expect(page.getByRole('checkbox', { name: /分析工具/ })).toBeChecked();
   await expectSelectedOption(page, page.getByLabel('submit 用途'), '提交候选答案');
   await page.getByRole('button', { name: '保存 CTF 配置', exact: true }).click();

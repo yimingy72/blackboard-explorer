@@ -1,5 +1,6 @@
 import { Alert, Button, Checkbox, Dropdown, Input, Modal, Tag } from 'antd';
 import InspectorLayout from '../components/InspectorLayout';
+import LoadingState from '../components/LoadingState';
 import TaskGoal from '../components/TaskGoal';
 import {createAgentClientState,type AgentClientState} from '../components/agentClientState';
 import Icon from '../components/Icon';
@@ -137,7 +138,7 @@ function BlackboardWorkbenchPage() {
     if (!taskId)
         return null;
     if (board.taskId !== taskId || (taskQuery.isLoading && board.loading))
-        return <div className={styles.loading} role="status" aria-label="正在加载任务"><span className={controls.skeleton}/><span className={controls.skeleton}/><span className={controls.skeleton}/></div>;
+        return <LoadingState page label="任务内容加载中" lines={6} />;
     if (taskQuery.isError && !unauthorized)
         return <div className={styles.errorState} role="alert"><h1>无法打开任务</h1><p>{taskQuery.error instanceof ApiError ? taskQuery.error.message : '请稍后重试。'}</p><div><Button className={controls.button} onClick={() => void taskQuery.refetch()} htmlType={"button"}>重试</Button><Link to="/tasks" className={controls.button}>返回任务列表</Link></div></div>;
     const task = taskQuery.data;
@@ -188,7 +189,7 @@ function BlackboardWorkbenchPage() {
 
       <InspectorLayout hideOnMobile={goalOpen} label={selectedAgent ? 'Agent 对话' : '对象详情'} onClose={() => selectedAgent ? closeAgent(selectedAgent.id) : setSelectedId(null)} inspector={selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={setSelectedId} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id,numbers)} events={viewEvents} state={viewState} historical={version!==null} onClose={()=>closeAgent(selectedAgent.id)} clientState={clientStates.current[selectedAgent.id]??=createAgentClientState()} draftValue={drafts[selectedAgent.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selectedAgent.id]:value}))} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={setSelectedId} historical={version!==null} agentNumbers={numbers} /> : null}>
         <TaskGoal key={taskId} open={goalOpen} goal={boardTask?.goal??(version===null?task?.goal:'')??''} context={boardTask?.domain_context??null} files={boardTask?.initialAttachments??(version===null?task?.initial_attachments:[])??[]} requirements={boardTask?.acceptance.length?<ul>{boardTask.acceptance.map(item=><li key={item.id}>{item.id} · {item.desc}</li>)}</ul>:undefined} onClose={closeGoal} />
-        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <div className={styles.canvasLoading} role="status" aria-label="正在同步关系图"><span className={controls.skeleton} /><span className={controls.skeleton} /><span className={controls.skeleton} /></div> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
+        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <LoadingState page label="黑板关系图加载中" lines={5} /> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={setSelectedId} />}</section>
       </InspectorLayout>
       <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} onRestoreFocus={()=>taskMenuButton.current?.focus({preventScroll:true})} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={setSelectedId} agentNumbers={numbers}/>
       <Modal title="续跑任务" open={resumeOpen} onCancel={() => { if(!resuming) setResumeOpen(false); }} footer={null} closable={!resuming} mask={{closable:!resuming}} keyboard={!resuming}>
@@ -216,7 +217,7 @@ export default function TaskWorkbenchPage() {
     if (!taskId)
         return <p role="alert">未指定任务。</p>;
     if (task.isLoading)
-        return <p role="status">正在读取任务…</p>;
+        return <LoadingState page label="任务信息加载中" lines={6} />;
     if (!task.data)
         return <div role="alert"><p>{task.error?.message ?? '无法读取任务。'}</p><Button className={controls.button} onClick={() => void task.refetch()} htmlType={"button"}>重试</Button> <Link to="/tasks">返回任务列表</Link></div>;
     return task.data.mode === 'ctf' ? <CtfWorkbench key={taskId} taskId={taskId} initialTask={task.data}/> : <BlackboardWorkbenchPage key={taskId}/>;

@@ -1,11 +1,10 @@
-.page { max-width: 1360px; margin: auto; padding: 28px 32px 48px; }
+.page { max-width: 1180px; margin: auto; padding: 24px 32px 36px; }
 .pageHeader { margin-bottom: 12px; }
-.pageHeader h1 { margin: 0; font-size: 24px; font-weight: 600; }
+.pageHeader h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .feedback, .errorBanner, .noticeBanner { margin-bottom: 16px; }
 .errorBanner, .noticeBanner { padding: 12px 16px; border-radius: 8px; font-size: 13px; overflow-wrap: anywhere; }
 .errorBanner { background: var(--color-danger-soft); color: var(--color-danger); }
 .noticeBanner { background: var(--color-success-soft); color: var(--color-success); }
-.loading { height: 160px; }
 .directWorker, .catalogEditor { background: #fff; border: 1px solid var(--color-line); border-radius: 12px; min-width: 0; overflow: clip; }
 .directActions, .contentHeader { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--color-line); flex-wrap: wrap; }
 .directActions > span { font-size: 12px; color: var(--color-muted); }
@@ -80,9 +79,7 @@
 .catalogEditor .feedback { margin:12px 18px; }
 @media(max-width:899px) { .formGrid, .connectionGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:550px) { .formGrid, .connectionGrid { grid-template-columns:minmax(0,1fr); } .spanTwo { grid-column:auto; } .resourceSelect { width:100%; } .connectionPicker { flex:1; } }
-.page { max-width:1180px; padding:22px 24px 36px; }
 .pageHeader { margin-bottom:12px; }
-.pageHeader h1 { font-size:20px; }
 .directActions { padding:12px 18px; position:sticky; top:var(--app-bar-height); z-index:5; background:#fff; }
 .workerContent { padding:0; gap:0; }
 .workerContent > .toolFieldset { padding:18px; border-top:1px solid var(--color-line); }
@@ -99,3 +96,7 @@
 .runtimeDetails { margin-top:16px; }
 @media(max-width:899px) { .workerForm { grid-template-columns:minmax(0,1fr); gap:18px; } .toolsColumn .toolChecks { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:550px) { .page { padding:16px 12px 30px; } .workerForm { padding:14px 12px; } .toolsColumn .toolChecks { grid-template-columns:minmax(0,1fr); } .directActions { padding:10px 12px; } }
+
+@media(max-width:899px) { .promptEditor { font-size:16px; } .checkRow { min-height:44px; } }
+
+@media(max-width:550px) { .applyHint { display:none; } .pageHeader h1 { font-size:20px; } .directActions,.headerActions { gap:8px; } }

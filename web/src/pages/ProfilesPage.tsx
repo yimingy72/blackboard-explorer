@@ -1,4 +1,5 @@
-import { Alert, App, Modal, Button, Checkbox, Collapse, Form, Input, Spin, Tabs, Segmented } from 'antd';
+import { Alert, App, Modal, Button, Checkbox, Collapse, Form, Input, Tabs, Segmented } from 'antd';
+import LoadingState from '../components/LoadingState';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -149,11 +150,11 @@ export default function ProfilesPage() {
       {section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
         {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void reload()}>重新读取</Button>} className={styles.feedback} />}
         {notice && <Alert role="status" type="success" showIcon title={notice} className={styles.feedback} />}
-        {settings.isLoading && !snapshot && <Spin description="正在读取 Worker 配置…"><div className={styles.loading} /></Spin>}
+        {settings.isLoading && !snapshot && <LoadingState label="Worker 配置加载中" lines={7} />}
         {settings.isError && !snapshot && <Alert type="error" title={`配置读取失败：${message(settings.error)}`} action={<Button onClick={() => void reload()}>重试</Button>} />}
         {snapshot && drafts && runtime && current && <>
           <section className={styles.directWorker}>
-            <div className={styles.directActions}><Segmented aria-label="Worker" value={role} disabled={saving} options={workers.map(item=>({value:item.id,label:item.id[0].toUpperCase()+item.id.slice(1)}))} onChange={value=>{setRole(value as WorkerRole);setError('');setNotice('');}} /><div className={styles.headerActions}><span className={controls.hint}>{currentDirty?'未保存':'下一次调用生效'}</span><Button aria-label="保存并应用" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!currentDirty} onClick={()=>void saveWorker()}>保存并应用</Button></div></div>
+            <div className={styles.directActions}><Segmented size="small" aria-label="Worker" value={role} disabled={saving} options={workers.map(item=>({value:item.id,label:item.id[0].toUpperCase()+item.id.slice(1)}))} onChange={value=>{setRole(value as WorkerRole);setError('');setNotice('');}} /><div className={styles.headerActions}><span className={`${controls.hint} ${styles.applyHint}`}>{currentDirty?'未保存':'下一次调用生效'}</span><Button aria-label="保存并应用" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!currentDirty} onClick={()=>void saveWorker()}>保存并应用</Button></div></div>
             <WorkerPrompts key={role} role={role} prompt={current.prompt} tools={current.tools} disabled={saving} onPromptChange={prompt=>setDrafts({...drafts,[role]:{...current,prompt}})} onToolsChange={tools=>setDrafts({...drafts,[role]:{...current,tools}})} />
           </section>
           <Collapse className={styles.runtimeDetails} items={[{ key: 'runtime', label: `全局调度与执行环境${runtimeDirty ? ' · 未保存' : ''}`, children: <Form component={false} disabled={saving}><div className={styles.formGrid}>

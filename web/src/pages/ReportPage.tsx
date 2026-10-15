@@ -1,4 +1,5 @@
 import { Alert, Button } from 'antd';
+import LoadingState from '../components/LoadingState';
 import Icon from '../components/Icon';
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -46,11 +47,11 @@ export default function ReportPage() {
     return <div className={styles.page}>
     <header className={styles.header}>
       <Link state={location.state} to={`/tasks/${encodeURIComponent(taskId)}`}><Icon name="back"/>返回工作台</Link>
-      <div className={styles.title}><div><h1>{run ? `第 ${run} 轮报告` : '最终报告'}</h1><p title={task.data?.goal}>{task.data?taskTitle(task.data):task.isPending?'正在读取任务…':`任务 ${taskId.slice(0,8)}`}</p></div><div className={styles.actions}><Button href={`/api/tasks/${encodeURIComponent(taskId)}/report${runQuery}`} download><Icon name="download"/>下载原文</Button>{(run ? task.data?.runs?.find((item) => item.run_number === run)?.workspace_uri : task.data?.workspace_uri) && <Button href={`/api/tasks/${encodeURIComponent(taskId)}/workspace${runQuery}`}><Icon name="download"/>下载工作区</Button>}</div></div>
+      <div className={styles.title}><div><h1>{run ? `第 ${run} 轮报告` : '最终报告'}</h1>{task.isPending ? <LoadingState label="任务信息加载中" lines={1} /> : <p title={task.data?.goal}>{task.data?taskTitle(task.data):`任务 ${taskId.slice(0,8)}`}</p>}</div><div className={styles.actions}><Button href={`/api/tasks/${encodeURIComponent(taskId)}/report${runQuery}`} download><Icon name="download"/>下载原文</Button>{(run ? task.data?.runs?.find((item) => item.run_number === run)?.workspace_uri : task.data?.workspace_uri) && <Button href={`/api/tasks/${encodeURIComponent(taskId)}/workspace${runQuery}`}><Icon name="download"/>下载工作区</Button>}</div></div>
       {task.data && <p className={styles.meta}>{taskId.slice(0, 8)} · {`创建于 ${formatDate(task.data.created_at)}`} · 估算费用 {formatMoney(task.data.usage?.cost, task.data.cost_currency)}</p>}
     </header>
     {task.isError && !unauthorized && <Alert type="error" title="任务信息读取失败" action={<Button onClick={()=>void task.refetch()}>重试任务信息</Button>} />}
-    {report.isLoading ? <p className={styles.message} role="status">正在读取报告…</p> : report.error ? <div className={styles.message} role="alert"><h2>报告尚不可用</h2><p>{report.error.message}</p><Button className={controls.button} onClick={() => void report.refetch()} htmlType={"button"}>重试</Button></div> : <article className={styles.markdown} aria-label="最终报告正文"><ReactMarkdown skipHtml remarkPlugins={[linkReferences(taskId)]} components={{
+    {report.isLoading ? <LoadingState label="报告内容加载中" lines={9} /> : report.error ? <div className={styles.message} role="alert"><h2>报告尚不可用</h2><p>{report.error.message}</p><Button className={controls.button} onClick={() => void report.refetch()} htmlType={"button"}>重试</Button></div> : <article className={styles.markdown} aria-label="最终报告正文"><ReactMarkdown skipHtml remarkPlugins={[linkReferences(taskId)]} components={{
                 a: ({ href, children }) => href?.startsWith(`/tasks/${taskId}`) ? <Link state={location.state} to={href}>{children}</Link> : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
                 img: ({ alt }) => <span>图片：{alt || '报告中的图片未自动加载'}</span>,
                 code: ({ children, className }) => {

@@ -33,6 +33,7 @@
   --color-overlay: oklch(0.2 0.01 260 / 0.38);
   --focus-ring: 0 0 0 3px rgb(56 106 192 / 0.16);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace;
+  --input-font-size: 14px;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-base: 0.875rem;
@@ -55,6 +56,7 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --z-sticky: 20;
   --z-panel: 30;
+  --z-skip-link: 1100;
   --app-bar-height: 44px;
 }
 
@@ -74,6 +76,10 @@ h1, h2, h3 { text-wrap: balance; }
 p { text-wrap: pretty; }
 pre, code { font-family: var(--font-mono); }
 pre { text-wrap: initial; }
+
+@media (max-width: 899px) {
+  :root { --input-font-size:16px; --app-bar-height:52px; }
+}
 
 [hidden] { display: none !important; }
 

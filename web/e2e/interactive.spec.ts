@@ -83,12 +83,14 @@ test('删除任务须确认清除所有会话，取消不发请求', async ({ pa
   });
   await page.route('**/api/tasks', (route) => removed ? route.fulfill({ json: [] }) : route.fallback());
   await page.goto('/tasks');
-  await page.getByRole('button', { name: `删除任务：${GOAL}` }).click();
+  await page.getByRole('button', { name: `任务操作：${GOAL}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: '删除任务', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '删除任务' });
   await expect(dialog).toContainText('所有 Agent 会话');
   await dialog.getByRole('button', { name: /^取\s*消$/ }).click();
   expect(removed).toBe(false);
-  await page.getByRole('button', { name: `删除任务：${GOAL}` }).click();
+  await page.getByRole('button', { name: `任务操作：${GOAL}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: '删除任务', exact: true }).click();
   await dialog.getByRole('button', { name: '确认删除' }).click();
   await expect(page.getByText('还没有任务', { exact: true })).toBeVisible();
   expect(removed).toBe(true);

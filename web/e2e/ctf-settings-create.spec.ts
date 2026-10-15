@@ -62,9 +62,9 @@ test('CTF 设置用途与模拟适配显式保存，冲突保留草稿和另一�
   });
   await page.goto('/profiles');
   await page.getByRole('tab', { name: /CTF 配置$/ }).click();
-  await selectMode(page, '队友 · Teammate');
+  await selectMode(page, '队友');
   await page.getByLabel('队友完整系统提示词').fill('Unsaved teammate draft');
-  await selectMode(page, 'Lead · 团队负责人');
+  await selectMode(page, 'Lead');
   await expect.poll(async () => (await page.getByLabel('Lead完整系统提示词').boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(300);
   await page.getByLabel('Lead完整系统提示词').fill('Lead new snapshot');
   await page.getByRole('checkbox', { name: /资料检索/ }).check();
@@ -87,7 +87,7 @@ test('CTF 设置用途与模拟适配显式保存，冲突保留草稿和另一�
   expect(saves[1].expected_revision).toBe(4);
   await expect(page.getByLabel('Lead完整系统提示词')).toHaveValue('Concurrent local Lead draft');
   await expectSelectedOption(page, page.getByLabel('lookup 用途'), '连接信息');
-  await selectMode(page, '队友 · Teammate');
+  await selectMode(page, '队友');
   await expect(page.getByLabel('队友完整系统提示词')).toHaveValue('Unsaved teammate draft');
   await expectSelectedOption(page, page.getByLabel('status 用途'), '查询验证状态');
   expect(mock.workerSaves).toEqual([]);
@@ -102,8 +102,8 @@ test('同名任务显示模式并保持各自 ID 链接', async ({ page }) => {
     acceptance_state: {}, usage: {}, created_at: '2026-10-08T00:00:00Z',
   })) }));
   await page.goto('/tasks');
-  const ctf = page.getByRole('row').filter({ hasText: 'CTF 团队' });
-  const blackboard = page.getByRole('row').filter({ hasText: '黑板探索' });
+  const ctf = page.getByRole('list', { name: '任务列表', exact: true }).getByRole('listitem').filter({ hasText: 'CTF 团队' });
+  const blackboard = page.getByRole('list', { name: '任务列表', exact: true }).getByRole('listitem').filter({ hasText: '黑板探索' });
   await expect(ctf.getByRole('link', { name: '同名任务', exact: true })).toHaveAttribute('href', `/tasks/${other}`);
   await expect(blackboard.getByRole('link', { name: '同名任务', exact: true })).toHaveAttribute('href', `/tasks/${TASK_ID}`);
   expect(mock.unexpected).toEqual([]);

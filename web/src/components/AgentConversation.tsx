@@ -1,3 +1,4 @@
+import LoadingState from './LoadingState';
 import { Alert, Avatar, Button, Collapse, Modal } from 'antd';
 import { Bubble, Sender } from '@ant-design/x';
 import InspectorActions from './InspectorActions';
@@ -107,7 +108,7 @@ function TraceBody({ entry, autoOpen=false }: {
     <Button size="small" type="text" className={styles.load} aria-expanded={open} onClick={() => setOpen(!open)} htmlType={"button"}>{open ? '收起正文' : '查看正文'}</Button>
     {open && <div className={styles.loaded}>
       <div className={styles.contentActions}><a href={api.evidenceUrl(entry.uri)} download>下载完整记录</a>{visibleText && <Button onClick={() => void copy()} htmlType={"button"}>复制正文</Button>}</div>
-      {!preview && !error && <p role="status">正在读取记录…</p>}
+      {!preview && !error && <LoadingState label="正在读取记录…" />}
       {error && <p role="alert">{error} <Button onClick={() => { setError(''); setPreview(null); setRetry((value) => value + 1); }} htmlType={"button"}>重试</Button></p>}
       {preview?.binary && <p>记录不是可显示的文本，请下载查看。</p>}
       {preview?.truncated && <p>正文过长，仅显示文件开头和结尾。下载可查看完整记录。</p>}
@@ -173,7 +174,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
         header:<div className={styles.entryHead}><strong>{entry.type==='chat'?entry.message.role==='user'?'你':'Agent 回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]+(entry.kind==='initial_context'&&entry.deriveRound?` · 第 ${entry.deriveRound} 轮`:'')}</strong><span>{entry.type!=='chat'?`v${entry.version} · `:''}{formatTime(entry.type==='chat'?entry.message.created_at:entry.type==='tool'?entry.call.createdAt:entry.at)}</span></div>,
         content:<article aria-label={`${entry.type==='chat'?entry.message.role==='user'?'用户消息':'Agent回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]} ${entry.type==='chat'?entry.message.id:'v'+entry.version}`}>{entry.type==='chat'?<ChatMessage message={entry.message} onRetry={text=>{setDraft(text);setSendError('');}} />:entry.type==='tool'?<ToolCall call={entry.call} />:<TraceBody entry={entry} autoOpen={autoExpanded.has(entry.version)} />}</article>,
       }))} />
-      <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:14,lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} onSubmit={()=>void send()} onKeyDown={event=>{if(event.key==='Enter'){if(event.ctrlKey||event.metaKey){event.preventDefault();void send();}return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
+      <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} onSubmit={()=>void send()} onKeyDown={event=>{if(event.key==='Enter'){if(event.ctrlKey||event.metaKey){event.preventDefault();void send();}return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
         {!historical&&review&&messages.data?.session_available===false&&<p className={styles.recordNote}>旧会话未保存，将基于已有黑板和记录开始复盘。</p>}{!historical&&review&&messages.data?.session_available&&messages.data.session_origin==='legacy'&&<p className={styles.recordNote}>此复盘会话基于旧任务记录初始化。</p>}
         {(sendError||messages.error)&&<Alert type="error" title={sendError||messages.error?.message} />}
         <div className={styles.composerHint}><span>{historical?'回放期间不可发送':review?'只读复盘 · 费用单独记录':'下一轮模型调用时送达'}</span><span>Ctrl/⌘+Enter</span></div>

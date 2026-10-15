@@ -64,8 +64,7 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
                 const key = `${server.name}@${server.version}`;
                 return <div key={key} className={styles.mcpChoice}>
           <label className={styles.checkRow}><Checkbox checked={Boolean(bound)} disabled={disabled || (!server.enabled && !bound)} onChange={(event) => changeServer(server.name, server.version, event.target.checked)}/>{server.label}{!server.enabled && <small>已停用</small>}</label>
-          {bound && <><Button className={controls.button} disabled={disabled || inspected === key && loadingTools} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{inspected === key && loadingTools ? `正在读取 ${server.label} 工具…` : `读取 ${server.label} 工具清单`}</Button>
-            {inspected === key && loadingTools && <p className={controls.hint} role="status">正在连接服务并读取工具清单…</p>}
+          {bound && <><Button className={controls.button} disabled={disabled || inspected === key && loadingTools} loading={inspected === key && loadingTools} aria-busy={inspected === key && loadingTools} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{`读取 ${server.label} 工具清单`}</Button>
             {inspected === key && toolError && <p className={controls.error} role="alert">{toolError}</p>}
             {inspected === key && toolList && <div className={styles.toolChecks}>{toolList.map((tool) => <label key={tool.name} className={styles.checkRow}><Checkbox checked={bound.allowed_tools == null || bound.allowed_tools.includes(tool.name)} disabled={disabled} onChange={(event) => {
                                     const current = bound.allowed_tools ?? toolList.map((item) => item.name);
@@ -75,7 +74,7 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
           </>}
         </div>;
             }) : <p className={controls.hint}>平台尚未添加 MCP 服务。</p>}
-      <p className={controls.hint}>未限制时允许该服务全部工具；取消勾选后只允许选中的工具。</p>
+      {selected.length > 0 && <p className={controls.hint}>未设置白名单时允许该服务全部工具。</p>}
     </fieldset>}
     </aside></div><Collapse className={styles.variableHelp} size={"small"} ghost items={[{ key: "content", label: <>配置说明与模板变量</>, children: <><p>提示词下一次模型调用生效；工具仅对新任务生效。</p><p>通用变量：{'{{ goal }}'}、{'{{ domain_context }}'}、{'{{ acceptance_status }}'}、{'{{ agent_id }}'}。</p><p>Explore：current_intent、yaml_snapshot、seed_max_steps、conclude_grace_calls；Derive：facts_text、intents_text、previous_excluded；Close：mode、satisfies_facts、judgment_history、yaml_snapshot。</p></> }]}/>
   </div>;
