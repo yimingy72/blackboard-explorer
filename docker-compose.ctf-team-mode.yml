@@ -8,3 +8,12 @@ services:
 networks:
   exec:
     name: bbx-ctf-team-mode_exec
+
+# This stack has always run on the hyphen-named volumes below; Compose would
+# otherwise derive fresh "<project>_postgres_data" names and silently start on
+# empty volumes (this happened once during the 2026-10-17 toolchain rollout).
+volumes:
+  postgres_data:
+    name: bbx-ctf-team-mode-postgres_data
+  minio_data:
+    name: bbx-ctf-team-mode-minio_data
