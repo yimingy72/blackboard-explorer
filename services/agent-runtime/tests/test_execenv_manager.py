@@ -251,6 +251,12 @@ async def test_wrong_exec_network_is_rejected_before_creation(
     with pytest.raises(RuntimeError, match=error):
         await manager.provision(task_id, profile)
     assert fake.containers.items == []
+    assert await manager.find(task_id) is None
+    fake.containers.create(
+        profile.exec_image,
+        name=f"bbx-exec-{task_id.hex[:8]}",
+        labels=manager._labels(task_id, "envd"),
+    )
     with pytest.raises(RuntimeError, match=error):
         await manager.find(task_id)
 
@@ -264,11 +270,53 @@ async def test_network_mode_fails_fast_when_runtime_is_not_attached(monkeypatch)
         docker_client=cast(docker.DockerClient, fake),
         objects=cast(ObjectStore, Objects()),
     )
-    monkeypatch.setattr(manager_module, "runtime_container_id", lambda: "runtime-container")
+    monkeypatch.setattr(manager_module, "runtime_in_container", lambda: True)
     task_id = uuid4()
     with pytest.raises(RuntimeError, match="not attached to agent-runtime"):
         await manager.provision(task_id, profile)
     assert fake.containers.items == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actual_mac", ["02:42:ac:10:00:01", "02:42:ac:20:00:01", None])
+async def test_network_mode_requires_a_matching_runtime_interface(
+    monkeypatch: pytest.MonkeyPatch, actual_mac: str | None
+) -> None:
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    fake = Docker()
+    fake.networks.network.attrs["Containers"] = {"a" * 64: {"MacAddress": "02:42:ac:10:00:01"}}
+    manager = ExecEnvManager(
+        settings("network"),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+    monkeypatch.setattr(manager_module, "runtime_in_container", lambda: True)
+    monkeypatch.setattr(
+        manager_module, "runtime_network_macs", lambda: {actual_mac} if actual_mac else set()
+    )
+    monkeypatch.setattr(manager, "wait_healthy", AsyncMock())
+    if actual_mac == "02:42:ac:10:00:01":
+        handle = await manager.provision(uuid4(), profile)
+        assert handle.container_id == fake.containers.items[0].id
+    else:
+        with pytest.raises(RuntimeError, match="not attached to agent-runtime"):
+            await manager.provision(uuid4(), profile)
+        assert fake.containers.items == []
+
+
+@pytest.mark.asyncio
+async def test_missing_environment_can_be_found_without_a_working_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ExecEnvManager(
+        settings("network"),
+        docker_client=cast(docker.DockerClient, Docker()),
+        objects=cast(ObjectStore, Objects()),
+    )
+    network = AsyncMock(side_effect=RuntimeError("Execution network is unavailable"))
+    monkeypatch.setattr(manager, "_execution_network", network)
+    assert await manager.find(uuid4()) is None
+    network.assert_not_awaited()
 
 
 @pytest.mark.asyncio
