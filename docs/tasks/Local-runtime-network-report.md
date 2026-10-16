@@ -50,3 +50,5 @@ hostname 不等于容器 ID 是部署实现细节；设计要求 runtime 实际�
 用户随后明确要求将本地修复与服务器部署补丁一起提交、合并 main、推送 GitHub 并更新服务器，取代上文检查点的未发布状态。本地修复提交为 `f5fe10b`，服务器兼容代码/文档为 `6894cac`、`cebb39d`，二者自动合并无冲突。
 
 合并后重新执行 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache make check`：**2135 passed、351 deselected，59.22 秒**，ruff/pyright 全绿；对应 Docker 生命周期/真实 CTF 链路 **7 passed，73.93 秒**。集成测试同时只读挂载当前 manager 与 Settings，保证旧基础镜像也验证合并源码，而非混用新管理器和旧配置类。未调用真实模型或访问原任务目标。合并验证证据位于 `.data/combined-release/`；服务器实际发布与数据核对另见 Server-deployment 报告的补充记录。
+
+代码已合并 main 为 `d1dffd3` 并推送 `origin/main`，远端 HEAD 已核对。服务器已更新两份兼容补丁，Ubuntu/Kali 两模式实测通过；本地已安装的网络修复和原18任务保持，未将本机新增数据覆盖服务器。后续发布文档与 HANDOFF 的提交不改变上述运行代码。

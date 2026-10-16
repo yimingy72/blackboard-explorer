@@ -63,9 +63,11 @@
   | Login-session-cache | ✅ 登录成功后清除旧会话查询，修复过期401缓存导致重复返回登录页；117项前端检查、构建及浏览器过期重登验证通过，已部署并合并main，账号和数据保持（2026-10-15） |
   | Home-ui-polish | ✅ 首页任务列表、统一读取反馈/跳转及响应式细节已单独提交 `5c169de`，随流量功能合并main；沿用Ant Design，无后端或任务规则变更（2026-10-15） |
   | Traffic-observability | ✅ 两模式按Agent采集TCP/UDP/ICMP及HTTPS、MinIO归档、官方Wireshark原生过滤/协议树/字节联动与统一前端已部署并合并main；2129普通/345隔离集成/129前端/12原生浏览器交互通过，17任务/99会话及配置保留（2026-10-15） |
+  | Local-runtime-network / Server-deployment | ✅ 本地网络误判/失败清理、Linux AppArmor兼容已合并main为 `d1dffd3` 并推送，服务器完整迁移及新版本更新完成；合并源码2135普通/7项相关Docker集成、服务器Ubuntu/Kali实际执行与原生解析通过，21张业务表及当前存档保持（2026-10-16） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **最新交付**：首页样式 `5c169de`、流量采集与原生解析 `4fd4da8`、统一查看前端 `acf5625` 已合并main为 `aec9f62`。两模式共用Agent归属、HTTPS解码、MinIO存档与官方Wireshark 4.4.19显示过滤；完整原生解析按快照更新，不把逻辑调用冒充数据包。沿用同版2129普通、345隔离集成、129前端及12项原生浏览器检查，合并后140个候选文件逐字节一致。入口 `http://127.0.0.1:58000/`；当前blackboard标签 `cdf594fc…`、runtime `7c7ee3ee…`、Kali `c83fc64a…`、Ubuntu `1735df94…`。本地17任务/99会话及配置保留；旧轮不能补录原生输入/密钥。此次Git发布不重启服务。见[流量报告](tasks/Traffic-observability-report.md)及第0.5节。
+- **最新交付**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，服务器已更新，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。服务器入口 `http://101.201.116.63:58000/`，原本机账号；17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致。本地 `http://127.0.0.1:58000/` 已安装网络修复，18任务保持；两端数据不自动双向同步。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
+- **流量版本交付记录**：首页样式 `5c169de`、流量采集与原生解析 `4fd4da8`、统一查看前端 `acf5625` 已合并main为 `aec9f62`。两模式共用Agent归属、HTTPS解码、MinIO存档与官方Wireshark 4.4.19显示过滤；完整原生解析按快照更新，不把逻辑调用冒充数据包。沿用同版2129普通、345隔离集成、129前端及12项原生浏览器检查，合并后140个候选文件逐字节一致。该检查点入口 `http://127.0.0.1:58000/`；blackboard标签 `cdf594fc…`、runtime `7c7ee3ee…`、Kali `c83fc64a…`、Ubuntu `1735df94…`。当时本地17任务/99会话及配置保留；旧轮不能补录原生输入/密钥。该次Git发布未重启服务。见[流量报告](tasks/Traffic-observability-report.md)及第0.5节。
 - **登录修复记录**：`97aa713` 已合并main为 `b8b3f20`。成功登录后清除旧会话查询，避免旧401错误再次触发返回登录；117项前端检查、构建及浏览器过期重登验证通过。账号、任务及配置保持；其历史镜像由上述流量版本替代。见[登录修复报告](tasks/Login-session-cache-report.md)及第0.4节。
 - **普通黑板重构交付记录**：普通黑板重构与架构优化按前端、性能、稳定性、记账及文档分组提交，后端/前端分别合并main为 `a397c02`、`d7a9937`。当时源码与部署版本一致，main的Python与前端检查分别1971/117通过，原340项隔离集成及36项Mock浏览器证据沿用同版源码。该检查点候选镜像runtime为 `4e04a5b0…`、blackboard为 `d9b7ca1b…`，发布时13任务/80会话及13张业务表摘要保持；Git发布未重启服务、未运行真实模型或靶机。见[普通黑板报告](tasks/Blackboard-refresh-report.md)及第0.3节。
 - **CTF可靠性交付记录**：2026-10-13的代码与测试 `ded93ee`、提示词 `1f4341c`、文档 `118b393` 已合并main为 `d457785`。当时1359普通/228集成通过、9任务/56会话与配置保持；本地镜像与Worker revision13属于该历史检查点，后续版本以上述最新交付为准。见[收尾与上下文修复报告](tasks/CTF-close-context-fix-report.md)。
@@ -114,6 +116,14 @@ Git同步目标为`origin/main`，仓库为`yimingy72/blackboard-explorer`；结
 沿用此次源码已完成的 `make check` 2129 passed、隔离Docker集成345 passed、前端129 passed/构建、四组件Ant Design lint各0 issues和12项真实官方引擎浏览器交互检查。Git发布没有代码变更，不重复跑模型或完整集成。原生检查覆盖TLS解密/跨片重组、Agent独立源、过滤语法、生成字段/字节数据源、错误/缓存淘汰恢复；旧版本V2结果与最终V3结果分开记录，不能相加。MinIO/数据库及已部署服务保持不变，正式静态11个资源hash已核验一致。
 
 同步目标为 `origin/main`（`yimingy72/blackboard-explorer`），推送后核对远端HEAD。未打包`.env`、`.data`、原始流量、私有密钥、依赖目录或构建产物。ui-rebuild原工作树及其其他未跟踪材料保持，任务分支保留忽略的验证证据；不删除工作树、不重启容器。Git发布检查记录位于 `~/bbx-wt/traffic-observability/.data/traffic/git-publication/`。
+
+### 0.6 2026-10-16 本地修复与服务器兼容发布
+
+用户明确要求两份补丁一起提交、合并main、推送GitHub及同步服务器。代码分组提交为 `f5fe10b`（本地网络/失败清理）、`6894cac`（AppArmor配置/策略/回归）、`cebb39d`（迁移部署记录），合并验证为 `61e39ce`，main合并为 `d1dffd3`；没有冲突。整仓普通检查2135 passed、351 deselected，ruff/pyright全绿；7项相关Docker集成通过，包含自定义/短hostname、真实未接网拒绝、direct/proxy归档恢复与脚本化CTF链路。未调用真实模型或目标。
+
+服务器运行代码镜像为 `bbx-agent-runtime:server-d1dffd3`（`2e51b194e91c…`）、`bbx-blackboard:d1dffd3`（`f34091142dda…`）；blackboard/前端代码未变，复用原验证镜像，runtime禁网增加两文件兼容层。发布后文档同步不重建相同代码。执行网络 `bbx-production_exec`、定向AppArmor enforce及私有部署参数保持；运维使用 `/opt/blackboard-explorer/operations/compose.py`，不读取.env、不输出完整含凭据配置。
+
+更新前无活动任务，更新后原登录/3个模型配置、公网12静态文件、Ubuntu/Kali实际双Agent执行与MinIO归档/原生解析通过。21张表完整摘要、17任务、99会话、29Profile、5平台配置、当前28,227对象/303,462,819字节保持；测试执行容器与精确UUID合成对象清理完毕。Postgres/MinIO及其他项目容器未替换，原443服务保持。服务器只更新代码，不重新迁移本机后来新增的任务。部署检查点与备份/恢复位置见两份报告；证据在忽略的 `.data/combined-release/`，开发工作树保留。
 
 ## 1. 仓库与文档
 
@@ -422,6 +432,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Local-runtime-network / Server-deployment为既有执行网络和生命周期的兼容修复：通过实际接口MAC核验runtime接网，不以hostname推断容器ID；未创建envd时查找可直接返回空。Linux主机可选择已加载的定向AppArmor策略，relay与Agent能力边界保持。两者不改变领域/调度/会话规则，不新增设计待同步项；三份设计正本未改。部署细节、兼容策略与验证见对应任务报告及 `deploy/apparmor/README.md`，既有设计待办保持。
 
 Traffic-observability已按用户确认先同步实现架构9.2–9.4并实现：同容器文件/软件共享、每Agent独立网络采集源、TLS任务CA/官方mitmproxy及私有keylog、MinIO逐轮归档/删除、官方sharkd源内重组和原生过滤、统一列表及数据源字节联动。原生表达式以部署Wireshark版本为准，`frame.number/tcp.stream`按来源解释；结果有覆盖/资源/数量限制，逻辑调用不假冒wire，旧档案不补造解密材料。索引与缓存限额、终态ACK、隐私边界及存储约两倍原包的当前限制均已写入设计/部署说明与[报告](tasks/Traffic-observability-report.md)。本轮没有新增待同步设计项，既有通用/CTF规则待办保持。首页样式基线为组件/交互整理，不改变领域规则。
 
