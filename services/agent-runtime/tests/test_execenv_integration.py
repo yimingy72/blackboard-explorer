@@ -24,6 +24,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import SecretStr
 from testcontainers.core.container import DockerContainer
+from testcontainers.core.network import Network
 
 pytestmark = pytest.mark.integration
 
@@ -45,6 +46,89 @@ async def command(handle: ExecEnvHandle, value: str) -> dict:
                 assert not result.isError
                 assert result.structuredContent is not None
                 return result.structuredContent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hostname", ["preserved-runtime-hostname", "a"])
+async def test_custom_hostname_runtime_provisions_only_on_its_attached_network(
+    hostname: str,
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    identifier = uuid4().hex[:8]
+    script = """
+import asyncio, socket
+from pathlib import Path
+from uuid import uuid4
+from bbx_contracts.profile import load_profile
+from bbx_runtime.clients import EnvdClient
+from bbx_runtime.execenv.manager import ExecEnvManager
+from bbx_runtime.settings import Settings
+from pydantic import SecretStr
+
+async def main():
+    assert socket.gethostname() == EXPECTED_HOSTNAME
+    settings = Settings.model_construct(
+        minio_root_password=SecretStr('unused-test-secret'),
+        service_token=SecretStr('unused-test-service'),
+        envd_token_secret=SecretStr('isolated-network-test'),
+        exec_network=NETWORK,
+        traffic_enabled=False,
+    )
+    manager = ExecEnvManager(settings)
+    profile, _ = load_profile(Path('/app/profiles/default'))
+    profile.exec_resources.mem = '512m'
+    task = uuid4()
+    try:
+        handle = await manager.provision(task, profile)
+        async with EnvdClient(handle.base_url, handle.token) as client:
+            assert (await client.health())['status'] == 'ok'
+        settings.exec_network = OTHER_NETWORK
+        try:
+            await manager._execution_network()
+        except RuntimeError as error:
+            assert 'not attached to agent-runtime' in str(error)
+        else:
+            raise AssertionError('An unattached execution network was accepted')
+        settings.exec_network = NETWORK
+        print('custom_hostname_provisioned_and_unattached_network_rejected')
+    finally:
+        await manager.destroy(task)
+    assert await manager.find(task) is None
+
+asyncio.run(main())
+"""
+    with Network() as attached, Network() as other:
+        source = root / "services/agent-runtime/src/bbx_runtime/execenv/manager.py"
+        controller = (
+            DockerContainer("bbx-agent-runtime:latest")
+            .with_name(f"bbx-runtime-network-{identifier}")
+            .with_network(attached)
+            .with_kwargs(hostname=hostname)
+            .with_volume_mapping("/var/run/docker.sock", "/var/run/docker.sock", mode="rw")
+            .with_volume_mapping(
+                str(source),
+                "/app/services/agent-runtime/src/bbx_runtime/execenv/manager.py",
+                mode="ro",
+            )
+            .with_volume_mapping(
+                str(source.parent.parent / "settings.py"),
+                "/app/services/agent-runtime/src/bbx_runtime/settings.py",
+                mode="ro",
+            )
+            .with_command(["sleep", "120"])
+        )
+        with controller:
+            code, output = await asyncio.to_thread(
+                controller.exec,
+                [
+                    "python",
+                    "-c",
+                    f"NETWORK={attached.name!r}\nOTHER_NETWORK={other.name!r}\nEXPECTED_HOSTNAME={hostname!r}\n"
+                    + script,
+                ],
+            )
+            assert code == 0, output
+            assert b"custom_hostname_provisioned_and_unattached_network_rejected" in output
 
 
 @pytest.mark.asyncio

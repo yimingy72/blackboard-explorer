@@ -24,6 +24,9 @@ class Settings(ControlSettings):
     exec_network: str = "blackboard-explorer_exec"
     exec_access_mode: Literal["network", "relay"] = "network"
     exec_egress_mode: Literal["direct", "proxy"] = "direct"
+    exec_apparmor_profile: str | None = Field(
+        default=None, pattern=r"^bbx-[a-z0-9][a-z0-9_.-]{0,62}$"
+    )
     egress_proxy_url: str = "http://egress-proxy:8888"
     max_running_tasks: int = Field(default=1, ge=1)
     otel_enabled: bool = False

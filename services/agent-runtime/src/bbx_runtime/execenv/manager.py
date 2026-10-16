@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import logging
-import socket
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -94,11 +93,20 @@ class ArchiveResult:
     fallback: str
 
 
-def runtime_container_id() -> str | None:
-    """Return the local Docker container ID when running inside a container."""
-    if not Path("/.dockerenv").exists():
-        return None
-    return socket.gethostname()
+def runtime_in_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def runtime_network_macs() -> set[str]:
+    addresses = set()
+    for path in Path("/sys/class/net").glob("*/address"):
+        try:
+            address = path.read_text().strip().lower()
+        except OSError:
+            continue
+        if len(address) == 17 and address != "00:00:00:00:00:00":
+            addresses.add(address)
+    return addresses
 
 
 class ExecEnvManager:
@@ -137,23 +145,20 @@ class ExecEnvManager:
         if network.attrs.get("Internal") is not required_internal:
             expected = "internal" if required_internal else "non-internal"
             raise RuntimeError(f"Execution network {self.settings.exec_network} must be {expected}")
-        if self.settings.exec_access_mode == "network":
-            runtime_id = runtime_container_id()
+        if self.settings.exec_access_mode == "network" and runtime_in_container():
             containers = network.attrs.get("Containers")
-            if (
-                runtime_id
-                and containers is not None
-                and not any(
-                    runtime_id == container_id
-                    or runtime_id.startswith(container_id)
-                    or container_id.startswith(runtime_id)
-                    for container_id in containers
+            if containers is not None:
+                # A hostname can be customized or copied from an old container.
+                addresses = runtime_network_macs()
+                attached = any(
+                    (endpoint.get("MacAddress") or "").lower() in addresses
+                    for endpoint in containers.values()
                 )
-            ):
-                raise RuntimeError(
-                    f"Execution network {self.settings.exec_network} is not attached to "
-                    "agent-runtime; set EXEC_NETWORK to the shared Compose exec network"
-                )
+                if not attached:
+                    raise RuntimeError(
+                        f"Execution network {self.settings.exec_network} is not attached to "
+                        "agent-runtime; set EXEC_NETWORK to the shared Compose exec network"
+                    )
         return network
 
     async def _role(self, task_id: UUID, role: str) -> Any | None:
@@ -205,6 +210,9 @@ class ExecEnvManager:
             environment.update(
                 {key: proxy for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
             )
+        security_options: dict[str, Any] = {}
+        if self.settings.exec_apparmor_profile:
+            security_options["security_opt"] = [f"apparmor={self.settings.exec_apparmor_profile}"]
         container = await asyncio.to_thread(
             self.docker.containers.create,
             profile.exec_image,
@@ -223,6 +231,7 @@ class ExecEnvManager:
                 else {}
             ),
             devices=["/dev/net/tun:/dev/net/tun:rwm"],
+            **security_options,
             read_only=False,
             nano_cpus=int(profile.exec_resources.cpus * 1_000_000_000),
             mem_limit=profile.exec_resources.mem,
@@ -346,10 +355,10 @@ class ExecEnvManager:
 
     async def find(self, task_id: UUID | str) -> ExecEnvHandle | None:
         task = self._task(task_id)
-        await self._execution_network()
         envd = await self._role(task, "envd")
         if envd is None:
             return None
+        await self._execution_network()
         await self._running(envd)
         relay = None
         if self.settings.exec_access_mode == "relay":
