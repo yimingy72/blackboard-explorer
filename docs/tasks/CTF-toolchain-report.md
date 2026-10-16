@@ -90,17 +90,19 @@ uv run pytest services/agent-runtime/tests/test_ctf_view_image.py services/agent
 - 真实模型任务：需要费用与授权，本轮未跑（“看图”能力的真实端到端验证需要支持视觉的模型；当前 CTF profile 用的 DeepSeek flash 不支持图片，工具会按能力门控直接拒绝）。
 - 未访问任何靶机；未调用 live/e2e/eval 命令。
 
-## 3. 需要用户执行的命令
+## 3. 需要用户执行的命令（可选清理）
 
-1. 本地/服务器平台都要为**新任务**才能用上新执行镜像：已运行任务继续使用原容器与旧镜像，属于预期行为。
-2. 本机 Docker 构建缓存已积累到约 247 GB，磁盘剩余约 130 GB。若要回收（会失去镜像重建的缓存加速）：
+1. 新执行镜像只对**新建任务**生效；已运行/已结束的任务保留原容器与旧镜像，属于预期行为。
+2. 本机：旧执行镜像已变为无标签的悬空镜像，构建缓存约 247 GB（磁盘剩余约 130 GB）。确认新任务正常后可回收：
    ```bash
-   docker builder prune -f
+   docker image prune -f        # 只删悬空镜像
+   docker builder prune -f      # 释放构建缓存（会失去后续重建的加速）
    ```
-3. 服务器上的旧执行镜像（`bbx-exec-env-kali` 更早版本、约 2.8 GB）在新版本验证通过后可删除：
+3. 本机的两个空卷 `bbx-ctf-team-mode_postgres_data` / `bbx-ctf-team-mode_minio_data` 是本次误建的空卷（无容器挂载、无数据），确认后可删：
    ```bash
-   ssh root@101.201.116.63 'docker image rm <旧镜像ID>'
+   docker volume rm bbx-ctf-team-mode_postgres_data bbx-ctf-team-mode_minio_data
    ```
+4. 服务器：旧执行镜像已被 `docker load` 重命名为悬空镜像，旧平台镜像 `bbx-blackboard:d1dffd3` / `bbx-agent-runtime:server-d1dffd3` 仍保留作为回滚点；确认后可 `docker image prune -f`。
 
 ## 4. 偏差与待决
 
