@@ -125,6 +125,7 @@ Git同步目标为`origin/main`，仓库为`yimingy72/blackboard-explorer`；结
 
 更新前无活动任务，更新后原登录/3个模型配置、公网12静态文件、Ubuntu/Kali实际双Agent执行与MinIO归档/原生解析通过。21张表完整摘要、17任务、99会话、29Profile、5平台配置、当前28,227对象/303,462,819字节保持；测试执行容器与精确UUID合成对象清理完毕。Postgres/MinIO及其他项目容器未替换，原443服务保持。服务器只更新代码，不重新迁移本机后来新增的任务。部署检查点与备份/恢复位置见两份报告；证据在忽略的 `.data/combined-release/`，开发工作树保留。
 
+- **CTF 工具链与看图（2026-10-17）**：Kali 执行镜像补齐 CTF 工具链——SageMath 10.9（conda-forge 独立前缀）、ghidra、radare2、hashcat（含 CPU OpenCL）、john、ffuf/gobuster、node/npm、angr/fpylll、pwndbg/gef/checksec、seccomp-tools/one_gadget、取证与移动工具、ssh/dig/nc，排除浏览器自动化；`make image-exec-env-kali` 构建，`scripts/verify-exec-env-kali.sh` 48 项功能验收（真实解压、反编译、爆破、LLL、angr 加载等）全部通过，envd 契约套件用 `EXEC_ENV_IMAGE` 参数化后在 Kali 镜像上同样通过。CTF 成员新增 `view_image`：复用普通模式的原生图片通道（工具返回引用、字节入对象存储、下一次模型调用注入原生图片、会话只留引用），角色白名单与模型能力门控沿用既有规则。本地以 main `408369e` 重建镜像并部署，发布 CTF profile v18；服务器发布 profile v16（执行镜像与平台镜像均已更新）。另修复 `up -d` 会让本地 CTF 栈挂载到 Compose 默认推导空卷的问题（`f8d2afd` 显式固定历史卷），数据核验无损。详见 [CTF-toolchain 报告](tasks/CTF-toolchain-report.md)。
 ## 1. 仓库与文档
 
 ```

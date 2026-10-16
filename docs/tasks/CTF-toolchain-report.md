@@ -108,3 +108,28 @@ uv run pytest services/agent-runtime/tests/test_ctf_view_image.py services/agent
 - **pwndbg 与 gef 并存**：pwndbg 用自带 gdb（`pwndbg` 命令），gef 用系统 gdb（`gef` 命令或 `source /usr/share/gdb/gef.py`），互不干扰；普通 `gdb` 仍是 Kali 原版。
 - **Kali rolling 版本不固定**：apt 层工具随 Kali 滚动；上游固定版本的是 micromamba、SageMath、angr/fpylll、pwndbg（均有 SHA-256 或精确版本）。
 - 未做：真实模型任务端到端跑一轮（需用户授权与费用）；服务器部署见第 3 节。
+
+## 5. 部署记录（2026-10-17）
+
+### 5.1 本地
+
+- 以 main `408369e` 重建前端（`pnpm --dir web build`）、`bbx-blackboard`、`bbx-agent-runtime`；打标签 `bbx-ctf-blackboard:latest`、`bbx-ctf-toolchain-blackboard:20261017`、`bbx-ctf-toolchain-runtime:20261017`（旧镜像 ID：blackboard `cdf594fc…`、runtime `443bbaea…`，未删除，可回滚）。
+- 重新部署 `bbx-ctf-team-mode` 栈：blackboard/agent-runtime 用新镜像，PostgreSQL/MinIO 卷不变；`http://127.0.0.1:58000/login` 返回 200，任务接口正常。
+- 发布 CTF profile **v18**：`exec_image=bbx-exec-env-kali:latest`（新镜像）、`worker_tools` 两角色加入 `view_image`、`prompt_templates` 更新为仓库版本（含预装工具链与 view_image 说明）。`exec_resources` 仍为 8g/3.0cpu/1024pids。
+
+**过程中发生并已修复的事故**：`scripts/deploy_ctf_team_mode.sh up -d`（不带 `--no-deps`）把 PostgreSQL/MinIO 重建到 Compose 默认推导的 `bbx-ctf-team-mode_postgres_data`/`_minio_data`（下划线）卷上，平台因此读到空库（任务与 profile 看起来“消失”）。真实数据一直在历史连字符卷 `bbx-ctf-team-mode-postgres_data`/`-minio_data` 中。修复：在 `docker-compose.ctf-team-mode.yml` 中显式 `name:` 固定这两个历史卷（提交 `f8d2afd`），重新 `up -d` 后容器挂回原卷；核验 19 个任务、`ctf` v17 及全部会话/存档均在，随后才发布 v18。误建的两个下划线空卷仍保留（无容器挂载），确认无用后可删。
+
+### 5.2 服务器（101.201.116.63）
+
+- 通过 SSH 流式传输镜像：`bbx-exec-env-kali`（含 `20261017` 标签）、`bbx-blackboard:408369e`、`bbx-agent-runtime:server-408369e-20261017`；源码发布到 `/opt/blackboard-explorer/releases/f8d2afd` 并切换 `current`。
+- `operations/compose.server.yml` 的镜像标签由 `d1dffd3` 系列改为新标签（原文件备份为 `compose.server.yml.bak-20261017`）；`compose.py up -d --wait blackboard agent-runtime` 重建成功，PostgreSQL/MinIO 未重启（17 小时运行、卷不变）。
+- 发布服务器 CTF profile **v16**（v15 → v16，同样内容）；`http://101.201.116.63:58000/login` 返回 200。
+- 部署前确认没有运行中的任务（1 stopped / 6 failed / 10 finished），未删除任何数据卷。
+
+### 5.3 Git
+
+- `534800a feat(exec-env): add the CTF toolchain layer to the Kali image`
+- `1e2ebf9 feat(ctf): let members send container images to the model`
+- `408369e docs(ctf): record the CTF toolchain and image-view work`
+- `f8d2afd fix(compose): pin the CTF stack to its historical volumes`
+- 均已合并到 main 并推送到 GitHub。
