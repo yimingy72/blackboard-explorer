@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -111,6 +112,134 @@ async def hydrate_image_messages(
         raise
 
 
+def vision_refusal(model: Any) -> str | None:
+    """Return the refusal message when the model cannot receive native images."""
+    if getattr(model, "supports_vision", None) is False:
+        return "当前模型配置明确不支持看图，未读取图片。请改用支持视觉的模型。"
+    if getattr(model, "provider", None) == "bedrock":
+        return "当前 Bedrock 连接器会丢弃图片输入，未读取图片。请改用支持图片传递的连接方式。"
+    if (
+        getattr(model, "provider", None) == "deepseek"
+        or urlsplit(getattr(model, "base_url", "") or "").hostname == "api.deepseek.com"
+    ) and str(getattr(model, "model", "")).lower() == "deepseek-v4-pro":
+        return "当前 DeepSeek V4 Pro 模型不支持图片输入，未读取图片。"
+    return None
+
+
+def pending_images(state: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the mutable pending-image list stored in a session state."""
+    pending = state.get(IMAGE_STATE_KEY)
+    if not isinstance(pending, list):
+        pending = []
+        state[IMAGE_STATE_KEY] = pending
+    return pending
+
+
+async def stage_image(
+    *,
+    task_id: str,
+    agent_id: str,
+    state: dict[str, Any],
+    objects: Any,
+    data: bytes,
+    stored_uri: str | None = None,
+) -> str:
+    """Bound, verify and queue image bytes; the next model call receives them."""
+    if len(data) > IMAGE_MAX_BYTES:
+        return "图片超过 10 MiB 上限，请先缩小图片。"
+    detected = _media_type(data)
+    if detected is None:
+        return "图片格式无效；仅支持 PNG、JPEG 或 WebP。"
+    media_type, extension = detected
+    digest = hashlib.sha256(data).hexdigest()
+    if stored_uri is None:
+        uri = f"evidence/{task_id}/{agent_id}/view-{digest}.{extension}"
+        try:
+            if not await objects.exists(uri):
+                await objects.put(uri, data, content_type=media_type)
+        except Exception:
+            return "图片持久化失败，未送入模型。"
+    else:
+        uri = stored_uri
+    record = {
+        "uri": uri,
+        "sha256": digest,
+        "media_type": media_type,
+        "message_id": f"bbx-view-{uuid4()}",
+    }
+    pending_images(state).append(record)
+    records = state.setdefault(IMAGE_RECORDS_KEY, {})
+    records[record["message_id"]] = record
+    return f"图片 {uri} 已读取，将在下一次模型调用中作为原生图片输入。"
+
+
+async def inject_pending_images(
+    *,
+    task_id: str,
+    state: dict[str, Any],
+    read_evidence: Callable[[str], Awaitable[bytes]],
+    messages: list[Message],
+) -> ImageInjection:
+    """Rehydrate image history and append pending images for the model request."""
+    pending = pending_images(state)
+    history = state.get("in_memory", {})
+    history_messages = history.get("messages", []) if isinstance(history, dict) else []
+    saved_ids = {item.message_id for item in history_messages if item.role == "user"}
+    pending[:] = [record for record in pending if record["message_id"] not in saved_ids]
+    records = state.get(IMAGE_RECORDS_KEY, {})
+    added: list[Message] = []
+    for record in pending:
+        message = Message(
+            role="user",
+            message_id=record["message_id"],
+            contents=[Content.from_text(f"[图片查看] {record['uri']}")],
+        )
+        messages.append(message)
+        added.append(message)
+    hydrated: list[Message] = []
+    try:
+        for message in messages:
+            record = records.get(message.message_id)
+            if not isinstance(record, dict):
+                continue
+            if any(content.type == "data" for content in message.contents):
+                continue
+            content = await _image_content(task_id, record, read_evidence)
+            message.contents.append(content)
+            hydrated.append(message)
+    except Exception:
+        finish_pending_images(messages, ImageInjection(added, hydrated), sent=False)
+        raise
+    return ImageInjection(added, hydrated)
+
+
+async def run_with_image_injection(
+    context: ChatContext, messages: list[Message], injection: ImageInjection, call_next: Callable
+) -> None:
+    """Call the model with injected images, restoring history-only references."""
+    try:
+        await call_next()
+    except BaseException:
+        finish_pending_images(messages, injection, sent=False)
+        raise
+    if isinstance(context.result, ResponseStream):
+        inner = context.result
+
+        async def updates():
+            sent = False
+            try:
+                async for update in inner:
+                    yield update
+                await inner.get_final_response()
+                sent = True
+            finally:
+                finish_pending_images(messages, injection, sent=sent)
+
+        context.result = ResponseStream(updates(), finalizer=lambda _: inner.get_final_response())
+    else:
+        finish_pending_images(messages, injection, sent=True)
+
+
 def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> FunctionTool:
     """Return a reference now; deliver image bytes to the next model request."""
     read_only = read_only or ctx.task_type != "explore"
@@ -119,19 +248,13 @@ def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> Functio
     async def view_image(path_or_uri: str) -> str:
         """查看本任务已保存的资料/证据图片；仅 Explore 可读 /workspace。"""
         model = getattr(ctx.profile.models, ctx.task_type)
-        if getattr(model, "supports_vision", None) is False:
-            return "当前模型配置明确不支持看图，未读取图片。请改用支持视觉的模型。"
-        if model.provider == "bedrock":
-            return "当前 Bedrock 连接器会丢弃图片输入，未读取图片。请改用支持图片传递的连接方式。"
-        if (
-            model.provider == "deepseek"
-            or urlsplit(getattr(model, "base_url", "")).hostname == "api.deepseek.com"
-        ) and model.model.lower() == "deepseek-v4-pro":
-            return "当前 DeepSeek V4 Pro 模型不支持图片输入，未读取图片。"
+        refusal = vision_refusal(model)
+        if refusal is not None:
+            return refusal
         if ctx.checkpoint is None:
             return "图片会话尚未就绪，无法保证把图片送入模型。"
-        pending = ctx.checkpoint.session.state.setdefault(IMAGE_STATE_KEY, [])
-        if len(pending) >= IMAGE_MAX_PENDING:
+        state = ctx.checkpoint.session.state
+        if len(pending_images(state)) >= IMAGE_MAX_PENDING:
             return "已有过多待看的图片，请先处理当前图片。"
         if path_or_uri.startswith("/workspace/"):
             if read_only:
@@ -155,32 +278,14 @@ def make_view_image_tool(ctx: RunContext, *, read_only: bool = False) -> Functio
                 return f"无法读取证据图片：{exc.message}"
         else:
             return "图片引用无效，请使用本任务 /workspace 路径或已登记的资料/证据 URI。"
-        if len(data) > IMAGE_MAX_BYTES:
-            return "图片超过 10 MiB 上限，请先缩小图片。"
-        detected = _media_type(data)
-        if detected is None:
-            return "图片格式无效；仅支持 PNG、JPEG 或 WebP。"
-        media_type, extension = detected
-        digest = hashlib.sha256(data).hexdigest()
-        if read_only:
-            uri = path_or_uri
-        else:
-            uri = f"evidence/{ctx.task_id}/{ctx.agent_id}/view-{digest}.{extension}"
-            try:
-                if not await ctx.objects.exists(uri):
-                    await ctx.objects.put(uri, data, content_type=media_type)
-            except Exception:
-                return "图片持久化失败，未送入模型。"
-        record = {
-            "uri": uri,
-            "sha256": digest,
-            "media_type": media_type,
-            "message_id": f"bbx-view-{uuid4()}",
-        }
-        pending.append(record)
-        records = ctx.checkpoint.session.state.setdefault(IMAGE_RECORDS_KEY, {})
-        records[record["message_id"]] = record
-        return f"图片 {uri} 已读取，将在下一次模型调用中作为原生图片输入。"
+        return await stage_image(
+            task_id=ctx.task_id,
+            agent_id=ctx.agent_id,
+            state=state,
+            objects=ctx.objects,
+            data=data,
+            stored_uri=path_or_uri if read_only else None,
+        )
 
     return view_image
 
@@ -190,36 +295,16 @@ async def append_pending_images(ctx: RunContext, messages: list[Message]) -> Ima
     checkpoint = ctx.checkpoint
     if checkpoint is None:
         return ImageInjection([], [])
-    pending: list[dict[str, str]] = checkpoint.session.state.get(IMAGE_STATE_KEY, [])
-    history = checkpoint.session.state.get("in_memory", {})
-    history_messages = history.get("messages", []) if isinstance(history, dict) else []
-    saved_ids = {item.message_id for item in history_messages if item.role == "user"}
-    pending[:] = [record for record in pending if record["message_id"] not in saved_ids]
-    records = checkpoint.session.state.get(IMAGE_RECORDS_KEY, {})
-    added: list[Message] = []
-    for record in pending:
-        message = Message(
-            role="user",
-            message_id=record["message_id"],
-            contents=[Content.from_text(f"[图片查看] {record['uri']}")],
-        )
-        messages.append(message)
-        added.append(message)
-    hydrated: list[Message] = []
-    try:
-        for message in messages:
-            record = records.get(message.message_id)
-            if not isinstance(record, dict):
-                continue
-            if any(content.type == "data" for content in message.contents):
-                continue
-            content = await _image_content(ctx.task_id, record, ctx.board.read_evidence)
-            message.contents.append(content)
-            hydrated.append(message)
-    except Exception:
-        finish_pending_images(messages, ImageInjection(added, hydrated), sent=False)
-        raise
-    return ImageInjection(added, hydrated)
+
+    async def read_evidence(uri: str) -> bytes:
+        return await ctx.board.read_evidence(uri)
+
+    return await inject_pending_images(
+        task_id=ctx.task_id,
+        state=checkpoint.session.state,
+        read_evidence=read_evidence,
+        messages=messages,
+    )
 
 
 def finish_pending_images(
@@ -243,29 +328,7 @@ class ImageViewMiddleware(ChatMiddleware):
         context.messages = list(context.messages)
         messages = context.messages
         injection = await append_pending_images(self.ctx, messages)
-        try:
-            await call_next()
-        except BaseException:
-            finish_pending_images(messages, injection, sent=False)
-            raise
-        if isinstance(context.result, ResponseStream):
-            inner = context.result
-
-            async def updates():
-                sent = False
-                try:
-                    async for update in inner:
-                        yield update
-                    await inner.get_final_response()
-                    sent = True
-                finally:
-                    finish_pending_images(messages, injection, sent=sent)
-
-            context.result = ResponseStream(
-                updates(), finalizer=lambda _: inner.get_final_response()
-            )
-        else:
-            finish_pending_images(messages, injection, sent=True)
+        await run_with_image_injection(context, messages, injection, call_next)
 
 
 def strip_image_history(session: AgentSession) -> None:

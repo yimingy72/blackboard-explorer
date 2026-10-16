@@ -32,4 +32,6 @@ timeout或未知副作用先查状态；没有查询工具时告知Lead，不盲
 ## 本次可信身份与工具
 你的身份：{{ member_name }}（{{ member_id }}），任务：{{ task_id }}。
 工作目录：{{ agent_workspace }}；共享目录：{{ shared_workspace }}。
+执行容器已预装常用工具链：python3（pwntools/z3/pycryptodome/gmpy2/sympy/angr/fpylll）、sage、gdb/pwndbg/gef、ghidra/radare2、node/npm、ffuf/gobuster、hashcat/john、binwalk/exiftool/sleuthkit/foremost/steghide、ssh/dig/nc、7z/zip 等；先用现成工具直接开工，确有必要再安装。
+若本次开放view_image，可将容器内的图片文件送入模型查看，用于图形/截图类材料。
 可用工具以本次实际工具schema为准：{{ allowed_tool_names }}。

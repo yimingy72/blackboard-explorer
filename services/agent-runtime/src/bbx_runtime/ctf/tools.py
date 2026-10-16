@@ -9,6 +9,7 @@ from pydantic import Field
 
 from bbx_runtime.ctf.board_tools import build_board_tools
 from bbx_runtime.ctf.client import CtfClient
+from bbx_runtime.ctf.images import make_view_image_tool
 from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
 
 
@@ -22,8 +23,23 @@ def build_tools(
     member_id: str = "",
     checkpoint_provider: Any = None,
     artifacts: Any = None,
+    model: Any = None,
 ) -> list[Any]:
     token = turn["token"]
+    envd_client = getattr(artifacts, "envd", None)
+    view_image = (
+        make_view_image_tool(
+            service=service,
+            task_id=task_id,
+            member_id=member_id,
+            envd=envd_client,
+            objects=artifacts.objects_factory,
+            checkpoint_provider=checkpoint_provider or (lambda: None),
+            model=model,
+        )
+        if envd_client is not None and model is not None
+        else None
+    )
 
     @tool
     async def list_members() -> ToolJsonResult:
@@ -302,6 +318,7 @@ def build_tools(
     return [
         *build_board_tools(service, task_id, member_id, turn, artifacts),
         *([execute_command] if envd is not None else []),
+        *([view_image] if view_image is not None else []),
         list_members,
         send_message,
         read_turn_result,

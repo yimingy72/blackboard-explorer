@@ -34,6 +34,7 @@ from bbx_runtime.ctf.client import CtfClient, CtfControlTransportExhausted
 from bbx_runtime.ctf.context import fixed_prompt_tokens
 from bbx_runtime.ctf.execution import DrainPending
 from bbx_runtime.ctf.failures import propagate_tool_failure
+from bbx_runtime.ctf.images import ImageInjectionMiddleware
 from bbx_runtime.ctf.middleware import (
     CtfHistoryProvider,
     MailboxMiddleware,
@@ -235,6 +236,7 @@ class CtfRunner:
                 member_id=member["id"],
                 checkpoint_provider=lambda: checkpoint,
                 artifacts=artifacts,
+                model=profile.model,
             )
             allowed = set(profile.worker_tools[member["role"]].builtin)
             tools = [item for item in tools if item.name in allowed]
@@ -356,6 +358,7 @@ class CtfRunner:
                     middleware=[
                         mailbox,
                         MessageInjectionMiddleware(),
+                        ImageInjectionMiddleware(self.service, task_id, lambda: checkpoint),
                         ModelErrorMiddleware(
                             self.service, task_id, member["id"], turn, profile.model
                         ),

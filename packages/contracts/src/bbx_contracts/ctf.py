@@ -32,6 +32,7 @@ CTF_COMMON_TOOLS = frozenset(
         "record_candidate",
         "read_turn_result",
         "read_saved_tool_result",
+        "view_image",
     }
 )
 CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {

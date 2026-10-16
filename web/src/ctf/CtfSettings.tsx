@@ -13,7 +13,7 @@ type Draft = {
 type Settings = Awaited<ReturnType<typeof api.getCtfWorkerSettings>>;
 type Binding = NonNullable<Settings['profile']['platform_tools']>[number];
 const roles: Role[] = ['lead', 'teammate'];
-const common = ['list_members', 'send_message', 'execute_command', 'list_challenges', 'get_challenge', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate', 'read_turn_result', 'read_saved_tool_result'];
+const common = ['list_members', 'send_message', 'execute_command', 'list_challenges', 'get_challenge', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate', 'read_turn_result', 'read_saved_tool_result', 'view_image'];
 const builtin = { lead: [...common, 'create_teammate', 'stop_teammate', 'resume_teammate', 'remove_teammate', 'finish_task', 'set_verification_required', 'confirm_messages', 'list_deferred_messages'], teammate: common };
 const from = (value: Settings, role: Role): Draft => ({ prompt: value.profile.prompt_templates[role], tools: value.profile.worker_tools[role] });
 export default function CtfSettings({ onDirtyChange, onBusyChange }: {
