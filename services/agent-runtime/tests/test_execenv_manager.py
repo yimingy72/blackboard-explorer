@@ -206,6 +206,37 @@ async def test_short_name_collision_never_reuses_another_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exec_apparmor_profile_does_not_change_relay_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    configured = settings()
+    configured.exec_apparmor_profile = "bbx-exec-netns"
+    fake = Docker()
+    manager = ExecEnvManager(
+        configured,
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+    monkeypatch.setattr(manager, "wait_healthy", AsyncMock())
+    await manager.provision(uuid4(), profile)
+    envd, relay = fake.containers.items
+    assert envd.kwargs["security_opt"] == ["apparmor=bbx-exec-netns"]
+    assert not envd.kwargs.get("privileged", False)
+    assert relay.kwargs["security_opt"] == ["no-new-privileges"]
+    assert relay.kwargs["cap_drop"] == ["ALL"]
+
+
+def test_exec_apparmor_cannot_disable_the_host_policy() -> None:
+    from pydantic import ValidationError
+
+    configured = settings().model_dump()
+    configured["exec_apparmor_profile"] = "unconfined"
+    with pytest.raises(ValidationError, match="exec_apparmor_profile"):
+        Settings.model_validate(configured)
+
+
+@pytest.mark.asyncio
 async def test_failed_provision_keeps_preexisting_envd(monkeypatch: pytest.MonkeyPatch) -> None:
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     fake = Docker()
