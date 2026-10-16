@@ -17,12 +17,22 @@ image-exec-env:
 
 # Alternative CTF exec image on a Kali base (see services/envd/Dockerfile.kali).
 # BASE_IMAGE is a local image reference by default; override it per host.
+# CURL_PROXY is used for the pinned upstream downloads (micromamba, pwndbg) when
+# the build host cannot reach them directly; GITHUB_MIRROR prefixes the GitHub
+# release URLs and can be emptied to fetch from github.com.
 BASE_IMAGE ?= kali-mini:latest
 EXEC_KALI_IMAGE ?= bbx-exec-env-kali:latest
+CURL_PROXY ?=
+GITHUB_MIRROR ?= https://ghfast.top/
+
+# BuildKit does not inject host.docker.internal, so it is added explicitly for
+# the pinned upstream downloads (micromamba/pwndbg) when CURL_PROXY is a host proxy.
+KALI_BUILD_ARGS ?= --add-host host.docker.internal:host-gateway
 
 image-exec-env-kali:
-	docker build $(DOCKER_BUILD_ARGS) -f services/envd/Dockerfile.kali \
+	docker build $(DOCKER_BUILD_ARGS) $(KALI_BUILD_ARGS) -f services/envd/Dockerfile.kali \
 		--build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) \
+		--build-arg CURL_PROXY=$(CURL_PROXY) --build-arg GITHUB_MIRROR=$(GITHUB_MIRROR) \
 		-t $(EXEC_KALI_IMAGE) .
 
 image-egress-proxy:

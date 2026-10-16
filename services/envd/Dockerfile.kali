@@ -68,6 +68,83 @@ RUN python3.13 -m venv /opt/envd/venv \
     && /opt/traffic/venv/bin/pip install --no-cache-dir ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} mitmproxy==12.2.3 \
     && chmod -R a-w /opt/envd /opt/traffic
 
+# ---------------------------------------------------------------------------
+# CTF tool layer (2026-10-17). The first Cybench runs showed members spending
+# ~14% of command time installing tooling and hitting "command not found" /
+# "No module named"; this layer makes the common CTF toolset available from the
+# first turn. Browser automation (Chromium / Playwright / Selenium) is
+# deliberately NOT installed.
+#
+# Kali provides every package below; SageMath and pwndbg are not in
+# kali-rolling and come from pinned upstream distributions with checksum
+# verification (see the ARG block). Versions recorded in
+# docs/tasks/CTF-toolchain-report.md.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       bzip2 7zip unrar cabextract ncompress \
+       nodejs npm \
+       ffuf gobuster \
+       ghidra radare2 \
+       hashcat john \
+       libimage-exiftool-perl python3-pil \
+       sleuthkit foremost steghide pngcheck imagemagick testdisk \
+       oletools \
+       apktool jadx dex2jar \
+       openssh-client bind9-dnsutils net-tools iputils-ping traceroute whois telnet \
+       php-cli python3-pip checksec gef impacket-scripts ruby ruby-dev \
+       libgl1 libxrender1 libxi6 libxtst6 \
+       pocl-opencl-icd clinfo \
+       fcrackzip unzip zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# pwn helper gems from the TUNA rubygems mirror (pinned), then drop the
+# build-only development headers to keep the layer small.
+ARG RUBYGEMS_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/rubygems/
+RUN gem install --source "${RUBYGEMS_MIRROR}" --no-document "seccomp-tools:1.6.1" "one_gadget:2.1.1" \
+    && rm -rf /var/lib/gems/*/build_info /root/.gem \
+    && apt-get purge -y ruby-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# SageMath: absent from kali-rolling, so it is installed from conda-forge into
+# an isolated prefix. The prefix has its own python 3.12; the members' system
+# python3 (3.14) and envd's venv keep working untouched and only the `sage`
+# command is exposed on PATH.
+ARG MICROMAMBA_VERSION=2.9.0
+ARG MICROMAMBA_SHA256=8761c382127e6363bd9e0a2451aa3ef90d071a79133f736e2f759a3bf13040dd
+ARG CONDA_FORGE_CHANNEL=https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/
+ARG SAGE_VERSION=10.9
+ARG SAGE_PYTHON=3.12
+ARG CURL_PROXY=
+RUN curl -fsSL ${CURL_PROXY:+--proxy "${CURL_PROXY}"} --retry 3 -o /tmp/micromamba.tar.bz2 \
+        "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
+    && echo "${MICROMAMBA_SHA256}  /tmp/micromamba.tar.bz2" | sha256sum -c - \
+    && tar -xjf /tmp/micromamba.tar.bz2 -C /usr/local bin/micromamba \
+    && rm /tmp/micromamba.tar.bz2 \
+    && micromamba create -y -r /opt/mamba -p /opt/sage \
+         -c "${CONDA_FORGE_CHANNEL}" "python=${SAGE_PYTHON}" "sage=${SAGE_VERSION}" \
+    && rm -rf /opt/mamba/pkgs \
+    && ln -s /opt/sage/bin/sage /usr/local/bin/sage \
+    && chmod -R a+rX /opt/sage
+
+# angr / fpylll / cysignals for the members' default interpreter. Pinned
+# releases are fetched from upstream PyPI because the mirrors lag behind.
+ARG PYPI_UPSTREAM=https://pypi.org/simple
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        --index-url "${PYPI_UPSTREAM}" \
+        "angr==10.0.4.post1" "fpylll==0.6.4" "cysignals==1.13.1" \
+    && rm -rf /root/.cache/pip
+
+# pwndbg ships a self-contained 645 MiB deb (its own gdb + python 3.13), so the
+# stock gdb, gef and the system python are unaffected. Pinned tag + sha256.
+ARG PWNDBG_VERSION=2026.09.15
+ARG PWNDBG_SHA256=08f5df53f5ff55ab795a7ae619a8dadf63d8485fb01bdf5d03784d7daf01976b
+ARG GITHUB_MIRROR=https://ghfast.top/
+RUN curl -fsSL ${CURL_PROXY:+--proxy "${CURL_PROXY}"} --retry 3 -o /tmp/pwndbg.deb \
+        "${GITHUB_MIRROR}https://github.com/pwndbg/pwndbg/releases/download/${PWNDBG_VERSION}/pwndbg_${PWNDBG_VERSION}_amd64.deb" \
+    && echo "${PWNDBG_SHA256}  /tmp/pwndbg.deb" | sha256sum -c - \
+    && apt-get install -y --no-install-recommends /tmp/pwndbg.deb \
+    && rm /tmp/pwndbg.deb
+
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/opt/envd/venv/bin/python", "-m", "uvicorn", "bbx_envd.app:app", "--host", "0.0.0.0", "--port", "8080"]

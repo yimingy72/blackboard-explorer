@@ -19,6 +19,9 @@ from testcontainers.core.network import Network
 
 pytestmark = pytest.mark.integration
 TOKEN = "integration-only-token"
+# The CTF profile runs a Kali-based exec image; EXEC_ENV_IMAGE lets the same
+# contract suite cover it without changing the platform defaults.
+EXEC_ENV_IMAGE = os.environ.get("EXEC_ENV_IMAGE", "bbx-exec-env:latest")
 
 # Publish the test client's route without giving envd an external network.
 RELAY = """
@@ -55,7 +58,7 @@ def envd_url():
     network.name = f"bbx-m2env-{uuid.uuid4().hex[:8]}"
     with network:
         container = (
-            DockerContainer("bbx-exec-env:latest")
+            DockerContainer(EXEC_ENV_IMAGE)
             .with_name(f"bbx-m2env-envd-{uuid.uuid4().hex[:8]}")
             .with_network(network)
             .with_network_aliases("envd")

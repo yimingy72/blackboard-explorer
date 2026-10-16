@@ -12,3 +12,8 @@ data
 .coverage
 htmlcov
 *.log
+
+# Image recipes are build inputs, not image content: excluding them keeps an
+# edit to a Dockerfile from invalidating every layer after COPY services/envd.
+services/envd/Dockerfile
+services/envd/Dockerfile.kali
