@@ -44,3 +44,9 @@
 hostname 不等于容器 ID 是部署实现细节；设计要求 runtime 实际接入执行网络，新实现继续满足该约束，未修改设计文档。这里的 MAC 仅用于控制服务核验自身网络接入，不改变流量采集的 Agent/source 归属，也不从可变业务 IP 推测数据包作者。
 
 尚未提交、合并 main 或推送。建议一个提交：`fix(runtime): validate custom-hostname network attachment and unblock cleanup`，包含 manager、两份回归及本任务/报告。服务器 AppArmor 修复留在其原分支，未混入本次本地修复。
+
+## 合并验证补充（2026-10-16）
+
+用户随后明确要求将本地修复与服务器部署补丁一起提交、合并 main、推送 GitHub 并更新服务器，取代上文检查点的未发布状态。本地修复提交为 `f5fe10b`，服务器兼容代码/文档为 `6894cac`、`cebb39d`，二者自动合并无冲突。
+
+合并后重新执行 `UV_CACHE_DIR=/private/tmp/bbx-uv-cache make check`：**2135 passed、351 deselected，59.22 秒**，ruff/pyright 全绿；对应 Docker 生命周期/真实 CTF 链路 **7 passed，73.93 秒**。集成测试同时只读挂载当前 manager 与 Settings，保证旧基础镜像也验证合并源码，而非混用新管理器和旧配置类。未调用真实模型或访问原任务目标。合并验证证据位于 `.data/combined-release/`；服务器实际发布与数据核对另见 Server-deployment 报告的补充记录。

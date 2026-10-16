@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from Moby v27.5.1 profiles/apparmor/template.go (Moby authors).
+# Retain Docker's proc/sys protections; permit only namespace setup mounts.
+#include <tunables/global>
+
+profile bbx-exec-netns flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  network,
+  capability,
+  file,
+  umount,
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  signal (send,receive) peer=bbx-exec-netns,
+  ptrace (trace,read,tracedby,readby) peer=bbx-exec-netns,
+
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  mount options=(rw, rbind) /run/netns/ -> /run/netns/,
+  mount options=(rw, rshared) -> /run/netns/,
+  mount options=(rw, rprivate) -> /run/netns/,
+  mount options=(rw, bind) /proc/*/ns/net -> /run/netns/*,
+  # nsfs reports its source as / to AppArmor on Ubuntu kernels.
+  mount options=(rw, bind) / -> /run/netns/*,
+  mount options=(rw, rslave) -> /,
+  mount fstype=sysfs -> /sys/,
+  mount options=(rw, bind) /etc/netns/*/resolv.conf -> /etc/resolv.conf,
+}

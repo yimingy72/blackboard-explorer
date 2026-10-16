@@ -210,6 +210,9 @@ class ExecEnvManager:
             environment.update(
                 {key: proxy for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
             )
+        security_options: dict[str, Any] = {}
+        if self.settings.exec_apparmor_profile:
+            security_options["security_opt"] = [f"apparmor={self.settings.exec_apparmor_profile}"]
         container = await asyncio.to_thread(
             self.docker.containers.create,
             profile.exec_image,
@@ -228,6 +231,7 @@ class ExecEnvManager:
                 else {}
             ),
             devices=["/dev/net/tun:/dev/net/tun:rwm"],
+            **security_options,
             read_only=False,
             nano_cpus=int(profile.exec_resources.cpus * 1_000_000_000),
             mem_limit=profile.exec_resources.mem,

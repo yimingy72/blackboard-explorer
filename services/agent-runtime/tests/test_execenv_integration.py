@@ -110,6 +110,11 @@ asyncio.run(main())
                 "/app/services/agent-runtime/src/bbx_runtime/execenv/manager.py",
                 mode="ro",
             )
+            .with_volume_mapping(
+                str(source.parent.parent / "settings.py"),
+                "/app/services/agent-runtime/src/bbx_runtime/settings.py",
+                mode="ro",
+            )
             .with_command(["sleep", "120"])
         )
         with controller:
