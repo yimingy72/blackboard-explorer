@@ -26,6 +26,24 @@ const created = event(1, 'task.created', {
 });
 
 describe('reduce', () => {
+  it('updates the active budget without changing the run or usage', () => {
+    const board = reduce([
+      created,
+      event(2, 'task.running', { status: 'running' }),
+      event(3, 'budget.updated', {
+        usage: { cost: 4 },
+        budget: { max_cost: 30, max_minutes: 180 },
+        previous_budget: { max_cost: 10, max_minutes: 60 },
+      }),
+    ]);
+    expect(board.task).toMatchObject({
+      status: 'running',
+      runNumber: 1,
+      usage: { cost: 4 },
+      budget: { max_cost: 30, max_minutes: 180 },
+    });
+  });
+
   it('advances an immutable projection and preserves unrelated references', () => {
     const history=[created,event(2,'agent.spawned',{id:'agent-1',task_type:'derive'}),event(3,'fact.posted',{id:'F1',kind:'observation',statement:'Observation',author:'agent-1',derived_from:[]})];
     const before=reduce(history), snapshot=structuredClone(before);

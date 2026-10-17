@@ -416,6 +416,57 @@ class BoardService:
             )
         await self.repo.notify(tid, written[-1]["version"])
 
+    async def adjust_budget(
+        self,
+        tid: UUID,
+        additional_cost: Decimal,
+        max_minutes: int | None,
+        actor: str = "user",
+    ) -> list[dict[str, Any]]:
+        """Extend an active ordinary task without changing its run or Agent sessions."""
+        if additional_cost < 0 or (max_minutes is not None and max_minutes < 1):
+            raise RuleViolation("invalid_budget", "预算增量必须非负，时长上限必须为正整数。")
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
+            if task["status"] not in {"provisioning", "running", "closing"}:
+                raise RuleViolation("budget_task_inactive", "仅运行中的任务可以调整预算。")
+            previous = dict(task["budget"])
+            budget = dict(previous)
+            budget["max_cost"] = str(Decimal(str(previous["max_cost"])) + additional_cost)
+            budget["max_minutes"] = max_minutes or int(previous["max_minutes"])
+            if budget == previous:
+                raise RuleViolation("budget_unchanged", "预算没有变化。")
+            spent = Decimal(str(task["usage"].get("cost", 0) or 0))
+            reserve = Params.model_validate(task["params"]).close_reserve_ratio
+            if Decimal(budget["max_cost"]) * (1 - reserve) <= spent:
+                raise RuleViolation("budget_exhausted", "追加后仍需留有可探索金额。")
+            active_seconds = int(task.get("active_seconds") or 0)
+            if task.get("active_since") is not None:
+                active_seconds += max(
+                    0, int((datetime.now(UTC) - task["active_since"]).total_seconds())
+                )
+            if int(budget["max_minutes"]) * 60 <= active_seconds:
+                raise RuleViolation("budget_time_exhausted", "追加后的总时长仍不足以继续运行。")
+            written = await self.repo.append(
+                conn,
+                tid,
+                [
+                    event(
+                        "budget.updated",
+                        actor,
+                        {
+                            "usage": task["usage"],
+                            "budget": budget,
+                            "previous_budget": previous,
+                            "additional_cost": str(additional_cost),
+                        },
+                    )
+                ],
+            )
+        await self.repo.notify(tid, written[-1]["version"])
+        return written
+
     async def post_fact(
         self,
         tid: UUID,

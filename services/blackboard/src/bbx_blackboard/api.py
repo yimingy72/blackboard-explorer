@@ -144,6 +144,11 @@ class ResumeBody(BaseModel):
     refresh_tools: bool = False
 
 
+class BudgetAdjustBody(BaseModel):
+    additional_cost: Decimal = Field(default=Decimal(0), ge=0)
+    max_minutes: int | None = Field(default=None, ge=1)
+
+
 class StatusBody(BaseModel):
     status: Literal["running", "closing", "finished", "failed", "stopped"]
     reason: str | None = None
@@ -941,6 +946,24 @@ def create_app(
             body.additional_cost,
             body.additional_minutes,
             body.refresh_tools,
+            identity.name,
+        )
+        return await task_detail(request, task_id)
+
+    @app.post("/api/tasks/{task_id}/budget", response_model=TaskView, tags=["tasks"])
+    async def adjust_task_budget(
+        request: Request, task_id: UUID, body: BudgetAdjustBody
+    ) -> TaskView:
+        identity = require_user_or_service(request)
+        if identity.kind != "user":
+            raise HTTPException(403, "User token required")
+        task = await _task(request, task_id)
+        if task.get("mode") == "ctf":
+            raise HTTPException(409, "mode_mismatch")
+        await _service(request).adjust_budget(
+            task_id,
+            body.additional_cost,
+            body.max_minutes,
             identity.name,
         )
         return await task_detail(request, task_id)
