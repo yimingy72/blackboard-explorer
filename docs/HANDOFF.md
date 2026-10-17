@@ -64,6 +64,7 @@
   | Home-ui-polish | ✅ 首页任务列表、统一读取反馈/跳转及响应式细节已单独提交 `5c169de`，随流量功能合并main；沿用Ant Design，无后端或任务规则变更（2026-10-15） |
   | Traffic-observability | ✅ 两模式按Agent采集TCP/UDP/ICMP及HTTPS、MinIO归档、官方Wireshark原生过滤/协议树/字节联动与统一前端已部署并合并main；2129普通/345隔离集成/129前端/12原生浏览器交互通过，17任务/99会话及配置保留（2026-10-15） |
   | Local-runtime-network / Server-deployment | ✅ 本地网络误判/失败清理、Linux AppArmor兼容已合并main为 `d1dffd3` 并推送，服务器完整迁移及新版本更新完成；合并源码2135普通/7项相关Docker集成、服务器Ubuntu/Kali实际执行与原生解析通过，21张业务表及当前存档保持（2026-10-16） |
+  | Multi-task-runtime | ✅ 任务分支默认容量改为2，两种模式共用槽位；2149普通/52项相关回归/5项Docker检查通过，本地与服务器配置已生效；数据与配置保持，源码待合并（2026-10-17） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **最新交付**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，服务器已更新，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。服务器入口 `http://101.201.116.63:58000/`，原本机账号；17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致。本地 `http://127.0.0.1:58000/` 已安装网络修复，18任务保持；两端数据不自动双向同步。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
@@ -434,6 +435,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
+Multi-task-runtime 已按用户 2026-10-17 要求先同步实现架构第5、11节与开发方案部署/配置/资源说明（设计提交 `eff1698`），替换原“同一时间一个任务”。复用已有监管器与 MAF，默认容量2、两模式共用、超额按创建时间排队、每任务容器与会话独立；未新增数据库或前端配置。两端 runtime 实际容量已更新，后续本地部署仍需覆盖旧显式容量1，详见[多任务报告](tasks/Multi-task-runtime-report.md)。原排队业务任务的模型402错误独立记录，未自动续跑；本任务无新增设计待同步项。
+
 Local-runtime-network / Server-deployment为既有执行网络和生命周期的兼容修复：通过实际接口MAC核验runtime接网，不以hostname推断容器ID；未创建envd时查找可直接返回空。Linux主机可选择已加载的定向AppArmor策略，relay与Agent能力边界保持。两者不改变领域/调度/会话规则，不新增设计待同步项；三份设计正本未改。部署细节、兼容策略与验证见对应任务报告及 `deploy/apparmor/README.md`，既有设计待办保持。
 
 Traffic-observability已按用户确认先同步实现架构9.2–9.4并实现：同容器文件/软件共享、每Agent独立网络采集源、TLS任务CA/官方mitmproxy及私有keylog、MinIO逐轮归档/删除、官方sharkd源内重组和原生过滤、统一列表及数据源字节联动。原生表达式以部署Wireshark版本为准，`frame.number/tcp.stream`按来源解释；结果有覆盖/资源/数量限制，逻辑调用不假冒wire，旧档案不补造解密材料。索引与缓存限额、终态ACK、隐私边界及存储约两倍原包的当前限制均已写入设计/部署说明与[报告](tasks/Traffic-observability-report.md)。本轮没有新增待同步设计项，既有通用/CTF规则待办保持。首页样式基线为组件/交互整理，不改变领域规则。
@@ -509,7 +512,7 @@ token 归属、tool_call.recorded、任务创建引导例外已同步并合并�
 - 调度器自建 asyncio 循环，**不用 MAF Workflow**（超步屏障与连续调度冲突）；MAF 只用于 Agent 本体。
 - MAF 核对结论：`max_iterations` 默认 40 需调大；函数中间件"替换结果"而不是 terminate；M2a 实测原 enqueue 注入不能跨轮保留，改用公开 Content.text/result 追加增量；MCP 工具经过函数中间件，参数为 `static_headers`。
 - 默认模型为 DeepSeek `deepseek-flash`，平台配置支持多模型及MAF Chat Completions/Responses连接器；重复判断由 Agent 根据同步的黑板完成，不再部署本地 embedding 或生成向量；v1 不部署模型网关。
-- 部署：本机 Docker；同一时间一个任务；每任务一个 ubuntu 执行环境（每个 Agent 一个 Linux 用户），证据"引用时持久化 + 结束时归档"到 MinIO。
+- 部署：本机 Docker；支持多任务同时运行，MAX_RUNNING_TASKS 默认 2，普通黑板和 CTF 共用容量，超额按创建时间排队；每任务一个独立执行环境（每个 Agent 一个 Linux 用户），证据"引用时持久化 + 结束时归档"到 MinIO。
 
 ---
 

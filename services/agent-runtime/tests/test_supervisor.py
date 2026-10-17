@@ -171,19 +171,94 @@ async def test_deletion_failure_retries_without_restarting_archive_cleanup() -> 
 
 
 @pytest.mark.asyncio
-async def test_fifo_queue_respects_max_running_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
-    service = Service([task("new", "provisioning", 2), task("old", "provisioning", 0)])
+@pytest.mark.parametrize("limit", [1, 2])
+async def test_fifo_queue_respects_max_running_tasks(
+    monkeypatch: pytest.MonkeyPatch, limit: int
+) -> None:
+    service = Service(
+        [
+            task("new", "provisioning", 2),
+            task("old", "provisioning", 0),
+            task("mid", "provisioning", 1),
+        ]
+    )
     manager = Manager()
-    owner = supervisor(service, manager)
+    owner = supervisor(service, manager, limit=limit)
     started = AsyncMock()
     monkeypatch.setattr(owner, "_start", started)
     await owner.tick()
-    assert [call for call in manager.calls if call[0] == "provision"] == [("provision", "old")]
+    expected = [("provision", tid) for tid in ("old", "mid")[:limit]]
+    assert [call for call in manager.calls if call[0] == "provision"] == expected
     assert service.states["old"]["task"]["status"] == "running"
+    assert service.states["mid"]["task"]["status"] == ("running" if limit == 2 else "provisioning")
     assert service.states["new"]["task"]["status"] == "provisioning"
-    started.assert_awaited_once()
+    assert started.await_count == limit
     await owner.tick()
-    assert [call for call in manager.calls if call[0] == "provision"] == [("provision", "old")]
+    assert [call for call in manager.calls if call[0] == "provision"] == expected
+
+
+@pytest.mark.parametrize(
+    "first_mode,second_mode",
+    [("blackboard", "blackboard"), ("ctf", "ctf"), ("blackboard", "ctf"), ("ctf", "blackboard")],
+)
+async def test_concurrent_tasks_share_capacity_and_cleanup_is_task_scoped(
+    monkeypatch, first_mode: str, second_mode: str
+) -> None:
+    rows = [
+        task("first", "provisioning"),
+        task("second", "provisioning", 1),
+        task("third", "provisioning", 2),
+    ]
+    rows[0]["mode"], rows[1]["mode"] = first_mode, second_mode
+    service, manager = Service(rows), Manager()
+    owner = supervisor(service, manager, limit=2)
+    monkeypatch.setattr(owner, "_start", AsyncMock())
+    entered: set[str] = set()
+
+    async def coordinate(tid: str) -> None:
+        manager.handles[tid] = SimpleNamespace(task_id=tid)
+        await service.transition(tid, "running")
+        entered.add(tid)
+        await asyncio.Event().wait()
+
+    coordinator = Mock(
+        run=AsyncMock(side_effect=coordinate),
+        detach=AsyncMock(),
+        close=AsyncMock(),
+        service=Mock(runtime=AsyncMock()),
+    )
+    owner.ctf = coordinator
+    try:
+        await owner.tick()
+        await asyncio.sleep(0)
+        assert [service.states[tid]["task"]["status"] for tid in ("first", "second", "third")] == [
+            "running",
+            "running",
+            "provisioning",
+        ]
+        second_ctf = owner.ctf_tasks.get("second")
+        manager.archive_gate = asyncio.Event()
+        await service.transition("first", "stopped")
+        await owner.tick()
+        assert "first" in owner.cleanups
+        assert service.states["third"]["task"]["status"] == "provisioning"
+        manager.archive_gate.set()
+        await owner.cleanups["first"]
+        await owner.tick()
+        assert service.states["second"]["task"]["status"] == "running"
+        assert service.states["third"]["task"]["status"] == "running"
+        assert set(manager.handles) == {"second", "third"}
+        assert ("destroy", "second") not in manager.calls
+        if second_mode == "ctf":
+            assert second_ctf is not None
+            assert owner.ctf_tasks["second"] is second_ctf and not second_ctf.done()
+        if first_mode == "ctf":
+            coordinator.detach.assert_awaited_once_with("first")
+        assert entered == {row["id"] for row in rows[:2] if row.get("mode") == "ctf"}
+    finally:
+        for future in owner.ctf_tasks.values():
+            future.cancel()
+        await owner.stop()
 
 
 @pytest.mark.parametrize("status", ["provisioning", "running"])
@@ -283,11 +358,14 @@ async def test_recovery_keeps_unprovisioned_queue_and_fails_missing_running(
 async def test_recovery_rejoins_running_and_existing_provisioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = Service([task("queued", "provisioning"), task("running", "running")])
+    service = Service(
+        [task("queued", "provisioning"), task("running", "running"), task("other", "running")]
+    )
     manager = Manager()
     manager.handles = {
         "queued": SimpleNamespace(task_id="queued"),
         "running": SimpleNamespace(task_id="running"),
+        "other": SimpleNamespace(task_id="other"),
     }
     owner = supervisor(service, manager)
     started = AsyncMock()
@@ -295,8 +373,9 @@ async def test_recovery_rejoins_running_and_existing_provisioning(
     await owner.recover()
     assert ("healthy", "queued") in manager.calls
     assert ("healthy", "running") in manager.calls
-    started.assert_awaited_once()
-    assert started.call_args.args[0]["task"]["id"] == "running"
+    assert ("healthy", "other") in manager.calls
+    # Recovery preserves both running tasks even after lowering the admission limit to one.
+    assert [call.args[0]["task"]["id"] for call in started.await_args_list] == ["running", "other"]
     assert service.states["queued"]["task"]["status"] == "provisioning"
 
 
