@@ -57,6 +57,31 @@ async def test_single_public_call_does_not_reconnect_or_repeat_uncertain_command
     cast(AsyncMock, item.connect).assert_not_awaited()
 
 
+async def test_http_execution_uses_a_bounded_request_without_the_mcp_session(tmp_path):
+    fake = FakeEnvd(tmp_path, command_outputs={"direct": CommandOutput(stdout="direct result")})
+    session = Session()
+    async with fake:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=fake.app), trust_env=False
+        ) as http:
+            envd = EnvdClient("http://synthetic.invalid", fake.token, http)
+            await envd.create_user("agent-1")
+            item = SingleDispatchExecutionTool(
+                name="exec",
+                url="http://synthetic.invalid/mcp",
+                session=cast(Any, session),
+                static_headers={**envd.headers, "X-Agent-Id": "agent-1"},
+                http_client=http,
+                load_tools=False,
+                load_prompts=False,
+                sampling_max_requests=0,
+            )
+            result = await item.call_tool("execute_command", command="direct")
+    assert session.calls == []
+    assert fake.commands == ["direct"]
+    assert any(content.text and "direct result" in content.text for content in result)
+
+
 async def test_structured_json_matches_native_maf_and_drops_runtime_context_arguments():
     session = Session()
     item = execution_tool(session)
@@ -154,7 +179,7 @@ async def test_real_maf_mcp_lifecycle_sends_one_command_and_keeps_json_contract(
             body = await request.aread()
             payload = json.loads(body) if body else {}
             response = await self.delegate.handle_async_request(request)
-            if payload.get("method") == "tools/call":
+            if payload.get("method") == "tools/call" or request.url.path == "/execute":
                 self.command_requests += 1
                 if drop_response:
                     await response.aclose()

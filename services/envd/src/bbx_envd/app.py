@@ -77,6 +77,41 @@ async def execute_command_tool(
     )
 
 
+async def execute_control(request) -> Response:
+    """Run one ordinary-task command outside the long-lived MCP response stream."""
+    if settings.envd_mode == "ctf":
+        return JSONResponse({"error": "CTF mode requires fenced MCP metadata"}, status_code=409)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Object body required")
+        command = body.get("command")
+        cwd = body.get("cwd")
+        timeout_sec = body.get("timeout_sec", 120)
+        privileged = body.get("privileged", False)
+        if not isinstance(command, str) or not command:
+            raise ValueError("Command is required")
+        if cwd is not None and not isinstance(cwd, str):
+            raise ValueError("Invalid cwd")
+        if type(timeout_sec) is not int:
+            raise ValueError("Invalid timeout_sec")
+        if type(privileged) is not bool:
+            raise ValueError("Invalid privileged flag")
+        agent_id = request.headers.get("X-Agent-Id", "")
+        result = await execute_command(
+            agent_id,
+            command,
+            cwd,
+            timeout_sec,
+            privileged,
+            settings,
+            traffic=traffic_capture,
+        )
+        return JSONResponse(result)
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
 async def ctf_control(request) -> Response:
     if settings.envd_mode != "ctf" or ctf_registry is None:
         return JSONResponse({"error": "CTF mode unavailable"}, status_code=409)
@@ -697,6 +732,7 @@ app = TokenAuth(
     Starlette(
         routes=[
             Route("/health", health),
+            Route("/execute", execute_control, methods=["POST"]),
             Route("/traffic/{action}/parts/{identifier}", traffic_control),
             Route("/traffic/{action}/ack", traffic_control, methods=["POST"]),
             Route("/traffic/{action}", traffic_control, methods=["GET", "POST"]),

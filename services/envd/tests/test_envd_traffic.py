@@ -252,6 +252,24 @@ async def test_authenticated_routes_lists_summary_only_and_ack(capture, monkeypa
         assert (await client.get(f"/traffic/chunks/{identifier}")).status_code == 404
 
 
+async def test_direct_execute_route_uses_verified_agent_header(capture, monkeypatch):
+    monkeypatch.setenv("ENVD_TOKEN", "replace-me")
+    service = importlib.import_module("bbx_envd.app")
+    monkeypatch.setattr(service.settings, "envd_mode", "blackboard")
+    execute = AsyncMock(return_value={"exit_code": 0, "stdout": "ok"})
+    monkeypatch.setattr(service, "execute_command", execute)
+    transport = httpx.ASGITransport(app=service.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers.update({"Authorization": "Bearer replace-me", "X-Agent-Id": "agent-1"})
+        response = await client.post(
+            "/execute",
+            json={"command": "printf ok", "cwd": None, "timeout_sec": 30, "privileged": False},
+        )
+    assert response.status_code == 200 and response.json()["exit_code"] == 0
+    assert execute.await_args is not None
+    assert execute.await_args.args[:2] == ("agent-1", "printf ok")
+
+
 async def test_missing_capture_tools_are_explicit_partial(tmp_path, monkeypatch):
     capture = TrafficCapture(tmp_path / "traffic", 1024 * 1024, 3)
     monkeypatch.setattr("bbx_envd.traffic.shutil.which", lambda _: None)
