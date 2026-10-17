@@ -192,7 +192,7 @@ class TrafficCollector:
             )
         if status.get("error") or status.get("status") in {"partial", "error"}:
             self.error = redaction.text(str(status.get("error") or "Capture incomplete"))
-        if self.manifest["captured_bytes"] >= self.max_bytes:
+        if self.manifest["captured_bytes"] >= self.max_bytes and not self.error:
             self.error = "Traffic storage capacity exceeded"
         self.manifest["error"] = self.error
         self.manifest["status"] = (
@@ -399,7 +399,7 @@ class TrafficCollector:
             self._status(status)
             if not self.stopped and self.manifest["captured_bytes"] >= self.max_bytes:
                 await self._limit()
-            listed = await self.envd.traffic("chunks")
+            listed = await self.envd.traffic("chunks", limit=256)
             items = sorted(listed.get("items", []), key=lambda item: item.get("first_seq", 0))
             previous = copy.deepcopy(self.manifest)
             acknowledged: list[str] = []
@@ -419,7 +419,7 @@ class TrafficCollector:
                 if has_observations:
                     observations = await self._observations()
                     await self._records(observations, "runtime", uuid4().hex, prepared=True)
-                remaining = len(items) - len(acknowledged)
+                remaining = max(0, int(listed.get("total_items", len(items))) - len(acknowledged))
                 self.manifest["pending_chunks"] = remaining
                 await self._publish()
             except BaseException:
@@ -433,7 +433,7 @@ class TrafficCollector:
 
     async def _artifacts_tick(self) -> None:
         async with self.artifact_lock:
-            artifacts = await self.envd.traffic("artifacts")
+            artifacts = await self.envd.traffic("artifacts", limit=256)
             for item in artifacts.get("items", []):
                 await self._artifact(item)
 

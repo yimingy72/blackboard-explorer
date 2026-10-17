@@ -270,16 +270,16 @@ class TrafficCapture:
         if self.state is not None:
             self.state["error"] = "; ".join(self.reasons)[:4096]
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, include_items: bool = False) -> dict[str, Any]:
         if self.state is None:
             return {"status": "error", "https": "unavailable", "error": "Capture not started"}
         result = {
             **self.state,
             "updated_at": now(),
-            "chunks": list(self.chunks.values()),
-            "files": list(self.artifacts.values()),
             "pending_chunks": len(self.chunks),
         }
+        if include_items:
+            result.update(chunks=list(self.chunks.values()), files=list(self.artifacts.values()))
         return result
 
     async def start(self, task_id: str, run_number: int) -> dict[str, Any]:
@@ -630,7 +630,8 @@ class TrafficCapture:
     def preview_lost(self, reason: str, count: int = 1) -> None:
         assert self.state is not None
         self.state["preview_dropped"] = self.state.get("preview_dropped", 0) + count
-        self.partial(reason)
+        # Preview loss affects the live packet list only. The raw capture remains
+        # available and must not turn the entire capture into an error.
 
     async def refresh_interfaces(self, role: str) -> None:
         args = ["ip", "-j", "link", "show"]
@@ -943,7 +944,6 @@ class TrafficCapture:
                     path.stat().st_size for path in self.directory.rglob("*") if path.is_file()
                 )
                 if total > self.max_bytes or self.state["captured_bytes"] >= self.max_bytes:
-                    self.partial("Traffic capacity reached")
                     await self.limit()
                     return
                 self.persist()
@@ -978,22 +978,32 @@ class TrafficCapture:
         return None
 
     @staticmethod
-    async def stop_process(process: asyncio.subprocess.Process) -> bool:
-        if process.returncode is None:
+    async def stop_processes(processes: list[asyncio.subprocess.Process]) -> bool:
+        """Stop capture process groups together so one slow child cannot stall cleanup."""
+        running = [process for process in processes if process.returncode is None]
+        for process in running:
             try:
                 os.killpg(process.pid, signal.SIGINT)
             except ProcessLookupError:
                 pass
+        if not running:
+            return False
+        waits = {asyncio.create_task(process.wait()): process for process in running}
+        done, pending = await asyncio.wait(waits, timeout=5)
+        await asyncio.gather(*done, return_exceptions=True)
+        for waiter in pending:
+            process = waits[waiter]
             try:
-                await asyncio.wait_for(process.wait(), 5)
-            except TimeoutError:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await process.wait()
-                return True
-        return False
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        return bool(pending)
+
+    @classmethod
+    async def stop_process(cls, process: asyncio.subprocess.Process) -> bool:
+        return await cls.stop_processes([process])
 
     async def limit(self) -> dict[str, Any]:
         async with self.lock:
@@ -1007,10 +1017,13 @@ class TrafficCapture:
             self.stopping = True
             # dumpcap/libpcap batches Linux packets for CAP_READ_TIMEOUT=250ms.
             await asyncio.sleep(0.3)
-            for role, process in self.processes.items():
-                if role != "proxy":
-                    if await self.stop_process(process):
-                        self.partial("Raw capture required forced termination")
+            capture_processes = [
+                process for role, process in self.processes.items() if role != "proxy"
+            ]
+            if await self.stop_processes(capture_processes):
+                self.partial(
+                    "Capture processes did not stop gracefully; packet archive may end early"
+                )
             if self.readers:
                 await asyncio.gather(*self.readers)
             await self.packet_queue.join()
@@ -1038,11 +1051,10 @@ class TrafficCapture:
                 await asyncio.gather(self.poller, return_exceptions=True)
             # Let the final kernel capture batch reach dumpcap before its SIGINT.
             await asyncio.sleep(0.3)
-            for role in sorted(self.processes, key=lambda item: item != "proxy"):
-                process = self.processes.get(role)
-                if process is not None:
-                    if await self.stop_process(process):
-                        self.partial("Capture process required forced termination")
+            if await self.stop_processes(list(self.processes.values())):
+                self.partial(
+                    "Capture processes did not stop gracefully; packet archive may end early"
+                )
             if self.readers:
                 await asyncio.gather(*self.readers)
             if any(role not in self.drop_counts for role in self.raw_owners):
@@ -1061,7 +1073,11 @@ class TrafficCapture:
             assert self.directory is not None
             shutil.rmtree(self.directory / "control", ignore_errors=True)
             self.state.update(
-                status="partial" if self.reasons else "complete",
+                status=(
+                    "partial"
+                    if self.reasons or int(self.state.get("preview_dropped", 0))
+                    else "complete"
+                ),
                 finished_at=now(),
                 capturing=False,
                 proxy_serving=False,

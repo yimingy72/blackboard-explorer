@@ -100,6 +100,15 @@ async def test_limit_keeps_proxy_identity_but_does_not_add_records(capture):
     assert stopped["proxy_serving"] is False
 
 
+async def test_preview_loss_is_counted_without_becoming_a_capture_error(capture):
+    capture.preview_lost("Oversized packet preview discarded; raw capture retained", 3)
+    assert capture.status()["preview_dropped"] == 3
+    assert capture.status().get("error") is None
+    stopped = await capture.stop()
+    assert stopped["status"] == "partial"
+    assert stopped.get("error") is None
+
+
 async def test_sealed_segment_rejects_symlink_fifo_and_bad_identifier(capture, tmp_path):
     capture.record(record())
     await capture.seal()
@@ -232,6 +241,12 @@ async def test_authenticated_routes_lists_summary_only_and_ack(capture, monkeypa
         identifier = next(iter(capture.chunks))
         chunk = await client.get(f"/traffic/chunks/{identifier}")
         assert json.loads(chunk.content)["id"] == "r-1"
+        compact = (await client.get("/traffic/status")).json()
+        assert "chunks" not in compact and "files" not in compact
+        expanded = (await client.get("/traffic/status?include_items=true")).json()
+        assert expanded["chunks"] and "files" in expanded
+        listing = (await client.get("/traffic/chunks?limit=1")).json()
+        assert listing["total_items"] == 1 and len(listing["items"]) == 1
         assert (await client.get("/traffic/chunks/unknown")).status_code == 404
         assert (await client.post("/traffic/ack", json={"chunks": [identifier]})).status_code == 200
         assert (await client.get(f"/traffic/chunks/{identifier}")).status_code == 404

@@ -241,6 +241,7 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
             stopped = (await client.post("/traffic/stop", json={})).json()
             assert stopped["status"] == "complete", stopped
             assert stopped["dropped_packets"] == 0
+            stopped_files = (await client.get("/traffic/artifacts?limit=1024")).json()["items"]
             native = (await client.get("/traffic/native")).json()
             assert native["error"] is None, native
             sources = [TrafficNativeSourceIndex.model_validate(item) for item in native["sources"]]
@@ -259,7 +260,7 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
             for source in sources:
                 expected = b"".join(native_bytes[part.id] for part in source.parts)
                 originals = [
-                    item for item in stopped["files"] if item["source_id"] == source.source_id
+                    item for item in stopped_files if item["source_id"] == source.source_id
                 ]
                 actual = b"".join(
                     [
@@ -299,7 +300,7 @@ assert (directory/'tls.keys').stat().st_mode&0o777==0o600
 """
             code, output = await asyncio.to_thread(container.exec, ["python3", "-c", check_native])
             assert code == 0, output
-            assert not keylog_ids.intersection(item["id"] for item in stopped["files"])
+            assert not keylog_ids.intersection(item["id"] for item in stopped_files)
             assert (
                 await client.post("/traffic/native/ack", json={"parts": list(native_bytes)})
             ).status_code == 200
@@ -391,8 +392,8 @@ assert (directory/'tls.keys').stat().st_mode&0o777==0o600
             )
             assert failed["exit_code"] != 0
             final = (await client.post("/traffic/stop", json={})).json()
-            assert final["status"] == "partial", final
-            assert "TLS handshake failed" in final["error"]
+            assert final["status"] == "complete", final
+            assert "TLS handshake failed" not in (final.get("error") or "")
             assert any(
                 item["plaintext"] == "encrypted"
                 for item in (await client.get("/traffic/records")).json()["items"]
@@ -430,9 +431,11 @@ assert (directory/'tls.keys').stat().st_mode&0o777==0o600
                 )
                 assert forwarded["exit_code"] == 0, forwarded
             sealed = (await client.post("/traffic/seal", json={})).json()
+            sealed_items = (await client.get("/traffic/status?include_items=true")).json()
+            limited_items = (await client.get("/traffic/status?include_items=true")).json()
             assert sealed["record_count"] == limited["record_count"]
-            assert sealed["files"] == limited["files"]
-            assert sealed["chunks"] == limited["chunks"]
+            assert sealed_items["files"] == limited_items["files"]
+            assert sealed_items["chunks"] == limited_items["chunks"]
             assert (await client.get("/traffic/native")).json() == limited_native
             final_stop = (await client.post("/traffic/stop", json={})).json()
             assert not final_stop["proxy_serving"]

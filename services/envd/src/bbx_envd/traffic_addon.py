@@ -180,7 +180,6 @@ class TrafficAddon:
                 "response": None,
             }
         )
-        self.failure("TLS handshake failed; some HTTPS traffic could not be decoded")
 
     def client_disconnected(self, client: Any) -> None:
         self.connections.pop(client.id, None)
