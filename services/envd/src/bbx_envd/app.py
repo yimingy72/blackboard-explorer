@@ -182,10 +182,16 @@ async def traffic_control(request) -> Response:
             return JSONResponse(result)
         if action in {"chunks", "artifacts"}:
             collection = capture.chunks if action == "chunks" else capture.artifacts
+            limit = int(request.query_params.get("limit", "256"))
+            if not 1 <= limit <= 1024:
+                raise ValueError("Invalid list limit")
+            items = list(collection.values())
             return JSONResponse(
                 {
                     "source_id": capture.status().get("source_id"),
-                    "items": list(collection.values()),
+                    "items": items[:limit],
+                    "total_items": len(items),
+                    "has_more": len(items) > limit,
                     "status": capture.status(),
                 }
             )
@@ -217,7 +223,9 @@ async def traffic_control(request) -> Response:
                     "status": capture.status(),
                 }
             )
-        return JSONResponse(capture.status())
+        return JSONResponse(
+            capture.status(include_items=request.query_params.get("include_items") == "true")
+        )
     except FileNotFoundError:
         return JSONResponse({"error": "Sealed segment unavailable"}, status_code=404)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):

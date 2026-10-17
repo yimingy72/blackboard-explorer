@@ -106,7 +106,7 @@ class EnvdClient:
         }:
             raise ValueError("Unknown traffic operation")
         method = "GET" if operation in {"status", "chunks", "artifacts"} else "POST"
-        kwargs = {"json": payload} if method == "POST" else {}
+        kwargs = {"json": payload} if method == "POST" else {"params": payload}
         return (await self._response(method, f"/traffic/{operation}", **kwargs)).json()
 
     @asynccontextmanager
