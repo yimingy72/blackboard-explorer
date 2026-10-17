@@ -36,7 +36,7 @@ docker compose --project-name blackboard-explorer up -d --wait
 
 可选代理模式另需 `make image-egress-proxy`。内置评测目标需叠加 `docker-compose.dev.yml`；完整启动和切换命令见[使用与部署](../../docs/使用与部署.md)。镜像构建代理参数见 `services/envd/README.md`。`serve` 在 Settings 之外要求 POSTGRES_HOST/PORT/USER/PASSWORD/DB，独立 PG 会话仅用于 advisory lock 和健康探测，不直接写黑板表；锁已被占用则退出，丢失连接立即停止派发。Compose 挂载 Docker socket，runtime 是可信控制服务，不把 socket、服务密钥或模型密钥传给执行环境。
 
-`TaskSupervisor` 每 2 秒遍历任务列表所有分页。provisioning 按创建时间排队，running/closing 与尚未完成归档清理的任务占容量；`MAX_RUNNING_TASKS` 默认 1。每任务 SchedulerLoop 用 SSE（500ms 去抖）唤醒，持续事件也不会延后超过 2 秒的兜底 tick；每 30 秒清扫心跳与交接超时。`decide(state, params, now)` 是纯函数，动作由 ActionExecutor 执行。
+`TaskSupervisor` 每 2 秒遍历任务列表所有分页。provisioning 按创建时间排队，running/closing、启动中与尚未完成归档清理的任务占容量；`MAX_RUNNING_TASKS` 默认 2，普通黑板与 CTF 共用这一容量，每个任务只计一次。每任务独立使用执行容器、黑板、Session、预算、流量与归档；停止或清理一个任务不会停止其他任务。调低容量不强停已有任务，等待容量释放后再派发。每任务 SchedulerLoop 用 SSE（500ms 去抖）唤醒，持续事件也不会延后超过 2 秒的兜底 tick；每 30 秒清扫心跳与交接超时。`decide(state, params, now)` 是纯函数，动作由 ActionExecutor 执行。
 
 停止服务会先阻止新派发，再以 runtime_restart 取消并等待 finish；保留执行容器。重启结束旧记录（不增加 attempts/种子空产，不清零失败连击），健康容器接管；尚无容器的 provisioning 继续排队，running/closing 丢失或无法恢复容器则 failed。终态任务先完成交接，然后归档上传、服务 API 登记 task.archived、最后销毁；登记失败保留容器重试。归档事件会让工作台的下载入口即时出现。
 
