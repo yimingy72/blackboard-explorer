@@ -43,7 +43,7 @@ HTTP 状态为 402，request id 为 `IHtATHzzzHNtlhYbvJRFebhjsUrbKIsL`。这不�
 - 原失败任务通过原任务 ID 续跑为第 4 轮，追加预算和时长均为 0，原预算与累计用量保留。
 - 百智云余额仍不足，因此只为该任务新建固定配置版本，将 Worker 模型切换到实测可用的官方 `deepseek-default`；目标、验收、Fact、Intent、Session 和 run-3 归档不变。
 - 新 run 已恢复正常模型调用，没有再次出现 402；Close 已依据 F66 的原始 Jenkins/docker.sock 证据提交 A1 `met`，完成依据为 `inferred`，等待 Derive 完成前复核。
-- 旧 Derive Session 约 54 万 token，跨供应商复核在本地转换阶段失败。为该任务创建 v7 配置，将既有 `context_threshold` 调为 120000，触发平台已有的 Derive 分段：完整旧 Session 仍保留，下一轮模型输入从新黑板分段读取，不删除或覆盖历史。
+- 旧 Derive Session 约 54 万 token，跨供应商复核在本地转换阶段失败。该任务的恢复配置 v5 将既有 `context_threshold` 调为 120000，触发平台已有的 Derive 分段：完整旧 Session 仍保留，下一轮模型输入从新黑板分段读取，不删除或覆盖历史。任务继续固定 v5，与 `task.resumed` 记录一致，便于 replay。
 
 ## 边界
 
