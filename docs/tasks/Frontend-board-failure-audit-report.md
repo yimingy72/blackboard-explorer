@@ -55,3 +55,11 @@
 - `0ef17097` 的 Derive Session 后续出现 21–29 ms 的本地 `OtherException`，没有 HTTP 状态。新的运行日志会记录实际异常类名；本轮没有删除或覆盖该任务的 Session，也没有自动重开已关闭的 Intent。
 - 历史任务不会回写既有失败事件；新的失败归因只影响后续运行。
 
+## 部署
+
+- 最终 `main`：`8b48fd375e9df49485d7dfc25d2db2a45ad21c0f`，已推送到 GitHub。
+- 本地 CTF 环境：`bbx-ctf-blackboard:latest` 与 `bbx-agent-runtime:latest` 已重建，只替换 blackboard/runtime；`http://127.0.0.1:58000/login` 返回 200，容器内前端入口 SHA-256 与本地构建一致。
+- 公网环境：release `/opt/blackboard-explorer/releases/8b48fd3`，运行 `bbx-blackboard:8b48fd3` 与 `bbx-agent-runtime:8b48fd3`；更新前数据库备份到 `/opt/blackboard-explorer/private/update-8b48fd3-20261017T141404Z/database.dump`。
+- 公网部署前活动任务数为 0；只重建 blackboard/runtime，Postgres、MinIO 和其他项目未重启。登录页返回 200，CTF state 返回 `event_version=42220`，黑板完成态快照返回 `closing_reason=manual`。
+- 已清理本地和公网旧应用镜像；本机构建缓存额外回收约 4.09 GB，容器镜像约 412.8 MB。当前版本镜像保留 `latest` 与 `8b48fd3` 标签。
+
