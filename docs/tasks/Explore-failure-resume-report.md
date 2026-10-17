@@ -31,3 +31,10 @@
 - Intent 已被系统关闭后不会自动重开；修复只保证仍处于 open 的失败方向复用原 Agent。
 - 同一个 Agent Session 长期增长仍受上下文阈值控制；超过上限由既有分段/收尾规则处理。
 - reactivation 不重放已执行工具；未知副作用仍依赖单次执行日志和 Session 中的已确认结果。
+
+## 公网部署
+
+- 代码 `a4bb552`、文档 `755d795` 已合并并推送 `main`。
+- 更新前确认无运行中任务，数据库备份到服务器 root 私有目录 `update-a4bb552-20261017T120633Z/database.dump`。
+- `bbx-blackboard:a4bb552` 与 `bbx-agent-runtime:a4bb552` 已传输到 `101.201.116.63`，release 切换到 `755d795`；只重建两个应用容器，Postgres、MinIO 和其他项目未动。
+- 容器内 runner/rules SHA-256 与提交逐项一致；两服务 healthy，`/login` 返回 200，部署前后无活动任务被中断。
