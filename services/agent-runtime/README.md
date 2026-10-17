@@ -71,7 +71,7 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 
 ## 执行容器网络
 
-生产使用`EXEC_ACCESS_MODE=network`，runtime与envd在`EXEC_NETWORK`指定的exec网络内通信，默认该网络有网关。宿主机开发可设`relay`：单独中转容器只转发到该任务envd:8080，宿主端口随机分配且只绑定127.0.0.1。执行容器不发布端口；relay只改变宿主机访问envd的方式，不改变所选出网模式。
+生产使用`EXEC_ACCESS_MODE=network`，runtime与envd在`EXEC_NETWORK`指定的exec网络内通信，默认该网络有网关。宿主机开发可设`relay`：单独中转容器只转发到该任务envd:8080，宿主端口随机分配且只绑定127.0.0.1。执行容器不发布端口；relay只改变宿主机访问envd的方式，不改变所选出网模式。执行容器的 `pids_limit` 不低于 `EXEC_MIN_PIDS`（默认 1024），为同一任务内的多 Agent 命令、抓包和扫描进程保留足够配额。
 
 容器按完整任务 UUID 标记归属，短名称冲突会报错；provision 失败清理本次新建容器。`ENVD_TOKEN` 由 runtime 的 secret 和规范 UUID 字符串经 HMAC-SHA256 派生。工具进程看不到该 secret/token。
 

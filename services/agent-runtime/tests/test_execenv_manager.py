@@ -165,6 +165,7 @@ async def test_provision_idempotent_with_direct_egress_and_relay(
     }
     assert envd.kwargs["devices"] == ["/dev/net/tun:/dev/net/tun:rwm"]
     assert envd.kwargs["nano_cpus"] == 2_000_000_000
+    assert envd.kwargs["pids_limit"] == 1024
     assert relay.kwargs["network"] == "bridge"
     assert relay.kwargs["ports"] == {"8080/tcp": ("127.0.0.1", 0)}
     assert relay.kwargs["cap_drop"] == ["ALL"]

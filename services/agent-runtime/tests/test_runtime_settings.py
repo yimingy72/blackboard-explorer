@@ -14,6 +14,7 @@ def test_settings(monkeypatch) -> None:
         monkeypatch.setenv(key, "replace-me")
     settings = Settings()  # pyright: ignore[reportCallIssue]
     assert settings.max_running_tasks == 2
+    assert settings.exec_min_pids == 1024
     assert settings.deepseek_api_key.get_secret_value() == "replace-me"
     assert "replace-me" not in repr(settings)
 
@@ -37,6 +38,16 @@ def test_task_capacity_must_be_positive(monkeypatch) -> None:
             minio_root_password=SecretStr("test"),
             envd_token_secret=SecretStr("test"),
         )
+
+
+def test_execution_pid_floor_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("EXEC_MIN_PIDS", "2048")
+    settings = Settings(
+        service_token=SecretStr("test"),
+        minio_root_password=SecretStr("test"),
+        envd_token_secret=SecretStr("test"),
+    )
+    assert settings.exec_min_pids == 2048
 
 
 def test_settings_allow_platform_only_models_without_deepseek_key(monkeypatch) -> None:

@@ -235,7 +235,7 @@ class ExecEnvManager:
             read_only=False,
             nano_cpus=int(profile.exec_resources.cpus * 1_000_000_000),
             mem_limit=profile.exec_resources.mem,
-            pids_limit=profile.exec_resources.pids,
+            pids_limit=max(profile.exec_resources.pids, self.settings.exec_min_pids),
         )
         try:
             await asyncio.to_thread(container.start)
