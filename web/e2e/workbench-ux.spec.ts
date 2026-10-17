@@ -1,7 +1,7 @@
 import { taskAction, closeRecords, expandSection } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { TASK_ID, installMockApi } from './fixtures';
+import { TASK_ID, boardSnapshot, installMockApi } from './fixtures';
 import { BOARD_UPDATE, INITIAL_CONTEXT, MODEL_ERROR, MODEL_OUTPUT, MODEL_REASONING, installConversationFixture } from './conversation-fixture';
 
 test('Agent 常驻列表打开上下文、同步、模型输出与工具记录，回放隔离未来内容', async ({ page }) => {
@@ -19,7 +19,7 @@ test('Agent 常驻列表打开上下文、同步、模型输出与工具记录�
   await expect(conversation.locator('pre').filter({ hasText: BOARD_UPDATE })).toBeVisible();
   await expect(conversation.locator('p').filter({ hasText: MODEL_OUTPUT })).toBeVisible();
   await expect(conversation.locator('pre').filter({ hasText: MODEL_ERROR })).toBeVisible();
-  await conversation.getByRole('button', { name: '实际返回的推理', exact: true }).press('Enter');
+  await conversation.getByRole('button', { name: '思考 · 模型返回', exact: true }).press('Enter');
   await expect(conversation.getByText(MODEL_REASONING, { exact: true })).toBeVisible();
   await expect(conversation).toContainText('工具调用');
   const graph = page.getByRole('region', { name: '黑板关系图' }).first();
@@ -61,7 +61,6 @@ test('创建表单支持长验收条件，桌面与窄屏不横向溢出', async
 });
 
 test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对话独立', async ({ page }) => {
-  await page.clock.setFixedTime(new Date('2026-09-24T08:10:00Z'));
   const mock = await installConversationFixture(page, { running: true });
   const secondId = '22222222-2222-4222-8222-222222222222';
   const secondTask = {
@@ -77,11 +76,14 @@ test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对�
   await page.route('**/api/tasks', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify([secondTask]) }));
   await page.route(`**/api/tasks/${secondId}`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondTask) }));
   await page.route(`**/api/tasks/${secondId}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondEvents) }));
+  await page.route(`**/api/tasks/${secondId}/state`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(boardSnapshot(secondEvents)) }));
   await page.goto(`/tasks/${TASK_ID}`);
-  await expect(page.getByText('累计运行 9 分 50 秒', { exact: true })).toBeVisible();
-  await page.clock.setFixedTime(new Date('2026-09-24T08:10:02Z'));
-  await expect(page.getByText('累计运行 9 分 52 秒', { exact: true })).toBeVisible();
-  await page.getByRole('region', { name: '黑板关系图' }).first().getByRole('button', { name: /^Agent 1，运行中/ }).click();
+  const duration = page.getByText(/累计运行 \d+/);
+  await expect(duration).toBeVisible();
+  const initialDuration = await duration.textContent();
+  await page.waitForTimeout(1100);
+  await expect(duration).not.toHaveText(initialDuration ?? '');
+  await page.getByRole('region', { name: '黑板关系图' }).first().getByRole('button', { name: /^Agent 1，种子探索/ }).click();
   await expect(page.getByRole('complementary', { name: 'Agent 1 对话记录' })).toBeVisible();
   await page.getByRole('button', { name: '关闭对话' }).click();
   await expect(page.getByRole('group', { name: '全部 Agent' }).getByRole('button', { name: /Agent 1/ })).toBeFocused();

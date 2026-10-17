@@ -75,7 +75,7 @@ test('题目分类键盘切换、文件预览和讨论入口保持上下文', as
   expect(mock.unexpected).toEqual([]);
 });
 
-test('画布缩放和平移在轮询、选择节点和关闭面板后保留', async ({ page }) => {
+test('画布缩放和平移在状态刷新、选择节点和关闭面板后保留', async ({ page }) => {
   const mock = await installCtfApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/tasks/${CTF_ID}`);
@@ -87,7 +87,10 @@ test('画布缩放和平移在轮询、选择节点和关闭面板后保留', as
   await expect.poll(() => viewport.evaluate(element => new DOMMatrixReadOnly((element as HTMLElement).style.transform).a)).toBeCloseTo(Math.min(1.5, initialScale * 1.2), 4);
   await expect(viewport).not.toHaveAttribute('style', initial ?? '');
   const zoomed = await viewport.getAttribute('style');
-  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/ctf/state'));
+  await openCtfMenu(page);
+  const zoomRefresh = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/ctf/state'));
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).dispatchEvent('click');
+  await zoomRefresh;
   await expect(viewport).toHaveAttribute('style', zoomed ?? '');
 
   const pane = page.locator('.react-flow__pane');
@@ -99,7 +102,10 @@ test('画布缩放和平移在轮询、选择节点和关闭面板后保留', as
   await page.mouse.up();
   const panned = await viewport.getAttribute('style');
   expect(panned).not.toBe(zoomed);
-  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/ctf/state'));
+  await openCtfMenu(page);
+  const panRefresh = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/ctf/state'));
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).dispatchEvent('click');
+  await panRefresh;
   await expect(viewport).toHaveAttribute('style', panned ?? '');
   await page.getByRole('button', { name: 'Agent：Web 分析员' }).click();
   await expect(page.getByRole('complementary', { name: 'Web 分析员 会话' })).toBeVisible();

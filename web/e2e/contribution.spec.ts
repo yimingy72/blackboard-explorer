@@ -1,7 +1,7 @@
 import { taskAction, conversationAction, settleModal } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { installMockApi, TASK_ID } from './fixtures';
+import { boardSnapshot, installMockApi, TASK_ID } from './fixtures';
 
 test('Agent 颜色对应创建对象，贡献可定位，旧正文分段且原文保持', async ({ page }) => {
   const mock = await installMockApi(page);
@@ -19,6 +19,7 @@ test('Agent 颜色对应创建对象，贡献可定位，旧正文分段且原�
   });
   const events = raw.map((event, index) => ({ ...event, version: index + 1 }));
   await page.route(`**/api/tasks/${TASK_ID}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(events) }));
+  await page.route(`**/api/tasks/${TASK_ID}/state`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(boardSnapshot(events)) }));
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/tasks/${TASK_ID}`);
   const canvas = page.getByRole('region', { name: '黑板关系图' }).first();

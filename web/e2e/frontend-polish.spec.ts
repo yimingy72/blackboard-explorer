@@ -1,7 +1,7 @@
 import { selectOption, taskAction, expandSection, settleModal } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
-import { GOAL, TASK_ID, installMockApi } from './fixtures';
+import { GOAL, TASK_ID, boardSnapshot, installMockApi } from './fixtures';
 import { installConversationFixture } from './conversation-fixture';
 
 const output = '../.data/checkpoints/frontend-polish/after';
@@ -43,6 +43,7 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     }
     await page.goto(`/tasks/${TASK_ID}`);
     const canvas = page.getByRole('region', { name: '黑板关系图' }).first();
+    await page.getByRole('button', { name: '适配全部节点', exact: true }).click();
     await expect(canvas.getByRole('button', { name: /事实 F1，已提出/ })).toBeVisible();
     await noOverflow(page);
     expect(await page.evaluate(() => document.documentElement.scrollHeight - innerHeight)).toBeLessThanOrEqual(1);
@@ -51,6 +52,7 @@ test('全站页面、配置入口和详情在桌面与窄屏保持可读且不�
     const detail = page.getByRole('complementary', { name: '对象详情' });
     await expect(detail).toBeVisible();
     await noOverflow(page);
+    await expect.poll(async () => Math.round((await detail.boundingBox())?.x ?? -1)).toBeGreaterThanOrEqual(0);
     const bounds = await detail.boundingBox();
     expect(bounds?.x).toBeGreaterThanOrEqual(0);
     expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(width > 900 ? 1001 : 845);
@@ -224,6 +226,7 @@ test('长任务目标保留全文且不挤走画布', async ({ page }) => {
   const goal = '核对各月份的数据与原始资料，并保留每一项结论的证据。'.repeat(40);
   const events = mock.events.map((event) => event.type === 'task.created' ? { ...event, payload: { ...event.payload, goal } } : event);
   await page.route(`**/api/tasks/${TASK_ID}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(events) }));
+  await page.route(`**/api/tasks/${TASK_ID}/state`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(boardSnapshot(events)) }));
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/tasks/${TASK_ID}`);

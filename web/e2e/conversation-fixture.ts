@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { installMockApi, TASK_ID } from './fixtures';
+import { boardSnapshot, installMockApi, TASK_ID } from './fixtures';
 
 export const INITIAL_CONTEXT = '目标：核对月度汇总。验收：差异必须附原始行依据。';
 export const BOARD_UPDATE = '[黑板更新] F2 已提交：两份汇总的日期口径不同。';
@@ -37,6 +37,9 @@ export async function installConversationFixture(page: Page, options: { running?
   }));
   await page.route(`**/api/tasks/${TASK_ID}/events?*`, (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify(events),
+  }));
+  await page.route(`**/api/tasks/${TASK_ID}/state`, (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(boardSnapshot(events)),
   }));
   await page.route('**/api/evidence?*', async (route) => {
     const uri = new URL(route.request().url()).searchParams.get('uri') ?? '';

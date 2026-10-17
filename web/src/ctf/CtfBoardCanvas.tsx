@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Tooltip } from 'antd';
+import '@xyflow/react/dist/style.css';
 import { AimOutlined, ApartmentOutlined, ExpandOutlined, HistoryOutlined, MinusOutlined, PlusOutlined, PushpinOutlined, ReloadOutlined, SearchOutlined, ShareAltOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { Background, BackgroundVariant, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, useNodesInitialized, useNodesState, useReactFlow, type NodeProps } from '@xyflow/react';
 import type { CtfChallenge, CtfEvent, CtfMember, CtfRecord } from './types';

@@ -64,7 +64,7 @@ function taskFromSnapshot(task: JsonObject): BoardTask {
     fail_reason: nullableText(task.fail_reason),
     version: amount(task.version ?? task.last_change_version),
     params: (task.params ?? {}) as Record<string, unknown>,
-    closingReason: null,
+    closingReason: nullableText(task.closing_reason),
     startedAt: nullableText(task.started_at),
     finishedAt: nullableText(task.finished_at),
     runNumber: amount(task.run_number) || 1,

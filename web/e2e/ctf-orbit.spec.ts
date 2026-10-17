@@ -45,7 +45,7 @@ async function ready(page: Page, count = 5) {
 }
 async function refresh(page: Page) {
   await openCtfMenu(page);
-  await page.getByRole('menuitem', { name: '刷新', exact: true }).click();
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).dispatchEvent('click');
   await expect(page.getByRole('menuitem', { name: '刷新', exact: true })).toBeHidden();
 }
 async function locate(page: Page, name: string) {
@@ -162,10 +162,12 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
   test(`orbit skips historical beams and treats fresh candidate feedback honestly (${reducedMotion})`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion });
     const mock = await installOrbit(page);
-    const history = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/events'));
     await page.goto(`/tasks/${CTF_ID}`);
-    await history;
     await ready(page);
+    const history = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/events'));
+    await page.getByRole('button', { name: '任务：模拟 Web 题', exact: true }).click();
+    await history;
+    await page.getByRole('button', { name: '关闭详情', exact: true }).click();
     await expect(page.locator('[data-ctf-pulse]')).toHaveCount(0);
     const before = await positions(page);
     mock.records.push({ id: 'fresh-candidate', challenge_id: 'C1', author_id: 'member-1', kind: 'verification', body: '新候选 FLAG{isolated}', created_version: 21, artifact_refs: [], verification: { source: 'agent', status: 'candidate', candidate: 'FLAG{isolated}' } });

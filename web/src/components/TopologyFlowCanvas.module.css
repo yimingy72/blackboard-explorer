@@ -42,4 +42,4 @@
 .activity { animation:objectUpdate 1.6s var(--ease-out) both; }
 @keyframes objectUpdate { 0%,100% { box-shadow:0 3px 14px rgb(36 65 104 / .035); } 25% { box-shadow:0 0 0 3px rgb(80 138 222 / .14),0 6px 20px rgb(55 91 148 / .08); } }
 @media(prefers-reduced-motion:reduce) { .node,.activity { transition:none; animation:none; } .pulse { display:none; } }
-@media(max-width:650px) { .saveStatus,.legend { display:none; } .bottomBar { max-width:calc(100% - 24px); flex-wrap:wrap; } .minimap { display:none; } }
+@media(max-width:900px) { .saveStatus,.legend { display:none; } .bottomBar { max-width:calc(100% - 24px); flex-wrap:wrap; } .minimap { display:none; } }
