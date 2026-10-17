@@ -3,6 +3,7 @@ import type { TaskView } from '../api/client';
 export type CtfMember = {
   id: string; agent_id?: string; display_name: string; role: 'lead' | 'teammate';
   lifecycle: 'active' | 'stopped' | 'removed'; run_state: string; generation: number;
+  current_turn_id?: string | null;
 };
 export type CtfChallenge = {
   id: string; title: string; description: string; connection?: string | null;
@@ -32,6 +33,7 @@ export type CtfSession = { session: Record<string, unknown>; revision: number };
 export type CtfReasoning = { text: string; kind: 'reasoning' | 'summary' };
 export type CtfToolCall = { id: string; name: string; arguments: unknown; result?: unknown; status: 'pending' | 'completed' | 'failed' };
 export type CtfState = {
+  event_version?: number;
   task: TaskView & { domain_context?: string|null; completion_requirements?: string|null; ctf_cleanup?: { phase?: 'archiving' | 'destroying' | 'failed' | 'complete'; error?: string | null }; ctf_review_usage?: { cost?: string | number; output_tokens?: number }; ctf_phase?: string | null; ctf_options?: { max_teammates?: number } | null; ctf_conclusion?: Record<string, unknown> | null };
   members: CtfMember[]; challenges?: CtfChallenge[]; records?: CtfRecord[]; artifacts?: CtfArtifact[];
 };

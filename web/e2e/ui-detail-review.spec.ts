@@ -222,7 +222,11 @@ test('普通黑板新增现有节点的关系时保留节点位置和用户视�
   await page.goto(`/tasks/${TASK_ID}`);
   const canvas = page.getByRole('region', { name: '黑板关系图' }).first();
   await expectInitialFit(canvas, 3);
+  await expect(page.getByText('实时连接正常', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __bbxMockEventSources: EventTarget[] }).__bbxMockEventSources.length)).toBe(1);
   await page.getByRole('button', { name: '放大画布', exact: true }).click();
+  await expect.poll(() => page.locator('.react-flow__viewport').evaluate(element => new DOMMatrixReadOnly((element as HTMLElement).style.transform).a)).toBeCloseTo(1.2, 4);
+  await page.getByRole('button', { name: '显示全部关系', exact: true }).click();
   const viewport = page.locator('.react-flow__viewport');
   const transform = await viewport.getAttribute('style');
   const positions = await canvas.locator('.react-flow__node').evaluateAll(nodes => nodes.map(node => ({ id: node.getAttribute('data-id'), position: (node as HTMLElement).style.transform })));

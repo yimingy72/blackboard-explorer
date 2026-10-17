@@ -9,11 +9,10 @@ import Icon from '../components/Icon';
 import { taskTitle } from './format';
 import { TaskCurrency } from './currency';
 import { taskListUrl } from './taskNavigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, request, type TaskView } from '../api/client';
-import CtfWorkbench from '../ctf/CtfWorkbench';
 import { useBoard } from '../board/store';
 import { reduceBoard } from '../board/reducer';
 import { taskEndExplanation } from '../board/view';
@@ -21,10 +20,11 @@ import { activeDuration, agentContributions, agentStyle, agentLabel, agentNumber
 import AgentConversation from '../components/AgentConversation';
 import WorkbenchDrawer from '../components/WorkbenchDrawer';
 import DetailPanel from '../components/DetailPanel';
-import TopologyFlowCanvas from '../components/TopologyFlowCanvas';
 import controls from '../styles/controls.module.css';
 import { formatMoney, taskStatusLabel } from './format';
 import styles from './TaskWorkbenchPage.module.css';
+const CtfWorkbench = lazy(() => import('../ctf/CtfWorkbench'));
+const TopologyFlowCanvas = lazy(() => import('../components/TopologyFlowCanvas'));
 const connectionText = {
     connecting: '正在连接实时事件',
     open: '实时连接正常',
@@ -59,14 +59,14 @@ function BlackboardWorkbenchPage() {
     const [actionError, setActionError] = useState('');
     const [version, setVersion] = useState<number | null>(null);
     const [now, setNow] = useState(() => Date.now());
-    const taskQuery = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId!), enabled: Boolean(taskId), refetchInterval: 5000 });
+    const taskQuery = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId!), enabled: Boolean(taskId), staleTime: 5000, refetchInterval: query => ['created', 'provisioning', 'running', 'closing'].includes(String(query.state.data?.status)) ? 10000 : false });
     const board = useBoard(taskId);
     const ensureHistory = board.ensureHistory;
     const viewEvents = useMemo(() => version === null ? board.events : board.events.filter((event) => event.version <= version), [board.events, version]);
     const viewState = useMemo(() => version === null ? board.state : reduceBoard(viewEvents), [version, board.state, viewEvents]);
     const totalObjects = Object.keys(viewState.facts).length + Object.keys(viewState.intents).length;
     const unauthorized = (taskQuery.error instanceof ApiError && taskQuery.error.status === 401) || (board.error instanceof ApiError && board.error.status === 401);
-    const numbers = useMemo(() => agentNumbers(viewEvents, Object.keys(viewState.agents)), [viewEvents, viewState.agents]);
+    const numbers = useMemo(() => agentNumbers([], Object.keys(viewState.agents)), [viewState.agents]);
     const agents = useMemo(() => orderedAgents(viewState, numbers), [viewState, numbers]);
     const contributions = useMemo(() => agentContributions(viewState, viewEvents), [viewState, viewEvents]);
     const selectedAgent = selectedId ? viewState.agents[selectedId] : undefined;
@@ -205,7 +205,7 @@ function BlackboardWorkbenchPage() {
 
       <InspectorLayout hideOnMobile={goalOpen} label={selectedAgent ? 'Agent 对话' : '对象详情'} onClose={() => selectedAgent ? closeAgent(selectedAgent.id) : setSelectedId(null)} inspector={selectedAgent ? <AgentConversation contribution={contributions[selectedAgent.id]} color={agentStyle(numbers[selectedAgent.id])} onSelect={selectObject} key={`${taskId}-${selectedAgent.id}`} taskId={taskId} agent={selectedAgent} label={agentLabel(selectedAgent.id,numbers)} events={viewEvents} state={viewState} historical={version!==null} onClose={()=>closeAgent(selectedAgent.id)} onTraffic={() => setTrafficAgent(selectedAgent.id)} clientState={clientStates.current[selectedAgent.id]??=createAgentClientState()} draftValue={drafts[selectedAgent.id]??''} onDraftChange={value=>setDrafts(current=>({...current,[selectedAgent.id]:value}))} /> : selectedId ? <DetailPanel taskId={taskId} state={viewState} selectedId={selectedId} onSelect={selectObject} historical={version!==null} agentNumbers={numbers} /> : null}>
         <TaskGoal key={taskId} open={goalOpen} goal={boardTask?.goal??(version===null?task?.goal:'')??''} context={boardTask?.domain_context??null} files={boardTask?.initialAttachments??(version===null?task?.initial_attachments:[])??[]} requirements={boardTask?.acceptance.length?<ul>{boardTask.acceptance.map(item=><li key={item.id}>{item.id} · {item.desc}</li>)}</ul>:undefined} onClose={closeGoal} />
-        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <LoadingState page label="黑板关系图加载中" lines={5} /> : <TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={selectObject} />}</section>
+        <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <LoadingState page label="黑板关系图加载中" lines={5} /> : <Suspense fallback={<LoadingState page label="黑板关系图加载中" lines={5} />}><TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={selectObject} /></Suspense>}</section>
       </InspectorLayout>
       <TrafficDrawer taskId={taskId} currentRun={task?.run_number ?? boardTask?.runNumber ?? 1} runs={task?.runs?.map(run => run.run_number) ?? []} agents={agents.map(agent => ({ id: agent.id, name: agentLabel(agent.id, numbers) }))} open={trafficAgent !== undefined} initialAgentId={trafficAgent} onClose={() => setTrafficAgent(undefined)} />
       <WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} onRestoreFocus={()=>taskMenuButton.current?.focus({preventScroll:true})} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={selectObject} agentNumbers={numbers}/>
@@ -237,5 +237,7 @@ export default function TaskWorkbenchPage() {
         return <LoadingState page label="任务信息加载中" lines={6} />;
     if (!task.data)
         return <div role="alert"><p>{task.error?.message ?? '无法读取任务。'}</p><Button className={controls.button} onClick={() => void task.refetch()} htmlType={"button"}>重试</Button> <Link to="/tasks">返回任务列表</Link></div>;
-    return task.data.mode === 'ctf' ? <CtfWorkbench key={taskId} taskId={taskId} initialTask={task.data}/> : <BlackboardWorkbenchPage key={taskId}/>;
+    return task.data.mode === 'ctf'
+        ? <Suspense fallback={<LoadingState page label="团队协作页加载中" lines={6} />}><CtfWorkbench key={taskId} taskId={taskId} initialTask={task.data}/></Suspense>
+        : <BlackboardWorkbenchPage key={taskId}/>;
 }

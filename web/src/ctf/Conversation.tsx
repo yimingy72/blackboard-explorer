@@ -33,8 +33,10 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
     const [removing, setRemoving] = useState(false);
     const sendAction = useAction();
     const memberAction = useAction();
-    const messages = useQuery({ queryKey: ['ctf', taskId, 'messages', member.id], queryFn: ({ signal }) => ctfApi.messages(taskId, member.id, signal), refetchInterval: 3000 });
-    const session = useQuery({ queryKey: ['ctf', taskId, 'session', member.id], queryFn: ({ signal }) => ctfApi.session(taskId, member.id, signal), refetchInterval: 3000 });
+    const active = ['created', 'provisioning', 'running', 'closing'].includes(phase);
+    const messages = useQuery({ queryKey: ['ctf', taskId, 'messages', member.id], queryFn: ({ signal }) => ctfApi.messages(taskId, member.id, signal), staleTime: 2000, refetchInterval: active ? 3000 : false });
+    // Session snapshots can be large; messages already provide the live mailbox view.
+    const session = useQuery({ queryKey: ['ctf', taskId, 'session', member.id], queryFn: ({ signal }) => ctfApi.session(taskId, member.id, signal), staleTime: 8000, refetchInterval: active ? 10000 : false });
     const entries = useMemo(() => conversationEntries(session.data, messages.data?.messages ?? [], member.id), [session.data, messages.data, member.id]);
     const label = (id: string) => id === 'user' ? '你' : id === 'system' ? '系统通知' : members.find((item) => item.id === id)?.display_name ?? id;
     async function send() {

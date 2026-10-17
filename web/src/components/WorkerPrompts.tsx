@@ -64,7 +64,7 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
                 const key = `${server.name}@${server.version}`;
                 return <div key={key} className={styles.mcpChoice}>
           <label className={styles.checkRow}><Checkbox checked={Boolean(bound)} disabled={disabled || (!server.enabled && !bound)} onChange={(event) => changeServer(server.name, server.version, event.target.checked)}/>{server.label}{!server.enabled && <small>已停用</small>}</label>
-          {bound && <><Button className={controls.button} disabled={disabled || inspected === key && loadingTools} loading={inspected === key && loadingTools} aria-busy={inspected === key && loadingTools} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{`读取 ${server.label} 工具清单`}</Button>
+          {bound && <><Button className={controls.button} aria-label={`读取 ${server.label} 工具清单`} disabled={disabled || inspected === key && loadingTools} loading={inspected === key && loadingTools} aria-busy={inspected === key && loadingTools} onClick={() => void inspect(server.name, server.version)} htmlType={"button"}>{`读取 ${server.label} 工具清单`}</Button>
             {inspected === key && toolError && <p className={controls.error} role="alert">{toolError}</p>}
             {inspected === key && toolList && <div className={styles.toolChecks}>{toolList.map((tool) => <label key={tool.name} className={styles.checkRow}><Checkbox checked={bound.allowed_tools == null || bound.allowed_tools.includes(tool.name)} disabled={disabled} onChange={(event) => {
                                     const current = bound.allowed_tools ?? toolList.map((item) => item.name);

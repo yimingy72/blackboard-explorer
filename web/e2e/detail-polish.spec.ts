@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { installMockApi, TASK_ID } from './fixtures';
+import { boardSnapshot, installMockApi, TASK_ID } from './fixtures';
 
 test('详情用 Markdown 展示正文和代码，缩略图紧凑且筛选全部移除', async ({ page }) => {
   const mock = await installMockApi(page);
@@ -25,6 +25,7 @@ test('详情用 Markdown 展示正文和代码，缩略图紧凑且筛选全部�
       ? { ...event, payload: { ...event.payload, statement: '核对 **日期范围** 与汇总结果。', expected: '- 输出差异行\n- 保留原始编号', method: '执行下面的检查：\n\n```sh\npython verify.py --input source.csv\n```' } }
       : event);
   await page.route(`**/api/tasks/${TASK_ID}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(events) }));
+  await page.route(`**/api/tasks/${TASK_ID}/state`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(boardSnapshot(events)) }));
   const imageRequests: string[] = [];
   await page.route('https://images.invalid/**', (route) => { imageRequests.push(route.request().url()); return route.abort(); });
   await page.setViewportSize({ width: 1440, height: 1000 });

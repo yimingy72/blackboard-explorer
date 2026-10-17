@@ -723,6 +723,16 @@ async def test_model_error_observation_failure_preserves_original_exception():
     [
         ({"incomplete_reason": "max_output_tokens", "payload": "secret payload"}, "输出上限"),
         ({"category": "content_filter", "payload": "secret payload"}, "内容审核"),
+        (
+            {
+                "category": "payment_required",
+                "scope": "provider",
+                "http_status": 402,
+                "request_id": "safe-request-id",
+                "payload": "secret payload",
+            },
+            "余额不足",
+        ),
         ({"category": "unknown", "payload": "secret payload"}, "模型调用异常，具体原因未确认"),
         ("max_output_tokens secret payload", "内部错误"),
     ],
@@ -745,6 +755,13 @@ def test_model_failure_summary_uses_only_fixed_safe_metadata(metadata, summary_f
     assert diagnostic["phase"] == "model_turn"
     assert diagnostic["occurred_at"]
     assert UUID(diagnostic["correlation_id"])
+    if isinstance(metadata, dict) and metadata.get("category") == "payment_required":
+        assert diagnostic["model_error"] == {
+            "category": "payment_required",
+            "scope": "provider",
+            "http_status": 402,
+            "request_id": "safe-request-id",
+        }
     assert diagnostic["correlation_id"] in caplog.text
     assert "phase=model_turn" in caplog.text
     assert "error_type=RuntimeError" in caplog.text

@@ -334,6 +334,23 @@ class CtfMessage(ContractModel):
     notification_purpose: str | None = None
 
 
+class CtfFailureModelError(ContractModel):
+    """Bounded provider diagnostics copied from a failed model call."""
+
+    category: str = Field(pattern=r"^[a-z_]{1,64}$")
+    scope: Literal["provider", "request", "infrastructure"] | None = None
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    provider_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+    request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    failure_phase: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    exception_type: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")
+    transport_type: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")
+    incomplete_reason: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+    )
+    transient: bool | None = None
+
+
 class CtfFailureDiagnostic(ContractModel):
     """Safe coordinator failure metadata; never contains request or tool payloads."""
 
@@ -346,6 +363,7 @@ class CtfFailureDiagnostic(ContractModel):
     member_id: str | None = Field(default=None, min_length=1, max_length=128)
     turn_id: str | None = Field(default=None, min_length=1, max_length=128)
     generation: int | None = Field(default=None, ge=0)
+    model_error: CtfFailureModelError | None = None
 
 
 class CtfConclusion(ContractModel):

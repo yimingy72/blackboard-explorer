@@ -65,5 +65,5 @@
 .taskFoot { line-height:16px; padding-top:4px; }
 @keyframes progress-flash { from { box-shadow:0 0 0 4px #568dcc25; } to { box-shadow:0 0 0 0 #568dcc00; } }
 @keyframes accepted-flash { from { box-shadow:0 0 0 5px #408d6635; border-color:#73aa8b; } to { box-shadow:0 0 0 0 #408d6600; } }
-@media(max-width:899px) { .bottomBar { left:10px; right:118px; bottom:10px; flex-wrap:wrap; gap:6px; } .saveStatus { display:none; } .bottomBar .controls button { min-width:32px; } .pin { width:30px; height:30px; } }
+@media(max-width:899px) { .bottomBar { left:10px; right:118px; bottom:10px; flex-wrap:wrap; gap:6px; } .saveStatus { display:none; } .bottomBar .controls button { min-width:32px; } .pin { width:30px; height:30px; } .minimap { display:none; } }
 @media(prefers-reduced-motion:reduce) { .pulse { display:none; } .activityFlash .nodeButton,.successFlash .nodeButton { animation:none; } }

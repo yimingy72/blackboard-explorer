@@ -15,6 +15,7 @@ describe('board snapshot', () => {
         acceptance_state: { A1: { status: 'met', evidence_facts: ['F1'], judged_version: 40 } },
         run_number: 2,
         active_seconds: 30,
+        closing_reason: 'accepted',
       },
       facts: {
         F1: {
@@ -39,7 +40,7 @@ describe('board snapshot', () => {
       last_change_version: 21,
     });
     expect(version).toBe(42);
-    expect(state.task).toMatchObject({ goal: 'Find cause', runNumber: 2, activeSeconds: 30 });
+    expect(state.task).toMatchObject({ goal: 'Find cause', runNumber: 2, activeSeconds: 30, closingReason: 'accepted' });
     expect(state.acceptance.A1).toMatchObject({ status: 'met', evidence_facts: ['F1'] });
     expect(state.facts.F1).toMatchObject({ status: 'disputed', reliedBy: 2 });
     expect(state.intents.I1).toMatchObject({ status: 'closed', closedBy: 'F1', resultFacts: ['F1'] });

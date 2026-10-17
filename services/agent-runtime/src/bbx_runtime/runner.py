@@ -682,21 +682,27 @@ class AgentRunner:
                 metadata = classified if classified["category"] != "unknown" else None
             if isinstance(metadata, dict):
                 logger.warning(
-                    "Model call failed",
-                    extra={"fields": {"task_id": task_id, "agent_id": agent_id, **metadata}},
+                    "Model call failed task_id=%s agent_id=%s category=%s http_status=%s "
+                    "request_id=%s",
+                    task_id,
+                    agent_id,
+                    metadata["category"],
+                    metadata.get("http_status"),
+                    metadata.get("request_id"),
                 )
                 reason = f"模型请求失败：{metadata['category']}"
             else:
                 safe_type = model_error_metadata(error)["exception_type"]
+                raw_type = type(error).__name__
+                log_type = (
+                    raw_type if raw_type.isidentifier() and len(raw_type) <= 100 else safe_type
+                )
                 logger.warning(
-                    "Agent run failed",
-                    extra={
-                        "fields": {
-                            "task_id": task_id,
-                            "agent_id": agent_id,
-                            "category": safe_type,
-                        }
-                    },
+                    "Agent run failed task_id=%s agent_id=%s category=%s exception_type=%s",
+                    task_id,
+                    agent_id,
+                    safe_type,
+                    log_type,
                 )
                 reason = "费用登记待恢复" if usage_failure else f"运行失败：{safe_type}"
             receipt = {"accepted": False, "reason": reason}

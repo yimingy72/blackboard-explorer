@@ -10,6 +10,7 @@ from bbx_contracts.ctf import (
     CtfAgentProfile,
     CtfConclusion,
     CtfFailureDiagnostic,
+    CtfFailureModelError,
     CtfMember,
     CtfMessage,
     CtfTaskCreate,
@@ -287,6 +288,12 @@ def test_failure_diagnostic_is_bounded_and_traceable_without_payloads() -> None:
         occurred_at=datetime(2026, 10, 9, 2, 35, 28, 402438, tzinfo=UTC),
         correlation_id=uuid4(),
         summary="CTF 执行因内部错误停止；请使用失败追踪 ID 查询受控日志。",
+        model_error=CtfFailureModelError(
+            category="payment_required",
+            scope="provider",
+            http_status=402,
+            request_id="safe-request-id",
+        ),
     )
     conclusion = CtfConclusion(
         end_reason="system_failure",
@@ -295,6 +302,8 @@ def test_failure_diagnostic_is_bounded_and_traceable_without_payloads() -> None:
     )
     assert conclusion.failure is not None
     assert "payload" not in conclusion.failure.summary
+    assert conclusion.failure.model_error is not None
+    assert conclusion.failure.model_error.category == "payment_required"
     with pytest.raises(ValidationError):
         CtfConclusion.model_validate(
             {

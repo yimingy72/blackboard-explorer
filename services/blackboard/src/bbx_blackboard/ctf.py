@@ -995,7 +995,16 @@ class CtfService(
         async with self.repo.engine.connect() as conn:
             task = await row(conn, s.tasks, tid)
             require(task["mode"] == "ctf", "Task mode is not CTF")
-            result: dict[str, Any] = {"task": task}
+            # Read the cursor before the snapshot so events committed during the
+            # remaining reads are delivered by SSE instead of being skipped.
+            event_version = (
+                await conn.execute(
+                    select(func.coalesce(func.max(s.events.c.version), 0)).where(
+                        s.events.c.task_id == tid
+                    )
+                )
+            ).scalar_one()
+            result: dict[str, Any] = {"task": task, "event_version": int(event_version)}
             for key, table in (
                 ("members", s.ctf_members),
                 ("turns", s.ctf_turns),

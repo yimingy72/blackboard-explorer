@@ -74,6 +74,8 @@ async def test_list_members_reads_only_roster_and_matches_full_state(monkeypatch
     async def execute(query):
         table = query.get_final_froms()[0].name
         tables.append(table)
+        if table == "events":
+            return SimpleNamespace(scalar_one=lambda: 7)
         return SimpleNamespace(mappings=lambda: rows[table])
 
     connection = AsyncMock()
@@ -89,6 +91,7 @@ async def test_list_members_reads_only_roster_and_matches_full_state(monkeypatch
     assert roster["members"][0]["agent_id"] == "lead"
     full = await backend.state(tid)
     assert roster["members"] == full["members"]
+    assert full["event_version"] == 7
     assert full["messages"] == rows["ctf_messages"]
     assert full["turns"] == rows["ctf_turns"]
     assert full["records"] == [{"id": "record", "body": "record history"}]

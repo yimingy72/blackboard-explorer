@@ -623,13 +623,24 @@ class Repository:
         self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
     ) -> BoardState:
         task = await row(conn, s.tasks, tid)
-        task["version"] = (
-            await conn.execute(
-                select(func.coalesce(func.max(s.events.c.version), 0)).where(
-                    s.events.c.task_id == tid
+        event_state = (
+            (
+                await conn.execute(
+                    select(
+                        func.coalesce(func.max(s.events.c.version), 0).label("version"),
+                        func.array_agg(s.events.c.payload, order_by=s.events.c.version.desc())
+                        .filter(s.events.c.type.in_(("task.closing", "task.stopped")))
+                        .label("closings"),
+                    ).where(s.events.c.task_id == tid)
                 )
             )
-        ).scalar_one()
+            .mappings()
+            .one()
+        )
+        task["version"] = int(event_state["version"])
+        closings = event_state["closings"] or []
+        if closings and isinstance(closings[0], dict):
+            task["closing_reason"] = closings[0].get("reason")
 
         async def mapped(table):
             rows = (

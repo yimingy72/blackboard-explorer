@@ -1,13 +1,17 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import type { CtfChallenge, CtfRecord } from '../src/ctf/types';
 
 export const CTF_ID = '55555555-5555-4555-8555-555555555555';
 export const SECOND_ID = '66666666-6666-4666-8666-666666666666';
 const at = '2026-10-08T08:00:00Z';
 export async function openCtfMenu(page: Page) {
-  if (!await page.getByRole('menuitem', { name: '刷新', exact: true }).isVisible()) {
-    await page.getByRole('button', { name: '更多任务操作', exact: true }).click();
+  const item = page.getByRole('menuitem', { name: '刷新', exact: true });
+  if (await item.isVisible()) {
+    await page.keyboard.press('Escape');
+    await expect(item).toBeHidden();
   }
+  await page.getByRole('button', { name: '更多任务操作', exact: true }).click();
+  await expect(item).toBeVisible();
 }
 
 export async function installCtfApi(page: Page, options: { evidenceText?: string } = {}) {

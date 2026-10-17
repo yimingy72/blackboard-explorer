@@ -1,5 +1,7 @@
 import type { Page, Route } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { reduce } from '../src/board/reducer';
+import type { BoardEvent } from '../src/board/types';
 
 export const TASK_ID = '11111111-1111-4111-8111-111111111111';
 export const GOAL = '查明订单服务延迟的原因';
@@ -104,6 +106,58 @@ function profile(prompt: string): MockProfile {
     prompt_templates: { explore: prompt, derive: '推导模板', close: '收尾模板' },
     exec_image: 'bbx-exec-env:latest', exec_resources: { cpus: 2, mem: '4g', pids: 256 },
     privileged_allowlist: [],
+  };
+}
+
+export function boardSnapshot(events: MockEvent[]) {
+  const state = reduce(events as unknown as BoardEvent[]);
+  return {
+    task: {
+      name: state.task?.name,
+      goal: state.task?.goal ?? GOAL,
+      initial_attachments: state.task?.initialAttachments ?? [],
+      domain_context: state.task?.domain_context,
+      acceptance: state.task?.acceptance ?? [],
+      acceptance_state: Object.fromEntries(Object.values(state.acceptance).map(item => [item.id, item])),
+      budget: state.task?.budget ?? {},
+      usage: state.task?.usage ?? {},
+      status: state.task?.status ?? 'created',
+      version: state.task?.version ?? 0,
+      fail_reason: state.task?.fail_reason,
+      closing_reason: state.task?.closingReason,
+      report_uri: state.task?.report_uri,
+      workspace_uri: state.task?.workspace_uri,
+      started_at: state.task?.startedAt,
+      finished_at: state.task?.finishedAt,
+      run_number: state.task?.runNumber ?? 1,
+      active_seconds: state.task?.activeSince
+        ? state.task.activeSeconds ?? 0
+        : Math.max(state.task?.activeSeconds ?? 0, 600),
+      active_since: state.task?.activeSince,
+    },
+    facts: Object.fromEntries(Object.values(state.facts).map(fact => [fact.id, {
+      version: fact.version, kind: fact.kind, statement: fact.statement, author: fact.author,
+      provenance: fact.provenance, status: fact.status, relied_by: fact.reliedBy,
+      derived_from: fact.derivedFrom, disputes: fact.disputes, resolves: fact.resolves,
+      result: fact.result, satisfies: fact.satisfies, evidence: fact.evidence,
+    }])),
+    intents: Object.fromEntries(Object.values(state.intents).map(intent => [intent.id, {
+      version: intent.version, statement: intent.statement, based_on: intent.basedOn,
+      expected: intent.expected, method: intent.method, relates_to: intent.relatesTo,
+      retry_of: intent.retryOf, author: intent.author, status: intent.status,
+      holder: intent.holder, result: intent.result, closed_by: intent.closedBy,
+      result_facts: intent.resultFacts, attempts: intent.attempts, notes: intent.notes ?? [],
+    }])),
+    agents: Object.fromEntries(Object.values(state.agents).map(agent => [agent.id, {
+      task_type: agent.taskType, is_seed: agent.isSeed, derive_parallel: agent.deriveParallel,
+      derive_review: agent.deriveReview, close_mode: agent.closeMode, status: agent.status,
+      steps: agent.steps, context_tokens: agent.contextTokens, intent_id: agent.intentId,
+      usage: agent.usage, last_seen_version: agent.lastSeenVersion,
+      grace_calls_left: agent.graceCallsLeft, end_reason: agent.endReason,
+      receipt: agent.receipt, conclude_reason: agent.concludeReason,
+      started_at: agent.startedAt, finished_at: agent.finishedAt,
+    }])),
+    last_change_version: state.task?.version ?? 0,
   };
 }
 
@@ -214,6 +268,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       return json(route, task);
     }
     if (/\/api\/tasks\/[^/]+\/agents\/[^/]+\/messages$/.test(path) && method === 'GET') return json(route, { messages: [], session_available: false, session_origin: null, mode: 'review' });
+    if (path === `/api/tasks/${TASK_ID}/state` && method === 'GET') return json(route, boardSnapshot(events));
     if (path === `/api/tasks/${TASK_ID}/events` && method === 'GET') return json(route, events);
     if (path === `/api/tasks/${TASK_ID}/stream` && method === 'GET') {
       return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });

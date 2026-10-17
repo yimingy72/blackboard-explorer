@@ -1,5 +1,5 @@
 .app { min-height:100dvh; flex-direction:row; }
-.workbench { height:100dvh; min-height:0; overflow:hidden; }
+.workbench { height:100dvh; min-height:0; overflow:clip; }
 .sidebar { border-right:1px solid var(--color-line); position:sticky; top:0; height:100dvh; }
 .brand { min-height:60px; display:flex; align-items:center; gap:10px; padding:0 19px; color:var(--color-ink); white-space:nowrap; text-decoration:none; overflow:hidden; }
 .brand > span:first-child { font-size:23px; color:var(--color-primary); flex:none; }
