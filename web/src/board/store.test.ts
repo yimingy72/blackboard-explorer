@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { useBoardStore } from './store';
+import { boardFromSnapshot } from './snapshot';
 import type { BoardEvent } from './types';
 
 const taskOne = '11111111-1111-4111-8111-111111111111';
@@ -18,6 +19,17 @@ function created(taskId: string, version: number): BoardEvent {
 }
 
 describe('board event store', () => {
+  it('starts from a current snapshot and advances with a later event',()=>{
+    useBoardStore.getState().reset(taskOne);
+    const hydrated=boardFromSnapshot({task:{version:4,goal:taskOne,status:'running',acceptance:[],budget:{},usage:{}},facts:{},intents:{},agents:{},last_change_version:4});
+    useBoardStore.getState().hydrate(taskOne,hydrated.state);
+    expect(useBoardStore.getState().state.task?.status).toBe('running');
+    useBoardStore.getState().append(taskOne,[{...created(taskOne,5),type:'task.finished',payload:{}}]);
+    expect(useBoardStore.getState().state.task?.status).toBe('finished');
+    expect(useBoardStore.getState().events.map(event=>event.version)).toEqual([5]);
+    useBoardStore.getState().reset(null);
+  });
+
   it('advances new events without mutating past snapshots and repairs an older gap',()=>{
     useBoardStore.getState().reset(taskOne);
     const first=created(taskOne,1);

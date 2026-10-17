@@ -20,8 +20,23 @@ export function agentContributions(state: BoardState, events: readonly BoardEven
   return counts;
 }
 
-export function agentNumbers(events: readonly BoardEvent[]): Record<string, number> {
+export function agentNumbers(
+  events: readonly BoardEvent[],
+  knownAgents: readonly string[] = [],
+): Record<string, number> {
   const numbers: Record<string, number> = {};
+  if (knownAgents.length) {
+    for (const [index, id] of [...knownAgents]
+      .sort((left, right) => {
+        const leftNumber = Number(/-(\d+)$/.exec(left)?.[1] ?? Number.MAX_SAFE_INTEGER);
+        const rightNumber = Number(/-(\d+)$/.exec(right)?.[1] ?? Number.MAX_SAFE_INTEGER);
+        return leftNumber - rightNumber || left.localeCompare(right);
+      })
+      .entries()) {
+      numbers[id] = index + 1;
+    }
+    return numbers;
+  }
   let nextNumber = 1;
   for (const event of [...events].sort((a, b) => a.version - b.version)) {
     if (event.type !== 'agent.spawned') continue;
@@ -29,6 +44,13 @@ export function agentNumbers(events: readonly BoardEvent[]): Record<string, numb
     if (typeof id === 'string' && id && numbers[id] === undefined) {
       numbers[id] = nextNumber++;
     }
+  }
+  for (const id of [...knownAgents].sort((left, right) => {
+    const leftNumber = Number(/-(\d+)$/.exec(left)?.[1] ?? Number.MAX_SAFE_INTEGER);
+    const rightNumber = Number(/-(\d+)$/.exec(right)?.[1] ?? Number.MAX_SAFE_INTEGER);
+    return leftNumber - rightNumber || left.localeCompare(right);
+  })) {
+    if (numbers[id] === undefined) numbers[id] = nextNumber++;
   }
   return numbers;
 }
