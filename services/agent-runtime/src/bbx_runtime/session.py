@@ -101,6 +101,7 @@ class SessionCheckpoint:
         self.delivered_message_ids: set[str] = set()
         self.review_claim: dict[str, str] | None = None
         self.expected_derive_round: int | None = None
+        self.expected_started_at: str | None = None
         self.review_request: dict[str, Any] | None = None
         self.usage_error: Exception | None = None
         self.pending_usage_messages: list[Message] = []
@@ -164,6 +165,11 @@ class SessionCheckpoint:
             self.session.state["bbx_checkpoint_id"] = str(uuid4())
             strip_image_history(self.session)
             payload = storage_safe(self.session.to_dict())
+            fences: dict[str, Any] = {}
+            if self.expected_started_at is not None:
+                fences["expected_started_at"] = self.expected_started_at
+            if self.expected_derive_round is not None:
+                fences["expected_derive_round"] = self.expected_derive_round
 
             async def write() -> dict[str, Any]:
                 try:
@@ -176,11 +182,7 @@ class SessionCheckpoint:
                         expected_revision=self.revision,
                         deliveries=deliveries,
                         review_claim=self.review_claim,
-                        **(
-                            {"expected_derive_round": self.expected_derive_round}
-                            if self.expected_derive_round is not None
-                            else {}
-                        ),
+                        **fences,
                     )
                 except (httpx.TransportError, RemoteError) as error:
                     if isinstance(error, RemoteError) and error.status < 500:

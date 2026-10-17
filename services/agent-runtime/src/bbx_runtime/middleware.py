@@ -33,7 +33,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from bbx_runtime.billing import _input_tokens, _usage
 from bbx_runtime.clients.blackboard import RemoteError
-from bbx_runtime.context import RunContext
+from bbx_runtime.context import RunContext, execution_timestamp
 from bbx_runtime.image_view import append_pending_images, finish_pending_images
 from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
 from bbx_runtime.opening import OpeningContextProvider
@@ -200,6 +200,11 @@ class GraceGateMiddleware(FunctionMiddleware):
         agent = board["agents"].get(self.ctx.agent_id)
         if agent is None:
             raise RuntimeError(f"Agent {self.ctx.agent_id} is missing from the blackboard")
+        if (
+            self.ctx.expected_started_at is not None
+            and execution_timestamp(agent.get("started_at")) != self.ctx.expected_started_at
+        ):
+            raise asyncio.CancelledError("runtime_restart")
         if agent["status"] == "concluding":
             if context.function.name not in GRACE_TOOLS:
                 context.result = (
@@ -331,6 +336,11 @@ class BoardSyncMiddleware(ChatMiddleware):
             and int(agent.get("derive_round") or 1) != self.ctx.expected_derive_round
         ):
             raise asyncio.CancelledError("runtime_restart")
+        if (
+            self.ctx.expected_started_at is not None
+            and execution_timestamp(agent.get("started_at")) != self.ctx.expected_started_at
+        ):
+            raise asyncio.CancelledError("runtime_restart")
         requested = agent.get("conclude_requested_at")
         if requested:
             stamp = (
@@ -408,6 +418,11 @@ class BoardSyncMiddleware(ChatMiddleware):
         if agent is None:
             raise RuntimeError(f"Agent {self.ctx.agent_id} is missing from the blackboard")
         last_seen = int(agent["last_seen_version"])
+        if (
+            self.ctx.expected_started_at is not None
+            and execution_timestamp(agent.get("started_at")) != self.ctx.expected_started_at
+        ):
+            raise asyncio.CancelledError("runtime_restart")
         step = int(agent.get("steps") or 0) + 1
         checkpoint = self.ctx.checkpoint
         persisted = (
@@ -552,6 +567,11 @@ class BoardSyncMiddleware(ChatMiddleware):
                         "last_seen_version": last_seen,
                         "requested_at": requested_at,
                         "expected_run_number": self.ctx.state["task"].get("run_number") or 1,
+                        **(
+                            {"expected_started_at": self.ctx.expected_started_at}
+                            if self.ctx.expected_started_at is not None
+                            else {}
+                        ),
                         "expected_derive_round": (
                             self.ctx.expected_derive_round
                             or board["agents"][self.ctx.agent_id].get("derive_round")
@@ -614,6 +634,11 @@ class BoardSyncMiddleware(ChatMiddleware):
                 usage=usage,
                 last_seen_version=last_seen,
                 requested_at=requested_at,
+                **(
+                    {"expected_started_at": self.ctx.expected_started_at}
+                    if self.ctx.expected_started_at is not None
+                    else {}
+                ),
                 **(
                     {"expected_derive_round": self.ctx.expected_derive_round}
                     if self.ctx.expected_derive_round is not None

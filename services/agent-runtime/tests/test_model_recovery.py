@@ -26,7 +26,7 @@ from bbx_runtime.middleware import BoardSyncMiddleware
 from bbx_runtime.models import close_model_client, make_client
 from bbx_runtime.recovery import ModelRecoveryGate, RecoveryExhausted
 from bbx_runtime.runner import AgentRunner
-from bbx_runtime.session import _unpaired_calls
+from bbx_runtime.session import SessionCheckpoint, _unpaired_calls
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from openai import APIStatusError, AsyncOpenAI
@@ -219,6 +219,81 @@ async def invoke(runner, client, task_type="derive"):
             task_id=uuid4(), container_id="envd", name="envd", base_url="http://envd", token="token"
         ),
     )
+
+
+@pytest.mark.parametrize("task_type", ["explore", "derive"])
+async def test_cold_resume_repairs_interrupted_tools_before_provider_dispatch(task_type):
+    service = RecoveryService(task_type)
+    session = AgentSession()
+    session.state["in_memory"] = {
+        "messages": [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call("saved", "post_fact", arguments={}),
+                    Content.from_function_call("unknown", "execute_command", arguments={}),
+                ],
+            )
+        ]
+    }
+    session.state["bbx_tool_results"] = {
+        "saved": Content.from_function_result("saved", result="confirmed tool result").to_dict()
+    }
+    session.state["bbx_final_receipt"] = {"receipt": {"accepted": False}}
+    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent-1", session)
+    await checkpoint.save()
+    service.board["agents"]["agent-1"]["previous_receipt"] = {"accepted": False}
+    receipt = (
+        RECEIPT
+        if task_type == "derive"
+        else '{"accepted":true,"data":{"intent_result":"none","posted":[],"note":"done"}}'
+    )
+
+    class InspectRestoredClient(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            assert _unpaired_calls(list(kwargs["messages"])) == []
+            assert service.saved is not None
+            durable = AgentSession.from_dict(service.saved["session"])
+            assert _unpaired_calls(durable.state["in_memory"]["messages"]) == []
+            return super()._inner_get_response(**kwargs)
+
+    client = InspectRestoredClient(
+        [ScriptStep(text=receipt, expect_contains="confirmed tool result")]
+    )
+    runner, _ = runner_for(service)
+    assert (await invoke(runner, client, task_type)).end_reason == "normal"
+    assert client._index == 1
+    results = {
+        content.call_id: content.result
+        for message in client.received_messages[0]
+        for content in message.contents
+        if content.type == "function_result"
+    }
+    assert results["saved"] == "confirmed tool result"
+    assert "结果未保存" in results["unknown"]
+
+
+async def test_reactivated_execution_stops_old_worker_before_provider_dispatch():
+    original = "2026-10-17T12:00:00+00:00"
+
+    class ReplacedService(RecoveryService):
+        reads = 0
+
+        async def state(self, task_id):
+            self.reads += 1
+            if self.reads > 1:
+                self.board["agents"]["agent-1"]["started_at"] = "2026-10-17T12:01:00Z"
+            return await super().state(task_id)
+
+    service = ReplacedService("explore")
+    service.board["agents"]["agent-1"]["started_at"] = original
+    runner, _ = runner_for(service)
+    client = ScriptedChatClient([])
+    with pytest.raises(asyncio.CancelledError):
+        await invoke(runner, client, "explore")
+    assert client._index == 0
+    assert service.finish_agent.call_args.kwargs["expected_started_at"] == original
+    assert not service.beats
 
 
 async def test_stream_fragments_are_discarded_and_claimed_input_is_delivered_once(fast_recovery):

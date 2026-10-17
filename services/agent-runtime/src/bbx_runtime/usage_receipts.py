@@ -50,6 +50,11 @@ async def flush_ordinary_usage(checkpoint: "SessionCheckpoint") -> None:
                     request_id=str(request.request_id),
                     expected_run_number=request.expected_run_number,
                     usage_known=request.usage_known,
+                    **(
+                        {"expected_started_at": request.expected_started_at}
+                        if request.expected_started_at is not None
+                        else {}
+                    ),
                 )
                 break
             except Exception as error:

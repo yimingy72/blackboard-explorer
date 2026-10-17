@@ -72,7 +72,14 @@ class Sweeper:
             int(agent.get("derive_round") or 1) if agent.get("task_type") == "derive" else None
         )
         if await self.executor.cancel(
-            aid, reason, *([expected_round] if expected_round is not None else [])
+            aid,
+            reason,
+            *([expected_round] if expected_round is not None else []),
+            **(
+                {"expected_started_at": agent["started_at"]}
+                if agent.get("started_at") is not None
+                else {}
+            ),
         ):
             return
         reconcile = getattr(getattr(self.executor, "runner", None), "reconcile_final_receipt", None)
@@ -83,6 +90,8 @@ class Sweeper:
         finish_options: dict[str, Any] = (
             {"expected_derive_round": expected_round} if expected_round is not None else {}
         )
+        if agent.get("started_at") is not None:
+            finish_options["expected_started_at"] = agent["started_at"]
         try:
             await self.service.finish_agent(
                 self.executor.task_id,

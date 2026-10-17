@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -186,6 +186,7 @@ class AgentRegistered(BaseModel):
     agent_id: str
     token: str
     derive_round: int | None = None
+    started_at: AwareDatetime | None = None
 
 
 class UserMessageBody(BaseModel):
@@ -204,6 +205,7 @@ class SessionBody(BaseModel):
     origin: Literal["native", "legacy"]
     expected_revision: int = Field(ge=0)
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_started_at: AwareDatetime | None = None
     deliveries: list[DeliveryBody] = Field(default_factory=list)
     review_claim: DeliveryBody | None = None
 
@@ -240,6 +242,7 @@ class FinishBody(BaseModel):
     receipt: dict[str, Any]
     end_reason: str = Field(min_length=1)
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_started_at: AwareDatetime | None = None
     expected_run_number: int | None = Field(default=None, ge=1)
     expected_agent_run_id: str | None = Field(default=None, min_length=1)
 
@@ -1129,6 +1132,7 @@ def create_app(
             body.expected_revision,
             [delivery.model_dump() for delivery in body.deliveries],
             body.review_claim.model_dump() if body.review_claim else None,
+            expected_started_at=body.expected_started_at,
             **(
                 {"expected_derive_round": body.expected_derive_round}
                 if body.expected_derive_round is not None
@@ -1164,6 +1168,7 @@ def create_app(
             body.expected_revision,
             body.content,
             body.usage,
+            expected_started_at=body.expected_started_at,
         )
 
     @app.post(
@@ -1512,6 +1517,7 @@ def create_app(
             agent_id=agent_id,
             token=issue_agent_token(settings, task_id, agent_id, derive_round),
             derive_round=derive_round,
+            started_at=agent.get("started_at"),
         )
 
     @app.patch("/api/tasks/{task_id}/agents/{agent_id}", tags=["system"])
@@ -1544,6 +1550,7 @@ def create_app(
             model=model,
             requested_at=body.requested_at,
             billing_mode=task.get("billing_mode"),
+            expected_started_at=body.expected_started_at,
             **(
                 cast(dict[str, Any], {"expected_derive_round": body.expected_derive_round})
                 if body.expected_derive_round is not None

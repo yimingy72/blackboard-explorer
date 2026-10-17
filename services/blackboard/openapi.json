@@ -232,6 +232,18 @@
             ],
             "title": "Derive Round"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
           "token": {
             "title": "Token",
             "type": "string"
@@ -505,6 +517,18 @@
             "minimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "expected_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Started At"
           },
           "opening_instructions": {
             "title": "Opening Instructions",
@@ -1961,6 +1985,18 @@
             ],
             "title": "Expected Run Number"
           },
+          "expected_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Started At"
+          },
           "receipt": {
             "additionalProperties": true,
             "title": "Receipt",
@@ -2035,6 +2071,18 @@
               }
             ],
             "title": "Expected Run Number"
+          },
+          "expected_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Started At"
           },
           "last_seen_version": {
             "minimum": 0.0,
@@ -2119,6 +2167,18 @@
               }
             ],
             "title": "Expected Run Number"
+          },
+          "expected_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Started At"
           },
           "last_seen_version": {
             "minimum": 0.0,
@@ -3576,6 +3636,18 @@
             "minimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "expected_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Started At"
           },
           "opening_instructions": {
             "title": "Opening Instructions",

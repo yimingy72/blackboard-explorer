@@ -1714,6 +1714,8 @@ export interface components {
              * @default false
              */
             derive_review: boolean;
+            /** Intent Id */
+            intent_id?: string | null;
             /**
              * Is Seed
              * @default false
@@ -1731,6 +1733,8 @@ export interface components {
             agent_id: string;
             /** Derive Round */
             derive_round?: number | null;
+            /** Started At */
+            started_at?: string | null;
             /** Token */
             token: string;
         };
@@ -1830,6 +1834,8 @@ export interface components {
             expected_derive_round?: number | null;
             /** Expected Revision */
             expected_revision: number;
+            /** Expected Started At */
+            expected_started_at?: string | null;
             /** Opening Instructions */
             opening_instructions: string;
             /**
@@ -2366,6 +2372,8 @@ export interface components {
             expected_derive_round?: number | null;
             /** Expected Run Number */
             expected_run_number?: number | null;
+            /** Expected Started At */
+            expected_started_at?: string | null;
             /** Receipt */
             receipt: {
                 [key: string]: unknown;
@@ -2389,6 +2397,8 @@ export interface components {
             expected_derive_round?: number | null;
             /** Expected Run Number */
             expected_run_number?: number | null;
+            /** Expected Started At */
+            expected_started_at?: string | null;
             /** Last Seen Version */
             last_seen_version: number;
             /** Request Id */
@@ -2412,6 +2422,8 @@ export interface components {
             expected_derive_round?: number | null;
             /** Expected Run Number */
             expected_run_number?: number | null;
+            /** Expected Started At */
+            expected_started_at?: string | null;
             /** Last Seen Version */
             last_seen_version: number;
             /** Request Id */
@@ -3077,6 +3089,8 @@ export interface components {
             expected_derive_round?: number | null;
             /** Expected Revision */
             expected_revision: number;
+            /** Expected Started At */
+            expected_started_at?: string | null;
             /** Opening Instructions */
             opening_instructions: string;
             /**

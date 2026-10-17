@@ -25,7 +25,7 @@ from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
 from bbx_runtime.clients.blackboard import is_control_transport_error
-from bbx_runtime.context import CloseMode, RunContext, TaskType
+from bbx_runtime.context import CloseMode, RunContext, TaskType, execution_timestamp
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import (
@@ -161,12 +161,24 @@ class AgentRunner:
     @staticmethod
     def _same_finish_scope(state: dict[str, Any], proof: dict[str, Any]) -> bool:
         agent = state.get("agents", {}).get(proof.get("agent_id"))
+        if (
+            agent
+            and agent.get("task_type") == "explore"
+            and agent.get("previous_receipt") is not None
+            and proof.get("started_at") is None
+        ):
+            return False
         return bool(
             agent
             and str(state["task"].get("id", proof["task_id"])) == proof["task_id"]
             and state["task"].get("run_number") == proof.get("run_number")
             and str(agent.get("id", proof["agent_id"])) == proof.get("run_id")
             and agent.get("task_type") == proof.get("task_type")
+            and (
+                proof.get("started_at") is None
+                or execution_timestamp(agent.get("started_at"))
+                == execution_timestamp(proof["started_at"])
+            )
             and (
                 proof.get("derive_round") is None
                 or int(agent.get("derive_round") or 1) == proof["derive_round"]
@@ -175,12 +187,14 @@ class AgentRunner:
 
     async def _finish_receipt(
         self, task_id: str, agent_id: str, proof: dict[str, Any], *, compensate: bool = False
-    ) -> bool:
+    ) -> bool | None:
         kwargs = (
             {"expected_derive_round": proof["derive_round"]}
             if proof["derive_round"] is not None
             else {}
         )
+        if proof.get("started_at") is not None:
+            kwargs["expected_started_at"] = proof["started_at"]
         fenced = proof["run_number"] is not None
         if fenced:
             kwargs.update(
@@ -227,7 +241,7 @@ class AgentRunner:
                 )
                 if attempt < 2:
                     await asyncio.sleep(0.1 * 2**attempt)
-        return False
+        return None
 
     async def reconcile_final_receipt(
         self, task_id: str, agent_id: str, agent: dict[str, Any], task: dict[str, Any]
@@ -278,8 +292,17 @@ class AgentRunner:
         if not self._same_finish_scope({"task": task, "agents": {agent_id: agent}}, proof):
             return False
         try:
-            await self._finish_receipt(task_id, agent_id, proof, compensate=True)
+            confirmed = await self._finish_receipt(task_id, agent_id, proof, compensate=True)
+            # None keeps an unknown transport outcome pending; False proves an obsolete execution.
+            return confirmed is not False
         except Exception as error:
+            if isinstance(error, RemoteError) and error.code in {
+                "stale_agent_execution",
+                "stale_agent_round",
+                "stale_task_run",
+                "stale_agent_run",
+            }:
+                return False
             if not is_control_transport_error(error):
                 logger.warning(
                     "Agent final receipt blocked task_id=%s agent_id=%s error_type=%s",
@@ -302,6 +325,7 @@ class AgentRunner:
         handle: ExecEnvHandle | None = None,
         envd_http_client: httpx.AsyncClient | None = None,
         expected_derive_round: int | None = None,
+        expected_started_at: str | None = None,
     ) -> RunResult:
         owned_client = None
         credentials: dict[str, str] = {}
@@ -313,11 +337,18 @@ class AgentRunner:
         cancellation_error: asyncio.CancelledError | None = None
         checkpoint: SessionCheckpoint | None = None
         round_fence = expected_derive_round
+        started_fence = execution_timestamp(expected_started_at)
         run_number = None
         run_id = agent_id
         try:
             state = await self.service.state(task_id)
             run = state["agents"][agent_id]
+            if (
+                started_fence is not None
+                and execution_timestamp(run.get("started_at")) != started_fence
+            ):
+                raise ValueError("Agent execution changed before launch")
+            started_fence = execution_timestamp(run.get("started_at"))
             if run["task_type"] != task_type or run["status"] not in {"running", "concluding"}:
                 raise ValueError("Agent registration does not match a runnable agent")
             if (
@@ -352,6 +383,7 @@ class AgentRunner:
                 intent_id=intent_id or run.get("intent_id"),
                 mode=mode or run.get("close_mode"),
                 expected_derive_round=round_fence,
+                expected_started_at=started_fence,
             )
             if hasattr(self.service, "get_agent_session"):
                 checkpoint = await SessionCheckpoint.load(self.service, task_id, agent_id)
@@ -359,10 +391,15 @@ class AgentRunner:
                     checkpoint = SessionCheckpoint(self.service, task_id, agent_id, AgentSession())
                 ctx.checkpoint = checkpoint
                 checkpoint.expected_derive_round = ctx.expected_derive_round
-                if (
+                checkpoint.expected_started_at = started_fence
+                cleared_receipt = (
                     run.get("previous_receipt") is not None
                     and checkpoint.session.state.pop("bbx_final_receipt", None) is not None
-                ):
+                )
+                repaired_calls = repair_unpaired_tool_calls(
+                    checkpoint.session, include_interrupted=True
+                )
+                if cleared_receipt or repaired_calls:
                     await checkpoint.save()
             if (
                 task_type == "derive"
@@ -752,6 +789,7 @@ class AgentRunner:
                     "run_number": run_number,
                     "task_type": task_type,
                     "derive_round": round_fence,
+                    "started_at": started_fence,
                     "receipt": receipt,
                     "end_reason": end_reason,
                 }

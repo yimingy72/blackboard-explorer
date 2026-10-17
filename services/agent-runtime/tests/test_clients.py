@@ -1,6 +1,7 @@
 """HTTP clients preserve identity, payloads, and readable remote errors."""
 
 import json
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -58,6 +59,49 @@ async def test_blackboard_client_identity_and_error() -> None:
         assert denied.value.status == 403
         await agent.close()
         assert not http.is_closed
+
+
+async def test_execution_fence_is_serialized_for_session_usage_and_finish():
+    sent = []
+    started_at = datetime(2026, 10, 17, 12, tzinfo=UTC)
+
+    def respond(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = BlackboardClient("http://synthetic", "test", http)
+        await client.put_agent_session(
+            "task",
+            "agent-1",
+            session={},
+            opening_instructions="",
+            origin="native",
+            expected_revision=0,
+            expected_started_at=started_at,
+        )
+        await client.heartbeat(
+            "task",
+            "agent-1",
+            steps=1,
+            context_tokens=0,
+            usage={},
+            last_seen_version=0,
+            expected_started_at=started_at,
+            requested_at=started_at,
+            request_id=str(uuid4()),
+            expected_run_number=1,
+        )
+        await client.finish_agent(
+            "task",
+            "agent-1",
+            {"accepted": False},
+            "runtime_error",
+            expected_started_at=started_at,
+        )
+    assert sent[0]["expected_started_at"] == started_at.isoformat()
+    assert sent[1]["receipt"]["expected_started_at"] == started_at.isoformat()
+    assert sent[2]["expected_started_at"] == started_at.isoformat()
 
 
 @pytest.mark.asyncio

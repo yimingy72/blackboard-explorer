@@ -39,6 +39,7 @@ from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.store.repository import agent_execution_matches
 from bbx_blackboard.usage_receipts import reconcile_receipts, settle_receipt
 
 
@@ -165,6 +166,7 @@ class BoardService:
         expected_derive_round: int | None = None,
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
+        expected_started_at: datetime | None = None,
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
@@ -175,6 +177,11 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
             self._check_derive_round(state.agents.get(target), expected_derive_round)
+            if command in {"finish_agent", "heartbeat"} and (agent := state.agents.get(target)):
+                if not await agent_execution_matches(conn, tid, agent, expected_started_at):
+                    raise RuleViolation(
+                        "stale_agent_execution", "Agent 执行已变化，旧请求不能覆盖本次执行。"
+                    )
             if command == "finish_agent" and (
                 expected_run_number is not None or expected_agent_run_id is not None
             ):
@@ -637,12 +644,14 @@ class BoardService:
         request_id: UUID | str | None = None,
         expected_run_number: int | None = None,
         usage_known: bool = True,
+        expected_started_at: datetime | None = None,
     ) -> dict[str, Any]:
         if request_id is not None:
             request = HeartbeatRequest(
                 request_id=UUID(str(request_id)),
                 expected_run_number=expected_run_number,
                 expected_derive_round=expected_derive_round,
+                expected_started_at=expected_started_at,
                 requested_at=requested_at,
                 steps=steps,
                 context_tokens=context_tokens,
@@ -677,6 +686,7 @@ class BoardService:
                 "pricing": pricing,
             },
             expected_derive_round=expected_derive_round,
+            expected_started_at=expected_started_at,
         )
         return {"events": events, "cost": amount, "warning": warning}
 
@@ -718,6 +728,7 @@ class BoardService:
         expected_derive_round: int | None = None,
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
+        expected_started_at: datetime | None = None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -727,6 +738,7 @@ class BoardService:
             expected_derive_round=expected_derive_round,
             expected_run_number=expected_run_number,
             expected_agent_run_id=expected_agent_run_id,
+            expected_started_at=expected_started_at,
         )
 
     async def submit_close(

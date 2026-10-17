@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from bbx_blackboard.domain.rules import dispute_fields, event, pending_claims
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
+from bbx_blackboard.store.repository import agent_execution_matches
 
 ACTIVE = {"running", "concluding"}
 LEASE = timedelta(seconds=300)
@@ -266,6 +267,7 @@ class Conversations:
         deliveries: list[dict[str, UUID]],
         review_claim: dict[str, UUID] | None = None,
         expected_derive_round: int | None = None,
+        expected_started_at: datetime | None = None,
     ) -> dict[str, Any]:
         written = []
         async with self.repo.engine.begin() as conn:
@@ -280,6 +282,11 @@ class Conversations:
             if review_claim is not None:
                 message = await self._message(conn, tid, aid, review_claim["id"])
                 self._check_claim(message, review_claim["claim_token"])
+            if agent["status"] in ACTIVE or review_claim is None or expected_started_at is not None:
+                if not await agent_execution_matches(conn, tid, agent, expected_started_at):
+                    raise HTTPException(
+                        409, {"code": "stale_agent_execution", "message": "Agent execution changed"}
+                    )
             for delivery in deliveries:
                 message = await self._message(conn, tid, aid, delivery["id"])
                 self._check_claim(message, delivery["claim_token"])
@@ -474,12 +481,14 @@ class Conversations:
         expected_revision: int,
         content: str,
         usage: dict[str, Any],
+        *,
+        expected_started_at: datetime | None = None,
     ) -> dict[str, Any]:
         content = storage_safe(content)
         usage = storage_safe(usage)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task_agent(conn, tid, aid, writable=True)
+            _, agent = await self._task_agent(conn, tid, aid, writable=True)
             message = await self._message(conn, tid, aid, mid)
             if message["status"] == "completed" and message["claim_token"] == token:
                 reply = (
@@ -493,6 +502,11 @@ class Conversations:
                 )
                 return _public(reply)
             self._check_claim(message, token)
+            if agent["status"] in ACTIVE or expected_started_at is not None:
+                if not await agent_execution_matches(conn, tid, agent, expected_started_at):
+                    raise HTTPException(
+                        409, {"code": "stale_agent_execution", "message": "Agent execution changed"}
+                    )
             await self._save_session(
                 conn, tid, aid, session, opening_instructions, origin, expected_revision
             )

@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from bbx_blackboard.domain import BoardState, calculate_cost, decide
 from bbx_blackboard.store import schema as s
-from bbx_blackboard.store.repository import row
+from bbx_blackboard.store.repository import agent_execution_matches, row
 
 
 def check(condition: bool, message: str) -> None:
@@ -151,6 +151,7 @@ async def settle_receipt(service, conn, tid, aid, request: HeartbeatRequest):
         request.expected_run_number == task["run_number"]
         and agent["status"] in {"running", "concluding"}
         and task["status"] not in {"finished", "failed", "stopped"}
+        and await agent_execution_matches(conn, tid, agent, request.expected_started_at)
         and (
             agent["task_type"] != "derive" or request.expected_derive_round == agent["derive_round"]
         )
@@ -172,6 +173,9 @@ async def settle_receipt(service, conn, tid, aid, request: HeartbeatRequest):
         "receipt_scope": {
             "run_number": request.expected_run_number,
             "derive_round": request.expected_derive_round,
+            "started_at": request.expected_started_at.isoformat()
+            if request.expected_started_at
+            else None,
         },
     }
     if current:
