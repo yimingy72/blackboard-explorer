@@ -260,7 +260,7 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
             for source in sources:
                 expected = b"".join(native_bytes[part.id] for part in source.parts)
                 originals = [
-                        item for item in stopped_files if item["source_id"] == source.source_id
+                    item for item in stopped_files if item["source_id"] == source.source_id
                 ]
                 actual = b"".join(
                     [
