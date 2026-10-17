@@ -123,6 +123,8 @@ def main() -> None:
         stream=sys.stderr,
         force=True,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     args = parser().parse_args()
     try:
         if args.command == "serve":
