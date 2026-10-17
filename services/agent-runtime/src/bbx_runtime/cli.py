@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from uuid import UUID
 
@@ -114,6 +115,14 @@ async def run_command(args: argparse.Namespace, settings: ControlSettings) -> in
 
 
 def main() -> None:
+    # The service previously emitted only Uvicorn-style logs, leaving scheduler,
+    # model-error, and recovery warnings invisible in container logs.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stderr,
+        force=True,
+    )
     args = parser().parse_args()
     try:
         if args.command == "serve":

@@ -108,6 +108,26 @@ def _id(state: BoardState, kind: str) -> str:
     return f"agent-{value}" if kind == "agent" else f"{kind}{value}"
 
 
+def _failure_threshold_reason(error: dict[str, Any] | None) -> str:
+    """Keep the task-level stop reason actionable without copying provider bodies."""
+    if not isinstance(error, dict):
+        return "连续运行失败达到保护阈值"
+    category = error.get("category")
+    if not isinstance(category, str):
+        return "连续运行失败达到保护阈值"
+    messages = {
+        "payment_required": "模型账户余额不足（HTTP 402）",
+        "authentication": "模型服务鉴权失败",
+        "rate_limit": "模型服务持续限流",
+        "server_error": "模型服务持续不可用",
+        "connection": "模型连接持续失败",
+        "timeout": "模型请求持续超时",
+        "content_filter": "模型服务内容审核拦截",
+        "invalid_request": "模型服务拒绝请求",
+    }
+    return messages.get(category, "连续运行失败达到保护阈值")
+
+
 def _agent(state: BoardState, aid: str) -> dict[str, Any]:
     agent = state.agents.get(aid)
     if agent is None:
@@ -803,7 +823,7 @@ def decide(
                     "system",
                     {
                         "status": "failed",
-                        "reason": "连续运行失败达到保护阈值",
+                        "reason": _failure_threshold_reason(error),
                     },
                 )
             )

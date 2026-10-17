@@ -560,6 +560,34 @@ def test_transient_model_error_starts_new_window_after_120_seconds() -> None:
     assert third[1]["payload"]["reason"] == "连续运行失败达到保护阈值"
 
 
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        ({"category": "payment_required", "http_status": 402}, "模型账户余额不足（HTTP 402）"),
+        ({"category": "authentication"}, "模型服务鉴权失败"),
+        ({"category": "server_error"}, "模型服务持续不可用"),
+        ({"category": "unknown"}, "连续运行失败达到保护阈值"),
+    ],
+)
+def test_task_failure_reason_surfaces_safe_model_category(
+    error: dict[str, object], reason: str
+) -> None:
+    state = board()
+    state.task.update(failure_streak=2, failure_window_kind="model_error")
+    events = decide(
+        state,
+        "finish_agent",
+        "agent-1",
+        {
+            "agent_id": "agent-1",
+            "end_reason": "runtime_error",
+            "receipt": {"error": error},
+        },
+    )
+    assert [item["type"] for item in events] == ["agent.finished", "task.failed"]
+    assert events[1]["payload"]["reason"] == reason
+
+
 def test_transient_model_error_preserves_intent_and_seed_retries() -> None:
     state = board()
     state.intents["I1"].update(status="claimed", holder="agent-1", attempts=1)

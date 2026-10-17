@@ -66,16 +66,39 @@ def failure_diagnostic(
     correlation_id = str(uuid4())
     summary = "CTF 执行因内部错误停止；请使用失败追踪 ID 查询受控日志。"
     metadata = getattr(error, "bbx_model_error", None)
+    model_error: dict[str, Any] | None = None
     if isinstance(metadata, dict):
+        category = metadata.get("category")
         summary = "模型调用异常，具体原因未确认；请使用失败追踪 ID 查询受控日志及模型错误记录。"
-        if metadata.get("category") == "content_filter":
+        if category == "payment_required":
+            summary = "模型账户余额不足，任务已停止；请检查模型服务余额与计费配置。"
+        elif category == "content_filter":
             summary = "模型服务的内容审核拦截了本次调用，任务已停止；请查看模型错误记录。"
         elif metadata.get("incomplete_reason") == "max_output_tokens":
             summary = "模型响应达到单次输出上限而截断，不完整的工具调用未执行；请查看模型错误记录。"
-        elif metadata.get("category") == "authentication":
+        elif category == "authentication":
             summary = "模型服务鉴权失败，任务已停止；请查看模型错误记录。"
-        elif metadata.get("category") == "invalid_request":
+        elif category == "invalid_request":
             summary = "模型服务拒绝了本次请求，任务已停止；请查看模型错误记录。"
+        elif category in {"rate_limit", "server_error", "connection", "timeout"}:
+            summary = "模型服务持续不可用，任务已停止；已确认的记录与执行结果仍然保留。"
+        # Persist only fixed diagnostics, never provider messages, prompts, or credentials.
+        model_error = {
+            key: metadata.get(key)
+            for key in (
+                "category",
+                "scope",
+                "http_status",
+                "provider_code",
+                "request_id",
+                "failure_phase",
+                "exception_type",
+                "transport_type",
+                "incomplete_reason",
+                "transient",
+            )
+            if metadata.get(key) is not None
+        }
     if isinstance(error, CtfControlTransportExhausted):
         stage = error.stage
         task_id, member_id, turn_id, generation = (
@@ -98,6 +121,7 @@ def failure_diagnostic(
         "correlation_id": correlation_id,
         "summary": summary,
         **identity,
+        **({"model_error": model_error} if model_error else {}),
     }
     # Keep the stack location for operators, but deliberately omit str(error), which may
     # contain credentials, tool arguments, model requests, or remote response bodies.

@@ -246,6 +246,17 @@
           ],
           "default": null,
           "title": "Generation"
+        },
+        "model_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CtfFailureModelError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -256,6 +267,143 @@
         "summary"
       ],
       "title": "CtfFailureDiagnostic",
+      "type": "object"
+    },
+    "CtfFailureModelError": {
+      "additionalProperties": false,
+      "description": "Bounded provider diagnostics copied from a failed model call.",
+      "properties": {
+        "category": {
+          "pattern": "^[a-z_]{1,64}$",
+          "title": "Category",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "provider",
+                "request",
+                "infrastructure"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
+        },
+        "provider_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Code"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "failure_phase": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Phase"
+        },
+        "exception_type": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,99}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exception Type"
+        },
+        "transport_type": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,99}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transport Type"
+        },
+        "incomplete_reason": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Incomplete Reason"
+        },
+        "transient": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transient"
+        }
+      },
+      "required": [
+        "category"
+      ],
+      "title": "CtfFailureModelError",
       "type": "object"
     },
     "CtfMember": {

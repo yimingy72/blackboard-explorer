@@ -1242,9 +1242,11 @@ async def test_completion_review_requires_valid_receipt_and_second_judgment(boar
     state = await service.state(tid)
     assert state["task"]["last_judgment_version"] >= state["agents"][review]["finished_version"]
     await service.transition(tid, "closing", reason="accepted")
+    assert (await service.state(tid))["task"]["closing_reason"] == "accepted"
     await service.replay(tid)
     replayed = await service.state(tid)
     assert replayed["agents"][review]["finished_version"] == finished[-1]["version"]
+    assert replayed["task"]["closing_reason"] == "accepted"
     assert replayed["task"]["acceptance_state"]["A1"]["completion_basis"] == "inferred"
 
 
