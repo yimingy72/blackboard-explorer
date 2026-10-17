@@ -778,6 +778,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adjust Task Budget */
+        post: operations["adjust_task_budget_api_tasks__task_id__budget_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/claim_for": {
         parameters: {
             query?: never;
@@ -1763,6 +1780,16 @@ export interface components {
              * @description 时间上限，分钟
              */
             max_minutes: number;
+        };
+        /** BudgetAdjustBody */
+        BudgetAdjustBody: {
+            /**
+             * Additional Cost
+             * @default 0
+             */
+            additional_cost: number | string;
+            /** Max Minutes */
+            max_minutes?: number | null;
         };
         /** ClaimBody */
         ClaimBody: {
@@ -5690,6 +5717,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adjust_task_budget_api_tasks__task_id__budget_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetAdjustBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
                 };
             };
             /** @description Validation Error */

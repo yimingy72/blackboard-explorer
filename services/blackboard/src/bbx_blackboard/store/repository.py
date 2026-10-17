@@ -523,7 +523,10 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             agent = await row(conn, s.agent_runs, tid, aid)
             await patch(conn, s.agent_runs, tid, {"usage": {**agent["usage"], "cost": cost}}, aid)
     elif kind == "budget.updated":
-        await patch(conn, s.tasks, tid, {"usage": p["usage"]})
+        values = {"usage": p["usage"]}
+        if "budget" in p:
+            values["budget"] = p["budget"]
+        await patch(conn, s.tasks, tid, values)
     elif kind == "acceptance.judged":
         task = await row(conn, s.tasks, tid)
         state = dict(task["acceptance_state"])

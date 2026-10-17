@@ -107,6 +107,34 @@ async def test_resume_keeps_history_and_counts_only_active_time(board_service):
     assert (await board_service.state(tid))["task"]["run_number"] == 3
 
 
+async def test_running_task_budget_can_be_extended_without_resuming(board_service):
+    tid = await task(board_service)
+    await board_service.adjust_budget(tid, Decimal("20"), 180)
+    state = await board_service.state(tid)
+    assert state["task"]["status"] == "running"
+    assert state["task"]["run_number"] == 1
+    assert Decimal(state["task"]["budget"]["max_cost"]) == 30
+    assert state["task"]["budget"]["max_minutes"] == 180
+    async with board_service.repo.engine.connect() as conn:
+        event = (
+            (
+                await conn.execute(
+                    select(s.events)
+                    .where(
+                        s.events.c.task_id == tid,
+                        s.events.c.type == "budget.updated",
+                    )
+                    .order_by(s.events.c.version.desc())
+                    .limit(1)
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert event["payload"]["additional_cost"] == "20"
+    assert event["payload"]["budget"]["max_minutes"] == 180
+
+
 async def test_agent_numbers_are_task_local_under_concurrent_registration(board_service):
     first, second = await asyncio.gather(task(board_service), task(board_service))
     initial = await asyncio.gather(

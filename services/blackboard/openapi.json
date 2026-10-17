@@ -349,6 +349,38 @@
         "title": "Budget",
         "type": "object"
       },
+      "BudgetAdjustBody": {
+        "properties": {
+          "additional_cost": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Additional Cost"
+          },
+          "max_minutes": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Minutes"
+          }
+        },
+        "title": "BudgetAdjustBody",
+        "type": "object"
+      },
       "ClaimBody": {
         "properties": {
           "mode": {
@@ -8597,6 +8629,59 @@
         "summary": "Archive Data",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/budget": {
+      "post": {
+        "operationId": "adjust_task_budget_api_tasks__task_id__budget_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetAdjustBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Adjust Task Budget",
+        "tags": [
+          "tasks"
         ]
       }
     },

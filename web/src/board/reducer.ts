@@ -164,7 +164,10 @@ export function advanceBoard(previous: BoardState, events: readonly BoardEvent[]
         if (state.task) state.task.workspace_uri = nullableText(p.uri);
         break;
       case 'budget.updated':
-        if (state.task) state.task.usage = numbers(p.usage);
+        if (state.task) {
+          state.task.usage = numbers(p.usage);
+          if (p.budget && typeof p.budget === 'object') state.task.budget = p.budget as Record<string, unknown>;
+        }
         break;
       case 'cost.reconciled':
         if (state.task) state.task.usage = { ...state.task.usage, cost: Number(p.cost) || 0 };
