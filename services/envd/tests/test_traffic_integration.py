@@ -183,6 +183,13 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
                 await client.post("/traffic/start", json={"task_id": task_id, "run_number": 1})
             ).json()
             assert started["https"] == "enabled", started
+            direct = await client.post(
+                "/execute",
+                headers={"X-Agent-Id": "agent-1"},
+                json={"command": "printf direct-execution", "timeout_sec": 30},
+            )
+            assert direct.status_code == 200, direct.text
+            assert "direct-execution" in direct.json()["stdout"]
             results = await asyncio.gather(
                 command(
                     url,

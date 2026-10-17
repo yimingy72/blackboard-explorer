@@ -107,6 +107,23 @@ class FakeEnvd:
             (self.root / "agents" / agent_id).mkdir(exist_ok=True)
             return JSONResponse({"agent_id": agent_id, "home": f"/workspace/agents/{agent_id}"})
 
+        async def execute(request) -> Response:
+            try:
+                body = await request.json()
+                if not isinstance(body, dict):
+                    raise ValueError("Object body required")
+                agent_id = request.headers.get("X-Agent-Id", "")
+                result = await self.run_command(
+                    agent_id,
+                    body["command"],
+                    body.get("cwd"),
+                    body.get("timeout_sec", 120),
+                    body.get("privileged", False),
+                )
+                return JSONResponse(result)
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+
         async def files(request) -> Response:
             try:
                 path = self._path(request.query_params["path"])
@@ -157,6 +174,7 @@ class FakeEnvd:
                 routes=[
                     Route("/health", health),
                     Route("/users", users, methods=["POST"]),
+                    Route("/execute", execute, methods=["POST"]),
                     Route("/files", files),
                     Route("/stat", stat),
                     Route("/archive", archive, methods=["POST"]),
