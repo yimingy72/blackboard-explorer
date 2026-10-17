@@ -26,6 +26,12 @@ UV_CACHE_DIR=/private/tmp/bbx-uv-cache make check
 
 相关回归覆盖 Settings 默认值/覆盖值，以及 manager 实际传入 Docker 的 `pids_limit`。任务续跑前将从同一黑板、会话和预算建立新执行容器；切换 runtime 镜像会等待当前其他任务结束，不终止正在运行的 Agent。
 
+实际续跑结果：
+
+- 任务通过平台续跑接口进入 `run_number=2`、`status=running`，`failure_streak=0`，原黑板、会话、附件和 ¥10/60 分钟预算保留。
+- 为避免重启当时仍在运行的另一任务，本次续跑创建的新容器先通过 Docker 原子更新为 `PidsLimit=1024`；实际值已在容器状态中核对。
+- 续跑后持续产生工具调用、Agent 进度和轨迹记录，未再出现 `Resource temporarily unavailable` 或执行工具响应串扰。
+
 ## 偏差与待决
 
 - 已存在的旧执行容器不会就地修改 PID 上限；新容器才使用该下限。当前任务在续跑后的新容器生效。
