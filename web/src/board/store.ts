@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { create } from 'zustand';
 
 import { api } from '../api/client';
 import { openBoardStream, type StreamConnection } from '../api/events';
 import { advanceBoard, emptyBoard, orderedEvents, reduceBoard } from './reducer';
+import { boardFromSnapshot, type BoardSnapshot } from './snapshot';
 import type { BoardEvent, BoardState } from './types';
 
 interface BoardStore {
@@ -13,8 +14,12 @@ interface BoardStore {
   loading: boolean;
   error: Error | null;
   connection: StreamConnection;
+  historyLoaded: boolean;
+  historyLoading: boolean;
   reset: (taskId: string | null) => void;
+  hydrate: (taskId: string, state: BoardState) => void;
   append: (taskId: string, events: BoardEvent[]) => void;
+  ensureHistory: (taskId: string) => Promise<void>;
   setLoading: (taskId: string, loading: boolean) => void;
   setError: (taskId: string, error: Error) => void;
   setConnection: (taskId: string, connection: StreamConnection) => void;
@@ -27,6 +32,8 @@ export const useBoardStore = create<BoardStore>((set) => ({
   loading: false,
   error: null,
   connection: 'closed',
+  historyLoaded: false,
+  historyLoading: false,
   reset: (taskId) =>
     set({
       taskId,
@@ -35,6 +42,19 @@ export const useBoardStore = create<BoardStore>((set) => ({
       loading: Boolean(taskId),
       error: null,
       connection: taskId ? 'connecting' : 'closed',
+      historyLoaded: false,
+      historyLoading: false,
+    }),
+  hydrate: (taskId, state) =>
+    set({
+      taskId,
+      events: [],
+      state,
+      loading: false,
+      error: null,
+      connection: 'connecting',
+      historyLoaded: false,
+      historyLoading: false,
     }),
   append: (taskId, incoming) =>
     set((current) => {
@@ -52,6 +72,28 @@ export const useBoardStore = create<BoardStore>((set) => ({
       const events = orderedEvents([...current.events, ...fresh]);
       return { events, state: reduceBoard(events) };
     }),
+  ensureHistory: async (taskId) => {
+    const current = useBoardStore.getState();
+    if (current.taskId !== taskId || current.historyLoaded || current.historyLoading) return;
+    useBoardStore.setState({ historyLoading: true });
+    try {
+      const history = await api.getEvents(taskId, 0);
+      useBoardStore.setState((latest) => {
+        if (latest.taskId !== taskId) return latest;
+        const events = orderedEvents([...history, ...latest.events]);
+        return {
+          events,
+          state: reduceBoard(events),
+          historyLoaded: true,
+          historyLoading: false,
+        };
+      });
+    } catch {
+      useBoardStore.setState((latest) =>
+        latest.taskId === taskId ? { historyLoading: false } : latest,
+      );
+    }
+  },
   setLoading: (taskId, loading) =>
     set((current) => (current.taskId === taskId ? { loading } : current)),
   setError: (taskId, error) =>
@@ -69,6 +111,9 @@ export function useBoard(taskId: string | undefined): {
   loading: boolean;
   error: Error | null;
   connection: StreamConnection;
+  historyLoaded: boolean;
+  historyLoading: boolean;
+  ensureHistory: () => void;
 } {
   const activeTaskId = useBoardStore((board) => board.taskId);
   const state = useBoardStore((board) => board.state);
@@ -76,6 +121,11 @@ export function useBoard(taskId: string | undefined): {
   const loading = useBoardStore((board) => board.loading);
   const error = useBoardStore((board) => board.error);
   const connection = useBoardStore((board) => board.connection);
+  const historyLoaded = useBoardStore((board) => board.historyLoaded);
+  const historyLoading = useBoardStore((board) => board.historyLoading);
+  const ensureHistory = useCallback(() => {
+    if (taskId?.trim()) void useBoardStore.getState().ensureHistory(taskId.trim());
+  }, [taskId]);
 
   useEffect(() => {
     const id = taskId?.trim();
@@ -85,18 +135,29 @@ export function useBoard(taskId: string | undefined): {
 
     let disposed = false;
     let source: EventSource | null = null;
-    api.getEvents(id, 0)
-      .then((history) => {
+    let pending: BoardEvent[] = [];
+    let flushTimer: number | null = null;
+    const flush = () => {
+      flushTimer = null;
+      if (disposed || !pending.length) return;
+      const batch = pending;
+      pending = [];
+      useBoardStore.getState().append(id, batch);
+    };
+    api.getState<BoardSnapshot>(id)
+      .then((snapshot) => {
         if (disposed) return;
-        useBoardStore.getState().append(id, history);
-        const current = useBoardStore.getState().events;
-        const since = current.at(-1)?.version ?? 0;
+        const hydrated = boardFromSnapshot(snapshot);
+        useBoardStore.getState().hydrate(id, hydrated.state);
+        const since = hydrated.version;
         source = openBoardStream(id, since, {
-          onEvent: (event) => useBoardStore.getState().append(id, [event]),
+          onEvent: (event) => {
+            pending.push(event);
+            if (flushTimer === null) flushTimer = window.setTimeout(flush, 50);
+          },
           onConnection: (status) => useBoardStore.getState().setConnection(id, status),
           onError: (streamError) => useBoardStore.getState().setError(id, streamError),
         });
-        useBoardStore.getState().setLoading(id, false);
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -106,10 +167,21 @@ export function useBoard(taskId: string | undefined): {
 
     return () => {
       disposed = true;
+      if (flushTimer !== null) window.clearTimeout(flushTimer);
       source?.close();
       useBoardStore.getState().reset(null);
     };
   }, [taskId]);
 
-  return { taskId: activeTaskId, state, events, loading, error, connection };
+  return {
+    taskId: activeTaskId,
+    state,
+    events,
+    loading,
+    error,
+    connection,
+    historyLoaded,
+    historyLoading,
+    ensureHistory,
+  };
 }

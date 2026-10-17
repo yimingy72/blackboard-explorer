@@ -41,6 +41,11 @@ describe('Agent display and conversation history', () => {
     expect(agentLabel('agent-9', agentNumbers(first))).toBe('Agent 2');
     expect(agentNumbers(first.filter((item) => item.version <= 5))).toEqual({ 'agent-2': 1, 'agent-9': 2 });
     expect(agentNumbers([event('two', 2, 'agent.spawned', { id: 'agent-9' })])).toEqual({ 'agent-9': 1 });
+    expect(agentNumbers([], ['agent-10', 'agent-2', 'agent-9'])).toEqual({
+      'agent-2': 1,
+      'agent-9': 2,
+      'agent-10': 3,
+    });
   });
 
   it('merges recorded traces and tools by version without exposing later records', () => {
