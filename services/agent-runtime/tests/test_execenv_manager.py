@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import hmac
 import io
 import json
 import tarfile
+import threading
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -105,6 +107,49 @@ class Docker:
 class Objects:
     async def put(self, *_args: Any, **_kwargs: Any) -> None:
         pass
+
+
+@pytest.mark.parametrize("role", ["envd", "relay"])
+async def test_cancelled_provision_joins_creation_and_removes_all_created_containers(role):
+    fake = Docker()
+    started, release, removal = threading.Event(), threading.Event(), threading.Event()
+    original_create = fake.containers.create
+
+    def create(_image: str, **kwargs):
+        if kwargs["labels"]["bbx.role"] == role:
+            started.set()
+            assert release.wait(5)
+        container = original_create(_image, **kwargs)
+        original_remove = container.remove
+
+        def remove(*, force):
+            original_remove(force=force)
+            removal.set()
+
+        container.remove = remove
+        return container
+
+    fake.containers.create = create
+    manager = ExecEnvManager(
+        settings(),
+        docker_client=cast(docker.DockerClient, fake),
+        objects=cast(ObjectStore, Objects()),
+    )
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    pending = asyncio.create_task(manager.provision(uuid4(), profile))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        done, _ = await asyncio.wait({pending}, timeout=0.02)
+        assert not done
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    assert removal.is_set()
+    assert fake.containers.items == []
 
 
 def settings(mode: str = "relay", egress_mode: str = "direct") -> Settings:

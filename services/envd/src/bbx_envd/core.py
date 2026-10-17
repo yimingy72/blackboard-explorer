@@ -6,14 +6,17 @@ import json
 import os
 import pwd
 import re
+import shutil
 import signal
 import tempfile
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from bbx_envd.settings import Settings
 from bbx_envd.traffic import TrafficCapture
@@ -110,6 +113,60 @@ def truncate_streams(stdout: bytes, stderr: bytes) -> tuple[bytes, bytes, bool]:
     stderr_tail = stderr[-tail:]
     stdout_tail = stdout[-max(0, tail - len(stderr)) :] if len(stderr) < tail else b""
     return stdout_head + stdout_tail, stderr_head + stderr_tail, True
+
+
+def _read_range(source: BinaryIO, start: int, length: int) -> bytes:
+    source.seek(start)
+    return source.read(length)
+
+
+def command_output(
+    stdout: BinaryIO,
+    stderr: BinaryIO,
+    home: Path,
+    agent_id: str,
+    traffic: TrafficCapture | None,
+) -> tuple[bytes, bytes, bool, str | None]:
+    """Keep previews bounded and preserve complete output using file-backed copies."""
+    with ExitStack() as files:
+        if traffic is not None:
+            clean_out = files.enter_context(tempfile.TemporaryFile())
+            clean_err = files.enter_context(tempfile.TemporaryFile())
+            traffic.redact_output_file(stdout, clean_out)
+            traffic.redact_output_file(stderr, clean_err)
+            stdout, stderr = clean_out, clean_err
+        out_size = stdout.seek(0, os.SEEK_END)
+        err_size = stderr.seek(0, os.SEEK_END)
+        if out_size + err_size <= OUTPUT_LIMIT:
+            return (_read_range(stdout, 0, out_size), _read_range(stderr, 0, err_size), False, None)
+        half = OUTPUT_LIMIT // 2
+        shown_out = _read_range(stdout, 0, min(out_size, half))
+        shown_err = _read_range(stderr, 0, max(0, half - out_size))
+        shown_err += _read_range(stderr, max(0, err_size - half), min(err_size, half))
+        if err_size < half:
+            shown_out += _read_range(stdout, max(0, out_size - (half - err_size)), half - err_size)
+        output_dir = home / ".outputs"
+        output_dir.mkdir(mode=0o755, exist_ok=True)
+        output = output_dir / f"{next(_sequence)}.txt"
+        owner = pwd.getpwnam(agent_id)
+        directory_fd = os.open(output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchown(directory_fd, owner.pw_uid, owner.pw_gid)
+            os.fchmod(directory_fd, 0o755)
+            file_fd = os.open(
+                output.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory_fd,
+            )
+            with os.fdopen(file_fd, "wb") as target:
+                os.fchown(target.fileno(), owner.pw_uid, owner.pw_gid)
+                for source in (stdout, stderr):
+                    source.seek(0)
+                    shutil.copyfileobj(source, target, length=65536)
+        finally:
+            os.close(directory_fd)
+        return shown_out, shown_err, True, str(output)
 
 
 def prepare_workspace() -> None:
@@ -237,10 +294,24 @@ async def execute_command(
             if process_started is not None:
                 await finish_process_group(process)
             exit_code = 124 if status == "timed_out" else process.returncode
-            out.seek(0)
-            err.seek(0)
-            stdout = out.read()
-            stderr = err.read()
+            output_work = asyncio.create_task(
+                asyncio.to_thread(command_output, out, err, home, agent_id, traffic)
+            )
+            try:
+                shown_out, shown_err, truncated, full_output_path = await asyncio.shield(
+                    output_work
+                )
+            except asyncio.CancelledError:
+                while not output_work.done():
+                    try:
+                        await asyncio.shield(output_work)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not output_work.cancelled():
+                    output_work.exception()
+                raise
     except asyncio.CancelledError:
         status = "cancelled"
         raise
@@ -255,32 +326,6 @@ async def execute_command(
             exit_code=exit_code,
         )
         audit_command(execution)
-    if traffic is not None:
-        stdout, stderr = traffic.redact_output(stdout), traffic.redact_output(stderr)
-    shown_out, shown_err, truncated = truncate_streams(stdout, stderr)
-    full_output_path: str | None = None
-    if truncated:
-        output_dir = home / ".outputs"
-        output_dir.mkdir(mode=0o755, exist_ok=True)
-        output = output_dir / f"{next(_sequence)}.txt"
-        owner = pwd.getpwnam(agent_id)
-        directory_fd = os.open(output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fchown(directory_fd, owner.pw_uid, owner.pw_gid)
-            os.fchmod(directory_fd, 0o755)
-            file_fd = os.open(
-                output.name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=directory_fd,
-            )
-            with os.fdopen(file_fd, "wb") as target:
-                os.fchown(target.fileno(), owner.pw_uid, owner.pw_gid)
-                target.write(stdout)
-                target.write(stderr)
-        finally:
-            os.close(directory_fd)
-        full_output_path = str(output)
 
     def wrap(value: bytes) -> str:
         return f"<command_output>{value.decode('utf-8', errors='replace')}</command_output>"

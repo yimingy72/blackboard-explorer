@@ -1,7 +1,11 @@
 import asyncio
 import json
+import os
+import tempfile
+import threading
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import BinaryIO, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -134,6 +138,85 @@ def test_truncate_keeps_combined_head_and_tail() -> None:
     assert out == b"a" * 32768
     assert err == b"b" * 32768
     assert truncate_streams(b"a", b"b") == (b"a", b"b", False)
+
+
+@pytest.mark.parametrize("sizes", [(80000, 80000), (1, 80000), (80000, 1), (65536, 0), (0, 1)])
+def test_output_uses_bounded_reads_and_keeps_full_file(tmp_path, monkeypatch, sizes):
+    from bbx_envd import core
+
+    owner = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+    monkeypatch.setattr(core.pwd, "getpwnam", lambda _: owner)
+    output, error = b"a" * sizes[0], b"b" * sizes[1]
+
+    class BoundedReader:
+        def __init__(self, file):
+            self.file = file
+
+        def __getattr__(self, name):
+            return getattr(self.file, name)
+
+        def read(self, length=-1):
+            assert 0 <= length <= core.OUTPUT_LIMIT
+            return self.file.read(length)
+
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        out.write(output)
+        err.write(error)
+        shown_out, shown_err, truncated, full = core.command_output(
+            cast(BinaryIO, BoundedReader(out)),
+            cast(BinaryIO, BoundedReader(err)),
+            tmp_path,
+            "agent-1",
+            None,
+        )
+    assert (shown_out, shown_err, truncated) == truncate_streams(output, error)
+    assert len(shown_out) + len(shown_err) <= core.OUTPUT_LIMIT
+    if truncated:
+        assert full is not None
+        assert Path(full).read_bytes() == output + error
+    else:
+        assert full is None
+
+
+async def test_output_processing_runs_off_loop_and_joins_before_cancelled_files_close(
+    tmp_path, monkeypatch
+):
+    from bbx_envd import core
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original_output = core.command_output
+    monkeypatch.setattr(core, "agent_home", lambda _: tmp_path)
+    monkeypatch.setattr(core, "audit_command", lambda _: None)
+    process = AsyncMock()
+    process.returncode = 0
+    monkeypatch.setattr(core.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+
+    def output(out, err, *args):
+        assert threading.current_thread() is not threading.main_thread()
+        started.set()
+        try:
+            assert release.wait(5)
+            assert not out.closed and not err.closed
+            return original_output(out, err, *args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(core, "command_output", output)
+    pending = asyncio.create_task(
+        core.execute_command("agent-1", "test", None, 1, False, Settings(envd_token=SecretStr("t")))
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        done, _ = await asyncio.wait({pending}, timeout=0.02)
+        assert not done
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    assert finished.is_set()
 
 
 def test_workspace_path_rejects_traversal_and_external_symlink(tmp_path: Path) -> None:
