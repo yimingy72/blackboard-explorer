@@ -16,7 +16,7 @@ import pytest
 import zstandard
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
-from bbx_runtime.clients import EnvdClient
+from bbx_runtime.clients import EnvdClient, RemoteError
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.settings import Settings
 from docker.errors import ImageNotFound
@@ -46,6 +46,51 @@ async def command(handle: ExecEnvHandle, value: str) -> dict:
                 assert not result.isError
                 assert result.structuredContent is not None
                 return result.structuredContent
+
+
+async def test_concurrent_task_environments_keep_files_tokens_and_lifecycle_separate() -> None:
+    tasks = [uuid4(), uuid4()]
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    profile.exec_resources.mem = "512m"
+    with Network() as network:
+        settings = Settings.model_construct(
+            minio_root_password=SecretStr("unused-test-secret"),
+            service_token=SecretStr("unused-test-service"),
+            envd_token_secret=SecretStr("isolated-task-test"),
+            exec_network=network.name,
+            exec_access_mode="relay",
+            traffic_enabled=False,
+        )
+        manager = ExecEnvManager(settings)
+        try:
+            first, second = await asyncio.gather(
+                *(manager.provision(tid, profile) for tid in tasks)
+            )
+            assert first.container_id != second.container_id
+            assert first.base_url != second.base_url and first.token != second.token
+            await asyncio.gather(*(manager.create_user(h, "agent-1") for h in (first, second)))
+            for handle in (first, second):
+                result = await command(
+                    handle,
+                    f"printf '%s' {handle.task_id} > /workspace/shared/task.txt",
+                )
+                assert result["exit_code"] == 0
+            for handle in (first, second):
+                result = await command(handle, "cat /workspace/shared/task.txt")
+                assert str(handle.task_id) in result["stdout"]
+                other = second if handle is first else first
+                assert str(other.task_id) not in result["stdout"]
+            async with EnvdClient(first.base_url, second.token) as wrong_task:
+                with pytest.raises(RemoteError) as denied:
+                    await wrong_task.create_user("agent-2")
+                assert denied.value.status in {401, 403}
+            await manager.destroy(first.task_id)
+            assert await manager.find(first.task_id) is None
+            assert await manager.find(second.task_id) == second
+            result = await command(second, "cat /workspace/shared/task.txt")
+            assert result["exit_code"] == 0 and str(second.task_id) in result["stdout"]
+        finally:
+            await asyncio.gather(*(manager.destroy(tid) for tid in tasks))
 
 
 @pytest.mark.asyncio
