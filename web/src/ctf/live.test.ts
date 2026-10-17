@@ -59,3 +59,11 @@ describe('CTF live events', () => {
     expect(ctfEventsNeedSnapshot([event(12, 'ctf.conclusion.finalized', { conclusion: {} })])).toBe(true);
   });
 });
+
+it('does not replay a queued event that the newer snapshot already contains', () => {
+  const before = state();
+  before.event_version = 20;
+  const after = applyCtfEvents(before, [event(15, 'ctf.turn.started', { id: 'old-turn', agent_id: 'lead', generation: 1 })]);
+  expect(after).toBe(before);
+  expect(after?.members[0].run_state).toBe('idle');
+});

@@ -1,10 +1,13 @@
-import type { ELK } from 'elkjs/lib/elk.bundled.js'
-
+import type { ELK } from 'elkjs/lib/elk-api.js'
+import LayoutWorker from 'elkjs/lib/elk-worker.min.js?worker'
 import type { GraphEdge, GraphNode } from '../board/graph'
 
 let engine: Promise<ELK> | undefined
 function loadEngine(): Promise<ELK> {
-  return engine ??= import('elkjs/lib/elk.bundled.js').then(({ default: ELK }) => new ELK()).catch((error: unknown) => { engine = undefined; throw error })
+  return engine ??= (typeof Worker === 'undefined'
+    ? import('elkjs/lib/elk.bundled.js').then(({ default: ELK }) => new ELK())
+    : import('elkjs/lib/elk-api.js').then(({ default: ELK }) => new ELK({ workerFactory: () => new LayoutWorker() }))
+  ).catch((error: unknown) => { engine = undefined; throw error })
 }
 
 export const NODE_SIZE: Record<string, { width: number; height: number }> = {

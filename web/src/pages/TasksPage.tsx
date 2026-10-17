@@ -3,8 +3,9 @@ import { ApartmentOutlined, ArrowRightOutlined, ClockCircleOutlined, DeleteOutli
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { tasksQueryOptions } from '../api/queries';
 import { api, ApiError, type TaskView } from '../api/client';
-import { activeDuration } from '../board/agents';
+import ElapsedTime from '../components/ElapsedTime';
 import LoadingState from '../components/LoadingState';
 import { formatMoney, formatDate, taskStatusLabel, taskTitle } from './format';
 import styles from './TasksPage.module.css';
@@ -23,10 +24,6 @@ function knownAmount(value: unknown, currency: string | null | undefined): strin
   const amount = typeof value === 'number' || typeof value === 'string' && value.trim() ? Number(value) : NaN;
   return Number.isFinite(amount) && amount >= 0 ? formatMoney(amount, currency) : '—';
 }
-function runtime(task: TaskView, now: number): string {
-  if (!Number.isFinite(task.active_seconds) || task.active_seconds < 0 || task.active_since && !Number.isFinite(Date.parse(task.active_since))) return '—';
-  return activeDuration(task.active_seconds, task.active_since, now);
-}
 
 export default function TasksPage() {
   const navigate = useNavigate();
@@ -36,7 +33,6 @@ export default function TasksPage() {
   const search = params.get('q') ?? '';
   const filter = filters.find(item => item.value === params.get('view'))?.value ?? 'all';
   const requestedPage = Number(params.get('page') ?? '1');
-  const [now, setNow] = useState(Date.now);
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null);
   const actionButtons = useRef(new Map<string, HTMLElement>());
@@ -45,16 +41,10 @@ export default function TasksPage() {
   const [deleting, setDeleting] = useState(false);
   const deletePending = useRef(false);
   const [deleteError, setDeleteError] = useState('');
-  const query = useQuery({ queryKey: ['tasks'], queryFn: api.listTasks, refetchInterval: query => query.state.data?.some(task => ['provisioning', 'running', 'closing'].includes(task.status) || task.deleting) ? 2000 : false });
+  const query = useQuery({ ...tasksQueryOptions(), refetchInterval: query => query.state.data?.some(task => ['provisioning', 'running', 'closing'].includes(task.status) || task.deleting) ? 5000 : false });
   const unauthorized = query.error instanceof ApiError && query.error.status === 401;
   const hasData = query.data !== undefined;
   useEffect(() => { if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname + location.search } }); }, [unauthorized, navigate, location.pathname, location.search]);
-  const ticking = query.data?.some(task => Boolean(task.active_since)) ?? false;
-  useEffect(() => {
-    if (!ticking) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [ticking]);
   async function removeTask() {
     if (!deleteTarget || deletePending.current) return;
     deletePending.current = true; setDeleting(true); setDeleteError('');
@@ -99,7 +89,7 @@ export default function TasksPage() {
       <div className={styles.state}><Tag className={styles.statusTag} color={task.status === 'failed' ? 'error' : active ? 'processing' : 'default'} icon={task.status === 'failed' ? <WarningOutlined aria-hidden="true" /> : ended ? <StopOutlined aria-hidden="true" /> : <ClockCircleOutlined aria-hidden="true" />}>{task.deleting ? '删除中' : task.status === 'finished' ? '已结束' : taskStatusLabel(task.status)}</Tag></div>
       <div className={styles.usage}>
         <Tooltip title="已记录模型费用 / 任务预算，复盘费用另计"><span className={styles.cost}><span>{knownAmount(task.usage?.cost, task.cost_currency)}</span><small> / <span>{knownAmount(task.budget?.max_cost, task.cost_currency)}</span></small></span></Tooltip>
-        <span className={styles.runtime}><ClockCircleOutlined aria-hidden="true" />{runtime(task, now)}</span>
+        <span className={styles.runtime}><ClockCircleOutlined aria-hidden="true" /><ElapsedTime seconds={task.active_seconds} since={task.active_since} /></span>
       </div>
       <div className={styles.created}><span>创建于</span><time dateTime={task.created_at} title={`创建于 ${formatDate(task.created_at)}`}>{formatDate(task.created_at)}</time></div>
       <div className={styles.rowActions}>

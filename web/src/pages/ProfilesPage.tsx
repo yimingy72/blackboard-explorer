@@ -1,12 +1,12 @@
 import { Alert, App, Modal, Button, Checkbox, Collapse, Form, Input, Tabs, Segmented } from 'antd';
 import LoadingState from '../components/LoadingState';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import WorkerPrompts from '../components/WorkerPrompts';
-import CtfSettings from '../ctf/CtfSettings';
+const CtfSettings = lazy(() => import('../ctf/CtfSettings'));
 import { defaultTools, workers } from '../components/workerOptions';
-import PlatformCatalog from '../components/PlatformCatalog';
+const PlatformCatalog = lazy(() => import('../components/PlatformCatalog'));
 import { api, ApiError, type ProfileInput, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from './ProfilesPage.module.css';
@@ -147,7 +147,7 @@ export default function ProfilesPage() {
       <Modal title="离开配置页？" open={blocker.state==='blocked'} onCancel={()=>blocker.reset?.()} onOk={()=>{if(!busy)blocker.proceed?.();}} okText="放弃修改并离开" cancelText="继续编辑" okButtonProps={{disabled:busy}}><p>{busy?'配置正在保存，请稍候。':'尚未保存的修改会丢失。'}</p></Modal>
       <header className={styles.pageHeader}><h1>Agent 配置</h1></header>
       <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'models', label: '模型配置', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
-      {section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
+      <Suspense fallback={<LoadingState label="配置内容加载中" lines={6} />}>{section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
         {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void reload()}>重新读取</Button>} className={styles.feedback} />}
         {notice && <Alert role="status" type="success" showIcon title={notice} className={styles.feedback} />}
         {settings.isLoading && !snapshot && <LoadingState label="Worker 配置加载中" lines={7} />}
@@ -166,6 +166,6 @@ export default function ProfilesPage() {
             <div className={`${styles.editorActions} ${styles.wideField}`}><span className={controls.hint}>新任务生效</span><Button aria-label="保存全局设置" aria-busy={saving} type="primary" loading={saving} disabled={saving||!runtimeDirty} onClick={() => void saveRuntime()}>保存全局设置</Button></div>
           </div></Form> }]} />
         </>}
-      </>}
+      </>}</Suspense>
     </div>;
 }

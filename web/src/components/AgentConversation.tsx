@@ -138,7 +138,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     const [infoOpen,setInfoOpen]=useState(false);
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState('');
-    const messages = useQuery({ queryKey: ['agent-messages', taskId, agent.id], queryFn: () => api.getAgentMessages(taskId, agent.id), refetchInterval: historical ? false : 2000 });
+    const messages = useQuery({ queryKey: ['agent-messages', taskId, agent.id], queryFn: ({ signal }) => api.getAgentMessages(taskId, agent.id, signal), staleTime: 2000, refetchInterval: query => !historical && (['running', 'concluding'].includes(agent.status) || query.state.data?.messages.some(message => ['queued', 'processing'].includes(message.status))) ? 3000 : false });
     const entries = useMemo(() => conversationEntries(agent.id, events, state, messages.data?.messages, historical), [agent.id, events, state, messages.data?.messages, historical]);
     const hasTrace = entries.some((entry) => entry.type === 'trace');
     const elapsed = taskDuration(agent.startedAt, agent.finishedAt, historical ? events.at(-1)?.created_at : null, Date.now());
