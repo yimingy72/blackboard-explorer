@@ -65,6 +65,7 @@
   | Traffic-observability | ✅ 两模式按Agent采集TCP/UDP/ICMP及HTTPS、MinIO归档、官方Wireshark原生过滤/协议树/字节联动与统一前端已部署并合并main；2129普通/345隔离集成/129前端/12原生浏览器交互通过，17任务/99会话及配置保留（2026-10-15） |
   | Local-runtime-network / Server-deployment | ✅ 本地网络误判/失败清理、Linux AppArmor兼容已合并main为 `d1dffd3` 并推送，服务器完整迁移及新版本更新完成；合并源码2135普通/7项相关Docker集成、服务器Ubuntu/Kali实际执行与原生解析通过，21张业务表及当前存档保持（2026-10-16） |
   | Multi-task-runtime | ✅ 任务分支默认容量改为2，两种模式共用槽位；2149普通/52项相关回归/5项Docker检查通过，本地与服务器配置已生效；数据与配置保持，源码待合并（2026-10-17） |
+  | Platform-performance-audit | ✅ 全站路由拆包/预取、布局Worker与快照修复，执行代次隔离、取消清理和大输出修复；2202普通、302存储集成、139前端、126浏览器通过。c15602a已合并推送，两端及Ubuntu/Kali执行镜像更新；本地19任务/公网23任务与预算、会话、配置完整保留，无活动任务被中断（2026-10-18） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
 - **最新交付**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，服务器已更新，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。服务器入口 `http://101.201.116.63:58000/`，原本机账号；17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致。本地 `http://127.0.0.1:58000/` 已安装网络修复，18任务保持；两端数据不自动双向同步。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
@@ -434,6 +435,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Platform-performance-audit 已合并、推送并部署 c15602a：复用既有 started_at 隔离复活 Explore 的 finish/heartbeat/Session 写入，旧合法用量仅计费；MAF Session 修复、取消时资源归属、快照事务和全站加载优化均不改变领域职责，也不新增数据库迁移。OpenAPI/前端契约与 web/DESIGN 已同步；三份设计正本未改，后续统一实现架构时可补充执行时间围栏与取消后的线程收尾细节。部署保留两端数据/预算/配置，说明与备份位置见 [报告](tasks/Platform-performance-audit-report.md)。
 
 Multi-task-runtime 已按用户 2026-10-17 要求先同步实现架构第5、11节与开发方案部署/配置/资源说明（设计提交 `eff1698`），替换原“同一时间一个任务”。复用已有监管器与 MAF，默认容量2、两模式共用、超额按创建时间排队、每任务容器与会话独立；未新增数据库或前端配置。两端 runtime 实际容量已更新，后续本地部署仍需覆盖旧显式容量1，详见[多任务报告](tasks/Multi-task-runtime-report.md)。原排队业务任务的模型402错误独立记录，未自动续跑；本任务无新增设计待同步项。
 

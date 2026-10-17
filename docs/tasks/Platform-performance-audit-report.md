@@ -77,7 +77,7 @@ BBX_E2E_PREVIEW_DIR=dist pnpm --dir web e2e loading-performance.spec.ts --grep '
 - 同步创建系统用户、归档逐对象检查/下载仍有优化空间；此次没有在缺少测量依据时进一步改变其并发与锁规则。
 - 未重跑包含全部执行镜像构建的 `make test-integration`；本轮运行的是全部黑板/对象存储集成，以及 runtime/envd 离线回归。容器创建取消用内存 Docker 替身精确控制时序，不能替代 Docker daemon 故障注入。
 - 本次测量未模拟所有公网时延/丢包与移动设备；没有把离线通过等同于真实模型供应商或公网长时运行验证。
-- 代码尚未合并/推送，运行中的本地及公网服务未替换。生产启用须同步更新 blackboard/runtime；envd 修复需重建执行镜像后供新建任务使用。升级期间应保留正在运行的任务及其执行容器，不让旧 runtime 与新的复活执行围栏长期混跑。
+- 上述为审查完成时的范围记录；用户于 2026-10-18 授权提交、合并、推送及两端部署，正式结果见下节。执行代次检查随 blackboard/runtime 同步上线；执行镜像修复用于后续新建容器，没有替换运行中的任务容器。
 
 ## 建议提交划分
 
@@ -86,3 +86,39 @@ BBX_E2E_PREVIEW_DIR=dist pnpm --dir web e2e loading-performance.spec.ts --grep '
 3. `fix: make runtime file and container cleanup cancellation safe`：objects、envd、execenv 创建取消和大输出处理。
 4. `perf: split page loading and isolate workbench rendering`：前端加载、切页、Worker、计时器、快照竞争和 E2E。
 5. `docs: record platform performance and reliability audit`：本报告及界面加载规范补充。
+
+
+## 正式发布与部署（2026-10-18）
+
+- 按五组提交：`1807738` 执行恢复/代次/计费，`b7164a7` 列表与快照，`86a912f` 生命周期与大输出，`767f0fe` 前端加载，`3cde863` 文档。合并代码版本为 **`c15602a`**，已推送 GitHub；之后的发布记录为 docs-only 提交，运行代码不变。
+- 本地和公网均部署 `bbx-blackboard:c15602a`、`bbx-agent-runtime:c15602a`；Ubuntu 与 Kali 执行镜像均构建 `:c15602a` 并更新 `latest`，原工具和运行依赖保留。依赖清单/锁文件没有变化，基于各端固定的既有镜像做禁网源码增量构建；保留旧镜像用于回滚。
+- 每个应用镜像核对 196 份源码/构建文件，每个执行镜像核对 10 份已安装 envd 模块，均与已合并源码一致；容器内导入验证通过，没有调用真实模型。
+- 两端替换前均无活动任务或复盘会话。部署时用短暂数据库写屏障再次检查空闲，避免检查后有新任务抢先开始；只停止/替换 blackboard 与 runtime。Postgres、MinIO、其他项目和任务执行容器未被重启或删除，没有运行中任务被中断。
+- 启动使用原运行容器的实际配置副本，不读取 `.env` 或重新填充平台配置。所有应用与数据服务的环境值逐项/摘要保持，密码和模型密钥没有输出或写入 Git。
+
+| 保留核对 | 本地 | 公网 |
+|---|---:|---:|
+| 任务 | 19 | 23 |
+| 持久 Agent 会话 | 150 | 223 |
+| 内容摘要完全一致的业务表 | 21 | 21 |
+| MinIO 对象 | 58,663 | 111,078 |
+| MinIO 字节 | 1,677,884,800 | 9,903,573,559 |
+| 模型配置 API 可读数量 | 3 | 3 |
+
+预算、Profile、配置、会话和任务都在上述数据库完整摘要核对中；存档核对对象名、大小和 ETag 清单。没有恢复旧数据快照覆盖现状，没有续跑历史任务、修改预算或新增业务任务。
+
+更新前数据库 custom dump、内容摘要、旧镜像/环境摘要与回滚覆盖配置分别位于：
+
+- 本地：`/Users/yym/bbx-wt/platform-performance-audit/.data/platform-release/update-c15602a-20261017T163308Z/`
+- 公网：`/opt/blackboard-explorer/private/update-c15602a-20261017T163420Z/`
+
+公网 `current` 指向 `/opt/blackboard-explorer/releases/c15602a`。原 `operations/compose.py` 已指向本次保存的实际运行配置及镜像覆盖文件，后续运维不会回退到旧镜像/旧容量配置。上述目录含私有配置或业务备份，权限受限，不进入 Git。
+
+外网验收发现第一次重建时遗漏了仅用于 Compose 的 `BBX_BIND_ADDRESS`，导致服务临时只监听 `127.0.0.1`；在再次确认无活动任务后恢复原来的 `0.0.0.0:58000`，重新通过公网地址访问。此修正没有修改应用环境、业务数据或预算。
+
+最终校验：
+
+- 两端 `/login` 返回 200；从本机直连两端入口及初始 JS/CSS，字节与已验证构建一致。匿名 `/api/tasks` 返回 401。
+- 两端任务、模型、普通/CTF Worker 配置和两模式快照接口返回 200；容器内 90 个当前及保留的静态文件与 HTTP 返回逐字节一致，旧哈希资源保留供已打开页面过渡使用。
+- runtime 启动后没有 ERROR/Traceback；全部业务表和各服务环境再次复核一致，数据库和 MinIO 容器 ID 保持。
+- 测试地址：本地 **http://127.0.0.1:58000/**；公网 **http://101.201.116.63:58000/**。沿用原账号，无需重置配置。
