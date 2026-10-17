@@ -173,7 +173,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
-  listTasks: () => request<TaskView[]>('/tasks'),
+  listTasks: (signal?: AbortSignal) => request<TaskView[]>('/tasks', { signal }),
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),
@@ -181,11 +181,11 @@ export const api = {
   deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
-  getTask: (id: string) => request<TaskView>(taskPath(id)),
+  getTask: (id: string, signal?: AbortSignal) => request<TaskView>(taskPath(id), { signal }),
   resumeTask: (id: string, input: { request_id: string; additional_cost: string; additional_minutes: number; refresh_tools: boolean }) =>
     request<TaskView>(`${taskPath(id)}/resume`, { method: 'POST', body: JSON.stringify(input) }),
   deleteTask: (id: string) => request<{ deleting: boolean }>(taskPath(id), { method: 'DELETE' }),
-  getAgentMessages: (id: string, agent: string) => request<AgentMessages>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`),
+  getAgentMessages: (id: string, agent: string, signal?: AbortSignal) => request<AgentMessages>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`, { signal }),
   sendAgentMessage: (id: string, agent: string, message: { id: string; content: string }) =>
     request<AgentMessage>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`, { method: 'POST', body: JSON.stringify(message) }),
   startTask: (id: string) =>

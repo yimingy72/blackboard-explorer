@@ -227,6 +227,8 @@ class TaskSupervisor:
                         if agent.get("task_type") == "derive"
                         else {}
                     )
+                    if agent.get("started_at") is not None:
+                        finish_options["expected_started_at"] = agent["started_at"]
                     await self.service.finish_agent(
                         tid,
                         aid,
@@ -299,6 +301,8 @@ class TaskSupervisor:
                         if agent.get("task_type") == "derive"
                         else {}
                     )
+                    if agent.get("started_at") is not None:
+                        finish_options["expected_started_at"] = agent["started_at"]
                     await self.service.finish_agent(
                         tid,
                         aid,
@@ -313,6 +317,11 @@ class TaskSupervisor:
                         int(agent.get("derive_round") or 1)
                         if agent.get("task_type") == "derive"
                         else None,
+                        **(
+                            {"expected_started_at": agent["started_at"]}
+                            if agent.get("started_at") is not None
+                            else {}
+                        ),
                     )
             await asyncio.sleep(0.2)
         if loop := self.loops.pop(tid, None):

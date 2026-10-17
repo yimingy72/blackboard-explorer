@@ -25,9 +25,10 @@
 .main:focus { outline:none; }
 .skipLink { position:fixed; z-index:var(--z-skip-link); left:12px; top:8px; padding:8px 16px; background:#fff; border-radius:8px; transform:translateY(-150%); }
 .skipLink:focus { transform:none; }
-.main > :first-child { animation:page-arrival var(--duration-fast) var(--ease-out); }
+.route { min-width:0; height:100%; animation:page-arrival var(--duration-fast) var(--ease-out); }
+.main[data-navigating] { cursor:progress; }
 @keyframes page-arrival { from { opacity:.88; } to { opacity:1; } }
 @media(max-width:899px) { .account { height:44px; min-width:44px; } }
-@media(prefers-reduced-motion:reduce) { .main > :first-child { animation:none; } }
+@media(prefers-reduced-motion:reduce) { .route { animation:none; } }
 @media(max-width:650px) { .sidebar { display:none; } .mobileToggle { display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; padding:0; } .topbar { padding:0 12px 0 4px; } }
 @media(max-height:640px) { .workbench { height:auto; min-height:100dvh; overflow:visible; } }

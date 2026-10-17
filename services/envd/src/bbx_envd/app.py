@@ -17,7 +17,6 @@ from typing import BinaryIO, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.applications import Starlette
-from starlette.background import BackgroundTask
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
@@ -159,12 +158,7 @@ async def traffic_control(request) -> Response:
                     raise FileNotFoundError("Native input unavailable")
                 fd = capture.native.open_part(identifier)
                 source = os.fdopen(fd, "rb")
-                return StreamingResponse(
-                    iter(lambda: source.read(65536), b""),
-                    media_type="application/octet-stream",
-                    headers={"Content-Length": str(os.fstat(fd).st_size)},
-                    background=BackgroundTask(source.close),
-                )
+                return SnapshotResponse(source, os.fstat(fd).st_size)
             if request.method == "POST":
                 body = await request.json()
                 if not isinstance(body, dict) or not isinstance(body.get("parts"), list):
@@ -182,12 +176,7 @@ async def traffic_control(request) -> Response:
             fd = capture.open_segment(identifier, action)
             source = os.fdopen(fd, "rb")
             media = "application/x-ndjson" if action == "chunks" else "application/octet-stream"
-            return StreamingResponse(
-                iter(lambda: source.read(65536), b""),
-                media_type=media,
-                headers={"Content-Length": str(os.fstat(fd).st_size)},
-                background=BackgroundTask(source.close),
-            )
+            return SnapshotResponse(source, os.fstat(fd).st_size, media_type=media)
         if request.method == "POST":
             body = await request.json()
             if not isinstance(body, dict):
@@ -392,11 +381,23 @@ def open_workspace_path(path: Path) -> int:
 
 
 class SnapshotResponse(StreamingResponse):
-    def __init__(self, snapshot: BinaryIO, size: int) -> None:
+    def __init__(
+        self, snapshot: BinaryIO, size: int, *, media_type: str = "application/octet-stream"
+    ) -> None:
         self.snapshot = snapshot
+
+        def chunks():
+            remaining = size
+            while remaining > 0:
+                chunk = snapshot.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
         super().__init__(
-            iter(lambda: snapshot.read(65536), b""),
-            media_type="application/octet-stream",
+            chunks(),
+            media_type=media_type,
             headers={"Content-Length": str(size)},
         )
 
@@ -530,10 +531,35 @@ def make_archive(agents_only: bool = False) -> str:
     return name
 
 
+async def prepare_archive(agents_only: bool = False) -> str:
+    work = asyncio.create_task(asyncio.to_thread(make_archive, agents_only=agents_only))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not work.cancelled() and work.exception() is None:
+            Path(work.result()).unlink(missing_ok=True)
+        raise
+
+
+class ArchiveResponse(FileResponse):
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            Path(self.path).unlink(missing_ok=True)
+
+
 async def archive(request) -> Response:
     name = None
     try:
-        name = await asyncio.to_thread(make_archive)
+        name = await prepare_archive()
         fallback = os.path.getsize(name) > settings.archive_max_bytes
     except ArchiveTooLarge:
         fallback = True
@@ -541,19 +567,18 @@ async def archive(request) -> Response:
         if name is not None:
             os.unlink(name)
         try:
-            name = await asyncio.to_thread(make_archive, agents_only=True)
+            name = await prepare_archive(agents_only=True)
         except ArchiveTooLarge:
             return JSONResponse({"error": "expanded agent archive too large"}, status_code=413)
         if os.path.getsize(name) > settings.archive_max_bytes:
             os.unlink(name)
             return JSONResponse({"error": "agent archive too large"}, status_code=413)
     assert name is not None
-    return FileResponse(
+    return ArchiveResponse(
         name,
         media_type="application/zstd",
         filename="workspace.tar.zst",
         headers={"X-Archive-Fallback": "agents-only" if fallback else "none"},
-        background=BackgroundTask(os.unlink, name),
     )
 
 
@@ -680,7 +705,16 @@ async def restore(request) -> Response:
         try:
             skipped_links = await asyncio.shield(work)
         except asyncio.CancelledError:
-            await work
+            # A second cancellation must not remove files still used by the restore thread.
+            while not work.done():
+                try:
+                    await asyncio.shield(work)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not work.cancelled():
+                work.exception()
             raise
         except (ValueError, tarfile.TarError, OSError, subprocess.CalledProcessError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)

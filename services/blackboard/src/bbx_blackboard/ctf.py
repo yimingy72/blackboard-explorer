@@ -993,10 +993,10 @@ class CtfService(
 
     async def state(self, tid):
         async with self.repo.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
             task = await row(conn, s.tasks, tid)
             require(task["mode"] == "ctf", "Task mode is not CTF")
-            # Read the cursor before the snapshot so events committed during the
-            # remaining reads are delivered by SSE instead of being skipped.
+            # The task, cursor and folded rows must share one committed snapshot.
             event_version = (
                 await conn.execute(
                     select(func.coalesce(func.max(s.events.c.version), 0)).where(

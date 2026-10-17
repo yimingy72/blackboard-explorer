@@ -317,6 +317,7 @@ class ScenarioRunner(AgentRunner):
         handle: ExecEnvHandle | None = None,
         envd_http_client: httpx.AsyncClient | None = None,
         expected_derive_round: int | None = None,
+        expected_started_at: str | None = None,
     ) -> RunResult:
         assert client is None and envd_http_client is None
         if task_type == "explore":
@@ -337,6 +338,7 @@ class ScenarioRunner(AgentRunner):
             handle=handle,
             envd_http_client=self.envd_http,
             expected_derive_round=expected_derive_round,
+            expected_started_at=expected_started_at,
         )
 
 

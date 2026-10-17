@@ -9,6 +9,8 @@ import type { BoardEvent, BoardState } from './types';
 
 interface BoardStore {
   taskId: string | null;
+  generation: number;
+  baseState: BoardState;
   events: BoardEvent[];
   state: BoardState;
   loading: boolean;
@@ -27,6 +29,8 @@ interface BoardStore {
 
 export const useBoardStore = create<BoardStore>((set) => ({
   taskId: null,
+  generation: 0,
+  baseState: emptyBoard(),
   events: [],
   state: emptyBoard(),
   loading: false,
@@ -35,8 +39,10 @@ export const useBoardStore = create<BoardStore>((set) => ({
   historyLoaded: false,
   historyLoading: false,
   reset: (taskId) =>
-    set({
+    set(current => ({
       taskId,
+      generation: current.generation + 1,
+      baseState: emptyBoard(),
       events: [],
       state: emptyBoard(),
       loading: Boolean(taskId),
@@ -44,10 +50,11 @@ export const useBoardStore = create<BoardStore>((set) => ({
       connection: taskId ? 'connecting' : 'closed',
       historyLoaded: false,
       historyLoading: false,
-    }),
+    })),
   hydrate: (taskId, state) =>
     set({
       taskId,
+      baseState: state,
       events: [],
       state,
       loading: false,
@@ -59,7 +66,8 @@ export const useBoardStore = create<BoardStore>((set) => ({
   append: (taskId, incoming) =>
     set((current) => {
       if (current.taskId !== taskId) return current;
-      const batch = orderedEvents(incoming.filter((event) => event.task_id === taskId));
+      const baseVersion = current.baseState.task?.version ?? 0;
+      const batch = orderedEvents(incoming.filter((event) => event.task_id === taskId && event.version > baseVersion));
       const latest = current.events.at(-1)?.version ?? 0;
       if (!batch.length) return current;
       if (batch.every(event => event.version > latest)) {
@@ -70,7 +78,7 @@ export const useBoardStore = create<BoardStore>((set) => ({
       const fresh = batch.filter(event => !known.has(event.version));
       if (!fresh.length) return current;
       const events = orderedEvents([...current.events, ...fresh]);
-      return { events, state: reduceBoard(events) };
+      return { events, state: advanceBoard(current.baseState, events) };
     }),
   ensureHistory: async (taskId) => {
     const current = useBoardStore.getState();
@@ -79,18 +87,19 @@ export const useBoardStore = create<BoardStore>((set) => ({
     try {
       const history = await api.getEvents(taskId, 0);
       useBoardStore.setState((latest) => {
-        if (latest.taskId !== taskId) return latest;
+        if (latest.taskId !== taskId || latest.generation !== current.generation) return latest;
         const events = orderedEvents([...history, ...latest.events]);
         return {
           events,
           state: reduceBoard(events),
+          baseState: emptyBoard(),
           historyLoaded: true,
           historyLoading: false,
         };
       });
     } catch {
       useBoardStore.setState((latest) =>
-        latest.taskId === taskId ? { historyLoading: false } : latest,
+        latest.taskId === taskId && latest.generation === current.generation ? { historyLoading: false } : latest,
       );
     }
   },

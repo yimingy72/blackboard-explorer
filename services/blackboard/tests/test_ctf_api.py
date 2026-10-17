@@ -95,7 +95,17 @@ async def test_ctf_create_auto_provisions_task(monkeypatch, overrides, expected,
     app.state.ctf_service = backend
     monkeypatch.setattr(api, "ctf_profile", lambda _row: profile)
     monkeypatch.setattr(
-        api, "_task", AsyncMock(return_value={"id": tid, "mode": "ctf", "status": "created"})
+        api,
+        "_task",
+        AsyncMock(
+            return_value={
+                "id": tid,
+                "mode": "ctf",
+                "status": "created",
+                "agent_profile": "ctf-task-settings",
+                "agent_profile_version": 2,
+            }
+        ),
     )
     headers = {"Authorization": f"Bearer {issue_user_token(settings(), 'alice')}"}
 
@@ -763,3 +773,95 @@ def test_platform_purpose_metadata_roundtrips_in_existing_profile_columns():
     assert "platform_tools" not in encoded
     assert encoded["prompts"]["platform_tools"][0]["tool_name"] == "start"
     assert ctf_profile(encoded).platform_tools == profile.platform_tools
+
+
+@pytest.mark.parametrize("status", ["created", "provisioning", "running", "failed"])
+async def test_ctf_creation_retry_uses_original_profile_before_current_settings_reads(status):
+    config = settings()
+    app = api.create_app(config)
+    tid = uuid4()
+    app.state.input_groups = AsyncMock()
+    app.state.input_groups.prior_task.return_value = {
+        "id": tid,
+        "status": status,
+        "agent_profile": "ctf-task-settings",
+        "agent_profile_version": 7,
+    }
+    app.state.profile_store = AsyncMock()
+    app.state.platform_store = AsyncMock()
+    app.state.ctf_service = AsyncMock()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {issue_user_token(config, 'alice')}"},
+            json={
+                "mode": "ctf",
+                "input_group_id": str(tid),
+                "goal": "Original input",
+                "budget": {"max_cost": 2, "max_minutes": 10},
+                "agent_profile": "ctf",
+            },
+        )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "id": str(tid),
+        "agent_profile": "ctf-task-settings",
+        "agent_profile_version": 7,
+    }
+    app.state.profile_store.get.assert_not_awaited()
+    app.state.profile_store.create.assert_not_awaited()
+    app.state.platform_store.get.assert_not_awaited()
+    app.state.ctf_service.create_task.assert_not_awaited()
+    if status in {"created", "provisioning"}:
+        app.state.ctf_service.provision.assert_awaited_once_with(tid)
+    else:
+        app.state.ctf_service.provision.assert_not_awaited()
+
+
+async def test_ctf_concurrent_creation_retry_returns_profile_persisted_by_winner(monkeypatch):
+    config = settings()
+    app = api.create_app(config)
+    tid = uuid4()
+    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
+    app.state.input_groups = SimpleNamespace(prior_task=AsyncMock(return_value=None))
+    app.state.profile_store = SimpleNamespace(
+        get=AsyncMock(return_value={}),
+        create=AsyncMock(return_value={"name": "ctf-task-settings", "version": 9}),
+    )
+    app.state.platform_store = SimpleNamespace(
+        default_model_name=AsyncMock(return_value="fixture"),
+        get=AsyncMock(return_value={"enabled": True, "config": profile.model.model_dump()}),
+        public=lambda row: row,
+    )
+    app.state.ctf_service = SimpleNamespace(create_task=AsyncMock(return_value=tid))
+    monkeypatch.setattr(api, "ctf_profile", lambda row: profile)
+    monkeypatch.setattr(
+        api,
+        "_task",
+        AsyncMock(
+            return_value={
+                "id": tid,
+                "status": "running",
+                "agent_profile": "ctf-task-settings",
+                "agent_profile_version": 7,
+            }
+        ),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/tasks",
+            headers={"Authorization": f"Bearer {issue_user_token(config, 'alice')}"},
+            json={
+                "mode": "ctf",
+                "input_group_id": str(tid),
+                "goal": "Original input",
+                "budget": {"max_cost": 2, "max_minutes": 10},
+                "agent_profile": "ctf",
+            },
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["agent_profile_version"] == 7

@@ -1,11 +1,14 @@
 """Workspace file and archive boundary checks without containers."""
 
+import asyncio
 import importlib
 import io
 import os
 import subprocess
 import tarfile
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -176,6 +179,30 @@ async def test_snapshot_closes_on_disconnect(service) -> None:
     assert snapshot.closed
 
 
+async def test_snapshot_does_not_send_growth_after_declared_size(service):
+    module, _ = service
+    snapshot = io.BytesIO(b"original")
+    response = module.SnapshotResponse(snapshot, len(b"original"))
+    snapshot.seek(0, os.SEEK_END)
+    snapshot.write(b"appended after the response was prepared")
+    snapshot.seek(0)
+    body = bytearray()
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            body.extend(message.get("body", b""))
+
+    await response(
+        {"type": "http", "asgi": {"spec_version": "2.4"}, "method": "GET"}, receive, send
+    )
+    assert bytes(body) == b"original"
+    assert response.headers["content-length"] == str(len(body))
+    assert snapshot.closed
+
+
 @pytest.mark.asyncio
 async def test_files_and_stat_reject_path_replacement(service, monkeypatch) -> None:
     module, root = service
@@ -252,6 +279,166 @@ async def test_archive_fallback_keeps_exclusions(service, monkeypatch) -> None:
         )
         for name in names
     )
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_cancelled_archive_joins_writer_and_removes_its_file(
+    service, monkeypatch, tmp_path, fallback
+):
+    module, _ = service
+    started = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+    output = tmp_path / "cancelled.tar.zst"
+    oversized = tmp_path / "oversized.tar.zst"
+    monkeypatch.setattr(module.settings, "archive_max_bytes", 4)
+
+    def make_archive(agents_only=False):
+        if fallback and not agents_only:
+            oversized.write_bytes(b"12345")
+            return str(oversized)
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release.wait(2)
+            output.write_bytes(b"data")
+            return str(output)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(module, "make_archive", make_archive)
+    pending = asyncio.create_task(module.archive(None))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        done, _ = await asyncio.wait({pending}, timeout=0.02)
+        joined = not done
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        assert await asyncio.to_thread(finished.wait, 2)
+    assert joined, "The request must retain ownership until the writer finishes"
+    assert not output.exists()
+    assert not oversized.exists()
+
+
+async def test_archive_response_disconnect_removes_temporary_file(service, monkeypatch, tmp_path):
+    module, _ = service
+    output = tmp_path / "response.tar.zst"
+    output.write_bytes(b"data")
+    monkeypatch.setattr(module, "make_archive", lambda **_kwargs: str(output))
+    response = await module.archive(None)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message):
+        raise OSError("synthetic disconnected client")
+
+    with pytest.raises(OSError):
+        await response(
+            {"type": "http", "asgi": {"spec_version": "2.4"}, "method": "GET", "headers": []},
+            receive,
+            send,
+        )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("action", ["native", "chunks"])
+async def test_traffic_download_disconnect_closes_file(service, monkeypatch, tmp_path, action):
+    module, _ = service
+    source = tmp_path / "traffic.bin"
+    source.write_bytes(b"traffic")
+    opened = []
+
+    def open_source(*_args):
+        fd = os.open(source, os.O_RDONLY)
+        opened.append(fd)
+        return fd
+
+    monkeypatch.setattr(
+        module,
+        "traffic_capture",
+        SimpleNamespace(native=SimpleNamespace(open_part=open_source), open_segment=open_source),
+    )
+    response = await module.traffic_control(
+        Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/traffic",
+                "query_string": b"",
+                "headers": [],
+                "path_params": {"action": action, "identifier": "part"},
+            }
+        )
+    )
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message):
+        raise OSError("synthetic disconnected client")
+
+    try:
+        with pytest.raises(ClientDisconnect):
+            await response(
+                {"type": "http", "asgi": {"spec_version": "2.4"}, "method": "GET"},
+                receive,
+                send,
+            )
+        with pytest.raises(OSError):
+            os.fstat(opened[0])
+    finally:
+        try:
+            os.close(opened[0])
+        except OSError:
+            pass
+
+
+async def test_restore_repeated_cancellation_keeps_worker_inputs_until_join(
+    service, monkeypatch, tmp_path
+):
+    module, _ = service
+    monkeypatch.setattr(module, "RESTORE_MARKER", tmp_path / "restore-ready")
+    started = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+    inputs = []
+
+    def restore_archive(compressed, unpacked):
+        inputs.append(compressed)
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release.wait(2)
+            assert compressed.read_bytes() == b"archive"
+            unpacked.write_bytes(b"restored")
+            return 0
+        finally:
+            finished.set()
+
+    async def stream():
+        yield b"archive"
+
+    monkeypatch.setattr(module, "restore_archive", restore_archive)
+    pending = asyncio.create_task(module.restore(SimpleNamespace(stream=stream)))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        done, _ = await asyncio.wait({pending}, timeout=0.02)
+        joined = not done
+        retained = inputs[0].exists()
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        assert await asyncio.to_thread(finished.wait, 2)
+    assert joined and retained, "Repeated cancellation must not delete active worker inputs"
+    assert not inputs[0].parent.exists()
 
 
 @pytest.mark.asyncio

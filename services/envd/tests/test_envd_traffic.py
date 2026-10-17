@@ -146,6 +146,38 @@ async def test_command_identity_is_unique_and_credentials_are_not_in_display(cap
     assert (capture.directory / "control" / "credentials.json").stat().st_mode & 0o777 == 0o600
 
 
+def test_file_output_redaction_matches_bytes_across_copy_boundaries(tmp_path, monkeypatch):
+    import tempfile
+
+    from bbx_envd import traffic
+
+    capture = TrafficCapture(tmp_path / "traffic", 1024 * 1024, 100)
+    capture.credentials["first"] = {"password": "cross-boundary-password"}
+    body = (
+        b"a" * 65530
+        + b"cross-boundary-password\n"
+        + b"https://"
+        + b"u" * 70000
+        + b":"
+        + b"p" * 70000
+        + b"@host.invalid/path\n"
+        + b"cross-boundary-password\n"
+    )
+    with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as output:
+        source.write(body)
+        redact_file = traffic._redact_file
+
+        def truncate_process_output(snapshot, target, pattern):
+            assert snapshot is not source
+            source.truncate(0)
+            redact_file(snapshot, target, pattern)
+
+        monkeypatch.setattr(traffic, "_redact_file", truncate_process_output)
+        capture.redact_output_file(source, output)
+        output.seek(0)
+        assert output.read() == capture.redact_output(body)
+
+
 def test_display_redaction_and_binary_size():
     body = b'{"password":"synthetic-secret","nested":{"apiKey":"synthetic-key"}}'
     shown = message_preview(

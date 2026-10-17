@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import mmap
 import os
 import re
 import secrets
@@ -11,10 +12,11 @@ import shutil
 import signal
 import socket
 import stat
+import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from bbx_envd.native import NativeParts
 from bbx_envd.networks import AgentNetworks
@@ -25,6 +27,29 @@ from bbx_envd.packets import (
 from bbx_envd.traffic_format import complete_wire_detail
 
 SAFE_ID = re.compile(r"[a-zA-Z0-9_-]{1,80}\Z")
+OUTPUT_CREDENTIALS = re.compile(rb"(?i)(https?://[^\s:@/]+:)[^\s@/]+@")
+
+
+def _redact_file(source: BinaryIO, target: BinaryIO, pattern: re.Pattern[bytes]) -> None:
+    """Scan file-backed bytes without materializing a whole command output."""
+    source.flush()
+    size = os.fstat(source.fileno()).st_size
+    if not size:
+        return
+    with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as content:
+        offset = 0
+        for match in pattern.finditer(content):
+            end = match.end(1) if pattern.groups else match.start()
+            while offset < end:
+                next_offset = min(end, offset + 65536)
+                target.write(content[offset:next_offset])
+                offset = next_offset
+            target.write(b"[redacted]@" if pattern.groups else b"[redacted]")
+            offset = match.end()
+        while offset < size:
+            end = min(size, offset + 65536)
+            target.write(content[offset:end])
+            offset = end
 
 
 def now() -> str:
@@ -625,7 +650,29 @@ class TrafficCapture:
     def redact_output(self, value: bytes) -> bytes:
         for identity in self.credentials.values():
             value = value.replace(identity["password"].encode(), b"[redacted]")
-        return re.sub(rb"(?i)(https?://[^\s:@/]+:)[^\s@/]+@", rb"\1[redacted]@", value)
+        return OUTPUT_CREDENTIALS.sub(rb"\1[redacted]@", value)
+
+    def redact_output_file(self, source: BinaryIO, target: BinaryIO) -> None:
+        passwords = [
+            re.escape(identity["password"].encode())
+            for identity in self.credentials.copy().values()
+        ]
+        # Descendants can still modify inherited stdout; map only our private snapshot.
+        with tempfile.TemporaryFile() as snapshot:
+            source.seek(0)
+            remaining = os.fstat(source.fileno()).st_size
+            while remaining:
+                chunk = source.read(min(65536, remaining))
+                if not chunk:
+                    break
+                snapshot.write(chunk)
+                remaining -= len(chunk)
+            if not passwords:
+                _redact_file(snapshot, target, OUTPUT_CREDENTIALS)
+                return
+            with tempfile.TemporaryFile() as redacted:
+                _redact_file(snapshot, redacted, re.compile(b"|".join(passwords)))
+                _redact_file(redacted, target, OUTPUT_CREDENTIALS)
 
     def preview_lost(self, reason: str, count: int = 1) -> None:
         assert self.state is not None

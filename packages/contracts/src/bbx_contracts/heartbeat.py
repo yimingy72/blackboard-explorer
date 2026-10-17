@@ -31,6 +31,7 @@ def canonical_task_id(value: str) -> str:
 class HeartbeatRequest(ContractModel):
     requested_at: AwareDatetime | None = None
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_started_at: AwareDatetime | None = None
     steps: int = Field(ge=0)
     context_tokens: int = Field(ge=0)
     usage: Usage
@@ -84,6 +85,8 @@ class ReceiptHeartbeatRequest(ContractModel):
 def heartbeat_digest(task_id: str, agent_id: str, payload: dict[str, Any]) -> str:
     task_id = canonical_task_id(task_id)
     request = HeartbeatRequest.model_validate(payload).model_dump(mode="json")
+    if request["expected_started_at"] is None:
+        request.pop("expected_started_at")
     return hashlib.sha256(
         json.dumps(
             {"task_id": task_id, "agent_id": agent_id, "request": request},

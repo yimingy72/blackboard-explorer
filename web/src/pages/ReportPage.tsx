@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import { taskQueryOptions } from '../api/queries';
 import { api, ApiError } from '../api/client';
 import { formatMoney, formatDate, taskTitle } from './format';
 import controls from '../styles/controls.module.css';
@@ -39,7 +40,7 @@ export default function ReportPage() {
     const location = useLocation();
     const run = Number(new URLSearchParams(location.search).get('run')) || undefined;
     const runQuery = run ? `?run=${run}` : '';
-    const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId), enabled: Boolean(taskId) });
+    const task = useQuery({ ...taskQueryOptions(taskId), enabled: Boolean(taskId) });
     const report = useQuery({ queryKey: ['report', taskId, run], queryFn: ({ signal }) => api.getReport(taskId, signal, run), enabled: Boolean(taskId) });
     const unauthorized = [task.error, report.error].some((error) => error instanceof ApiError && error.status === 401);
     useEffect(() => { if (unauthorized)

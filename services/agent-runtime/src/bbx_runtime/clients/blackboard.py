@@ -18,6 +18,10 @@ def _body(value: BaseModel | dict[str, Any]) -> dict[str, Any]:
     return value.model_dump(mode="json") if isinstance(value, BaseModel) else value
 
 
+def _timestamp(value: datetime | str) -> str:
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
 class RemoteError(RuntimeError):
     def __init__(
         self,
@@ -340,6 +344,7 @@ class BlackboardClient:
         deliveries: list[dict[str, str]] | None = None,
         review_claim: dict[str, str] | None = None,
         expected_derive_round: int | None = None,
+        expected_started_at: datetime | str | None = None,
     ) -> dict[str, Any]:
         return await self._json(
             "PUT",
@@ -351,6 +356,11 @@ class BlackboardClient:
                 "expected_revision": expected_revision,
                 "deliveries": deliveries or [],
                 **({"review_claim": review_claim} if review_claim is not None else {}),
+                **(
+                    {"expected_started_at": _timestamp(expected_started_at)}
+                    if expected_started_at is not None
+                    else {}
+                ),
                 **(
                     {"expected_derive_round": expected_derive_round}
                     if expected_derive_round is not None
@@ -447,12 +457,18 @@ class BlackboardClient:
         request_id: str | None = None,
         expected_run_number: int | None = None,
         usage_known: bool = True,
+        expected_started_at: datetime | str | None = None,
     ) -> dict[str, Any]:
         payload = {
             "steps": steps,
             "context_tokens": context_tokens,
             "usage": _body(usage),
             "last_seen_version": last_seen_version,
+            **(
+                {"expected_started_at": _timestamp(expected_started_at)}
+                if expected_started_at is not None
+                else {}
+            ),
             **({"requested_at": requested_at.isoformat()} if requested_at else {}),
             **(
                 {"expected_derive_round": expected_derive_round}
@@ -523,6 +539,7 @@ class BlackboardClient:
         expected_derive_round: int | None = None,
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
+        expected_started_at: datetime | str | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
@@ -530,6 +547,11 @@ class BlackboardClient:
             json={
                 "receipt": receipt,
                 "end_reason": end_reason,
+                **(
+                    {"expected_started_at": _timestamp(expected_started_at)}
+                    if expected_started_at is not None
+                    else {}
+                ),
                 **(
                     {"expected_derive_round": expected_derive_round}
                     if expected_derive_round is not None

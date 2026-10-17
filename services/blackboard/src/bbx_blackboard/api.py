@@ -30,9 +30,9 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import select, tuple_
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -186,6 +186,7 @@ class AgentRegistered(BaseModel):
     agent_id: str
     token: str
     derive_round: int | None = None
+    started_at: AwareDatetime | None = None
 
 
 class UserMessageBody(BaseModel):
@@ -204,6 +205,7 @@ class SessionBody(BaseModel):
     origin: Literal["native", "legacy"]
     expected_revision: int = Field(ge=0)
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_started_at: AwareDatetime | None = None
     deliveries: list[DeliveryBody] = Field(default_factory=list)
     review_claim: DeliveryBody | None = None
 
@@ -240,6 +242,7 @@ class FinishBody(BaseModel):
     receipt: dict[str, Any]
     end_reason: str = Field(min_length=1)
     expected_derive_round: int | None = Field(default=None, ge=1)
+    expected_started_at: AwareDatetime | None = None
     expected_run_number: int | None = Field(default=None, ge=1)
     expected_agent_run_id: str | None = Field(default=None, min_length=1)
 
@@ -708,6 +711,23 @@ def create_app(
     @app.post("/api/tasks", response_model=TaskCreated, tags=["tasks"])
     async def create_task(request: Request, body: TaskCreateBody | CtfTaskCreate) -> TaskCreated:
         identity = require_user_or_service(request)
+        digest = request_hash(body.model_dump())
+        if body.input_group_id is not None:
+            store: InputGroups = request.app.state.input_groups
+            if store is None:
+                raise HTTPException(503, "Blackboard is starting")
+            prior = await store.prior_task(body.input_group_id, owner_key(identity), digest)
+            if prior is not None:
+                if isinstance(body, CtfTaskCreate) and prior["status"] in {
+                    "created",
+                    "provisioning",
+                }:
+                    await request.app.state.ctf_service.provision(prior["id"])
+                return TaskCreated(
+                    id=prior["id"],
+                    agent_profile=prior["agent_profile"],
+                    agent_profile_version=prior["agent_profile_version"],
+                )
         if isinstance(body, CtfTaskCreate):
             profiles = _profiles(request)
             row = await profiles.get(body.agent_profile, body.profile_version)
@@ -750,7 +770,7 @@ def create_app(
                         "input_group_id": body.input_group_id,
                         "input_file_ids": body.input_file_ids,
                         "input_owner": owner_key(identity),
-                        "create_request_hash": request_hash(body.model_dump()),
+                        "create_request_hash": digest,
                     }
                     if body.input_group_id is not None
                     else {}
@@ -760,20 +780,10 @@ def create_app(
             if task["status"] in {"created", "provisioning"}:
                 await request.app.state.ctf_service.provision(tid)
             return TaskCreated(
-                id=tid, agent_profile=row["name"], agent_profile_version=row["version"]
+                id=tid,
+                agent_profile=task["agent_profile"],
+                agent_profile_version=task["agent_profile_version"],
             )
-        digest = request_hash(body.model_dump())
-        if body.input_group_id is not None:
-            store: InputGroups = request.app.state.input_groups
-            if store is None:
-                raise HTTPException(503, "Blackboard is starting")
-            prior = await store.prior_task(body.input_group_id, owner_key(identity), digest)
-            if prior is not None:
-                return TaskCreated(
-                    id=prior["id"],
-                    agent_profile=prior["agent_profile"],
-                    agent_profile_version=prior["agent_profile_version"],
-                )
         profiles = _profiles(request)
         if body.model_version is not None and body.model_id is None:
             raise HTTPException(422, "模型版本需要同时指定模型")
@@ -856,6 +866,102 @@ def create_app(
         require_service(request)
         return await _conversations(request).deletions()
 
+    async def task_views(conn: AsyncConnection, tasks: list[dict[str, Any]]) -> list[TaskView]:
+        if not tasks:
+            return []
+        ids = [task["id"] for task in tasks]
+        ordinary_ids = [task["id"] for task in tasks if task.get("mode") != "ctf"]
+        ctf_ids = [task["id"] for task in tasks if task.get("mode") == "ctf"]
+        agents: dict[UUID, list[dict[str, Any]]] = {}
+        members: dict[UUID, list[dict[str, Any]]] = {}
+        runs: dict[UUID, list[dict[str, Any]]] = {}
+        profiles = {
+            (row["name"], row["version"]): row["models"]
+            for row in (
+                await conn.execute(
+                    select(
+                        s.agent_profiles.c.name,
+                        s.agent_profiles.c.version,
+                        s.agent_profiles.c.models,
+                    ).where(
+                        tuple_(s.agent_profiles.c.name, s.agent_profiles.c.version).in_(
+                            [
+                                (task["agent_profile"], task["agent_profile_version"])
+                                for task in tasks
+                            ]
+                        )
+                    )
+                )
+            ).mappings()
+        }
+        if ordinary_ids:
+            for row in (
+                await conn.execute(
+                    select(s.agent_runs)
+                    .where(
+                        s.agent_runs.c.task_id.in_(ordinary_ids),
+                        s.agent_runs.c.status.in_(("running", "concluding")),
+                    )
+                    .order_by(s.agent_runs.c.task_id, s.agent_runs.c.id)
+                )
+            ).mappings():
+                agents.setdefault(row["task_id"], []).append(dict(row))
+        if ctf_ids:
+            for row in (
+                await conn.execute(
+                    select(s.ctf_members).where(s.ctf_members.c.task_id.in_(ctf_ids))
+                )
+            ).mappings():
+                members.setdefault(row["task_id"], []).append(
+                    public_member({**row, "agent_id": row["id"]})
+                )
+        for row in (
+            await conn.execute(
+                select(s.task_runs)
+                .where(s.task_runs.c.task_id.in_(ids))
+                .order_by(s.task_runs.c.run_number)
+            )
+        ).mappings():
+            runs.setdefault(row["task_id"], []).append(dict(row))
+        result = []
+        for task in tasks:
+            models = profiles.get((task["agent_profile"], task["agent_profile_version"]))
+            if models is None:
+                raise KeyError(task["agent_profile"])
+            currencies = {model.get("price", {}).get("currency") for model in models.values()}
+            currency = currencies.pop() if len(currencies) == 1 else None
+            result.append(
+                TaskView(
+                    mode=task.get("mode", "blackboard"),
+                    name=task.get("name"),
+                    initial_attachments=task.get("initial_attachments") or [],
+                    cost_currency=currency,
+                    id=task["id"],
+                    goal=task["goal"],
+                    status=task["status"],
+                    deleting=task["deleting"],
+                    acceptance_state=task["acceptance_state"],
+                    usage=task["usage"],
+                    agents=agents.get(task["id"], []),
+                    report_uri=task.get("report_uri"),
+                    workspace_uri=task.get("workspace_uri"),
+                    agent_profile=task["agent_profile"],
+                    agent_profile_version=task["agent_profile_version"],
+                    created_at=task["created_at"],
+                    budget=task["budget"],
+                    run_number=task["run_number"],
+                    active_seconds=task["active_seconds"],
+                    active_since=task["active_since"],
+                    cleanup_ready=task["cleanup_ready"],
+                    runs=runs.get(task["id"], []),
+                    members=members.get(task["id"], []),
+                    ctf_options=task.get("ctf_options"),
+                    ctf_phase=(task.get("ctf_control") or {}).get("phase"),
+                    ctf_conclusion=task.get("ctf_conclusion"),
+                )
+            )
+        return result
+
     @app.get("/api/tasks", response_model=list[TaskView], tags=["tasks"])
     async def list_tasks(
         request: Request,
@@ -864,68 +970,30 @@ def create_app(
     ) -> list[TaskView]:
         require_user_or_service(request)
         async with request.app.state.engine.connect() as conn:
-            ids = (
-                (
-                    await conn.execute(
-                        select(s.tasks.c.id)
-                        .order_by(s.tasks.c.created_at.desc())
-                        .limit(limit)
-                        .offset(offset)
-                    )
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            rows = (
+                await conn.execute(
+                    select(s.tasks)
+                    .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
+                    .limit(limit)
+                    .offset(offset)
                 )
-                .scalars()
-                .all()
-            )
-        return [await task_detail(request, task_id) for task_id in ids]
+            ).mappings()
+            return await task_views(conn, [dict(row) for row in rows])
 
     @app.get("/api/tasks/{task_id}", response_model=TaskView, tags=["tasks"])
     async def task_detail(request: Request, task_id: UUID) -> TaskView:
         require_task_reader(request, task_id)
-        await _task(request, task_id)
-        task = await _task(request, task_id)
-        board = await (
-            request.app.state.ctf_service if task.get("mode") == "ctf" else _service(request)
-        ).state(task_id)
-        task = board["task"]
-        profile = await request.app.state.profile_store.get(
-            task["agent_profile"], task["agent_profile_version"]
-        )
-        currencies = {
-            model.get("price", {}).get("currency") for model in profile["models"].values()
-        }
-        currency = currencies.pop() if len(currencies) == 1 else None
-        return TaskView(
-            mode=task.get("mode", "blackboard"),
-            name=task.get("name"),
-            initial_attachments=task.get("initial_attachments") or [],
-            cost_currency=currency,
-            id=task_id,
-            goal=task["goal"],
-            status=task["status"],
-            deleting=task["deleting"],
-            acceptance_state=task["acceptance_state"],
-            usage=task["usage"],
-            agents=[
-                agent
-                for agent in board.get("agents", {}).values()
-                if agent["status"] in {"running", "concluding"}
-            ],
-            report_uri=task.get("report_uri"),
-            workspace_uri=task.get("workspace_uri"),
-            agent_profile=task["agent_profile"],
-            agent_profile_version=task["agent_profile_version"],
-            created_at=task["created_at"],
-            budget=task["budget"],
-            run_number=task["run_number"],
-            active_seconds=task["active_seconds"],
-            active_since=task["active_since"],
-            cleanup_ready=task["cleanup_ready"],
-            runs=await _task_runs(request, task_id),
-            members=[public_member(member) for member in board.get("members", [])],
-            ctf_options=task.get("ctf_options"),
-            ctf_phase=(task.get("ctf_control") or {}).get("phase"),
-            ctf_conclusion=task.get("ctf_conclusion"),
-        )
+        async with request.app.state.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            task = (
+                (await conn.execute(select(s.tasks).where(s.tasks.c.id == task_id)))
+                .mappings()
+                .first()
+            )
+            if task is None:
+                raise HTTPException(404, "Task not found")
+            return (await task_views(conn, [dict(task)]))[0]
 
     @app.post("/api/tasks/{task_id}/resume", response_model=TaskView, tags=["tasks"])
     async def resume_task(request: Request, task_id: UUID, body: ResumeBody) -> TaskView:
@@ -1129,6 +1197,7 @@ def create_app(
             body.expected_revision,
             [delivery.model_dump() for delivery in body.deliveries],
             body.review_claim.model_dump() if body.review_claim else None,
+            expected_started_at=body.expected_started_at,
             **(
                 {"expected_derive_round": body.expected_derive_round}
                 if body.expected_derive_round is not None
@@ -1164,6 +1233,7 @@ def create_app(
             body.expected_revision,
             body.content,
             body.usage,
+            expected_started_at=body.expected_started_at,
         )
 
     @app.post(
@@ -1512,6 +1582,7 @@ def create_app(
             agent_id=agent_id,
             token=issue_agent_token(settings, task_id, agent_id, derive_round),
             derive_round=derive_round,
+            started_at=agent.get("started_at"),
         )
 
     @app.patch("/api/tasks/{task_id}/agents/{agent_id}", tags=["system"])
@@ -1544,6 +1615,7 @@ def create_app(
             model=model,
             requested_at=body.requested_at,
             billing_mode=task.get("billing_mode"),
+            expected_started_at=body.expected_started_at,
             **(
                 cast(dict[str, Any], {"expected_derive_round": body.expected_derive_round})
                 if body.expected_derive_round is not None

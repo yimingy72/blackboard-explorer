@@ -31,6 +31,31 @@ async def row(
     return dict(result.mappings().one())
 
 
+async def agent_execution_matches(
+    conn: AsyncConnection,
+    tid: UUID,
+    agent: dict[str, Any],
+    expected_started_at: datetime | None,
+) -> bool:
+    if expected_started_at is not None:
+        return expected_started_at == agent["started_at"]
+    if agent["task_type"] != "explore":
+        return True
+    if agent.get("previous_receipt") is not None:
+        return False
+    # Legacy first executions may omit the fence; reactivated IDs may not.
+    reactivated = await conn.execute(
+        select(s.events.c.version)
+        .where(
+            s.events.c.task_id == tid,
+            s.events.c.object_id == agent["id"],
+            s.events.c.type == "agent.reactivated",
+        )
+        .limit(1)
+    )
+    return reactivated.first() is None
+
+
 async def patch(
     conn: AsyncConnection, table, task_id: UUID, values: dict[str, Any], oid: str | None = None
 ) -> None:

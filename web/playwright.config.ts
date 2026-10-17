@@ -1,4 +1,5 @@
 import { createServer } from 'node:net';
+import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 
 async function freePort(): Promise<number> {
@@ -31,7 +32,9 @@ export default defineConfig({
     launchOptions: process.env.BBX_E2E_BROWSER ? { executablePath: process.env.BBX_E2E_BROWSER } : {},
   },
   webServer: {
-    command: `pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
+    command: process.env.BBX_E2E_PREVIEW_DIR
+      ? `pnpm exec vite preview --outDir '${resolve(process.env.BBX_E2E_PREVIEW_DIR).replaceAll("'", "'\"'\"'")}' --host 127.0.0.1 --port ${port} --strictPort`
+      : `pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 30_000,

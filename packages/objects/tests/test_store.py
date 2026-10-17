@@ -1,5 +1,6 @@
 """Object storage wrapper checks without a running server."""
 
+import asyncio
 import io
 import threading
 from urllib.parse import urlsplit
@@ -135,3 +136,39 @@ async def test_known_small_attachment_uses_single_sdk_put_without_multipart(monk
     method, url, size = transport.calls[0]
     assert method == "PUT" and size == len(content)
     assert urlsplit(url).path == "/test/inputs/source.bin" and urlsplit(url).query == ""
+
+
+async def test_cancelled_upload_waits_for_source_reader_before_releasing_caller(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    contents = []
+
+    class SlowMinio(FakeMinio):
+        def put_object(self, bucket_name, object_name, data, length, **kwargs):
+            started.set()
+            try:
+                assert release.wait(5)
+                contents.append(data.read())
+            finally:
+                finished.set()
+
+    monkeypatch.setattr("bbx_objects.store.Minio", SlowMinio)
+    store = ObjectStore("localhost:9000", "user", "fixture", "test")
+    with io.BytesIO(b"complete upload") as content:
+        pending = asyncio.create_task(store.put("one", content, length=15))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            pending.cancel()
+            await asyncio.sleep(0)
+            assert not pending.done()
+            # Repeated cancellation must also leave the source open for the worker.
+            pending.cancel()
+            await asyncio.sleep(0)
+            assert not pending.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+    assert finished.is_set()
+    assert contents == [b"complete upload"]

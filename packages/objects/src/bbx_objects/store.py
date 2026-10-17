@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from io import BytesIO
 from typing import BinaryIO
@@ -72,7 +73,17 @@ class ObjectStore:
                 else (10 * 1024 * 1024 if length == -1 else 0),
             )
 
-        await anyio.to_thread.run_sync(upload)
+        pending = asyncio.create_task(anyio.to_thread.run_sync(upload))
+        cancelled: asyncio.CancelledError | None = None
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError as error:
+                cancelled = error
+        pending.result()
+        if cancelled is not None:
+            # Keep the source file and caller's lock alive until the SDK stops reading.
+            raise cancelled
 
     async def get(self, uri: str) -> bytes:
         def download() -> bytes:

@@ -140,13 +140,11 @@ class PlatformStore:
                 await conn.execute(
                     select(table)
                     .where(table.c.kind == kind)
+                    .distinct(table.c.name)
                     .order_by(table.c.name, table.c.version.desc())
                 )
             ).mappings()
-            latest = {}
-            for row in rows:
-                latest.setdefault(row["name"], self.public(dict(row)))
-        result = list(latest.values())
+            result = [self.public(dict(row)) for row in rows]
         if kind == "models":
             default_name = await self.default_model_name()
             for item in result:

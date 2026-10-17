@@ -6,12 +6,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import httpx
 import pytest
 from bbx_contracts.models import Params
 from bbx_contracts.profile import load_profile
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.execenv import ExecEnvHandle
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient
@@ -168,6 +170,78 @@ async def test_old_final_receipt_cannot_compensate_another_run(scripted, change)
         "task", "agent-1", board.snapshot["agents"]["agent-1"], board.snapshot["task"]
     )
     assert len(board.finishes) == before
+    assert scripted == ["model"]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_old_explore_receipt_cannot_compensate_reactivated_execution(scripted, legacy):
+    board = Board("ok")
+    agent = board.snapshot["agents"]["agent-1"]
+    agent.update(task_type="explore", started_at="2026-10-17T12:00:00+00:00")
+    board.finish_agent = AsyncMock(return_value=[])
+    runner = AgentRunner(Settings.model_construct(), cast(Any, board), Mock(), Mock())
+    await runner.run_agent(
+        "task",
+        "agent-1",
+        "explore",
+        agent_token="synthetic",
+        client=ScriptedChatClient([]),
+        handle=ExecEnvHandle(
+            task_id=uuid4(), container_id="envd", name="envd", base_url="http://envd", token="t"
+        ),
+    )
+    assert board.finish_agent.call_args.kwargs["expected_started_at"] == agent["started_at"]
+    assert board.saved is not None
+    assert board.saved["session"]["state"]["bbx_final_receipt"]["started_at"] == agent["started_at"]
+    agent["started_at"] = "2026-10-17T12:01:00Z"
+    if legacy:
+        board.saved["session"]["state"]["bbx_final_receipt"].pop("started_at")
+        agent["previous_receipt"] = {"accepted": False}
+    assert not await runner.reconcile_final_receipt(
+        "task", "agent-1", agent, board.snapshot["task"]
+    )
+    assert board.finish_agent.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "outcome,expected", [(False, False), (None, True), (True, True), ("stale", False)]
+)
+async def test_reconciliation_distinguishes_obsolete_and_unknown_finish(outcome, expected):
+    board = Board("ok")
+    agent = board.snapshot["agents"]["agent-1"]
+    agent.update(task_type="explore", started_at="2026-10-17T12:01:00Z", previous_receipt=None)
+    proof = {
+        "task_id": "task",
+        "agent_id": "agent-1",
+        "run_id": "agent-1",
+        "run_number": 1,
+        "task_type": "explore",
+        "derive_round": None,
+        "receipt": {"accepted": False},
+        "end_reason": "runtime_error",
+    }
+    board.saved = {"session": {"state": {"bbx_final_receipt": proof}}}
+    runner = AgentRunner(Settings.model_construct(), cast(Any, board), Mock(), Mock())
+    finish = AsyncMock(return_value=outcome)
+    if outcome == "stale":
+        finish.side_effect = RemoteError(422, "Execution changed", "stale_agent_execution")
+    runner._finish_receipt = finish
+    assert (
+        await runner.reconcile_final_receipt("task", "agent-1", agent, board.snapshot["task"])
+        is expected
+    )
+
+
+async def test_uncertain_finish_keeps_saved_receipt_pending_without_model_replay(scripted):
+    board = Board("persistent")
+    runner = AgentRunner(Settings.model_construct(), cast(Any, board), Mock(), Mock())
+    await runner.run_agent(
+        "task", "agent-1", "derive", agent_token="synthetic", client=ScriptedChatClient([])
+    )
+    assert await runner.reconcile_final_receipt(
+        "task", "agent-1", board.snapshot["agents"]["agent-1"], board.snapshot["task"]
+    )
+    assert board.snapshot["agents"]["agent-1"]["status"] == "running"
     assert scripted == ["model"]
 
 

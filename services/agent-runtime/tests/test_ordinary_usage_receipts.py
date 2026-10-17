@@ -64,6 +64,32 @@ def client():
     )
 
 
+async def test_execution_fence_survives_durable_usage_and_final_checkpoint():
+    started_at = "2026-10-17T12:00:00+00:00"
+
+    class FencedService(ReceiptService):
+        async def put_agent_session(self, *args, **kwargs):
+            assert kwargs["expected_started_at"] == started_at
+            return await super().put_agent_session(*args, **kwargs)
+
+    service = FencedService()
+    service.board["agents"]["agent-1"]["started_at"] = started_at
+    runner, _ = runner_for(service)
+    result = await runner.run_agent(
+        "task",
+        "agent-1",
+        "derive",
+        agent_token="issued",
+        client=client(),
+        expected_started_at=started_at.replace("+00:00", "Z"),
+    )
+    assert result.end_reason == "normal"
+    assert service.beats[0]["expected_started_at"].isoformat() == started_at
+    assert service.saved is not None
+    assert service.saved["session"]["state"]["bbx_final_receipt"]["started_at"] == started_at
+    assert service.finish_agent.call_args.kwargs["expected_started_at"] == started_at
+
+
 @pytest.mark.parametrize("failure", ["before_commit", "lost_ack"])
 async def test_successful_response_is_saved_before_billing_and_bounded_retry_never_replays_model(
     failure,

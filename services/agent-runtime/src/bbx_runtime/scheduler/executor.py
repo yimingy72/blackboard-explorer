@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
-from bbx_runtime.context import CloseMode, TaskType
+from bbx_runtime.context import CloseMode, TaskType, execution_timestamp
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.runner import AgentRunner, RunResult
 
@@ -46,6 +46,8 @@ class ActionExecutor:
         self.handle = handle
         self.tasks: dict[str, asyncio.Task[RunResult]] = {}
         self.task_rounds: dict[str, int | None] = {}
+        self.task_starts: dict[str, asyncio.Event] = {}
+        self.task_executions: dict[str, str | None] = {}
         self._stopping = False
         self._stop_reason = "runtime_restart"
 
@@ -130,6 +132,8 @@ class ActionExecutor:
         round_kwargs: dict[str, Any] = (
             {"expected_derive_round": derive_round} if derive_round else {}
         )
+        if registration.get("started_at") is not None:
+            round_kwargs["expected_started_at"] = registration["started_at"]
         try:
             self._check_stopped()
             if intent_id is not None:
@@ -171,8 +175,11 @@ class ActionExecutor:
             )
             raise
 
-        running = asyncio.create_task(
-            self.runner.run_agent(
+        started = asyncio.Event()
+
+        async def run() -> RunResult:
+            started.set()
+            return await self.runner.run_agent(
                 self.task_id,
                 aid,
                 task_type,
@@ -180,18 +187,27 @@ class ActionExecutor:
                 mode,
                 agent_token=token,
                 expected_derive_round=derive_round,
+                **(
+                    {"expected_started_at": registration["started_at"]}
+                    if registration.get("started_at") is not None
+                    else {}
+                ),
                 handle=self.handle,
-            ),
-            name=f"{self.task_id}/{aid}",
-        )
+            )
+
+        running = asyncio.create_task(run(), name=f"{self.task_id}/{aid}")
         self.tasks[aid] = running
         self.task_rounds[aid] = derive_round
+        self.task_starts[aid] = started
+        self.task_executions[aid] = execution_timestamp(registration.get("started_at"))
         running.add_done_callback(lambda done, agent_id=aid: self._forget(agent_id, done))
 
     def _forget(self, aid: str, task: asyncio.Task[RunResult]) -> None:
         if self.tasks.get(aid) is task:
             self.tasks.pop(aid, None)
             self.task_rounds.pop(aid, None)
+            self.task_starts.pop(aid, None)
+            self.task_executions.pop(aid, None)
         try:
             task.result()
         except asyncio.CancelledError:
@@ -229,12 +245,27 @@ class ActionExecutor:
                     int(agent.get("derive_round") or 1) if agent["task_type"] == "derive" else None,
                 )
 
-    async def cancel(self, aid: str, reason: str, expected_derive_round: int | None = None) -> bool:
+    async def cancel(
+        self,
+        aid: str,
+        reason: str,
+        expected_derive_round: int | None = None,
+        *,
+        expected_started_at: str | None = None,
+    ) -> bool:
         if expected_derive_round is not None and self.task_rounds.get(aid) != expected_derive_round:
+            return False
+        if expected_started_at is not None and self.task_executions.get(aid) != execution_timestamp(
+            expected_started_at
+        ):
             return False
         task = self.tasks.get(aid)
         if task is None:
             return False
+        started = self.task_starts.get(aid)
+        if started is not None and not task.done():
+            # Cancellation before the first coroutine step skips the runner's durable finish.
+            await started.wait()
         if not task.done():
             task.cancel(reason)
         try:

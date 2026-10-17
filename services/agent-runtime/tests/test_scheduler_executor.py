@@ -3,7 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import httpx
@@ -92,6 +92,20 @@ async def test_stale_round_cancel_cannot_cancel_reactivated_derive():
     assert await executor.cancel("agent-1", "heartbeat", expected_derive_round=2) is True
 
 
+async def test_stale_execution_cancel_cannot_cancel_reactivated_explore():
+    executor, service, _, runner, _ = setup_executor()
+    current = "2026-10-17T12:01:00Z"
+    service.register_agent.return_value["started_at"] = current
+    await executor.execute([SpawnExplore(intent_id="I1")])
+    await asyncio.wait_for(runner.started.wait(), 2)
+    assert runner.kwargs["expected_started_at"] == current
+    assert not await executor.cancel(
+        "agent-1", "heartbeat", expected_started_at="2026-10-17T12:00:00Z"
+    )
+    assert runner.cancel_reason is None
+    assert await executor.cancel("agent-1", "heartbeat", expected_started_at=current)
+
+
 async def test_spawn_claims_before_user_creation_and_cancel_forwards_reason():
     executor, service, manager, runner, _ = setup_executor()
     await executor.execute([SpawnExplore(intent_id="I1")])
@@ -105,6 +119,35 @@ async def test_spawn_claims_before_user_creation_and_cancel_forwards_reason():
     assert "agent-1" in executor.tasks
     assert await executor.cancel("agent-1", "heartbeat")
     assert runner.cancel_reason == "heartbeat"
+    assert executor.tasks == {}
+
+
+@pytest.mark.parametrize("reason", ["heartbeat", "runtime_restart"])
+async def test_cancel_immediately_after_dispatch_finishes_registered_claim(reason):
+    executor, service, manager, _runner, _ = setup_executor()
+    entered = asyncio.Event()
+
+    async def wait_for_state(_task_id):
+        entered.set()
+        await asyncio.Event().wait()
+
+    service.state.side_effect = wait_for_state
+    executor.runner = AgentRunner(
+        Settings.model_construct(),
+        cast(BlackboardClient, service),
+        Mock(),
+        cast(ExecEnvManager, manager),
+    )
+    await executor.execute([SpawnExplore(intent_id="I1")])
+    assert await executor.cancel("agent-1", reason)
+    assert entered.is_set()
+    service.claim_for.assert_awaited_once_with("task", "I1", "agent-1")
+    service.finish_agent.assert_awaited_once_with(
+        "task",
+        "agent-1",
+        {"accepted": True, "data": {"note": "运行被取消，系统结束交接"}},
+        reason,
+    )
     assert executor.tasks == {}
 
 

@@ -47,6 +47,7 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
   let membersChanged = false, challengesChanged = false, recordsChanged = false, artifactsChanged = false;
 
   for (const event of events) {
+    if (event.version <= (state.event_version ?? 0)) continue;
     const payload = object(event.payload) ?? {};
     if (event.type === 'ctf.member.created') {
       const member = payload as unknown as CtfState['members'][number];

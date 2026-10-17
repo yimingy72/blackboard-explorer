@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from bbx_contracts.models import AgentProfile, Params
@@ -15,6 +16,16 @@ if TYPE_CHECKING:
 
 TaskType = Literal["explore", "derive", "close"]
 CloseMode = Literal["judge", "final"]
+
+
+def execution_timestamp(value: datetime | str | None) -> str | None:
+    """Compare execution fences across FastAPI's equivalent Z and UTC encodings."""
+    if value is None:
+        return None
+    stamp = (
+        datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    )
+    return stamp.astimezone(UTC).isoformat()
 
 
 @dataclass
@@ -32,6 +43,7 @@ class RunContext:
     mode: CloseMode | None = None
     checkpoint: SessionCheckpoint | None = None
     expected_derive_round: int | None = None
+    expected_started_at: str | None = None
 
     @property
     def params(self) -> Params:

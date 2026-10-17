@@ -156,7 +156,17 @@ async def test_new_task_snapshots_latest_ctf_instead_of_reusing_old_task_family(
     app.state.platform_store = platform
     app.state.ctf_service = backend
     monkeypatch.setattr(
-        api, "_task", AsyncMock(return_value={"id": tid, "mode": "ctf", "status": "created"})
+        api,
+        "_task",
+        AsyncMock(
+            return_value={
+                "id": tid,
+                "mode": "ctf",
+                "status": "created",
+                "agent_profile": "ctf-task-settings",
+                "agent_profile_version": 7,
+            }
+        ),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

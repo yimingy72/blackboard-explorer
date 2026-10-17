@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { api } from '../api/client';
 
 import { useBoardStore } from './store';
 import { boardFromSnapshot } from './snapshot';
@@ -63,4 +64,37 @@ describe('board event store', () => {
     expect(useBoardStore.getState().state.task?.goal).toBe(taskTwo);
     useBoardStore.getState().reset(null);
   });
+});
+
+it('keeps snapshot facts when an SSE gap arrives out of order', () => {
+  useBoardStore.getState().reset(taskOne);
+  const { state } = boardFromSnapshot({
+    task: { version: 10, goal: 'Snapshot goal', status: 'running', acceptance: [], budget: {}, usage: {} },
+    facts: { F1: { id: 'F1', author: 'agent-1', statement: 'Existing fact', version: 2 } }, intents: {}, agents: {},
+  });
+  useBoardStore.getState().hydrate(taskOne, state);
+  useBoardStore.getState().append(taskOne, [{ ...created(taskOne, 12), type: 'task.finished', payload: {} }]);
+  useBoardStore.getState().append(taskOne, [{ ...created(taskOne, 11), type: 'task.closing', payload: { reason: 'budget' } }]);
+  expect(useBoardStore.getState().state.task?.goal).toBe('Snapshot goal');
+  expect(useBoardStore.getState().state.task?.status).toBe('finished');
+  expect(useBoardStore.getState().state.facts.F1.statement).toBe('Existing fact');
+  useBoardStore.getState().append(taskOne, [created(taskOne, 1)]);
+  expect(useBoardStore.getState().state.task?.goal).toBe('Snapshot goal');
+  useBoardStore.getState().reset(null);
+});
+
+it('ignores an old history response after navigating away and back to the same task', async () => {
+  let resolve!: (events: BoardEvent[]) => void;
+  const history = vi.spyOn(api, 'getEvents').mockImplementation(() => new Promise(done => { resolve = done; }));
+  try {
+    useBoardStore.getState().reset(taskOne);
+    const pending = useBoardStore.getState().ensureHistory(taskOne);
+    useBoardStore.getState().reset(taskTwo);
+    useBoardStore.getState().reset(taskOne);
+    useBoardStore.getState().append(taskOne, [{ ...created(taskOne, 15), payload: { goal: 'Current visit' } }]);
+    resolve([created(taskOne, 1)]);
+    await pending;
+    expect(useBoardStore.getState().events.map(event => event.version)).toEqual([15]);
+    expect(useBoardStore.getState().historyLoaded).toBe(false);
+  } finally { history.mockRestore(); useBoardStore.getState().reset(null); }
 });

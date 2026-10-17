@@ -189,6 +189,28 @@ class ExecEnvManager:
         if container.status != "running":
             await asyncio.to_thread(container.start)
 
+    async def _create_container(self, image: str, **kwargs: Any) -> Any:
+        pending = asyncio.create_task(
+            asyncio.to_thread(self.docker.containers.create, image, **kwargs)
+        )
+        cancelled: asyncio.CancelledError | None = None
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError as error:
+                cancelled = error
+        container = pending.result()
+        if cancelled is not None:
+            cleanup = asyncio.create_task(asyncio.to_thread(container.remove, force=True))
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    pass
+            cleanup.result()
+            raise cancelled
+        return container
+
     async def _create_envd(self, task_id: UUID, profile: AgentProfile | CtfAgentProfile) -> Any:
         name = self._name(task_id)
         await self._check_name(name, task_id, "envd")
@@ -213,8 +235,7 @@ class ExecEnvManager:
         security_options: dict[str, Any] = {}
         if self.settings.exec_apparmor_profile:
             security_options["security_opt"] = [f"apparmor={self.settings.exec_apparmor_profile}"]
-        container = await asyncio.to_thread(
-            self.docker.containers.create,
+        container = await self._create_container(
             profile.exec_image,
             name=name,
             detach=True,
@@ -247,8 +268,7 @@ class ExecEnvManager:
     async def _create_relay(self, task_id: UUID, envd_name: str) -> Any:
         name = self._relay_name(task_id)
         await self._check_name(name, task_id, "relay")
-        relay = await asyncio.to_thread(
-            self.docker.containers.create,
+        relay = await self._create_container(
             "bbx-exec-env:latest",
             command=["python3", "-c", RELAY, envd_name],
             name=name,

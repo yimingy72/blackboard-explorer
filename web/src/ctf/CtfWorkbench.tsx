@@ -1,4 +1,5 @@
 import TrafficDrawer from '../components/TrafficDrawer';
+import ElapsedTime from '../components/ElapsedTime';
 import { ApiOutlined } from '@ant-design/icons';
 import LoadingState from '../components/LoadingState';
 import { Alert, Button, Dropdown, Empty, Modal, Tag } from 'antd';
@@ -11,7 +12,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { taskListUrl } from '../pages/taskNavigation';
 import { ApiError, type TaskView } from '../api/client';
 import { formatMoney, taskTitle, formatDate } from '../pages/format';
-import { activeDuration } from '../board/agents';
 import { ctfApi } from './api';
 import { challengeTimeline } from './progress';
 import { acceptCursor, phaseLabels } from './view';
@@ -43,7 +43,6 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     const clientStates=useRef<Record<string,AgentClientState>>({});
     const [drafts,setDrafts]=useState<Record<string,string>>({});
     const closeGoal=()=>{setGoalOpen(false);goalButton.current?.focus({preventScroll:true});};
-    const [now, setNow] = useState(() => Date.now());
     const workspace = useRef<HTMLDivElement>(null);
     const returnFocus = useRef<HTMLElement | null>(null);
     const returnNode = useRef<string | null>(null);
@@ -61,9 +60,17 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         setLiveEvents([]);
         setHistoryRequested(false);
     }, [taskId]);
+    const snapshotReads = useRef(new Set<CtfEvent[]>());
     const state = useQuery({
         queryKey: ['ctf', taskId, 'state'],
-        queryFn: ({ signal }) => ctfApi.state(taskId, signal),
+        queryFn: async ({ signal }) => {
+            const received: CtfEvent[] = [];
+            snapshotReads.current.add(received);
+            try {
+                const snapshot = await ctfApi.state(taskId, signal);
+                return applyCtfEvents(snapshot, received)!;
+            } finally { snapshotReads.current.delete(received); }
+        },
         staleTime: 5000,
         refetchInterval: query => {
             const phase = query.state.data?.task.status ?? query.state.data?.task.ctf_phase;
@@ -112,6 +119,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
                 if (next === cursor.current)
                     return;
                 cursor.current = next;
+                for (const received of snapshotReads.current) if (event.type.startsWith('ctf.') && event.type !== 'ctf.cursor') received.push(event);
                 pending.push(event);
                 if (!timer)
                     timer = setTimeout(() => {
@@ -174,12 +182,6 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     const failure = task.ctf_conclusion?.failure && typeof task.ctf_conclusion.failure === 'object' ? task.ctf_conclusion.failure as Record<string, unknown> : null;
     const conclusionLabels: Record<string, string> = { goal_claimed: 'Lead 声明完成', user_stop: '用户停止', budget_exhausted: '预算已用尽', system_failure: '系统执行失败', partial: '部分完成' };
     useEffect(() => {
-        if (!['provisioning', 'running', 'closing'].includes(phase))
-            return;
-        const timer = setInterval(() => setNow(Date.now()), 1000);
-        return () => clearInterval(timer);
-    }, [phase]);
-    useEffect(() => {
         if (selectedGraphId)
             workspace.current?.querySelector<HTMLElement>('[data-inspector-panel] h2')?.focus({ preventScroll: true });
     }, [selectedGraphId]);
@@ -203,7 +205,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(task)}>{taskTitle(task)}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={phase === 'running' ? 'processing' : phase === 'failed' ? 'error' : 'default'}>{phaseLabels[phase] ?? phase}</Tag>
-        <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 {activeDuration(task.active_seconds ?? 0, task.active_since, now)}</span><span>{formatMoney(task.usage?.cost ?? 0, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
+        <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 <ElapsedTime seconds={task.active_seconds ?? 0} since={task.active_since} /></span><span>{formatMoney(task.usage?.cost ?? 0, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
         <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} size="small" type="text" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button>{task.report_uri && <Button href={`/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" rel="noopener noreferrer" icon={<Icon name="file" />}>报告</Button>}
           {phase === 'created' && <Button aria-label="启动任务" aria-busy={statusAction.busy && operation === 'start'} type="primary" loading={statusAction.busy && operation === 'start'} disabled={statusAction.busy} onClick={() => void changeStatus('start')}>启动任务</Button>}
           {['created','provisioning','running'].includes(phase) && <Button aria-label="停止任务" aria-busy={statusAction.busy && operation === 'stop'} danger disabled={statusAction.busy} loading={statusAction.busy && operation === 'stop'} onClick={() => void changeStatus('stop')}>停止任务</Button>}
