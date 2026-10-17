@@ -1743,6 +1743,42 @@ async def test_provider_error_window_coalesces_and_does_not_penalize_seed(board_
     assert await projections(service, tid) == before
 
 
+async def test_failed_explore_reuses_agent_and_session_for_released_intent(board_service):
+    service = board_service
+    tid = await task(service)
+    agent = await service.register_agent(tid, "explore")
+    await service.post_fact(tid, agent, fact())
+    iid = (await service.post_intent(tid, agent, intent(claim=True)))["id"]
+    await service.finish_agent(
+        tid,
+        agent,
+        {
+            "accepted": False,
+            "error": {"category": "connection", "scope": "provider", "transient": True},
+        },
+        "runtime_error",
+    )
+    state = await service.state(tid)
+    assert state["agents"][agent]["status"] == "failed"
+    assert state["intents"][iid]["status"] == "open"
+    assert state["intents"][iid]["attempts"] == 0
+
+    resumed = await service.register_agent(tid, "explore", intent_id=iid)
+    assert resumed == agent
+    await service.claim_for(tid, iid, resumed)
+    state = await service.state(tid)
+    assert state["agents"][agent]["status"] == "running"
+    assert state["agents"][agent]["receipt"] is None
+    assert state["agents"][agent]["previous_receipt"]["error"]["category"] == "connection"
+    events = await service.events(tid)
+    assert any(
+        event["type"] == "agent.reactivated" and event["object_id"] == agent for event in events
+    )
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
 async def test_model_success_resets_failure_window_without_finishing_agent(board_service):
     service = board_service
     tid = await task(service)

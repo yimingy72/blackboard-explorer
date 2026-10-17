@@ -359,6 +359,11 @@ class AgentRunner:
                     checkpoint = SessionCheckpoint(self.service, task_id, agent_id, AgentSession())
                 ctx.checkpoint = checkpoint
                 checkpoint.expected_derive_round = ctx.expected_derive_round
+                if (
+                    run.get("previous_receipt") is not None
+                    and checkpoint.session.state.pop("bbx_final_receipt", None) is not None
+                ):
+                    await checkpoint.save()
             if (
                 task_type == "derive"
                 and checkpoint is not None
@@ -469,6 +474,21 @@ class AgentRunner:
                             message_id=f"bbx-start-{agent_id}",
                             contents=[Content.from_text("开始。")],
                         )
+                        if task_type == "explore" and run.get("previous_receipt") is not None:
+                            prompt = Message(
+                                role="user",
+                                message_id=(
+                                    f"bbx-explore-resume-{agent_id}-"
+                                    f"{int(run.get('finished_version') or 0)}"
+                                ),
+                                contents=[
+                                    Content.from_text(
+                                        "此前本轮运行异常结束。系统已恢复同一 Agent、Intent、"
+                                        "黑板和会话。请从上次已确认的工具结果继续；不得重复执行"
+                                        "已执行或结果未知的旧命令，完成后返回正常交接回执。"
+                                    )
+                                ],
+                            )
                         if task_type == "derive":
                             round_number = int(run.get("derive_round") or 1)
                             mode_name = (
@@ -682,6 +702,12 @@ class AgentRunner:
             receipt = {"accepted": False, "reason": reason}
             if isinstance(metadata, dict):
                 receipt["error"] = metadata
+            elif usage_failure:
+                receipt["error"] = {
+                    "category": "usage_settlement",
+                    "scope": "infrastructure",
+                    "transient": True,
+                }
             end_reason = "runtime_error"
 
         async def finalize() -> None:

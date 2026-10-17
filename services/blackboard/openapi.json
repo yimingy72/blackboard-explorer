@@ -183,6 +183,17 @@
             "title": "Derive Review",
             "type": "boolean"
           },
+          "intent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Id"
+          },
           "is_seed": {
             "default": false,
             "title": "Is Seed",

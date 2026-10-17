@@ -131,17 +131,21 @@ async def test_05_three_model_failures_fail_and_archive_without_close(
             ),
             seconds=30,
         )
+        events = await s.events()
         errors = [
-            agent
-            for agent in failed["agents"].values()
-            if agent.get("end_reason") == "runtime_error"
+            event["payload"]
+            for event in events
+            if event["type"] == "agent.finished"
+            and event["payload"].get("end_reason") == "runtime_error"
         ]
         assert len(errors) >= 3
-        assert all(agent["task_type"] == "explore" for agent in errors)
+        assert len({event["agent_id"] for event in errors}) == 1
+        assert failed["agents"][errors[0]["agent_id"]]["task_type"] == "explore"
+        assert sum(event["type"] == "agent.reactivated" for event in events) >= 2
         assert failed["task"]["failure_streak"] == 3
         assert not [agent for agent in failed["agents"].values() if agent["task_type"] == "close"]
         assert s.manager.archives and s.manager.destroyed == [s.task_id]
-        assert any(event["type"] == "task.archived" for event in await s.events())
+        assert any(event["type"] == "task.archived" for event in events)
 
 
 async def test_parallel_transient_model_failures_count_as_one_window(

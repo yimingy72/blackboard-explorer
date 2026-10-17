@@ -131,6 +131,77 @@ async def test_runner_finishes_all_terminal_paths(monkeypatch, outcome):
     assert service.finish_agent.call_args.args[-1] == expected
 
 
+async def test_reactivated_explore_uses_fresh_resume_message(monkeypatch):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    state = {
+        "task": {
+            "agent_profile": "default",
+            "agent_profile_version": 1,
+            "params": Params().model_dump(),
+            "budget": {"max_minutes": 1},
+        },
+        "agents": {
+            "agent-1": {
+                "task_type": "explore",
+                "status": "running",
+                "intent_id": "I1",
+                "last_seen_version": 0,
+                "steps": 12,
+                "context_tokens": 100,
+                "finished_version": 91,
+                "previous_receipt": {"end_reason": "runtime_error"},
+            }
+        },
+        "facts": {},
+        "intents": {},
+    }
+    prompts = []
+    service = SimpleNamespace(
+        state=AsyncMock(return_value=state),
+        get_profile=AsyncMock(return_value=profile.model_dump()),
+        finish_agent=AsyncMock(),
+        with_token=Mock(),
+    )
+
+    class FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def create_session(self):
+            return object()
+
+        def run(self, prompt, *, stream=False, **_kwargs):
+            prompts.append(prompt)
+
+            async def response():
+                return SimpleNamespace(text='{"accepted":true,"data":{"posted":[]}}')
+
+            return fake_stream(response(), stream=stream)
+
+    monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
+    runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
+    result = await runner.run_agent(
+        "task",
+        "agent-1",
+        "explore",
+        "I1",
+        agent_token="issued",
+        client=ScriptedChatClient([]),
+        handle=ExecEnvHandle(
+            task_id=uuid4(), container_id="envd", name="envd", base_url="http://envd", token="test"
+        ),
+    )
+    assert result.end_reason == "normal"
+    assert prompts[0].message_id == "bbx-explore-resume-agent-1-91"
+    assert "不得重复执行" in prompts[0].text
+
+
 async def test_real_agent_fake_client_persists_safe_model_failure_receipt(caplog):
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     state = {

@@ -412,11 +412,17 @@ class BlackboardClient:
         task_type: Literal["explore", "derive", "close"],
         *,
         is_seed: bool = False,
+        intent_id: str | None = None,
         close_mode: Literal["judge", "final"] | None = None,
         derive_parallel: bool | None = None,
         derive_review: bool | None = None,
     ) -> dict[str, Any]:
-        body = {"task_type": task_type, "is_seed": is_seed, "close_mode": close_mode}
+        body = {
+            "task_type": task_type,
+            "is_seed": is_seed,
+            "intent_id": intent_id,
+            "close_mode": close_mode,
+        }
         if derive_parallel is not None:
             body["derive_parallel"] = derive_parallel
         if derive_review is not None:

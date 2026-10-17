@@ -168,6 +168,7 @@ class ArchiveBody(BaseModel):
 class AgentRegisterBody(BaseModel):
     task_type: Literal["explore", "derive", "close"]
     is_seed: bool = False
+    intent_id: str | None = None
     close_mode: Literal["judge", "final"] | None = None
     derive_parallel: bool | None = None
     derive_review: bool = False
@@ -176,6 +177,8 @@ class AgentRegisterBody(BaseModel):
     def check_derive_mode(self) -> AgentRegisterBody:
         if self.derive_review and (self.task_type != "derive" or self.derive_parallel is True):
             raise ValueError("derive_review requires a nonparallel derive agent")
+        if self.intent_id is not None and self.task_type != "explore":
+            raise ValueError("intent_id requires an explore agent")
         return self
 
 
@@ -1498,6 +1501,7 @@ def create_app(
             task_id,
             body.task_type,
             is_seed=body.is_seed,
+            intent_id=body.intent_id,
             close_mode=body.close_mode,
             derive_parallel=body.derive_parallel,
             derive_review=body.derive_review,

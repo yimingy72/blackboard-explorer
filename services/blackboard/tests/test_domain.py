@@ -199,6 +199,41 @@ def test_created_task_can_still_register_agent() -> None:
     )
 
 
+def test_failed_explore_reactivates_same_agent_for_released_intent() -> None:
+    state = board()
+    state.agents["agent-1"].update(
+        status="failed",
+        end_reason="runtime_error",
+        finished_version=9,
+        steps=17,
+        context_tokens=4200,
+    )
+    state.intents["I1"]["notes"] = [{"by": "agent-1", "text": "模型连接中断"}]
+    events = decide(
+        state,
+        "register_agent",
+        "scheduler",
+        {"task_type": "explore", "intent_id": "I1"},
+    )
+    assert events[0]["type"] == "agent.reactivated"
+    assert events[0]["object_id"] == "agent-1"
+    assert events[0]["payload"]["intent_id"] == "I1"
+
+
+def test_failed_explore_for_another_intent_creates_new_agent() -> None:
+    state = board()
+    state.agents["agent-1"].update(status="failed", end_reason="runtime_error", finished_version=9)
+    state.intents["I1"]["notes"] = [{"by": "agent-2", "text": "另一个意图"}]
+    events = decide(
+        state,
+        "register_agent",
+        "scheduler",
+        {"task_type": "explore", "intent_id": "I1"},
+    )
+    assert events[0]["type"] == "agent.spawned"
+    assert events[0]["object_id"] == "agent-5"
+
+
 @pytest.mark.parametrize("mode", ["judge", "final"])
 def test_only_one_active_close_agent_may_be_registered(mode: str) -> None:
     state = board()

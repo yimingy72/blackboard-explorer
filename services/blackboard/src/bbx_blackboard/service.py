@@ -598,6 +598,7 @@ class BoardService:
         task_type: str,
         *,
         is_seed: bool = False,
+        intent_id: str | None = None,
         close_mode: str | None = None,
         derive_parallel: bool | None = None,
         derive_review: bool = False,
@@ -605,6 +606,7 @@ class BoardService:
         data = {
             "task_type": task_type,
             "is_seed": is_seed,
+            "intent_id": intent_id,
             "close_mode": close_mode,
             "derive_review": derive_review,
         }

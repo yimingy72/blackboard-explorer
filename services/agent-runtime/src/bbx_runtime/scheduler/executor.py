@@ -112,6 +112,7 @@ class ActionExecutor:
                 self.task_id,
                 task_type,
                 is_seed=seed,
+                intent_id=intent_id if task_type == "explore" else None,
                 close_mode=mode,
                 **({"derive_parallel": derive_parallel} if derive_parallel is not None else {}),
                 **({"derive_review": derive_review} if derive_review is not None else {}),

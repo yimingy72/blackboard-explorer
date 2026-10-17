@@ -35,6 +35,8 @@ async def test_blackboard_client_identity_and_error() -> None:
         registered = await client.register_agent(task_id, "explore", is_seed=True)
         assert registered == {"agent_id": "agent-1", "token": "agent-token"}
         assert "derive_parallel" not in json.loads(seen[-1].content)
+        await client.register_agent(task_id, "explore", intent_id="I1")
+        assert json.loads(seen[-1].content)["intent_id"] == "I1"
         await client.register_agent(task_id, "derive", derive_parallel=True)
         assert json.loads(seen[-1].content)["derive_parallel"] is True
         await client.register_agent(task_id, "derive", derive_review=True)

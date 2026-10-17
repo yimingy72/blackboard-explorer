@@ -377,6 +377,14 @@ def decide(
             fail("close_already_running", "已有收尾 Agent 在运行，不能重复登记。")
         if kind == "close" and data.get("close_mode") not in {"judge", "final"}:
             fail("close_mode_required", "close Agent 必须指定 judge 或 final 模式。")
+        retry_intent_id = data.get("intent_id")
+        retry_intent = None
+        if retry_intent_id is not None:
+            if kind != "explore":
+                fail("invalid_agent_type", "只有 explore Agent 可以恢复失败意图。")
+            retry_intent = state.intents.get(retry_intent_id)
+            if retry_intent is None or retry_intent["status"] != "open":
+                fail("intent_unavailable", "失败恢复必须认领一条 open 意图。")
         derive_fields = {}
         previous_derive = (
             max(
@@ -387,7 +395,36 @@ def decide(
             if kind == "derive"
             else None
         )
-        aid = previous_derive["id"] if previous_derive else _id(state, "agent")
+        previous_explore = None
+        if kind == "explore":
+            candidates = [
+                {**item, "id": item.get("id", aid)}
+                for aid, item in state.agents.items()
+                if item["task_type"] == "explore"
+                and item["status"] == "failed"
+                and item.get("end_reason") == "runtime_error"
+            ]
+            if retry_intent is not None:
+                released_by = {
+                    note.get("by") for note in retry_intent.get("notes", []) if note.get("by")
+                }
+                candidates = [item for item in candidates if item["id"] in released_by]
+            elif data.get("is_seed"):
+                candidates = [item for item in candidates if item.get("is_seed")]
+            else:
+                candidates = []
+            previous_explore = max(
+                candidates,
+                key=lambda item: int(item.get("finished_version") or 0),
+                default=None,
+            )
+        aid = (
+            previous_derive["id"]
+            if previous_derive
+            else previous_explore["id"]
+            if previous_explore
+            else _id(state, "agent")
+        )
         if kind == "derive":
             expected = data.get("derive_parallel")
             review = data.get("derive_review", False)
@@ -501,7 +538,7 @@ def decide(
             }
         return [
             event(
-                "agent.reactivated" if previous_derive else "agent.spawned",
+                "agent.reactivated" if previous_derive or previous_explore else "agent.spawned",
                 actor,
                 {
                     "id": aid,

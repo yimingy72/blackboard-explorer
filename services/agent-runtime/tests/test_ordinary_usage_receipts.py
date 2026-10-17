@@ -309,6 +309,11 @@ async def test_trace_failure_cannot_hide_a_retained_usage_settlement_error():
     result = await invoke(runner, model)
     assert result.end_reason == "runtime_error"
     assert result.receipt["reason"] == "费用登记待恢复"
+    assert result.receipt["error"] == {
+        "category": "usage_settlement",
+        "scope": "infrastructure",
+        "transient": True,
+    }
     assert model._index == 1 and service.saved is not None
     assert service.saved["session"]["state"]["bbx_usage_outbox"]
     assert (

@@ -97,7 +97,7 @@ async def test_spawn_claims_before_user_creation_and_cancel_forwards_reason():
     await executor.execute([SpawnExplore(intent_id="I1")])
     await asyncio.wait_for(runner.started.wait(), 2)
     service.register_agent.assert_awaited_once_with(
-        "task", "explore", is_seed=False, close_mode=None
+        "task", "explore", is_seed=False, intent_id="I1", close_mode=None
     )
     service.claim_for.assert_awaited_once_with("task", "I1", "agent-1")
     manager.create_user.assert_awaited_once()
@@ -124,7 +124,13 @@ async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
     service.register_agent.side_effect = RemoteError(422, "Derive phase changed", "stale_derive")
     await executor.execute([SpawnDerive(parallel=True)])
     service.register_agent.assert_awaited_once_with(
-        "task", "derive", is_seed=False, close_mode=None, derive_parallel=True, derive_review=False
+        "task",
+        "derive",
+        is_seed=False,
+        intent_id=None,
+        close_mode=None,
+        derive_parallel=True,
+        derive_review=False,
     )
     assert not runner.started.is_set() and executor.tasks == {}
 
@@ -133,7 +139,13 @@ async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
     with pytest.raises(RemoteError):
         await executor.execute([SpawnDerive()])
     service.register_agent.assert_awaited_once_with(
-        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False, derive_review=False
+        "task",
+        "derive",
+        is_seed=False,
+        intent_id=None,
+        close_mode=None,
+        derive_parallel=False,
+        derive_review=False,
     )
 
 
@@ -142,7 +154,13 @@ async def test_review_registration_carries_required_review_flag():
     service.register_agent.side_effect = RemoteError(422, "Review phase changed", "stale_derive")
     await executor.execute([SpawnDerive(review=True)])
     service.register_agent.assert_awaited_once_with(
-        "task", "derive", is_seed=False, close_mode=None, derive_parallel=False, derive_review=True
+        "task",
+        "derive",
+        is_seed=False,
+        intent_id=None,
+        close_mode=None,
+        derive_parallel=False,
+        derive_review=True,
     )
     assert not runner.started.is_set()
 

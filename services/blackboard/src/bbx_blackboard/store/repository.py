@@ -396,12 +396,16 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             s.agent_runs,
             tid,
             {
-                "derive_round": p["derive_round"],
-                "round_start_version": p["round_start_version"],
+                "derive_round": p.get("derive_round", previous["derive_round"]),
+                "round_start_version": p.get(
+                    "round_start_version", previous["round_start_version"]
+                ),
                 "previous_receipt": previous["receipt"],
-                "derive_from_version": p["derive_from_version"],
-                "derive_parallel": p["derive_parallel"],
-                "derive_review": p["derive_review"],
+                "derive_from_version": p.get(
+                    "derive_from_version", previous["derive_from_version"]
+                ),
+                "derive_parallel": p.get("derive_parallel", previous["derive_parallel"]),
+                "derive_review": p.get("derive_review", previous["derive_review"]),
                 "finished_version": None,
                 "intent_id": None,
                 "status": "running",
