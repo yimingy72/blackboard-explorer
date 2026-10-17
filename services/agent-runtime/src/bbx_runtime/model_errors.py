@@ -32,6 +32,15 @@ OPENAI_PROVIDERS = {
     "azure_openai_chat",
     "azure_openai_responses",
 }
+PROVIDER_ERROR_CATEGORIES = {
+    "authentication",
+    "connection",
+    "conflict",
+    "payment_required",
+    "rate_limit",
+    "server_error",
+    "timeout",
+}
 
 
 class ModelStreamError(RuntimeError):
@@ -245,6 +254,7 @@ def model_error_metadata(
     )
     return {
         "category": category,
+        "scope": "provider" if category in PROVIDER_ERROR_CATEGORIES else "request",
         "exception_type": _safe_exception_type(error) or "OtherException",
         "cause_type": next(
             (name for item in reversed(chain[1:]) if (name := _safe_exception_type(item))),

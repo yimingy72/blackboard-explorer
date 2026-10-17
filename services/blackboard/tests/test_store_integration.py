@@ -1716,6 +1716,33 @@ async def test_failure_window_projection_and_legacy_replay(board_service):
     assert await projections(service, tid) == before
 
 
+async def test_provider_error_window_coalesces_and_does_not_penalize_seed(board_service):
+    service = board_service
+    tid = await task(service)
+    first = await service.register_agent(tid, "explore", is_seed=True)
+    second = await service.register_agent(tid, "explore", is_seed=True)
+    receipt = {
+        "error": {
+            "category": "payment_required",
+            "scope": "provider",
+            "transient": False,
+        }
+    }
+    await service.finish_agent(tid, first, receipt, "runtime_error")
+    state = (await service.state(tid))["task"]
+    started = state["failure_window_started_at"]
+    assert (state["failure_streak"], state["failure_window_kind"]) == (1, "model_error")
+    assert state["seed_empty_count"] == 0
+    await service.finish_agent(tid, second, receipt, "runtime_error")
+    state = (await service.state(tid))["task"]
+    assert state["failure_streak"] == 1
+    assert state["failure_window_started_at"] == started
+    assert state["seed_empty_count"] == 0
+    before = await projections(service, tid)
+    await service.replay(tid)
+    assert await projections(service, tid) == before
+
+
 async def test_model_success_resets_failure_window_without_finishing_agent(board_service):
     service = board_service
     tid = await task(service)

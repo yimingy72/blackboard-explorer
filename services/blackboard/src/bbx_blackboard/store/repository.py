@@ -496,6 +496,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             if (
                 reason != "runtime_restart"
                 and not p.get("transient_model_error", False)
+                and not p.get("provider_model_error", False)
                 and agent["is_seed"]
                 and not await board_has_content(conn, tid)
             ):

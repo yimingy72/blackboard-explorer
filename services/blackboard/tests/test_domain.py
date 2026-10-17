@@ -437,6 +437,36 @@ def test_transient_model_errors_share_one_anchored_window() -> None:
     assert starts == [starts[0]] * 4
 
 
+def test_provider_model_errors_share_one_anchored_window() -> None:
+    state = board()
+    receipt = {
+        "accepted": False,
+        "error": {
+            "category": "payment_required",
+            "scope": "provider",
+            "transient": False,
+        },
+    }
+    starts = []
+    for aid in ("agent-1", "agent-2", "agent-3", "agent-4"):
+        events = decide(
+            state,
+            "finish_agent",
+            aid,
+            {"agent_id": aid, "end_reason": "runtime_error", "receipt": receipt},
+        )
+        assert [item["type"] for item in events] == ["agent.finished"]
+        payload = events[0]["payload"]
+        assert payload["provider_model_error"] is True
+        assert payload["failure_window_kind"] == "model_error"
+        starts.append(payload["failure_window_started_at"])
+        state.task["failure_streak"] += payload["failure_increment"]
+        state.task["failure_window_kind"] = payload["failure_window_kind"]
+        state.task["failure_window_started_at"] = payload["failure_window_started_at"]
+    assert state.task["failure_streak"] == 1
+    assert starts == [starts[0]] * 4
+
+
 @pytest.mark.parametrize("as_string", [False, True])
 def test_transient_model_error_accepts_datetime_or_iso_window(as_string: bool) -> None:
     state = board()

@@ -590,7 +590,11 @@ class BoardSyncMiddleware(ChatMiddleware):
                     episode = self.recovery.failed(permit, metadata)
                     self.failure = ModelCallFailure(metadata, inputs, episode, step)
                 else:
-                    self.recovery.abort(permit, metadata)
+                    self.recovery.abort(
+                        permit,
+                        metadata,
+                        hold_dispatch=metadata.get("scope") == "provider",
+                    )
             await record_trace(self.ctx, "model_error", step, json.dumps(metadata, sort_keys=True))
 
         async def record(response: ChatResponse) -> ChatResponse:

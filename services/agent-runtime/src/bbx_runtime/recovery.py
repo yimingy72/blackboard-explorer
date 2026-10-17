@@ -142,9 +142,26 @@ class ModelRecoveryGate:
             episode.probe_ticket = None
             self._notify()
 
-    def abort(self, permit: ModelCallPermit, metadata: dict[str, Any]) -> None:
+    def abort(
+        self,
+        permit: ModelCallPermit,
+        metadata: dict[str, Any],
+        *,
+        hold_dispatch: bool = False,
+    ) -> None:
         self.release(permit)
-        if permit.episode is self.episode and self.episode is not None:
-            self.episode.metadata = metadata.copy()
-            self.episode.probes = len(RECOVERY_BACKOFF)
-            self._notify()
+        if not hold_dispatch or permit.started_serial <= self._healthy_through:
+            return
+        now = monotonic()
+        episode = self.episode
+        if episode is None or now >= episode.deadline:
+            episode = RecoveryEpisode(
+                deadline=now + RECOVERY_SECONDS,
+                next_probe_at=now + RECOVERY_SECONDS,
+                metadata=metadata.copy(),
+            )
+            self.episode = episode
+        episode.metadata = metadata.copy()
+        episode.probes = len(RECOVERY_BACKOFF)
+        episode.probe_ticket = None
+        self._notify()

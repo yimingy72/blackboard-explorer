@@ -23,20 +23,20 @@ def status_error(status: int, code: str = "safe_code", **headers: str) -> APISta
 
 
 @pytest.mark.parametrize(
-    ("status", "code", "category", "transient"),
+    ("status", "code", "category", "transient", "scope"),
     [
-        (429, "rate_limit", "rate_limit", True),
-        (503, "server_error", "server_error", True),
-        (400, "bad_request", "invalid_request", False),
-        (401, "bad_auth", "authentication", False),
-        (403, "forbidden", "authentication", False),
-        (402, "insufficient_balance", "payment_required", False),
-        (400, "content_filter", "content_filter", False),
-        (408, "timeout", "timeout", True),
-        (409, "conflict", "conflict", True),
+        (429, "rate_limit", "rate_limit", True, "provider"),
+        (503, "server_error", "server_error", True, "provider"),
+        (400, "bad_request", "invalid_request", False, "request"),
+        (401, "bad_auth", "authentication", False, "provider"),
+        (403, "forbidden", "authentication", False, "provider"),
+        (402, "insufficient_balance", "payment_required", False, "provider"),
+        (400, "content_filter", "content_filter", False, "request"),
+        (408, "timeout", "timeout", True, "provider"),
+        (409, "conflict", "conflict", True, "provider"),
     ],
 )
-def test_status_error_category_and_safe_metadata(status, code, category, transient):
+def test_status_error_category_and_safe_metadata(status, code, category, transient, scope):
     error = status_error(status, code, **{"x-request-id": "req-123", "retry-after": "2"})
     wrapped = ChatClientException("secret wrapper", inner_exception=error)
     metadata = model_error_metadata(
@@ -47,6 +47,7 @@ def test_status_error_category_and_safe_metadata(status, code, category, transie
     )
     assert metadata == {
         "category": category,
+        "scope": scope,
         "exception_type": "ChatClientException",
         "cause_type": "APIStatusError",
         "transport_type": None,

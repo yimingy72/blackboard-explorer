@@ -420,8 +420,13 @@ async def test_success_does_not_reset_per_agent_recovery_allowance(monkeypatch, 
     service.finish_agent.assert_awaited_once()
 
 
-@pytest.mark.parametrize("status", [400, 401, 402, 403, 409, 429, 500])
-async def test_http_model_failures_are_not_transport_recovered(status, fast_recovery):
+@pytest.mark.parametrize(
+    ("status", "holds_dispatch"),
+    [(400, False), (401, True), (402, True), (403, True), (409, True), (429, True), (500, True)],
+)
+async def test_http_model_failures_are_not_transport_recovered(
+    status, holds_dispatch, fast_recovery
+):
     service = RecoveryService()
     error = APIStatusError(
         "provider failure",
@@ -431,7 +436,7 @@ async def test_http_model_failures_are_not_transport_recovered(status, fast_reco
     client = InterruptedClient([ScriptStep()], {0: error})
     runner, _objects = runner_for(service)
     assert (await invoke(runner, client)).end_reason == "runtime_error"
-    assert client._index == 1 and not runner.dispatch_paused("task")
+    assert client._index == 1 and runner.dispatch_paused("task") is holds_dispatch
 
 
 @pytest.mark.parametrize("phase", ["heartbeat", "session"])
@@ -531,6 +536,26 @@ async def test_gate_has_one_probe_two_attempts_and_retains_fixed_cooldown(monkey
     assert next_window.episode is None
     next_episode = gate.failed(next_window, CONNECTION)
     assert next_episode is not None and next_episode is not episode and next_episode.deadline == 240
+
+
+async def test_provider_error_holds_dispatch_until_cooldown(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("bbx_runtime.recovery.monotonic", lambda: now[0])
+    gate = ModelRecoveryGate()
+    check = AsyncMock()
+    permit = await gate.acquire(check)
+    gate.started(permit)
+    gate.abort(
+        permit,
+        {"category": "payment_required", "scope": "provider", "transient": False},
+        hold_dispatch=True,
+    )
+    assert gate.paused
+    with pytest.raises(RecoveryExhausted):
+        await gate.acquire(check)
+    now[0] = 120
+    assert not gate.paused
+    assert (await gate.acquire(check)).episode is None
 
 
 async def test_success_releases_waiters_and_late_old_failure_does_not_pause(

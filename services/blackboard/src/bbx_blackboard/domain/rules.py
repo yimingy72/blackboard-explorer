@@ -675,6 +675,14 @@ def decide(
         transient_model_error = (
             reason == "runtime_error" and isinstance(error, dict) and error.get("transient") is True
         )
+        provider_model_error = (
+            reason == "runtime_error"
+            and isinstance(error, dict)
+            and (
+                error.get("scope") == "provider"
+                or error.get("category") in {"authentication", "payment_required"}
+            )
+        )
         failure_increment = int(reason == "runtime_error")
         previous_kind = task.get("failure_window_kind")
         mixed_failures = task["failure_streak"] > 0 and previous_kind not in {
@@ -691,25 +699,27 @@ def decide(
         }:
             failure_window_kind = "mixed"
         failure_window_started_at = None
-        if transient_model_error:
+        if transient_model_error or provider_model_error:
             now = datetime.now(UTC)
             started = task.get("failure_window_started_at")
             if isinstance(started, str):
                 started = datetime.fromisoformat(started)
             if isinstance(started, datetime) and started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
+            prior_kind = "model_transient" if transient_model_error else "model_error"
             if (
-                previous_kind in {"model_transient", "mixed"}
+                previous_kind == prior_kind
                 and isinstance(started, datetime)
                 and 0 <= (now - started).total_seconds() < 120
             ):
                 failure_increment = 0
             else:
                 started = now
-            failure_window_kind = "mixed" if mixed_failures else "model_transient"
+            failure_window_kind = "mixed" if mixed_failures else prior_kind
             failure_window_started_at = started.isoformat()
         counted = (
             not transient_model_error
+            and not provider_model_error
             and reason != "runtime_restart"
             and (
                 reason in {"heartbeat", "runtime_error"}
@@ -739,6 +749,7 @@ def decide(
                     "failure_window_kind": failure_window_kind,
                     "failure_window_started_at": failure_window_started_at,
                     "transient_model_error": transient_model_error,
+                    "provider_model_error": provider_model_error,
                 },
                 aid,
             )
@@ -763,6 +774,7 @@ def decide(
             task["status"] not in {"finished", "failed", "stopped"}
             and reason != "runtime_restart"
             and not transient_model_error
+            and not provider_model_error
             and agent.get("is_seed", False)
             and not (state.facts or state.intents)
             and task["seed_empty_count"] + 1 >= 2
