@@ -2,6 +2,7 @@ import { Button, Upload as AntUpload } from 'antd';
 import Icon from './Icon';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type InitialAttachment } from '../api/client';
+import { randomUUID } from '../api/uuid';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/NewTaskPage.module.css';
 type Upload = {
@@ -95,7 +96,7 @@ export default function TaskAttachments({ ensureGroup, resetGroup, groupExpired,
                 setError('每个文件最多 50 MB，最多 20 个文件，总量 200 MB。');
                 break;
             }
-            next.push({ key: crypto.randomUUID(), file, status: 'queued' });
+            next.push({ key: randomUUID(), file, status: 'queued' });
         }
         publish(next);
         void processQueue();
