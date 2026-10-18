@@ -10,6 +10,7 @@ export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'
   cleanup_ready: boolean;
   runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
 };
+export type TaskPage = Omit<components['schemas']['TaskPage'], 'items'> & { items: TaskView[] };
 export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
 export type CtfTaskCreateInput = Omit<components['schemas']['CtfTaskCreate'], 'ctf_options'> & {
   ctf_options?: Partial<components['schemas']['CtfOptions']>;
@@ -173,7 +174,13 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
-  listTasks: (signal?: AbortSignal) => request<TaskView[]>('/tasks', { signal }),
+  listTasks: (signal?: AbortSignal, limit = 100) => request<TaskView[]>(`/tasks?limit=${limit}`, { signal }),
+  listTaskPage: (filters: { q: string; status: string; offset: number; limit: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ limit: String(filters.limit), offset: String(filters.offset) });
+    if (filters.q.trim()) params.set('q', filters.q.trim());
+    if (filters.status !== 'all') params.set('status', filters.status);
+    return request<TaskPage>(`/tasks/page?${params}`, { signal });
+  },
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),

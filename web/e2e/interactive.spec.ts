@@ -1,3 +1,4 @@
+import { taskListRoute, fulfillTaskList } from './task-list-fixture';
 import { taskAction, closeRecords } from './ui';
 import { expect, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
@@ -81,7 +82,7 @@ test('删除任务须确认清除所有会话，取消不发请求', async ({ pa
     removed = true;
     return route.fulfill({ status: 202, json: { deleting: true } });
   });
-  await page.route('**/api/tasks', (route) => removed ? route.fulfill({ json: [] }) : route.fallback());
+  await page.route(taskListRoute, route => removed ? fulfillTaskList(route, []) : route.fallback());
   await page.goto('/tasks');
   await page.getByRole('button', { name: `任务操作：${GOAL}`, exact: true }).click();
   await page.getByRole('menuitem', { name: '删除任务', exact: true }).click();

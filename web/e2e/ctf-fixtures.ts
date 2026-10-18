@@ -1,3 +1,4 @@
+import { taskListResponse } from './task-list-fixture';
 import { expect, type Page } from '@playwright/test';
 import type { CtfChallenge, CtfRecord } from '../src/ctf/types';
 
@@ -57,7 +58,7 @@ export async function installCtfApi(page: Page, options: { evidenceText?: string
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, '');
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
-    if (path === '/tasks') return json([...tasks.values()]);
+    if (path === '/tasks' || path === '/tasks/page') return json(taskListResponse([...tasks.values()], request.url()));
     if (path === '/billing/summary') return json({ currency: 'CNY', total_cost: '0.04' });
     if (path === '/evidence' || path.startsWith('/evidence/')) return route.fulfill({ body: JSON.stringify({ text: options.evidenceText ?? '# Mock public evidence\nresult: fixture', args: { input: 'synthetic' }, result: 'synthetic result' }), contentType: 'application/json' });
     const match = path.match(/^\/tasks\/([^/]+)(.*)$/);

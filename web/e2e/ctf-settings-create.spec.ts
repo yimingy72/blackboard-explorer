@@ -1,3 +1,4 @@
+import { taskListRoute, fulfillTaskList } from './task-list-fixture';
 import { selectOption, expectSelectedOption, selectMode } from './ui';
 import { expect, test } from '@playwright/test';
 import type { CtfPlatformToolBinding, WorkerTools } from '../src/api/client';
@@ -97,10 +98,10 @@ test('CTF 设置用途与模拟适配显式保存，冲突保留草稿和另一�
 test('同名任务显示模式并保持各自 ID 链接', async ({ page }) => {
   const mock = await installMockApi(page);
   const other = '22222222-2222-4222-8222-222222222222';
-  await page.route('**/api/tasks', (route) => route.fulfill({ json: [TASK_ID, other].map((id, index) => ({
+  await page.route(taskListRoute, route => fulfillTaskList(route, [TASK_ID, other].map((id, index) => ({
     id, name: '同名任务', goal: 'Shared title', mode: index ? 'ctf' : 'blackboard', status: 'created',
     acceptance_state: {}, usage: {}, created_at: '2026-10-08T00:00:00Z',
-  })) }));
+  }))));
   await page.goto('/tasks');
   const ctf = page.getByRole('list', { name: '任务列表', exact: true }).getByRole('listitem').filter({ hasText: 'CTF 团队' });
   const blackboard = page.getByRole('list', { name: '任务列表', exact: true }).getByRole('listitem').filter({ hasText: '黑板探索' });

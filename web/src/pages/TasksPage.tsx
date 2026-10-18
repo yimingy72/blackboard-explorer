@@ -1,9 +1,8 @@
 import { Alert, Button, Dropdown, Empty, Grid, Input, Listy, Modal, Pagination, Segmented, Tag, Tooltip } from 'antd';
 import { ApartmentOutlined, ArrowRightOutlined, ClockCircleOutlined, DeleteOutlined, FileTextOutlined, MoreOutlined, PlusOutlined, SearchOutlined, StopOutlined, TeamOutlined, WarningOutlined } from '@ant-design/icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { tasksQueryOptions } from '../api/queries';
 import { api, ApiError, type TaskView } from '../api/client';
 import ElapsedTime from '../components/ElapsedTime';
 import LoadingState from '../components/LoadingState';
@@ -15,10 +14,10 @@ const filters: Array<{ value: TaskFilter; label: string }> = [
   { value: 'all', label: '全部' }, { value: 'active', label: '进行中' },
   { value: 'ended', label: '已结束' }, { value: 'failed', label: '异常' },
 ];
-function matchesFilter(task: TaskView, filter: TaskFilter): boolean {
-  if (filter === 'active') return ['created', 'provisioning', 'running', 'closing'].includes(task.status);
-  if (filter === 'ended') return ['finished', 'stopped'].includes(task.status);
-  return filter === 'all' || task.status === 'failed';
+function statusCount(counts: Record<string, number>, filter: TaskFilter): number {
+  if (filter === 'active') return ['created','provisioning','running','closing'].reduce((sum,status) => sum + (counts[status] ?? 0), 0);
+  if (filter === 'ended') return (counts.finished ?? 0) + (counts.stopped ?? 0);
+  return filter === 'failed' ? counts.failed ?? 0 : Object.values(counts).reduce((sum,count) => sum + count, 0);
 }
 function knownAmount(value: unknown, currency: string | null | undefined): string {
   const amount = typeof value === 'number' || typeof value === 'string' && value.trim() ? Number(value) : NaN;
@@ -30,9 +29,13 @@ export default function TasksPage() {
   const screens = Grid.useBreakpoint();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
-  const search = params.get('q') ?? '';
+  const search = (params.get('q') ?? '').slice(0,200);
+  const [queryText, setQueryText] = useState(search);
+  useEffect(() => { const timer = setTimeout(() => setQueryText(search), 200); return () => clearTimeout(timer); }, [search]);
   const filter = filters.find(item => item.value === params.get('view'))?.value ?? 'all';
   const requestedPage = Number(params.get('page') ?? '1');
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const pageSize = 20;
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<TaskView | null>(null);
   const actionButtons = useRef(new Map<string, HTMLElement>());
@@ -41,7 +44,20 @@ export default function TasksPage() {
   const [deleting, setDeleting] = useState(false);
   const deletePending = useRef(false);
   const [deleteError, setDeleteError] = useState('');
-  const query = useQuery({ ...tasksQueryOptions(), refetchInterval: query => query.state.data?.some(task => ['provisioning', 'running', 'closing'].includes(task.status) || task.deleting) ? 5000 : false });
+  const query = useQuery({
+    queryKey: ['tasks', 'page', queryText, filter, page],
+    queryFn: ({ signal }) => api.listTaskPage({ q: queryText, status: filter, offset: (page - 1) * pageSize, limit: pageSize }, signal),
+    staleTime: 5000, placeholderData: keepPreviousData,
+    refetchInterval: query => query.state.data && (statusCount(query.state.data.status_counts, 'active') > 0 || query.state.data.items.some(task => task.deleting)) ? 5000 : false,
+  });
+  const visible = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    if (query.data && !query.isPlaceholderData && page > pageCount) {
+      setParams(previous => { const next = new URLSearchParams(previous); if (pageCount > 1) next.set('page', String(pageCount)); else next.delete('page'); return next; }, { replace: true });
+    }
+  }, [query.data, query.isPlaceholderData, page, pageCount, setParams]);
   const unauthorized = query.error instanceof ApiError && query.error.status === 401;
   const hasData = query.data !== undefined;
   useEffect(() => { if (unauthorized) navigate('/login', { replace: true, state: { from: location.pathname + location.search } }); }, [unauthorized, navigate, location.pathname, location.search]);
@@ -67,11 +83,6 @@ export default function TasksPage() {
     if (page > 1) next.set('page', String(page)); else next.delete('page');
     setParams(next, { replace: true });
   }
-  const matching = useMemo(() => (query.data ?? []).filter(task => `${task.name ?? ''} ${task.goal} ${task.id}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())), [query.data, search]);
-  const visible = useMemo(() => matching.filter(task => matchesFilter(task, filter)), [matching, filter]);
-  const pageSize = 20;
-  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
-  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pageCount) : 1;
   const returnTo = location.pathname + location.search;
   const openTask = (task: TaskView, report = false) => navigate(`/tasks/${encodeURIComponent(task.id)}${report ? '/report' : ''}`, { state: { returnTo } });
   function taskRow(task: TaskView) {
@@ -111,12 +122,13 @@ export default function TasksPage() {
     <header className={styles.heading}><h1 ref={listHeading} tabIndex={-1}>任务</h1><Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={() => navigate('/tasks/new')}>创建任务</Button></header>
     <section className={styles.surface} aria-label="任务工作区">
       <div className={styles.toolbar}>
-        <Segmented size="small" aria-label="任务状态筛选" value={filter} options={filters.map(item => ({ value: item.value, label: <span className={styles.filterLabel}>{item.label}<span className={styles.filterCount}>{hasData ? matching.filter(task => matchesFilter(task, item.value)).length : '—'}</span></span> }))} onChange={value => changeFilter(value as TaskFilter)} />
-        <Input prefix={<SearchOutlined aria-hidden="true" />} aria-label="查找任务" placeholder="搜索名称、目标或 ID" allowClear value={search} onChange={event => changeSearch(event.target.value)} className={styles.search} />
+        <Segmented size="small" aria-label="任务状态筛选" value={filter} options={filters.map(item => ({ value: item.value, label: <span className={styles.filterLabel}>{item.label}<span className={styles.filterCount}>{hasData ? statusCount(query.data?.status_counts ?? {}, item.value) : '—'}</span></span> }))} onChange={value => changeFilter(value as TaskFilter)} />
+        <Input prefix={<SearchOutlined aria-hidden="true" />} aria-label="查找任务" placeholder="搜索名称、目标或 ID" allowClear maxLength={200} value={search} onChange={event => changeSearch(event.target.value)} className={styles.search} />
       </div>
+      <div className={styles.listHeader} aria-hidden="true"><span>任务</span><span>状态</span><span>费用 / 运行时长</span><span>创建时间</span><span>操作</span></div>
       {query.isError && !unauthorized && <Alert className={styles.feedback} type="error" showIcon title={hasData ? "更新任务失败" : "任务读取失败"} description={query.error instanceof ApiError ? query.error.message : '暂时无法连接黑板服务。'} action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
-      {unauthorized || !hasData && !query.isError ? <LoadingState className={styles.placeholder} label="任务列表加载中" lines={7} /> : hasData && (visible.length ? <div role="list" aria-label="任务列表"><Listy items={visible.slice((page - 1) * pageSize, page * pageSize)} rowKey="id" virtual={false} itemRender={taskRow} classNames={{ item: styles.item }} /></div> : <div className={styles.empty}>{empty}</div>)}
-      {hasData && visible.length > pageSize && <footer className={styles.footer}><span>第 {page} / {pageCount} 页</span><Pagination aria-label="任务分页" simple={screens.xs ? { readOnly: true } : false} current={page} pageSize={pageSize} total={visible.length} showSizeChanger={false} showLessItems onChange={changePage} /></footer>}
+      {unauthorized || !hasData && !query.isError ? <LoadingState className={styles.placeholder} label="任务列表加载中" lines={7} /> : hasData && (visible.length ? <div role="list" aria-label="任务列表" aria-busy={query.isFetching || search !== queryText}><Listy items={visible} rowKey="id" virtual={false} itemRender={taskRow} classNames={{ item: styles.item }} /></div> : <div className={styles.empty}>{empty}</div>)}
+      {hasData && total > pageSize && <footer className={styles.footer}><span>第 {page} / {pageCount} 页</span><Pagination aria-label="任务分页" simple={screens.xs ? { readOnly: true } : false} current={page} pageSize={pageSize} total={total} showSizeChanger={false} showLessItems onChange={changePage} /></footer>}
     </section>
     <Modal focusable={{ focusTriggerAfterClose: false }} afterClose={() => { const previous = deleteReturn.current; deleteReturn.current = null; if (previous) (previous.completed ? listHeading.current : actionButtons.current.get(previous.id) ?? listHeading.current)?.focus({ preventScroll: true }); }} title="删除任务" open={Boolean(deleteTarget)} onCancel={() => { if (!deleting) setDeleteTarget(null); }} onOk={() => void removeTask()} confirmLoading={deleting} okText="确认删除" cancelText="取消" okButtonProps={{ danger: true }} cancelButtonProps={{ disabled: deleting }} closable={!deleting} mask={{ closable: !deleting }} keyboard={!deleting}>
       <p>{deleteTarget ? taskTitle(deleteTarget) : ''}</p><p>黑板、证据、报告、归档及所有 Agent 会话将一起删除，无法恢复。</p>{deleteError && <Alert type="error" title={deleteError} showIcon />}

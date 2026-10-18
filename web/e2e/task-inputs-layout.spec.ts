@@ -1,3 +1,4 @@
+import { taskListRoute, fulfillTaskList } from './task-list-fixture';
 import { selectOption } from './ui';
 import { expect, test } from '@playwright/test';
 import { createHash } from 'node:crypto';
@@ -44,7 +45,7 @@ test('列表仅一次总数，名称与ID同行，完整长目标按需展开', 
   const mock = await installMockApi(page);
   const goal = '完整目标内容和不同资料的核对要求。\n'.repeat(100) + '目标末尾标记';
   const task = { id: TASK_ID, name: '月度核对', goal, status: 'finished', acceptance_state: {}, usage: {}, cost_currency: 'CNY', budget: { max_cost: 10 }, created_at: '2026-09-30T08:00:00Z', agent_profile: 'default', agent_profile_version: 2 };
-  await page.route('**/api/tasks', (route) => route.fulfill({ json: Array.from({ length: 8 }, (_, i) => ({ ...task, id: i ? `22222222-2222-4222-8222-${String(i).padStart(12, '0')}` : TASK_ID, name: i ? `核对 ${i}` : task.name })) }));
+  await page.route(taskListRoute, route => fulfillTaskList(route, Array.from({ length: 8 }, (_, i) => ({ ...task, id: i ? `22222222-2222-4222-8222-${String(i).padStart(12, '0')}` : TASK_ID, name: i ? `核对 ${i}` : task.name }))));
   await page.route(`**/api/tasks/${TASK_ID}`, (route) => route.fulfill({ json: task }));
   mock.events[0].payload = { ...mock.events[0].payload, name: task.name, goal };
   await page.goto('/tasks');

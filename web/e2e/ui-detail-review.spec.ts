@@ -1,3 +1,4 @@
+import { taskListRoute, fulfillTaskList } from './task-list-fixture';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { GOAL, TASK_ID, installMockApi, pushMockBoardEvent } from './fixtures';
@@ -69,7 +70,7 @@ test('任务搜索和分页写入 URL，详情与浏览器返回恢复原列表�
     acceptance_state: {}, usage: { cost: 0.02 }, cost_currency: 'CNY', budget: { max_cost: 10 },
     active_seconds: 600, active_since: null, created_at: '2026-10-10T08:00:00Z',
   }));
-  await page.route('**/api/tasks', route => route.fulfill({ json: tasks }));
+  await page.route(taskListRoute, route => fulfillTaskList(route, tasks));
   await page.goto('/tasks');
   await page.getByLabel('查找任务', { exact: true }).fill('月度核对');
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('月度核对');
@@ -101,7 +102,7 @@ for (const width of [1440, 390, 650]) {
       { id: TASK_ID, name: '未知费用任务', mode: 'blackboard', goal: GOAL, status: 'finished', usage: {}, budget: { max_cost: 10 }, cost_currency: 'CNY', active_seconds: 600, active_since: null, created_at: '2026-10-10T08:00:00Z' },
       { id: CTF_ID, name: '零费用任务', mode: 'ctf', goal: GOAL, status: 'created', usage: { cost: 0 }, budget: { max_cost: 20 }, cost_currency: 'CNY', active_seconds: 0, active_since: null, created_at: '2026-10-10T08:00:00Z' },
     ];
-    await page.route('**/api/tasks', route => route.fulfill({ json: tasks }));
+    await page.route(taskListRoute, route => fulfillTaskList(route, tasks));
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/tasks');
     const unknown = page.getByRole('link', { name: '未知费用任务', exact: true });
