@@ -36,6 +36,13 @@ export const BOARD_EVENT_TYPES = [
   'task.report',
   'budget.updated',
   'tool_call.recorded',
+  'progress.settings.updated',
+  'progress.message.posted',
+  'progress.message.replied',
+  'progress.turn.completed',
+  'progress.usage.settled',
+  'progress.tree.updated',
+  'progress.turn.failed',
 ] as const satisfies readonly BoardEventType[];
 
 export interface StreamHandlers {

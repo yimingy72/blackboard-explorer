@@ -19,7 +19,7 @@ function TwoColumns({ firstLabel, first, secondLabel, second }: {
       <div><h4>{secondLabel}</h4><pre>{second || '未提供'}</pre></div>
     </div>);
 }
-function PreviewBody({ kind, raw, path, summary }: {
+export function PreviewBody({ kind, raw, path, summary }: {
     kind: string;
     raw: string;
     path: string | null;

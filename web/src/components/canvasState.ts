@@ -3,22 +3,27 @@ export type CanvasViewState = {
   pinned: string[];
   viewport?: { x: number; y: number; zoom: number };
   collapsed: boolean;
+  expanded?: string[];
 };
-type CanvasKind = 'ctf-board' | 'blackboard';
-const patterns = { 'ctf-board': /^(?:agent|challenge):[^\s]{1,256}$/, blackboard: /^(?:goal|[FI]\d+|agent-\d+)$/ };
+type CanvasKind = 'ctf-board' | 'blackboard' | 'progress-tree';
+const patterns = { 'progress-tree': /^[A-Za-z0-9_-]{1,100}$/, 'ctf-board': /^(?:agent|challenge):[^\s]{1,256}$/, blackboard: /^(?:goal|[FI]\d+|agent-\d+)$/ };
 const coordinate = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e7;
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 function validate(kind: CanvasKind, value: unknown): CanvasViewState | null {
   if (!object(value) || !object(value.positions) || !Array.isArray(value.pinned) || typeof value.collapsed !== 'boolean') return null;
   const entries = Object.entries(value.positions);
   if (entries.length > 2000 || value.pinned.length > 2000) return null;
-  const positions: CanvasViewState['positions'] = {};
+  const positions: CanvasViewState['positions'] = Object.create(null);
   for (const [id, point] of entries) {
     if (!patterns[kind].test(id) || !object(point) || !coordinate(point.x) || !coordinate(point.y)) return null;
     positions[id] = { x: point.x, y: point.y };
   }
   if (!value.pinned.every((id): id is string => typeof id === 'string' && patterns[kind].test(id))) return null;
   const state: CanvasViewState = { positions, pinned: [...new Set(value.pinned)], collapsed: value.collapsed };
+  if (value.expanded !== undefined) {
+    if (!Array.isArray(value.expanded) || value.expanded.length > 2000 || !value.expanded.every((id): id is string => typeof id === 'string' && patterns[kind].test(id))) return null;
+    state.expanded = [...new Set(value.expanded)];
+  }
   if (value.viewport !== undefined) {
     const view = value.viewport;
     if (!object(view) || !coordinate(view.x) || !coordinate(view.y) || typeof view.zoom !== 'number' || !Number.isFinite(view.zoom) || view.zoom < 0.15 || view.zoom > 1.5) return null;
