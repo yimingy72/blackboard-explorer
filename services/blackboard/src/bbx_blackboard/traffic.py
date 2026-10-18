@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import re
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Iterable
 from io import BytesIO
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -125,6 +128,54 @@ async def _chunk(objects: Any, root: str, descriptor: TrafficChunk) -> list[Traf
         raise _unavailable() from exc
 
 
+async def _filtered_chunks(
+    request: Request,
+    objects: Any,
+    root: str,
+    descriptors: Iterable[TrafficChunk],
+    agent_id: str | None,
+) -> AsyncIterator[list[TrafficRecordSummary]]:
+    # Immutable chunk identities allow a small owner-only index for older archives.
+    if not hasattr(request.app.state, "traffic_chunk_owners"):
+        request.app.state.traffic_chunk_owners = OrderedDict()
+    cache: OrderedDict = request.app.state.traffic_chunk_owners
+    pending = []
+
+    def key(item: TrafficChunk) -> tuple:
+        return root, item.id, item.first_seq, item.last_seq, item.count
+
+    async def read(item: TrafficChunk) -> list[TrafficRecordSummary]:
+        records = await _chunk(objects, root, item)
+        owners = frozenset(record.agent_id for record in records)
+        if len(owners) <= 16:
+            cache[key(item)] = owners
+            cache.move_to_end(key(item))
+            while len(cache) > 8192:
+                cache.popitem(last=False)
+        return records
+
+    async def batch() -> list:
+        return await asyncio.gather(*(read(item) for item in pending), return_exceptions=True)
+
+    for descriptor in descriptors:
+        owners = (
+            descriptor.agent_ids if descriptor.agent_ids is not None else cache.get(key(descriptor))
+        )
+        if agent_id is not None and owners is not None and agent_id not in owners:
+            continue
+        pending.append(descriptor)
+        if len(pending) == (8 if agent_id is not None else 1):
+            for result in await batch():
+                if isinstance(result, BaseException):
+                    raise result
+                yield result
+            pending.clear()
+    for result in await batch():
+        if isinstance(result, BaseException):
+            raise result
+        yield result
+
+
 @router.get("", response_model=TrafficListResponse)
 async def list_traffic(
     request: Request,
@@ -153,13 +204,13 @@ async def list_traffic(
     snapshot_seq = manifest.chunks[-1].last_seq if manifest.chunks else 0
     matched = []
     search = (q or "").casefold()
-    descriptors = manifest.chunks if after is not None else reversed(manifest.chunks)
-    for descriptor in descriptors:
-        if before is not None and descriptor.first_seq >= before:
-            continue
-        if after is not None and descriptor.last_seq <= after:
-            continue
-        chunk = await _chunk(objects, root, descriptor)
+    descriptors = (
+        descriptor
+        for descriptor in (manifest.chunks if after is not None else reversed(manifest.chunks))
+        if (before is None or descriptor.first_seq < before)
+        and (after is None or descriptor.last_seq > after)
+    )
+    async for chunk in _filtered_chunks(request, objects, root, descriptors, agent_id):
         for record in chunk if after is not None else reversed(chunk):
             if before is not None and record.seq >= before:
                 continue

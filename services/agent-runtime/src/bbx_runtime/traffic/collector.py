@@ -190,7 +190,15 @@ class TrafficCollector:
             self.manifest["last_packet_at"] = max(
                 times, key=lambda stamp: datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             )
-        if status.get("error") or status.get("status") in {"partial", "error"}:
+        if (
+            status.get("error")
+            or status.get("status") == "error"
+            or (
+                status.get("status") == "partial"
+                and not status.get("preview_dropped")
+                and not status.get("dropped_packets")
+            )
+        ):
             self.error = redaction.text(str(status.get("error") or "Capture incomplete"))
         if self.manifest["captured_bytes"] >= self.max_bytes and not self.error:
             self.error = "Traffic storage capacity exceeded"
@@ -299,6 +307,9 @@ class TrafficCollector:
                 "source_id": source,
                 "local_chunk_id": local,
                 "detail_storage": "chunk" if bundled else "record",
+                "agent_ids": sorted(
+                    {record.get("agent_id") for record in summaries}, key=lambda value: value or ""
+                ),
             }
         )
         self.manifest["record_count"] += len(summaries)

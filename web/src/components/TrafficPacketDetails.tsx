@@ -50,7 +50,7 @@ export default function TrafficPacketDetails({ detail, native, pending, error, w
   }, [nativeFrameKey, narrow]);
   const source = sources.find(item => item.id === sourceId) ?? sources[0];
   const rows = useMemo(() => packetHexRows(source?.raw_hex ?? ''), [source?.raw_hex]);
-  useEffect(() => { setField(null); setFieldKey(undefined); setSourceId(0); }, [native?.revision, detail?.id]);
+  useEffect(() => { setField(null); setFieldKey(undefined); setSourceId(0); }, [native?.revision, nativeFrameKey, detail?.id]);
   const hasRange = field?.offset != null && field.length != null && field.data_source_id === source?.id;
   function highlighted(text: string, offset: number, stride: number) {
     if (!hasRange || !field || field.length === 0) return text;

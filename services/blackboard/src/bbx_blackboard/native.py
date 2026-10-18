@@ -39,8 +39,13 @@ INDEX_LIMIT = 32 * 1024**2
 KEYLOG_LIMIT = 64 * 1024**2
 RPC_LIMIT = 4 * 1024**2
 RESULT_LIMIT = 50_000
+WORKER_MEMORY_BUDGET = 2 * 1024**3
 IDLE_SECONDS = 300
 FRAME_FIELDS = ("%m", "epoch", "%s", "%d", "%p", "%L", "%i")
+
+
+def decoder_memory_limit(input_bytes: int) -> int:
+    return WORKER_MEMORY_BUDGET if input_bytes > 256 * 1024**2 else 1024**3
 
 
 class NativeUnavailable(Exception):
@@ -128,11 +133,14 @@ class NativeWorker:
         binary = shutil.which("sharkd")
         if binary is None or sys.platform != "linux":
             raise NativeUnavailable("Native analysis requires the Linux Wireshark worker")
+        capture = home / "capture.pcapng"
+        memory_limit = decoder_memory_limit(capture.stat().st_size if capture.exists() else 0)
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "bbx_blackboard.native_worker",
             binary,
+            str(memory_limit),
             cwd=home,
             env={
                 "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -180,7 +188,9 @@ class NativeWorker:
                 self.process.stdin.write(json.dumps(payload).encode() + b"\n")
                 await self.process.stdin.drain()
                 response = await asyncio.wait_for(self.process.stdout.readline(), timeout)
-                if not response or len(response) > RPC_LIMIT:
+                if not response:
+                    raise NativeUnavailable(f"Native decoder exited during {method}")
+                if len(response) > RPC_LIMIT:
                     raise NativeUnavailable("Native decoder output exceeded its limit")
                 decoded = json.loads(response)
                 if decoded.get("id") != self.serial:
@@ -233,6 +243,7 @@ class SourceSession:
     root: Path
     worker: NativeWorker
     index: TrafficNativeSourceIndex | None
+    memory_limit: int = 1024**3
     users: int = 0
     touched: float = field(default_factory=monotonic)
 
@@ -248,6 +259,7 @@ class NativeQuery:
     status: str = "building"
     revision: str | None = None
     requested_revision: str = ""
+    attempted_revision: str = ""
     refs: list[TrafficNativeSourceRef] = field(default_factory=list)
     committed_refs: list[TrafficNativeSourceRef] = field(default_factory=list)
     indices: dict[str, TrafficNativeSourceIndex] = field(default_factory=dict)
@@ -344,16 +356,20 @@ class NativeAnalysisCache:
             self.sweeper = asyncio.create_task(self._sweep())
         return query
 
-    async def refresh(self, query: NativeQuery, refs: list[TrafficNativeSourceRef]) -> None:
+    async def refresh(
+        self, query: NativeQuery, refs: list[TrafficNativeSourceRef], *, retry: bool = False
+    ) -> None:
         try:
             async with query.refresh_lock:
-                await self._refresh(query, refs)
+                await self._refresh(query, refs, retry=retry)
         except NativeUnavailable:
             raise
         except Exception as error:
             raise NativeUnavailable("Native source index is unavailable or invalid") from error
 
-    async def _refresh(self, query: NativeQuery, refs: list[TrafficNativeSourceRef]) -> None:
+    async def _refresh(
+        self, query: NativeQuery, refs: list[TrafficNativeSourceRef], *, retry: bool = False
+    ) -> None:
         query.touched = monotonic()
         previous_refs = {ref.source_id: ref.revision for ref in query.refs}
         selected_refs = [
@@ -389,10 +405,13 @@ class NativeAnalysisCache:
             query.indices = indices
         query.refs = selected_refs
         query.requested_revision = revision
-        if revision == query.revision:
+        if revision == query.revision and not (retry and query.status in {"error", "partial"}):
             return
         if query.future is None or query.future.done():
+            if revision == query.attempted_revision and not retry:
+                return
             query.status = "building"
+            query.error = None
             query.future = asyncio.create_task(self._build(query))
 
     @asynccontextmanager
@@ -434,6 +453,7 @@ class NativeAnalysisCache:
                         for part in [*pinned_index.parts, *pinned_index.keylog_parts]
                     )
                 )
+                memory_limit = decoder_memory_limit(ref.available_bytes if ref else 0)
 
                 def disk_bytes() -> int:
                     return sum(
@@ -447,6 +467,8 @@ class NativeAnalysisCache:
 
                 while self.sessions and (
                     len(self.sessions) >= 2
+                    or sum(item.memory_limit for item in self.sessions.values()) + memory_limit
+                    > WORKER_MEMORY_BUDGET
                     or disk_bytes()
                     + incoming_bytes
                     + min(INPUT_LIMIT, self.part_bytes + incoming_bytes)
@@ -490,7 +512,7 @@ class NativeAnalysisCache:
                             raise NativeUnavailable(
                                 "Native packet count does not match its source index"
                             )
-                    session = SourceSession(task_id, root, worker, index)
+                    session = SourceSession(task_id, root, worker, index, memory_limit)
                     self.sessions[key] = session
                 except BaseException:
                     if worker is not None:
@@ -599,6 +621,30 @@ class NativeAnalysisCache:
         return content
 
     async def check(self, expression: str) -> str:
+        # Syntax checks can share a loaded decoder and must not compete with its memory budget.
+        session = None
+        async with self.pool_lock:
+            session = next(
+                (
+                    item
+                    for item in reversed(self.sessions.values())
+                    if item.worker.process.returncode is None
+                ),
+                None,
+            )
+            if session is not None:
+                session.users += 1
+        if session is not None:
+            try:
+                await session.worker.check(expression)
+                return session.worker.version
+            except NativeFilterError:
+                raise
+            except NativeUnavailable:
+                pass
+            finally:
+                session.users -= 1
+                session.touched = monotonic()
         async with self._lease("checker", None) as session:
             await session.worker.check(expression)
             return session.worker.version
@@ -615,6 +661,7 @@ class NativeAnalysisCache:
                 refs = list(query.refs)
                 indices = dict(query.indices)
                 revision = query.requested_revision
+                query.attempted_revision = revision
                 if not refs:
                     raise NativeUnavailable(
                         "Native input was not recorded for this task run or Agent"
@@ -623,60 +670,87 @@ class NativeAnalysisCache:
                     raise NativeUnavailable("Native analysis input exceeds 2 GiB")
                 records, coverage = [], []
                 truncated = False
-                for ref in refs:
+                for position, ref in enumerate(refs):
                     key = f"{query.task_id}:{query.run}:{ref.source_id}:{ref.revision}"
-                    async with self._lease(
-                        key,
-                        query.task_id,
-                        query.objects,
-                        query.run,
-                        ref,
-                        indices[ref.source_id],
-                        query.expression,
-                    ) as session:
-                        await session.worker.check(query.expression)
-                        query.engine_version = session.worker.version
-                        source_count = 0
-                        while len(records) < RESULT_LIMIT:
-                            page = await session.worker.frames(
-                                query.expression,
-                                source_count,
-                                min(200, RESULT_LIMIT - len(records)),
-                            )
-                            for row in page:
-                                cells = [redact_traffic_text(str(cell), 4096) for cell in row["c"]]
-                                if len(cells) != 7:
-                                    raise NativeUnavailable("Native packet columns are unavailable")
-                                records.append(
-                                    TrafficNativePacket(
-                                        source_id=ref.source_id,
-                                        source_number=int(row["num"]),
-                                        agent_id=ref.agent_id,
-                                        attribution="exact" if ref.agent_id else "shared",
-                                        columns=cells,
-                                        background=row.get("bg"),
-                                        foreground=row.get("fg"),
-                                    )
+                    source_rows = []
+                    source_error = None
+                    analyzed = False
+                    # Reserve a fair share for later sources instead of starving Agent traffic.
+                    quota = max(1, (RESULT_LIMIT - len(records)) // (len(refs) - position))
+                    try:
+                        async with self._lease(
+                            key,
+                            query.task_id,
+                            query.objects,
+                            query.run,
+                            ref,
+                            indices[ref.source_id],
+                            query.expression,
+                        ) as session:
+                            await session.worker.check(query.expression)
+                            query.engine_version = session.worker.version
+                            while len(source_rows) <= quota:
+                                amount = min(200, quota + 1 - len(source_rows))
+                                page = await session.worker.frames(
+                                    query.expression,
+                                    len(source_rows),
+                                    amount,
                                 )
-                            source_count += len(page)
-                            if len(page) < 200:
-                                break
-                        coverage.append(
-                            TrafficNativeCoverage(
-                                source_id=ref.source_id,
-                                agent_id=ref.agent_id,
-                                packet_count=ref.packet_count,
-                                available_bytes=ref.available_bytes,
-                                complete=ref.complete,
-                                decryption="available"
-                                if session.index and session.index.keylog_parts
-                                else "unavailable",
-                                error=session.index.error if session.index else None,
-                            )
+                                for row in page:
+                                    cells = [
+                                        redact_traffic_text(str(cell), 4096) for cell in row["c"]
+                                    ]
+                                    if len(cells) != 7 or not Decimal(cells[1]).is_finite():
+                                        raise NativeUnavailable(
+                                            "Native packet columns are unavailable"
+                                        )
+                                    source_rows.append(
+                                        TrafficNativePacket(
+                                            source_id=ref.source_id,
+                                            source_number=int(row["num"]),
+                                            agent_id=ref.agent_id,
+                                            attribution="exact" if ref.agent_id else "shared",
+                                            columns=cells,
+                                            background=row.get("bg"),
+                                            foreground=row.get("fg"),
+                                        )
+                                    )
+                                if len(page) < amount:
+                                    break
+                            analyzed = True
+                            truncated |= len(source_rows) > quota
+                            records.extend(source_rows[:quota])
+                            source_error = session.index.error if session.index else None
+                    except NativeFilterError:
+                        raise
+                    except Exception as error:
+                        source_error = (
+                            str(error)
+                            if isinstance(error, NativeUnavailable)
+                            else ("Native source analysis failed; raw capture retained")
                         )
-                    if len(records) >= RESULT_LIMIT:
-                        truncated = True
-                        break
+                    coverage.append(
+                        TrafficNativeCoverage(
+                            source_id=ref.source_id,
+                            agent_id=ref.agent_id,
+                            packet_count=ref.packet_count,
+                            available_bytes=ref.available_bytes,
+                            complete=ref.complete,
+                            analyzed=analyzed,
+                            decryption="available"
+                            if indices[ref.source_id].keylog_parts
+                            else "unavailable",
+                            error=source_error,
+                        )
+                    )
+                if not any(item.analyzed for item in coverage):
+                    query.coverage = coverage
+                    errors = {item.error for item in coverage if item.error}
+                    raise NativeUnavailable(
+                        errors.pop()
+                        if len(errors) == 1
+                        else "Native analysis failed for all selected sources"
+                    )
                 records.sort(
                     key=lambda row: (Decimal(row.columns[1]), row.source_id, row.source_number)
                 )
@@ -686,12 +760,19 @@ class NativeAnalysisCache:
                 query.status = (
                     "partial" if truncated or any(item.error for item in coverage) else "ready"
                 )
+                failed_sources = sum(not item.analyzed for item in coverage)
                 query.error = (
-                    "Native result limit reached; narrow the display filter" if truncated else None
+                    f"有 {failed_sources} 个来源解析失败，其余结果已保留"
+                    if failed_sources
+                    else "原生分析结果已按来源公平截断，请缩小 Agent 或显示过滤范围"
+                    if truncated
+                    else None
                 )
         except asyncio.CancelledError:
             raise
         except NativeFilterError as error:
+            query.status, query.error = "error", str(error)
+        except NativeUnavailable as error:
             query.status, query.error = "error", str(error)
         except Exception:
             query.status, query.error = (
