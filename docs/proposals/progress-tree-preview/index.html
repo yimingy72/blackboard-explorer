@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>成果树 · 交互设计稿</title>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <svg class="symbols" aria-hidden="true"><defs>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 24 24"><rect x="3" y="8" width="6" height="8" rx="1.5"/><rect x="16" y="3" width="5" height="6" rx="1.5"/><rect x="16" y="15" width="5" height="6" rx="1.5"/><path d="M9 12h4V6h3M13 12v6h3"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 14a4 4 0 0 1-4 4H9l-5 3V7a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4z"/><path d="M8 8h8M8 12h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></symbol>
+    <symbol id="i-block" viewBox="0 0 24 24"><path d="m12 3 10 18H2zM12 9v5m0 3v.1"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h7l1 2 1-2h7v16h-7l-1 1-1-1H4zM12 6v15"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 1 0-1 9M20 3v6h-6"/></symbol>
+  </defs></svg>
+  <nav class="rail" aria-label="平台导航">
+    <div class="brand" title="黑板探索"><span></span><span></span><span></span><span></span></div>
+    <button class="rail-button selected" aria-label="任务列表"><svg><use href="#i-grid"/></svg></button>
+    <button class="rail-button" aria-label="Agent 配置"><svg><use href="#i-settings"/></svg></button>
+    <div class="rail-spacer"></div><div class="account">Y</div>
+  </nav>
+  <main>
+    <header class="task-header">
+      <button class="icon-button" title="返回任务列表"><svg><use href="#i-back"/></svg></button>
+      <strong>定位接口校验失败原因</strong><code>8e2a4b10</code><span class="tag blue">进行中</span>
+      <div class="task-meta"><span>运行 24 分 18 秒</span><span>¥2.41 / ¥20.00</span><span class="live">实时连接</span></div>
+      <div class="header-spacer"></div><span class="preview-label">交互设计稿 · 示例数据</span>
+      <button class="quiet-button" id="goal-button"><svg><use href="#i-file"/></svg>目标</button>
+    </header>
+    <div class="workspace-bar">
+      <div class="tabs" aria-label="任务视图">
+        <button id="raw-tab"><svg><use href="#i-grid"/></svg>协作黑板</button>
+        <button class="current" id="tree-tab"><svg><use href="#i-tree"/></svg>成果树</button>
+      </div>
+      <span class="sync-state"><span class="sync-dot"></span><span id="sync-text">已整理至黑板 v128</span><span class="muted">18 秒前</span></span>
+      <div class="header-spacer"></div>
+      <button class="quiet-button" id="latest-button"><svg><use href="#i-refresh"/></svg>模拟新增进展</button>
+      <button class="primary-button" id="ask-button"><svg><use href="#i-chat"/></svg>问整理 Agent</button>
+    </div>
+    <section class="goal-panel" id="goal-panel" hidden><strong>任务目标</strong><p>定位接口校验失败的触发条件，提供可复现的依据与修复建议。</p><span class="muted">完成要求：说明原因与适用范围；保留复现脚本和关键证据。</span></section>
+    <div class="workspace" id="workspace">
+      <section class="canvas" id="canvas" aria-label="成果树画布" tabindex="0">
+        <div class="canvas-context"><span>目标</span><svg><use href="#i-arrow"/></svg><span>探索方向</span><svg><use href="#i-arrow"/></svg><span>阶段成果与缺口</span></div>
+        <div class="world" id="world"><svg class="connections" id="connections" aria-hidden="true"></svg><div id="nodes"></div></div>
+        <div class="canvas-controls"><button id="zoom-in" aria-label="放大">+</button><button id="zoom-out" aria-label="缩小">−</button><button id="zoom-label">100%</button><button id="fit-button" aria-label="适配画布"><svg><use href="#i-expand"/></svg></button></div>
+        <div class="canvas-note"><span id="node-count">3 个方向 · 6 条进展</span><span>AI 整理，点击可追溯依据</span></div>
+        <div class="mini-map" aria-hidden="true"><svg viewBox="0 0 130 80"><path d="M14 40C40 40 35 15 58 15M14 40H58M14 40C40 40 35 65 58 65M58 15h48M58 40h48M58 65h48"/><rect x="9" y="35" width="14" height="10"/><rect x="52" y="10" width="19" height="10"/><rect x="52" y="35" width="19" height="10"/><rect x="52" y="60" width="19" height="10"/><rect x="100" y="10" width="20" height="10"/><rect x="100" y="35" width="20" height="10"/><rect x="100" y="60" width="20" height="10"/></svg></div>
+      </section>
+      <div class="resize-handle" id="resize-handle" role="separator" aria-label="调整详情宽度" tabindex="0" hidden></div>
+      <aside class="inspector" id="inspector" hidden aria-label="成果详情">
+        <header class="inspector-header"><span class="inspector-mark" id="inspector-mark"><svg><use href="#i-file"/></svg></span><div><span id="inspector-caption">阶段成果</span><h1 id="inspector-title"></h1></div><button class="icon-button" id="close-panel" aria-label="关闭详情"><svg><use href="#i-close"/></svg></button></header>
+        <div class="panel-tabs"><button id="detail-tab" class="current">成果详情</button><button id="chat-tab">问整理 Agent</button></div>
+        <div class="detail-scroll" id="detail-content"></div>
+        <div class="chat-content" id="chat-content" hidden>
+          <div class="chat-head"><span class="agent-avatar"><svg><use href="#i-book"/></svg></span><div><strong>成果整理 Agent</strong><span>读取本任务黑板 · 维护成果树</span></div></div>
+          <div class="chat-messages" id="chat-messages"><div class="assistant-message"><span class="message-author">成果整理 Agent</span><p>目前已定位到旧编码数据这条线索，环境差异已排除。还缺少触发边界的复核和修复后的对照结果。</p><div class="inline-sources"><button data-source="F12">F12</button><button data-source="F19">F19</button><button data-source="I7">I7</button></div></div></div>
+          <div class="suggestions" id="suggestions"><button>现在卡在哪里？</button><button>哪些结论已经有证据？</button></div>
+          <form class="composer" id="composer"><div id="scope-chip" hidden>围绕选中节点提问 <button type="button" id="clear-scope" aria-label="取消节点范围">×</button></div><textarea id="message-input" rows="2" aria-label="向成果整理 Agent 提问" placeholder="询问进展、依据或尚未解决的问题…"></textarea><div class="composer-bottom"><span>Enter 发送 · Shift+Enter 换行</span><button class="send-button" aria-label="发送问题"><svg><use href="#i-arrow"/></svg></button></div></form>
+        </div>
+        <footer class="inspector-footer" id="inspector-footer"><span>整理依据 <code id="detail-version">v128</code></span><button id="ask-node">围绕此节点提问 <svg><use href="#i-arrow"/></svg></button></footer>
+      </aside>
+    </div>
+  </main>
+  <div class="source-drawer" id="source-drawer" hidden role="dialog" aria-modal="true" aria-label="黑板来源"><header><strong id="source-title"></strong><button class="icon-button" id="close-source" aria-label="关闭来源"><svg><use href="#i-close"/></svg></button></header><div id="source-body"></div><p class="source-note">设计稿展示来源跳转；正式版可定位原黑板对象与对应证据。</p></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="preview.js"></script>
+</body>
+</html>
