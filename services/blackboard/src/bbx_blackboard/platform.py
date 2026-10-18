@@ -30,6 +30,12 @@ from bbx_blackboard.store.schema import platform_configs as table
 Kind = Literal["models", "mcp-servers"]
 
 
+def config_lock(kind: str, name: str) -> int:
+    return int.from_bytes(
+        hashlib.sha256(f"platform:{kind}:{name}".encode()).digest()[:8], "big", signed=True
+    )
+
+
 def check_url(value: str) -> str:
     url = urlsplit(value)
     if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password:
@@ -121,8 +127,12 @@ class PlatformStore:
             }
         return {**common, **row["config"]}
 
-    async def get(self, kind: Kind, name: str, version: int | None = None) -> dict[str, Any]:
+    async def get(
+        self, kind: Kind, name: str, version: int | None = None, *, include_deleted: bool = False
+    ) -> dict[str, Any]:
         query = select(table).where(table.c.kind == kind, table.c.name == name)
+        if not include_deleted:
+            query = query.where(table.c.deleted.is_(False))
         query = (
             query.where(table.c.version == version)
             if version
@@ -139,7 +149,7 @@ class PlatformStore:
             rows = (
                 await conn.execute(
                     select(table)
-                    .where(table.c.kind == kind)
+                    .where(table.c.kind == kind, table.c.deleted.is_(False))
                     .distinct(table.c.name)
                     .order_by(table.c.name, table.c.version.desc())
                 )
@@ -166,11 +176,10 @@ class PlatformStore:
             raise HTTPException(
                 422, "名称仅允许小写字母开头及字母、数字、下划线、连字符，最长64字符"
             )
-        lock = int.from_bytes(
-            hashlib.sha256(f"platform:{kind}:{name}".encode()).digest()[:8], "big", signed=True
-        )
         async with self.engine.begin() as conn:
-            await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock})
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": config_lock(kind, name)}
+            )
             previous = (
                 (
                     await conn.execute(
@@ -183,6 +192,8 @@ class PlatformStore:
                 .mappings()
                 .first()
             )
+            if previous and previous["deleted"]:
+                raise HTTPException(409, "此模型已删除，请刷新列表或新增模型")
             ciphertext = previous["secret_ciphertext"] if previous else None
             if isinstance(body, ModelInput):
                 spec = cast(dict[str, Any], PROVIDERS[body.provider])
@@ -270,7 +281,8 @@ class PlatformStore:
         return {"api_key": plain}
 
     async def credentials(self, kind: Kind, name: str, version: int) -> dict[str, Any]:
-        row = await self.get(kind, name, version)
+        # Existing tasks and resumed conversations still use their pinned credentials.
+        row = await self.get(kind, name, version, include_deleted=True)
         if kind == "models":
             values = self._decrypt_model_credentials(row)
             return {
@@ -314,18 +326,75 @@ class PlatformStore:
         return value["name"] if value else "deepseek-default"
 
     async def set_default_model(self, name: str) -> None:
-        if not (await self.get("models", name))["enabled"]:
-            raise HTTPException(422, "默认模型必须启用")
         async with self.engine.begin() as conn:
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": config_lock("models", name)}
+            )
+            enabled = (
+                await conn.execute(
+                    select(table.c.enabled)
+                    .where(
+                        table.c.kind == "models", table.c.name == name, table.c.deleted.is_(False)
+                    )
+                    .order_by(table.c.version.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if enabled is None:
+                raise HTTPException(404, "平台配置不存在")
+            if not enabled:
+                raise HTTPException(422, "默认模型必须启用")
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": config_lock("settings", "default_model")},
+            )
             await conn.execute(
                 pg_insert(app_settings)
                 .values(key="default_model", value={"name": name})
                 .on_conflict_do_update(index_elements=["key"], set_={"value": {"name": name}})
             )
 
+    async def delete_model(self, name: str) -> None:
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": config_lock("models", name)}
+            )
+            deleted = (
+                await conn.execute(
+                    select(table.c.deleted)
+                    .where(table.c.kind == "models", table.c.name == name)
+                    .order_by(table.c.version.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if deleted is None:
+                raise HTTPException(404, "平台配置不存在")
+            if deleted:
+                return
+            await conn.execute(
+                update(table)
+                .where(table.c.kind == "models", table.c.name == name)
+                .values(deleted=True)
+            )
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": config_lock("settings", "default_model")},
+            )
+            default = (
+                await conn.execute(
+                    select(app_settings.c.value).where(app_settings.c.key == "default_model")
+                )
+            ).scalar_one_or_none()
+            if (default["name"] if default else "deepseek-default") == name:
+                await conn.execute(
+                    pg_insert(app_settings)
+                    .values(key="default_model", value={"name": ""})
+                    .on_conflict_do_update(index_elements=["key"], set_={"value": {"name": ""}})
+                )
+
     async def ensure_default_model(self, model: ModelConfig) -> ModelConfig:
         try:
-            row = self.public(await self.get("models", "deepseek-default", 1))
+            row = self.public(await self.get("models", "deepseek-default", 1, include_deleted=True))
         except HTTPException as error:
             if error.status_code != 404:
                 raise
@@ -342,12 +411,19 @@ class PlatformStore:
             )
         return ModelConfig.model_validate(row["config"])
 
-    async def normalize_profile(self, profile: AgentProfile) -> AgentProfile:
+    async def normalize_profile(
+        self, profile: AgentProfile, *, allow_deleted_models: bool = False
+    ) -> AgentProfile:
         content = profile.model_dump(mode="json")
         for role in ("explore", "derive", "close"):
             model = getattr(profile.models, role)
             if model.platform_id is not None:
-                row = await self.get("models", model.platform_id, model.platform_version)
+                row = await self.get(
+                    "models",
+                    model.platform_id,
+                    model.platform_version,
+                    include_deleted=allow_deleted_models,
+                )
                 if not row["enabled"]:
                     raise HTTPException(422, "不能选择已停用的平台模型版本")
                 content["models"][role] = self.public(row)["config"]
@@ -407,6 +483,13 @@ async def import_key(request: Request, body: ImportKey) -> dict[str, int]:
 async def save_model(request: Request, name: str, body: ModelInput) -> dict[str, Any]:
     identity = require_user_or_service(request)
     return await store(request).save("models", name, body, identity.name)
+
+
+@router.delete("/models/{name}", status_code=204)
+async def delete_model(request: Request, name: str) -> Response:
+    require_user_or_service(request)
+    await store(request).delete_model(name)
+    return Response(status_code=204)
 
 
 @router.get("/mcp-servers")

@@ -104,6 +104,8 @@ async def task_profile(
 ) -> dict[str, Any]:
     workers = await read_workers(profiles)
     name = model_id or await platform.default_model_name()
+    if not name:
+        raise HTTPException(422, "请先选择模型，或在模型配置中设置默认模型")
     row = await platform.get("models", name, model_version)
     if not row["enabled"]:
         raise HTTPException(422, "所选模型已停用，请选择已启用的模型")
@@ -149,7 +151,9 @@ async def update_worker(request: Request, role: Role, body: WorkerUpdate) -> dic
     content["worker_tools"][role] = body.tools.model_dump(mode="json")
     try:
         profile = AgentProfile.model_validate(content)
-        profile = await request.app.state.platform_store.normalize_profile(profile)
+        profile = await request.app.state.platform_store.normalize_profile(
+            profile, allow_deleted_models=True
+        )
     except ValueError:
         raise HTTPException(422, "工具配置超出角色权限或缺少必要工具，请检查勾选项") from None
     row = await profiles.create(

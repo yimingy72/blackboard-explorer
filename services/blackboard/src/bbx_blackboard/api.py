@@ -765,6 +765,8 @@ def create_app(
             profile = ctf_profile(row)
             platform = request.app.state.platform_store
             model_name = body.model_id or await platform.default_model_name()
+            if not model_name:
+                raise HTTPException(422, "请先选择模型，或在模型配置中设置默认模型")
             selected = await platform.get("models", model_name, body.model_version)
             if not selected["enabled"]:
                 raise HTTPException(422, "Selected model is disabled")
@@ -831,6 +833,11 @@ def create_app(
             )
         else:
             row = await profiles.get(body.agent_profile, body.profile_version)
+            for model in row["models"].values():
+                if model.get("platform_id"):
+                    await request.app.state.platform_store.get(
+                        "models", model["platform_id"], model.get("platform_version")
+                    )
             if body.reasoning_effort is not None:
                 row = {
                     **row,

@@ -187,7 +187,8 @@ export interface paths {
         put?: never;
         /** Save Model */
         post: operations["save_model_api_platform_models__name__post"];
-        delete?: never;
+        /** Delete Model */
+        delete: operations["delete_model_api_platform_models__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4415,6 +4416,35 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_model_api_platform_models__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

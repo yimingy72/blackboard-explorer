@@ -6554,6 +6554,39 @@
       }
     },
     "/api/platform/models/{name}": {
+      "delete": {
+        "operationId": "delete_model_api_platform_models__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Model",
+        "tags": [
+          "platform"
+        ]
+      },
       "post": {
         "operationId": "save_model_api_platform_models__name__post",
         "parameters": [
