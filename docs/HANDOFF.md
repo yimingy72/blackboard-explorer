@@ -66,9 +66,11 @@
   | Local-runtime-network / Server-deployment | ✅ 本地网络误判/失败清理、Linux AppArmor兼容已合并main为 `d1dffd3` 并推送，服务器完整迁移及新版本更新完成；合并源码2135普通/7项相关Docker集成、服务器Ubuntu/Kali实际执行与原生解析通过，21张业务表及当前存档保持（2026-10-16） |
   | Multi-task-runtime | ✅ 任务分支默认容量改为2，两种模式共用槽位；2149普通/52项相关回归/5项Docker检查通过，本地与服务器配置已生效；数据与配置保持，源码待合并（2026-10-17） |
   | Platform-performance-audit | ✅ 全站路由拆包/预取、布局Worker与快照修复，执行代次隔离、取消清理和大输出修复；2202普通、302存储集成、139前端、126浏览器通过。c15602a已合并推送，两端及Ubuntu/Kali执行镜像更新；本地19任务/公网23任务与预算、会话、配置完整保留，无活动任务被中断（2026-10-18） |
+  | Full-platform-refinement | ✅ 全站布局/动效深化、服务端任务分页、会话稳定渲染、黑板热路径投影、CTF邮箱批处理及MAF上下文复用；2210普通、316存储集成、145前端、133浏览器通过。代码6b9dd72已合并推送并部署两端，迁移0017有效；20张业务表和文件存档摘要一致，19/23任务、150/223会话及预算/配置保留，无运行任务被中断（2026-10-18） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **最新交付**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，服务器已更新，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。服务器入口 `http://101.201.116.63:58000/`，原本机账号；17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致。本地 `http://127.0.0.1:58000/` 已安装网络修复，18任务保持；两端数据不自动双向同步。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
+- **最新交付**：全站体验与协作性能深化按五组提交合并为 `6b9dd72`，已推送GitHub并更新本地 `http://127.0.0.1:58000/` 和公网 `http://101.201.116.63:58000/`。任务分页、会话稳定渲染、黑板热路径和CTF邮箱批处理上线；迁移0017只加索引。两端在无活动任务/复盘时切换应用，20张业务表及MinIO摘要不变；本地19任务/150会话/58,663对象，公网23任务/223会话/111,078对象，预算、配置和旧备份保持。Postgres/MinIO及其他服务未重启，Ubuntu/Kali沿用既有执行镜像。检查与备份路径见[本轮报告](tasks/Full-platform-refinement-report.md)；两端数据不自动双向同步。
+- **本地修复与迁移交付记录**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。该检查点公网17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致，本地18任务保持。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
 - **流量版本交付记录**：首页样式 `5c169de`、流量采集与原生解析 `4fd4da8`、统一查看前端 `acf5625` 已合并main为 `aec9f62`。两模式共用Agent归属、HTTPS解码、MinIO存档与官方Wireshark 4.4.19显示过滤；完整原生解析按快照更新，不把逻辑调用冒充数据包。沿用同版2129普通、345隔离集成、129前端及12项原生浏览器检查，合并后140个候选文件逐字节一致。该检查点入口 `http://127.0.0.1:58000/`；blackboard标签 `cdf594fc…`、runtime `7c7ee3ee…`、Kali `c83fc64a…`、Ubuntu `1735df94…`。当时本地17任务/99会话及配置保留；旧轮不能补录原生输入/密钥。该次Git发布未重启服务。见[流量报告](tasks/Traffic-observability-report.md)及第0.5节。
 - **登录修复记录**：`97aa713` 已合并main为 `b8b3f20`。成功登录后清除旧会话查询，避免旧401错误再次触发返回登录；117项前端检查、构建及浏览器过期重登验证通过。账号、任务及配置保持；其历史镜像由上述流量版本替代。见[登录修复报告](tasks/Login-session-cache-report.md)及第0.4节。
 - **普通黑板重构交付记录**：普通黑板重构与架构优化按前端、性能、稳定性、记账及文档分组提交，后端/前端分别合并main为 `a397c02`、`d7a9937`。当时源码与部署版本一致，main的Python与前端检查分别1971/117通过，原340项隔离集成及36项Mock浏览器证据沿用同版源码。该检查点候选镜像runtime为 `4e04a5b0…`、blackboard为 `d9b7ca1b…`，发布时13任务/80会话及13张业务表摘要保持；Git发布未重启服务、未运行真实模型或靶机。见[普通黑板报告](tasks/Blackboard-refresh-report.md)及第0.3节。
@@ -435,6 +437,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+Full-platform-refinement已合并推送并部署代码6b9dd72，新增兼容任务分页接口和0017结束事件索引；普通领域决策、CTF投递顺序、MAF Session、预算与租约机制保持。OpenAPI/前端契约及web/DESIGN已同步，三份设计正本未改。后续统一实现架构可补充按命令投影、批量投递确认与服务端分页说明，无新增领域设计待决。主会话负责全站视觉，GPT‑6.1 Sol high子代理仅协助实现及技术审查；范围、性能证据和部署保留校验见[本轮报告](tasks/Full-platform-refinement-report.md)。
 
 Platform-performance-audit 已合并、推送并部署 c15602a：复用既有 started_at 隔离复活 Explore 的 finish/heartbeat/Session 写入，旧合法用量仅计费；MAF Session 修复、取消时资源归属、快照事务和全站加载优化均不改变领域职责，也不新增数据库迁移。OpenAPI/前端契约与 web/DESIGN 已同步；三份设计正本未改，后续统一实现架构时可补充执行时间围栏与取消后的线程收尾细节。部署保留两端数据/预算/配置，说明与备份位置见 [报告](tasks/Platform-performance-audit-report.md)。
 
