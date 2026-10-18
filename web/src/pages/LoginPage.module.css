@@ -1,7 +1,9 @@
-.page { min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px; background: var(--color-canvas); }
-.frame { width: min(100%, 390px); }
-.brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 32px; color: var(--color-ink); font-weight: 600; font-size: 18px; text-decoration: none; }
+.page { min-height: 100dvh; display: grid; place-items: center; padding: 28px 20px; background: var(--color-canvas); }
+.frame { width: min(100%, 380px); }
+.brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 24px; color: var(--color-ink); font-weight: 600; font-size: 16px; text-decoration: none; }
 .brand > span { color: var(--color-primary); font-size: 26px; }
-.formPanel { padding: 32px; background: #fff; border: 1px solid var(--color-line); border-radius: 14px; box-shadow: 0 8px 28px #20252d06; }
-.formPanel h1 { margin: 0 0 28px; font-size: 22px; font-weight: 600; }
+.formPanel { padding: 28px; background: #fff; border: 1px solid var(--color-line); border-radius: 14px; box-shadow: 0 8px 28px #20252d06; }
+.formPanel h1 { margin: 0 0 22px; font-size: 20px; font-weight: 600; }
 .error { margin-bottom: 20px; }
+
+@media(max-width:650px) { .formPanel { padding:24px; } .page { padding:24px 16px; } }

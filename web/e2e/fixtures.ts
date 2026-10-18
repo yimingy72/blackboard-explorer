@@ -1,3 +1,4 @@
+import { taskListResponse } from './task-list-fixture';
 import type { Page, Route } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { reduce } from '../src/board/reducer';
@@ -250,7 +251,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
         return json(route, { deleted: true });
       }
     }
-    if (path === '/api/tasks' && method === 'GET') return json(route, [task]);
+    if ((path === '/api/tasks' || path === '/api/tasks/page') && method === 'GET') return json(route, taskListResponse([task], request.url()));
     if (path === `/api/tasks/${TASK_ID}` && method === 'GET') return json(route, task);
     if (path === `/api/tasks/${TASK_ID}/resume` && method === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -391,7 +392,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
-  return { unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
+  return { taskFixture: task, unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
 }
 
 /** Send a synthetic event through the same listener path as the mocked SSE source. */

@@ -11,6 +11,7 @@ type Props = {
   runs: number[];
   agents: { id: string; name: string }[];
   open: boolean;
+  active: boolean;
   initialAgentId?: string | null;
   onClose: () => void;
 };

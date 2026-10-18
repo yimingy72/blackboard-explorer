@@ -24,7 +24,8 @@ from bbx_contracts.models import (
     Usage,
 )
 from fastapi import HTTPException
-from sqlalchemy import func, insert, or_, select, update
+from sqlalchemy import case, func, insert, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.domain import (
@@ -170,12 +171,23 @@ class BoardService:
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            state = await self.repo.load(conn, tid)
+            target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
+            if command in {
+                "heartbeat",
+                "conclude",
+                "take_grace",
+                "record_tool_call",
+                "record_cleanup",
+            }:
+                state = await self.repo.load_agent(conn, tid, target)
+                if command == "record_tool_call":
+                    state.tool_calls = await self.repo.tool_call_refs(conn, tid, [data["id"]])
+            else:
+                state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
-            target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
             self._check_derive_round(state.agents.get(target), expected_derive_round)
             if command in {"finish_agent", "heartbeat"} and (agent := state.agents.get(target)):
                 if not await agent_execution_matches(conn, tid, agent, expected_started_at):
@@ -212,7 +224,7 @@ class BoardService:
             } and await reconcile_receipts(
                 self, conn, tid, actor if command == "finish_agent" else None
             ):
-                state = await self.repo.load(conn, tid)
+                state = await self.repo.load(conn, tid, include_tool_calls=False)
             events = decide(state, command, actor, data)
             written = await self.repo.append(conn, tid, events)
             if command == "finish_agent":
@@ -318,7 +330,7 @@ class BoardService:
                         "resume_request_conflict", "此请求编号已用于不同的追加额度。"
                     )
                 return
-            state = await self.repo.load(conn, tid)
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
             task = state.task
@@ -486,7 +498,10 @@ class BoardService:
         data = PostFactRequest.model_validate(request).model_dump(mode="json")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            state = await self.repo.load(conn, tid)
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
+            state.tool_calls = await self.repo.tool_call_refs(
+                conn, tid, [item["call_id"] for item in data["evidence"] if item.get("call_id")]
+            )
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
@@ -545,7 +560,7 @@ class BoardService:
         data = PostIntentRequest.model_validate(request).model_dump(mode="json")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            state = await self.repo.load(conn, tid)
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
@@ -812,7 +827,7 @@ class BoardService:
             raise RuleViolation("trace_missing", "Trace 对象不存在，请先持久化正文。")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            state = await self.repo.load(conn, tid)
+            state = await self.repo.load_agent(conn, tid, agent_id)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
@@ -889,7 +904,28 @@ class BoardService:
                 task_mode = (
                     await conn.execute(select(s.tasks.c.mode).where(s.tasks.c.id == tid))
                 ).scalar_one()
-                if task_mode != "ctf":
+                if task_mode == "ctf":
+                    unrelated_message = (s.events.c.type == "ctf.message.posted") & ~or_(
+                        s.events.c.payload["sender_id"].astext == for_agent,
+                        s.events.c.payload["recipient_id"].astext == for_agent,
+                    )
+                    other_private = s.events.c.type.in_(
+                        (
+                            "ctf.platform.dispatched",
+                            "ctf.message.delivered",
+                            "ctf.turn.finished",
+                            "agent.trace.recorded",
+                            "tool_call.recorded",
+                        )
+                    ) & (s.events.c.actor != for_agent)
+                    payload = case(
+                        (unrelated_message | other_private, literal({}, type_=JSONB)),
+                        else_=s.events.c.payload,
+                    ).label("payload")
+                    stmt = select(
+                        *(payload if column.name == "payload" else column for column in s.events.c)
+                    ).where(s.events.c.task_id == tid, s.events.c.version > since)
+                else:
                     stmt = stmt.where(
                         or_(
                             s.events.c.addressed_to.is_(None),

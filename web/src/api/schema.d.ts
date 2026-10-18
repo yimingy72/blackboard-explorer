@@ -537,6 +537,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Page */
+        get: operations["task_page_api_tasks_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -3192,6 +3209,26 @@ export interface components {
              */
             id: string;
         };
+        /** TaskPage */
+        TaskPage: {
+            /** Items */
+            items: components["schemas"]["TaskView"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Status Counts */
+            status_counts: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
+        };
+        /**
+         * TaskStatus
+         * @enum {string}
+         */
+        TaskStatus: "created" | "provisioning" | "running" | "closing" | "finished" | "failed" | "stopped";
         /** TaskView */
         TaskView: {
             /** Acceptance State */
@@ -5120,6 +5157,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": string[];
+                };
+            };
+        };
+    };
+    task_page_api_tasks_page_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                status?: components["schemas"]["TaskStatus"] | ("active" | "ended") | null;
+                mode?: ("blackboard" | "ctf") | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

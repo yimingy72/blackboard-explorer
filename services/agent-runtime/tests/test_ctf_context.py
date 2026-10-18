@@ -9,6 +9,7 @@ from agent_framework import AgentSession, Content, Message, annotate_message_gro
 from agent_framework.exceptions import ChatClientInvalidRequestException
 from agent_framework.openai import OpenAIChatClient
 from bbx_contracts.ctf import load_ctf_profile
+from bbx_contracts.storage import storage_safe
 from bbx_runtime.ctf.context import (
     align_history_start,
     estimate_messages_tokens,
@@ -16,6 +17,7 @@ from bbx_runtime.ctf.context import (
     input_token_limit,
     message_signature,
     safe_history_boundaries,
+    serialized_message_signature,
     stable_tool_previews,
 )
 from bbx_runtime.ctf.middleware import CtfHistoryProvider, TurnBoundary
@@ -78,6 +80,48 @@ def test_budget_uses_tokens_model_window_output_reserve_and_one_margin():
     assert estimate_text_tokens("abc" * 1000) == 1000
     assert estimate_text_tokens("汉" * 1000) == 3000
     assert estimate_text_tokens("{}" * 1000) == 2000
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "".join(chr(code) for code in range(128)),
+        "".join(chr(code) for code in range(128, 4096)),
+        "上下文 résumé κόσμος नमस्ते 👩🏽‍💻\n{}[]\t" * 1000,
+    ],
+)
+def test_fast_token_estimate_preserves_ascii_whitespace_and_unicode_budget(value):
+    ascii_words = sum(char.isascii() and (char.isalnum() or char.isspace()) for char in value)
+    other_bytes = sum(
+        len(char.encode("utf-8"))
+        for char in value
+        if not (char.isascii() and (char.isalnum() or char.isspace()))
+    )
+    assert estimate_text_tokens(value) == (ascii_words + 2) // 3 + other_bytes
+
+
+def test_native_checkpoint_signatures_match_maf_roundtrip_for_rich_contents():
+    messages = [
+        Message(
+            role="assistant",
+            message_id="assistant",
+            author_name="worker",
+            contents=[
+                Content.from_text("result\x00with storage escaping"),
+                Content.from_text_reasoning(text="reasoning", protected_data='{"opaque":true}'),
+                Content.from_function_call("call", "inspect", arguments={"nested": [1, "汉"]}),
+            ],
+            additional_properties={"_group": {"id": "group"}, "trace_only": "ignored"},
+        ),
+        Message(role="tool", contents=[Content.from_function_result("call", result={"a": [1, 2]})]),
+        Message(role="user", contents=[Content.from_data(data=b"image", media_type="image/png")]),
+    ]
+    session = AgentSession()
+    session.state["in_memory"] = {"messages": messages}
+    payload = storage_safe(session.to_dict())
+    for saved in payload["state"]["in_memory"]["messages"]:
+        assert serialized_message_signature(saved) == message_signature(Message.from_dict(saved))
 
 
 def test_trace_metadata_cannot_trigger_history_eviction():

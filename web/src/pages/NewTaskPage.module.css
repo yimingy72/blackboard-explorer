@@ -1,11 +1,12 @@
-.page { max-width: 1160px; margin: auto; padding: 24px 28px 40px; }
-.heading { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
+.page { max-width: 1240px; margin: auto; padding:24px var(--page-gutter) 40px; }
+.heading { display:flex; justify-content:space-between; gap:16px; align-items:center; margin-bottom:var(--section-gap); flex-wrap:wrap; }
+.headingIdentity { display:flex; align-items:center; gap:10px; }
 .heading h1 { font-size: 22px; font-weight: 600; margin: 0; }
 .form { min-width: 0; }
-.modePicker { margin-bottom: 20px; }
-.layout { display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 32px; }
+.modePicker { margin:0; }
+.layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 20px; }
 .editor { min-width: 0; background: #fff; padding: 20px; border: 1px solid var(--color-line); border-radius: 12px; }
-.sidebar { min-width: 0; }
+.sidebar { min-width:0; align-self:start; position:sticky; top:calc(var(--app-bar-height) + 20px); padding:18px; border:1px solid var(--color-line); border-radius:12px; background:#fff; }
 .sidebar h2, .acceptance h2, .attachmentHeading h2 { font-size: 14px; font-weight: 600; margin: 0 0 16px; }
 .settingsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .acceptance { padding-top: 6px; }
@@ -22,11 +23,12 @@
 .fileInfo strong { font-size: 13px; overflow-wrap: anywhere; }
 .fileInfo small { color: var(--color-muted); }
 .fileActions { display: flex; flex: none; }
-.footer { margin-top: 24px; display: grid; gap: 16px; }
-.footerActions { display: flex; justify-content: flex-end; gap: 10px; }
+.footer { margin-top:16px; padding-top:16px; border-top:1px solid var(--color-line); display:grid; gap:12px; }
+.footerActions { display:flex; gap:8px; }
+.footerActions > :last-child { flex:1; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-@media (max-width: 800px) { .layout { grid-template-columns: minmax(0,1fr); gap: 24px; } .sidebar { background: #fff; padding: 22px; border: 1px solid var(--color-line); border-radius: 12px; } }
-@media (max-width: 650px) { .page { padding: 16px 12px 30px; } .editor { padding: 18px; } .heading { gap: 6px; } .uploads > li { flex-wrap: wrap; } }
+@media (max-width: 800px) { .layout { grid-template-columns: minmax(0,1fr); gap: 24px; } .sidebar { position:static; padding:18px; } }
+@media (max-width: 650px) { .page { padding: 16px 12px 30px; } .editor { padding:16px; } .heading { gap: 6px; } .uploads > li { flex-wrap: wrap; } }
 
 .modelHeading { display:flex; align-items:center; gap:8px; }
 

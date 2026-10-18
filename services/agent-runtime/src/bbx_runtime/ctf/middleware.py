@@ -158,6 +158,9 @@ class MailboxMiddleware(ChatMiddleware):
             )
         )
         session.state["ctf_active_input_ids"] = active_inputs
+        if not rows:
+            session.state[PENDING_KEY] = []
+            return
         history = session.state.get("in_memory", {}).get("messages", [])
         seen = {message.message_id for message in history}
         pending = []
@@ -181,13 +184,18 @@ class MailboxMiddleware(ChatMiddleware):
                 },
                 f"{self.turn['id']}:inputs:" + ":".join(str(row["id"]) for row in rows),
             )
+        staged = {item["id"] for item in checkpoint.deliveries}
+        new_messages = []
         for row in rows:
             message_id = str(row["id"])
-            if not any(item["id"] == message_id for item in checkpoint.deliveries):
+            if message_id not in staged:
                 checkpoint.stage_delivery(message_id, str(row["claim_token"]))
+                staged.add(message_id)
             if message_id not in seen:
-                self.injection.enqueue_messages(session, mailbox_message(row))
+                new_messages.append(mailbox_message(row))
                 seen.add(message_id)
+        if new_messages:
+            self.injection.enqueue_messages(session, new_messages)
 
     async def process(self, context: ChatContext, call_next: Any) -> None:
         await self.authorize_call()

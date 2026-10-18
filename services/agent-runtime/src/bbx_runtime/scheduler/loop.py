@@ -95,8 +95,9 @@ class SchedulerLoop:
                     version = int(event["version"])
                     if version > self._last_version:
                         self._last_version = version
-                        self._event_serial += 1
-                        self._wake.set()
+                        if event.get("type") not in {"agent.trace.recorded", "tool_call.recorded"}:
+                            self._event_serial += 1
+                            self._wake.set()
                     if self._stop.is_set():
                         return
             except asyncio.CancelledError:

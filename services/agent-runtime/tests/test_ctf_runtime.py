@@ -5,10 +5,11 @@ import copy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
+from unittest.mock import Mock
 
 import httpx
 import pytest
-from agent_framework import Agent, MessageInjectionMiddleware, tool
+from agent_framework import Agent, Content, Message, MessageInjectionMiddleware, tool
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import budget_exhausted
@@ -255,6 +256,61 @@ async def test_native_injection_at_tool_boundary_and_same_session_restore():
         "fourth",
     ]
     assert history[0].additional_properties["ctf_source"]["sender_id"] == "lead"
+
+
+async def test_large_mailbox_reconcile_is_linear_preserves_order_and_batches_native_injection():
+    count = 500
+    service = MemoryCtf()
+    for index in range(count):
+        service.post(str(index), f"instruction {index}")
+    service.rows.append(service.rows[0])
+    checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
+
+    class Delivery(dict):
+        reads = 0
+
+        def __getitem__(self, key):
+            if key == "id":
+                type(self).reads += 1
+            return super().__getitem__(key)
+
+    checkpoint.deliveries = [
+        Delivery(id=str(index), claim_token=str(index)) for index in range(count)
+    ]
+    first = Message(role="user", message_id="0", contents=[Content.from_text("already pending")])
+    stale = Message(role="user", message_id="stale", contents=[Content.from_text("not claimed")])
+    checkpoint.session.state[PENDING_KEY] = [first, first, stale]
+    mailbox = MailboxMiddleware(cast(CtfClient, service), checkpoint, TURN, 10)
+    enqueue = Mock(wraps=mailbox.injection.enqueue_messages)
+    mailbox.injection.enqueue_messages = enqueue
+    await mailbox.reconcile()
+    await mailbox.reconcile()
+    assert Delivery.reads <= count * 3
+    assert [item["id"] for item in checkpoint.deliveries] == [str(index) for index in range(count)]
+    assert [m.message_id for m in checkpoint.session.state[PENDING_KEY]] == [
+        str(i) for i in range(count)
+    ]
+    assert checkpoint.session.state[PENDING_KEY][0] is first
+    assert enqueue.call_count == 1
+    assert not service.delivered
+
+
+async def test_empty_mailbox_clears_stale_pending_without_scanning_session_history():
+    service = MemoryCtf()
+    checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
+
+    class UnreadHistory(list):
+        def __iter__(self):
+            raise AssertionError("An empty claim does not need conversation history")
+
+    checkpoint.session.state["in_memory"] = {"messages": UnreadHistory()}
+    checkpoint.session.state[PENDING_KEY] = [
+        Message(role="user", contents=[Content.from_text("obsolete queued input")])
+    ]
+    await MailboxMiddleware(cast(CtfClient, service), checkpoint, TURN, 10).reconcile()
+    assert checkpoint.session.state[PENDING_KEY] == []
+    assert checkpoint.session.state["ctf_active_input_ids"] == {"turn_id": TURN["id"], "ids": []}
+    assert service.operations == ["claim_messages"]
 
 
 async def test_pending_checkpoint_is_not_delivery_and_lost_response_reconciles():

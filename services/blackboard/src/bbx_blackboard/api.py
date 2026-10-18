@@ -25,13 +25,15 @@ from bbx_contracts.models import (
     PostIntentRequest,
     SubmitCloseRequest,
     TaskSpec,
+    TaskStatus,
 )
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select, tuple_
+from sqlalchemy import Text, func, select, tuple_
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -135,6 +137,14 @@ class TaskView(BaseModel):
     ctf_options: dict[str, Any] | None = None
     ctf_phase: str | None = None
     ctf_conclusion: dict[str, Any] | None = None
+
+
+class TaskPage(BaseModel):
+    items: list[TaskView]
+    total: int
+    status_counts: dict[str, int]
+    limit: int
+    offset: int
 
 
 class ResumeBody(BaseModel):
@@ -372,6 +382,27 @@ async def _task(request: Request, task_id: UUID) -> dict[str, Any]:
     if row is None:
         raise HTTPException(404, "Task not found")
     return dict(row)
+
+
+async def _agent_record(request: Request, task_id: UUID, agent_id: str) -> dict[str, Any]:
+    async with request.app.state.engine.connect() as conn:
+        found = (
+            (
+                await conn.execute(
+                    select(
+                        s.agent_runs.c.id,
+                        s.agent_runs.c.task_type,
+                        s.agent_runs.c.derive_round,
+                        s.agent_runs.c.started_at,
+                    ).where(s.agent_runs.c.task_id == task_id, s.agent_runs.c.id == agent_id)
+                )
+            )
+            .mappings()
+            .first()
+        )
+    if found is None:
+        raise HTTPException(404, "Agent not found")
+    return dict(found)
 
 
 def _run_uri(kind: str, task_id: UUID, run: int) -> str:
@@ -981,6 +1012,57 @@ def create_app(
             ).mappings()
             return await task_views(conn, [dict(row) for row in rows])
 
+    @app.get("/api/tasks/page", response_model=TaskPage, tags=["tasks"])
+    async def task_page(
+        request: Request,
+        q: str = Query(default="", max_length=200),
+        status: TaskStatus | Literal["active", "ended"] | None = None,
+        mode: Literal["blackboard", "ctf"] | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ) -> TaskPage:
+        require_user_or_service(request)
+        conditions = []
+        if q.strip():
+            search = func.concat_ws(
+                " ", s.tasks.c.name, s.tasks.c.goal, sql_cast(s.tasks.c.id, Text)
+            )
+            conditions.append(search.icontains(q.strip(), autoescape=True))
+        if mode is not None:
+            conditions.append(s.tasks.c.mode == mode)
+        async with request.app.state.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            counts = {value.value: 0 for value in TaskStatus}
+            for name, count in await conn.execute(
+                select(s.tasks.c.status, func.count()).where(*conditions).group_by(s.tasks.c.status)
+            ):
+                counts[name] = count
+            if status is None:
+                total = sum(counts.values())
+            else:
+                states = {
+                    "active": ("created", "provisioning", "running", "closing"),
+                    "ended": ("finished", "stopped"),
+                }.get(status, (status,))
+                total = sum(counts.get(value, 0) for value in states)
+                conditions.append(s.tasks.c.status.in_(states))
+            rows = (
+                await conn.execute(
+                    select(s.tasks)
+                    .where(*conditions)
+                    .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).mappings()
+            return TaskPage(
+                items=await task_views(conn, [dict(row) for row in rows]),
+                total=total,
+                status_counts=counts,
+                limit=limit,
+                offset=offset,
+            )
+
     @app.get("/api/tasks/{task_id}", response_model=TaskView, tags=["tasks"])
     async def task_detail(request: Request, task_id: UUID) -> TaskView:
         require_task_reader(request, task_id)
@@ -1000,8 +1082,8 @@ def create_app(
         identity = require_user_or_service(request)
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
-        await _task(request, task_id)
-        if (await _task(request, task_id)).get("mode") == "ctf":
+        task = await _task(request, task_id)
+        if task.get("mode") == "ctf":
             await request.app.state.ctf_service.resume(
                 task_id,
                 body.request_id,
@@ -1322,8 +1404,8 @@ def create_app(
     @app.get("/api/tasks/{task_id}/state", tags=["board"])
     async def state(request: Request, task_id: UUID) -> dict[str, Any]:
         require_task_reader(request, task_id)
-        await _task(request, task_id)
-        if (await _task(request, task_id)).get("mode") == "ctf":
+        task = await _task(request, task_id)
+        if task.get("mode") == "ctf":
             from bbx_blackboard.ctf_api import state as ctf_state
 
             return await ctf_state(request, task_id)
@@ -1403,30 +1485,34 @@ def create_app(
     ) -> list[SearchHit]:
         require_task_reader(request, task_id)
         await _task(request, task_id)
-        board = await _service(request).state(task_id)
         needle = q.casefold() if q else ""
         hits: list[tuple[int, SearchHit]] = []
-        for kind, rows in (("fact", board["facts"]), ("intent", board["intents"])):
-            if type not in {"all", kind}:
-                continue
-            for item in rows.values():
-                haystack = " ".join(
-                    str(item.get(field) or "")
-                    for field in (
-                        ("statement",) if kind == "fact" else ("statement", "expected", "method")
+        async with request.app.state.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            for kind, table in (("fact", s.facts), ("intent", s.intents)):
+                if type not in {"all", kind}:
+                    continue
+                fields = ("statement",) if kind == "fact" else ("statement", "expected", "method")
+                rows = (
+                    await conn.execute(
+                        select(table.c.id, table.c.version, *(table.c[field] for field in fields))
+                        .where(table.c.task_id == task_id)
+                        .order_by(table.c.version)
                     )
-                ).casefold()
-                if needle in haystack:
-                    hits.append(
-                        (
-                            int(item["version"]),
-                            SearchHit(
-                                id=item["id"],
-                                type=cast(Literal["fact", "intent"], kind),
-                                statement=item["statement"],
-                            ),
+                ).mappings()
+                for item in rows:
+                    haystack = " ".join(str(item.get(field) or "") for field in fields).casefold()
+                    if needle in haystack:
+                        hits.append(
+                            (
+                                int(item["version"]),
+                                SearchHit(
+                                    id=item["id"],
+                                    type=cast(Literal["fact", "intent"], kind),
+                                    statement=item["statement"],
+                                ),
+                            )
                         )
-                    )
         return [hit for _, hit in sorted(hits, key=lambda row: row[0], reverse=True)[:k]]
 
     @app.get("/api/evidence", tags=["board"])
@@ -1576,7 +1662,7 @@ def create_app(
             derive_parallel=body.derive_parallel,
             derive_review=body.derive_review,
         )
-        agent = (await _service(request).state(task_id))["agents"][agent_id]
+        agent = await _agent_record(request, task_id, agent_id)
         derive_round = int(agent.get("derive_round") or 1) if body.task_type == "derive" else None
         return AgentRegistered(
             agent_id=agent_id,
@@ -1597,11 +1683,8 @@ def create_app(
             body = HeartbeatBody.model_validate(body.receipt.model_dump())
         if body.request_id is not None:
             return await _service(request).heartbeat(task_id, agent_id, **body.model_dump())
-        board = await _service(request).state(task_id)
-        agent = board["agents"].get(agent_id)
-        if agent is None:
-            raise HTTPException(404, "Agent not found")
-        task = board["task"]
+        task = await _task(request, task_id)
+        agent = await _agent_record(request, task_id, agent_id)
         profile = await _profiles(request).get(task["agent_profile"], task["agent_profile_version"])
         model = ModelConfig.model_validate(profile["models"][agent["task_type"]])
         return await _service(request).heartbeat(

@@ -1,3 +1,4 @@
+import { taskListRoute, fulfillTaskList } from './task-list-fixture';
 import { taskAction, closeRecords, expandSection } from './ui';
 import { mkdir } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
@@ -73,7 +74,7 @@ test('拓扑与 Agent 条目联动，时长增长，切换任务后编号和对�
     payload: event.type === 'agent.spawned' ? { id: 'agent-9', task_type: 'derive' }
       : event.type === 'task.created' ? { ...event.payload, goal: secondTask.goal } : event.payload,
   }));
-  await page.route('**/api/tasks', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify([secondTask]) }));
+  await page.route(taskListRoute, route => fulfillTaskList(route, [secondTask]));
   await page.route(`**/api/tasks/${secondId}`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondTask) }));
   await page.route(`**/api/tasks/${secondId}/events?*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondEvents) }));
   await page.route(`**/api/tasks/${secondId}/state`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(boardSnapshot(secondEvents)) }));

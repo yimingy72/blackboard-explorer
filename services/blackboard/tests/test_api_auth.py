@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
@@ -508,7 +509,18 @@ async def test_search_matches_text_and_orders_by_version(monkeypatch: pytest.Mon
         return {"id": _task_id}
 
     monkeypatch.setattr(api, "_task", fake_task)
-    app.state.board_service = SearchService()
+    rows = await SearchService().state(task_id)
+
+    class SearchEngine:
+        @asynccontextmanager
+        async def connect(self):
+            async def execute(query):
+                kind = query.get_final_froms()[0].name
+                return SimpleNamespace(mappings=lambda: list(rows[kind].values()))
+
+            yield SimpleNamespace(execution_options=AsyncMock(), execute=execute)
+
+    app.state.engine = SearchEngine()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,

@@ -1,12 +1,13 @@
 import LoadingState from './LoadingState';
 import { Alert, Avatar, Button, Collapse, Modal } from 'antd';
-import { Bubble, Sender } from '@ant-design/x';
+import { Sender } from '@ant-design/x';
+import ConversationBubbles from './ConversationBubbles';
 import InspectorActions from './InspectorActions';
 import ReasoningBlock from './ReasoningBlock';
 import ToolSteps from './ToolSteps';
 import {createAgentClientState,type AgentClientState} from './agentClientState';
 import { TaskCurrency } from '../pages/currency';
-import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { api, type AgentMessage, type PreviewData } from '../api/client';
@@ -134,13 +135,14 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     const fallback=useRef(createAgentClientState());const client=clientState??fallback.current;
     const alive=useRef(true);useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
     const draft=draftValue??localDraft;
-    const setDraft=(value:string)=>{client.draftRevision+=1;(onDraftChange??setLocalDraft)(value);};
+    const setDraft=useCallback((value:string)=>{client.draftRevision+=1;(onDraftChange??setLocalDraft)(value);},[client,onDraftChange]);
     const [infoOpen,setInfoOpen]=useState(false);
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState('');
+    const retryDraft = useCallback((text: string) => { setDraft(text); setSendError(''); }, [setDraft]);
     const messages = useQuery({ queryKey: ['agent-messages', taskId, agent.id], queryFn: ({ signal }) => api.getAgentMessages(taskId, agent.id, signal), staleTime: 2000, refetchInterval: query => !historical && (['running', 'concluding'].includes(agent.status) || query.state.data?.messages.some(message => ['queued', 'processing'].includes(message.status))) ? 3000 : false });
     const entries = useMemo(() => conversationEntries(agent.id, events, state, messages.data?.messages, historical), [agent.id, events, state, messages.data?.messages, historical]);
-    const hasTrace = entries.some((entry) => entry.type === 'trace');
+    const hasTrace = useMemo(() => entries.some((entry) => entry.type === 'trace'), [entries]);
     const elapsed = taskDuration(agent.startedAt, agent.finishedAt, historical ? events.at(-1)?.created_at : null, Date.now());
     const review = messages.data?.mode === 'review' || !['running', 'concluding'].includes(agent.status);
     useEffect(() => { heading.current?.focus({preventScroll:true}); }, [taskId, agent.id]);
@@ -165,16 +167,19 @@ export default function AgentConversation({ taskId, agent, label, events, state,
             if(alive.current)setSending(false);
         }
     }
-    const autoExpanded = new Set(entries.filter(entry=>entry.type==='trace'&&entry.kind==='model_output').slice(-6).map(entry=>entry.type==='trace'?entry.version:0));
+    const items = useMemo(() => {
+      const autoExpanded = new Set(entries.filter(entry=>entry.type==='trace'&&entry.kind==='model_output').slice(-6).map(entry=>entry.type==='trace'?entry.version:0));
+      return entries.map(entry=>({
+        key:entry.type==='chat'?entry.message.id:`${entry.type}-${entry.version}`,role:entry.type==='chat'&&entry.message.role==='user'?'user':'assistant',typing:false,streaming:false,
+        header:<div className={styles.entryHead}><strong>{entry.type==='chat'?entry.message.role==='user'?'你':'Agent 回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]+(entry.kind==='initial_context'&&entry.deriveRound?` · 第 ${entry.deriveRound} 轮`:'')}</strong><span>{entry.type!=='chat'?`v${entry.version} · `:''}{formatTime(entry.type==='chat'?entry.message.created_at:entry.type==='tool'?entry.call.createdAt:entry.at)}</span></div>,
+        content:<article aria-label={`${entry.type==='chat'?entry.message.role==='user'?'用户消息':'Agent回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]} ${entry.type==='chat'?entry.message.id:'v'+entry.version}`}>{entry.type==='chat'?<ChatMessage message={entry.message} onRetry={retryDraft} />:entry.type==='tool'?<ToolCall call={entry.call} />:<TraceBody entry={entry} autoOpen={autoExpanded.has(entry.version)} />}</article>,
+      }));
+    }, [entries, retryDraft]);
     return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`}>
       <header className={styles.header}><Avatar size={28} shape="square" style={{background:'var(--agent-tint,#eaf0fb)',color:'var(--agent-accent,#386ac0)'}}>{label.split(' ').at(-1)}</Avatar><div className={styles.identity}><h2 tabIndex={-1} ref={heading} title={agent.id}>{label}<small>{agentRole(agent)}{historical?' · 历史快照':''}</small></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div><InspectorActions onClose={onClose} onTraffic={onTraffic} closeLabel="关闭对话" menu={{items:[{key:'info',label:'运行信息'}],onClick:()=>setInfoOpen(true)}} /></header>
       {!hasTrace&&<p className={styles.empty}>{agent.status==='running'||agent.status==='concluding'?'对话记录尚未到达；工具调用会在此显示。':'此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
       {agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
-      <Bubble.List className={styles.messages} autoScroll={!historical} role={{assistant:{variant:'borderless',styles:{root:{paddingBlock:6,paddingInlineEnd:0,width:"100%",minWidth:0},content:{padding:0,minHeight:0,width:"100%"},body:{gap:4,width:"100%",minWidth:0},header:{marginBottom:2}}},user:{placement:'end',styles:{root:{paddingBlock:6,paddingInlineStart:'12%'},content:{padding:'7px 10px',minHeight:0},header:{marginBottom:2}}}}} items={entries.map(entry=>({
-        key:entry.type==='chat'?entry.message.id:`${entry.type}-${entry.version}`,role:entry.type==='chat'&&entry.message.role==='user'?'user':'assistant',typing:false,streaming:false,
-        header:<div className={styles.entryHead}><strong>{entry.type==='chat'?entry.message.role==='user'?'你':'Agent 回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]+(entry.kind==='initial_context'&&entry.deriveRound?` · 第 ${entry.deriveRound} 轮`:'')}</strong><span>{entry.type!=='chat'?`v${entry.version} · `:''}{formatTime(entry.type==='chat'?entry.message.created_at:entry.type==='tool'?entry.call.createdAt:entry.at)}</span></div>,
-        content:<article aria-label={`${entry.type==='chat'?entry.message.role==='user'?'用户消息':'Agent回复':entry.type==='tool'?'工具调用':traceLabels[entry.kind]} ${entry.type==='chat'?entry.message.id:'v'+entry.version}`}>{entry.type==='chat'?<ChatMessage message={entry.message} onRetry={text=>{setDraft(text);setSendError('');}} />:entry.type==='tool'?<ToolCall call={entry.call} />:<TraceBody entry={entry} autoOpen={autoExpanded.has(entry.version)} />}</article>,
-      }))} />
+      <ConversationBubbles className={styles.messages} autoScroll={!historical} items={items} />
       <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} onSubmit={()=>void send()} onKeyDown={event=>{if(event.key==='Enter'){if(event.ctrlKey||event.metaKey){event.preventDefault();void send();}return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
         {!historical&&review&&messages.data?.session_available===false&&<p className={styles.recordNote}>旧会话未保存，将基于已有黑板和记录开始复盘。</p>}{!historical&&review&&messages.data?.session_available&&messages.data.session_origin==='legacy'&&<p className={styles.recordNote}>此复盘会话基于旧任务记录初始化。</p>}
         {(sendError||messages.error)&&<Alert type="error" title={sendError||messages.error?.message} />}

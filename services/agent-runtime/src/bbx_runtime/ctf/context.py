@@ -16,16 +16,34 @@ from bbx_runtime.ctf.budget import ctf_max_output_tokens
 
 def message_signature(message: Message) -> str:
     """Compare saved material without serializing trace-only envelope metadata."""
+    return serialized_message_signature(
+        {
+            "role": str(message.role),
+            "message_id": message.message_id,
+            "author_name": message.author_name,
+            "contents": [content.to_dict() for content in message.contents],
+            "additional_properties": message.additional_properties,
+        }
+    )
+
+
+def serialized_message_signature(message: dict[str, Any]) -> str:
+    """Hash the native MAF snapshot directly; it has already serialized every Content."""
     payload = {
-        "role": str(message.role),
-        "message_id": message.message_id,
-        "author_name": message.author_name,
-        "contents": [content.to_dict() for content in message.contents],
-        "group": message.additional_properties.get(GROUP_ANNOTATION_KEY),
+        "role": str(message["role"]),
+        "message_id": message.get("message_id"),
+        "author_name": message.get("author_name"),
+        "contents": message.get("contents", []),
+        "group": message.get("additional_properties", {}).get(GROUP_ANNOTATION_KEY),
     }
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode()
     ).hexdigest()
+
+
+_ASCII_WORD_BYTES = (
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n\r\f\v\x1c\x1d\x1e\x1f"
+)
 
 
 def estimate_text_tokens(text: str) -> int:
@@ -34,12 +52,9 @@ def estimate_text_tokens(text: str) -> int:
     This is a sizing heuristic, not the provider's tokenizer. The input budget also
     leaves a 20% margin, and reported provider usage remains authoritative.
     """
-    ascii_words = sum(char.isascii() and (char.isalnum() or char.isspace()) for char in text)
-    other_bytes = sum(
-        len(char.encode("utf-8"))
-        for char in text
-        if not (char.isascii() and (char.isalnum() or char.isspace()))
-    )
+    encoded = text.encode("utf-8")
+    other_bytes = len(encoded.translate(None, _ASCII_WORD_BYTES))
+    ascii_words = len(encoded) - other_bytes
     return (ascii_words + 2) // 3 + other_bytes
 
 

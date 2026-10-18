@@ -27,6 +27,18 @@ interface BoardStore {
   setConnection: (taskId: string, connection: StreamConnection) => void;
 }
 
+let historyRequest: AbortController | null = null;
+
+function hasVersion(events: readonly BoardEvent[], version: number): boolean {
+  let lower = 0, upper = events.length;
+  while (lower < upper) {
+    const middle = (lower + upper) >>> 1;
+    if (events[middle].version < version) lower = middle + 1;
+    else upper = middle;
+  }
+  return events[lower]?.version === version;
+}
+
 export const useBoardStore = create<BoardStore>((set) => ({
   taskId: null,
   generation: 0,
@@ -38,7 +50,9 @@ export const useBoardStore = create<BoardStore>((set) => ({
   connection: 'closed',
   historyLoaded: false,
   historyLoading: false,
-  reset: (taskId) =>
+  reset: (taskId) => {
+    historyRequest?.abort();
+    historyRequest = null;
     set(current => ({
       taskId,
       generation: current.generation + 1,
@@ -50,7 +64,8 @@ export const useBoardStore = create<BoardStore>((set) => ({
       connection: taskId ? 'connecting' : 'closed',
       historyLoaded: false,
       historyLoading: false,
-    })),
+    }));
+  },
   hydrate: (taskId, state) =>
     set({
       taskId,
@@ -74,18 +89,19 @@ export const useBoardStore = create<BoardStore>((set) => ({
         return { events: [...current.events, ...batch], state: advanceBoard(current.state, batch) };
       }
       // Reconnects may repeat events or supply a previously missing older version.
-      const known = new Set(current.events.map(event => event.version));
-      const fresh = batch.filter(event => !known.has(event.version));
+      const fresh = batch.filter(event => !hasVersion(current.events, event.version));
       if (!fresh.length) return current;
       const events = orderedEvents([...current.events, ...fresh]);
       return { events, state: advanceBoard(current.baseState, events) };
     }),
   ensureHistory: async (taskId) => {
     const current = useBoardStore.getState();
-    if (current.taskId !== taskId || current.historyLoaded || current.historyLoading) return;
+    if (current.taskId !== taskId || current.historyLoaded || current.historyLoading || historyRequest) return;
+    const controller = new AbortController();
+    historyRequest = controller;
     useBoardStore.setState({ historyLoading: true });
     try {
-      const history = await api.getEvents(taskId, 0);
+      const history = await api.getEvents(taskId, 0, controller.signal);
       useBoardStore.setState((latest) => {
         if (latest.taskId !== taskId || latest.generation !== current.generation) return latest;
         const events = orderedEvents([...history, ...latest.events]);
@@ -101,6 +117,8 @@ export const useBoardStore = create<BoardStore>((set) => ({
       useBoardStore.setState((latest) =>
         latest.taskId === taskId && latest.generation === current.generation ? { historyLoading: false } : latest,
       );
+    } finally {
+      if (historyRequest === controller) historyRequest = null;
     }
   },
   setLoading: (taskId, loading) =>
@@ -112,6 +130,55 @@ export const useBoardStore = create<BoardStore>((set) => ({
   setConnection: (taskId, connection) =>
     set((current) => (current.taskId === taskId ? { connection } : current)),
 }));
+
+export function connectBoard(taskId: string | undefined): (() => void) | undefined {
+  const id = taskId?.trim();
+  useBoardStore.getState().reset(id || null);
+  if (!id) return;
+
+  const generation = useBoardStore.getState().generation;
+  const controller = new AbortController();
+  let disposed = false;
+  let source: EventSource | null = null;
+  let pending: BoardEvent[] = [];
+  let flushTimer: number | null = null;
+  const active = () => !disposed && useBoardStore.getState().generation === generation;
+  const flush = () => {
+    flushTimer = null;
+    if (!active() || !pending.length) return;
+    const batch = pending;
+    pending = [];
+    useBoardStore.getState().append(id, batch);
+  };
+  api.getState<BoardSnapshot>(id, controller.signal)
+    .then((snapshot) => {
+      if (!active()) return;
+      const hydrated = boardFromSnapshot(snapshot);
+      useBoardStore.getState().hydrate(id, hydrated.state);
+      source = openBoardStream(id, hydrated.version, {
+        onEvent: (event) => {
+          if (!active()) return;
+          pending.push(event);
+          if (flushTimer === null) flushTimer = window.setTimeout(flush, 50);
+        },
+        onConnection: (status) => { if (active()) useBoardStore.getState().setConnection(id, status); },
+        onError: (error) => { if (active()) useBoardStore.getState().setError(id, error); },
+      });
+    })
+    .catch((cause: unknown) => {
+      if (active()) {
+        useBoardStore.getState().setError(id, cause instanceof Error ? cause : new Error(String(cause)));
+      }
+    });
+
+  return () => {
+    disposed = true;
+    controller.abort();
+    if (flushTimer !== null) window.clearTimeout(flushTimer);
+    source?.close();
+    if (useBoardStore.getState().generation === generation) useBoardStore.getState().reset(null);
+  };
+}
 
 export function useBoard(taskId: string | undefined): {
   taskId: string | null;
@@ -136,51 +203,7 @@ export function useBoard(taskId: string | undefined): {
     if (taskId?.trim()) void useBoardStore.getState().ensureHistory(taskId.trim());
   }, [taskId]);
 
-  useEffect(() => {
-    const id = taskId?.trim();
-    const store = useBoardStore.getState();
-    store.reset(id || null);
-    if (!id) return;
-
-    let disposed = false;
-    let source: EventSource | null = null;
-    let pending: BoardEvent[] = [];
-    let flushTimer: number | null = null;
-    const flush = () => {
-      flushTimer = null;
-      if (disposed || !pending.length) return;
-      const batch = pending;
-      pending = [];
-      useBoardStore.getState().append(id, batch);
-    };
-    api.getState<BoardSnapshot>(id)
-      .then((snapshot) => {
-        if (disposed) return;
-        const hydrated = boardFromSnapshot(snapshot);
-        useBoardStore.getState().hydrate(id, hydrated.state);
-        const since = hydrated.version;
-        source = openBoardStream(id, since, {
-          onEvent: (event) => {
-            pending.push(event);
-            if (flushTimer === null) flushTimer = window.setTimeout(flush, 50);
-          },
-          onConnection: (status) => useBoardStore.getState().setConnection(id, status),
-          onError: (streamError) => useBoardStore.getState().setError(id, streamError),
-        });
-      })
-      .catch((cause: unknown) => {
-        if (!disposed) {
-          useBoardStore.getState().setError(id, cause instanceof Error ? cause : new Error(String(cause)));
-        }
-      });
-
-    return () => {
-      disposed = true;
-      if (flushTimer !== null) window.clearTimeout(flushTimer);
-      source?.close();
-      useBoardStore.getState().reset(null);
-    };
-  }, [taskId]);
+  useEffect(() => connectBoard(taskId), [taskId]);
 
   return {
     taskId: activeTaskId,

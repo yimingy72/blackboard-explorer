@@ -131,6 +131,12 @@ events = Table(
 )
 Index("ix_events_task_version", events.c.task_id, events.c.version)
 Index(
+    "ix_events_task_closing_version",
+    events.c.task_id,
+    events.c.version,
+    postgresql_where=events.c.type.in_(("task.closing", "task.stopped")),
+)
+Index(
     "ix_events_ctf_observation",
     events.c.task_id,
     events.c.object_id,

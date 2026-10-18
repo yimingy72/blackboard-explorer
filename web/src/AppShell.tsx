@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useLocation, useNavigate, useNavigation } from 'react-router-dom';
-import { Alert, Avatar, Button, Drawer, Dropdown, Layout, Menu, Tooltip } from 'antd';
+import { App as AntApp, Alert, Avatar, Button, Drawer, Dropdown, Layout, Menu, Tooltip } from 'antd';
 import { ApartmentOutlined, AppstoreOutlined, DownOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import { api } from './api/client';
 import { preloadPage } from './pages/routeModules';
@@ -9,7 +9,7 @@ import { tasksQueryOptions, taskQueryOptions } from './api/queries';
 import { taskTitle } from './pages/format';
 import styles from './styles/App.module.css';
 
-export default function AppShell() {
+function Shell() {
   const navigate = useNavigate(); const queryClient = useQueryClient();
   const { pathname } = useLocation();
   const pending = useNavigation().state === 'loading';
@@ -72,3 +72,5 @@ export default function AppShell() {
     }} styles={{ body: { padding: 12 } }}>{navigation(true, 'workspace-navigation-drawer')}</Drawer>
   </Layout>;
 }
+
+export default function AppShell() { return <AntApp><Shell /></AntApp>; }
