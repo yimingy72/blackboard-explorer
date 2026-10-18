@@ -67,3 +67,47 @@ it('does not replay a queued event that the newer snapshot already contains', ()
   expect(after).toBe(before);
   expect(after?.members[0].run_state).toBe('idle');
 });
+
+it('does not traverse object collections for diagnostic or already snapshotted events', () => {
+  const before = state();
+  let visits = 0;
+  function counted<T>(values: T[]): T[] {
+    return new Proxy(values, { get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) visits++;
+      return Reflect.get(target, key, receiver);
+    } });
+  }
+  before.members = counted(Array.from({ length: 1000 }, (_, index) => ({ ...before.members[0], id: `m${index}` })));
+  before.challenges = counted(Array.from({ length: 1000 }, (_, index) => ({ ...before.challenges![0], id: `c${index}` })));
+  before.records = counted(Array.from({ length: 1000 }, (_, index) => ({ id: `r${index}` } as NonNullable<CtfState['records']>[number])));
+  before.artifacts = counted(Array.from({ length: 1000 }, (_, index) => ({ id: `a${index}` } as NonNullable<CtfState['artifacts']>[number])));
+  expect(applyCtfEvents(before, [
+    event(11, 'agent.trace.recorded', {}), event(12, 'tool_call.recorded', {}),
+    event(5, 'ctf.turn.started', { agent_id: 'm0', id: 'obsolete' }),
+  ])).toBe(before);
+  expect(visits).toBe(0);
+});
+
+it('copies only a changed collection while retaining batch order and untouched references', () => {
+  const before = state();
+  let unrelatedReads = 0;
+  before.members.push({ ...before.members[0], id: 'untouched' });
+  before.records = new Proxy(Array.from({ length: 1000 }, (_, index) => ({ id: `r${index}` } as NonNullable<CtfState['records']>[number])), {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) unrelatedReads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const after = applyCtfEvents(before, [
+    event(11, 'ctf.turn.started', { agent_id: 'lead', id: 'first', generation: 1 }),
+    event(12, 'ctf.turn.finished', { agent_id: 'lead' }),
+    event(13, 'ctf.turn.started', { agent_id: 'lead', id: 'last', generation: 2 }),
+  ]);
+  expect(after?.members[0]).toMatchObject({ current_turn_id: 'last', generation: 2, run_state: 'running' });
+  expect(after?.members).not.toBe(before.members);
+  expect(after?.members[1]).toBe(before.members[1]);
+  expect(after?.records).toBe(before.records);
+  expect(after?.challenges).toBe(before.challenges);
+  expect(after?.artifacts).toBe(before.artifacts);
+  expect(unrelatedReads).toBe(0);
+});

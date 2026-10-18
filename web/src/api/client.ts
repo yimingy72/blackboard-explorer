@@ -192,9 +192,9 @@ export const api = {
     request<components['schemas']['StatusResult']>(`${taskPath(id)}/start`, { method: 'POST' }),
   stopTask: (id: string) =>
     request<components['schemas']['StatusResult']>(`${taskPath(id)}/stop`, { method: 'POST' }),
-  getEvents: (id: string, since = 0) =>
-    request<BoardEvent[]>(`${taskPath(id)}/events?since=${since}`),
-  getState: <T = Record<string, unknown>>(id: string) => request<T>(`${taskPath(id)}/state`),
+  getEvents: (id: string, since = 0, signal?: AbortSignal) =>
+    request<BoardEvent[]>(`${taskPath(id)}/events?since=${since}`, { signal }),
+  getState: <T = Record<string, unknown>>(id: string, signal?: AbortSignal) => request<T>(`${taskPath(id)}/state`, { signal }),
   getObject: (id: string, objectId: string) =>
     request<ObjectDetails>(`${taskPath(id)}/objects/${encodeURIComponent(objectId)}?depth=1`),
   listProfiles: () => request<ProfileName[]>('/profiles'),

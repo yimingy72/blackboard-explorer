@@ -13,7 +13,7 @@ import TrafficMessages from './TrafficMessages';
 import TrafficPacketDetails from './TrafficPacketDetails';
 import styles from './PacketInspector.module.css';
 
-type Props = { taskId: string; currentRun: number; runs: number[]; agents: { id: string; name: string }[]; initialAgentId?: string | null };
+type Props = { taskId: string; currentRun: number; runs: number[]; agents: { id: string; name: string }[]; initialAgentId?: string | null; active: boolean };
 type Feed = { page?: TrafficPage; rows: TrafficRecord[]; pending: TrafficRecord[]; unseen: number; error: Error | null };
 const captureLabels = { collecting: '采集中', complete: '已结束', partial: '采集不完整', error: '采集失败', archived: '已归档' };
 const examples = [
@@ -26,7 +26,7 @@ const examples = [
 ];
 const blankFeed = (): Feed => ({ rows: [], pending: [], unseen: 0, error: null });
 
-function usePacketFeed(taskId: string, filters: TrafficFilters) {
+function usePacketFeed(taskId: string, filters: TrafficFilters, active: boolean) {
   const [feed, setFeed] = useState<Feed>(blankFeed);
   const [paused, setPaused] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -45,16 +45,16 @@ function usePacketFeed(taskId: string, filters: TrafficFilters) {
         setFeed(previous => initial ? { ...blankFeed(), page, rows: incoming } : pausedRef.current
           ? { ...previous, page, pending: appendPackets(previous.pending, incoming), unseen: previous.unseen + incoming.length, error: null }
           : { ...previous, page, rows: appendPackets(previous.rows, incoming), error: null });
-        if (!page.capture?.finished_at || page.has_more) timer = setTimeout(() => void poll(), page.has_more ? 100 : 1000);
+        if (active && !page.capture?.finished_at || page.has_more) timer = setTimeout(() => void poll(), page.has_more ? 100 : 1000);
       } catch (error) {
         if (controller.signal.aborted) return;
         setFeed(previous => ({ ...previous, error: error instanceof Error ? error : new Error('流量读取失败。') }));
-        timer = setTimeout(() => void poll(), 3000);
+        if (active) timer = setTimeout(() => void poll(), 3000);
       }
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [taskId, filters, revision]);
+  }, [taskId, filters, revision, active]);
   function pause(value: boolean) {
     pausedRef.current = value; setPaused(value);
     if (!value) setFeed(previous => ({ ...previous, rows: appendPackets(previous.rows, previous.pending), pending: [], unseen: 0 }));
@@ -102,8 +102,8 @@ function DisplayFilter({ taskId, value, onApply }: { taskId: string; value: stri
   </div>;
 }
 
-function PacketSession({ taskId, filters, agents, expression, onFilter }: { taskId: string; filters: TrafficFilters; agents: Props['agents']; expression: string; onFilter: (expression: string) => void }) {
-  const feed = usePacketFeed(taskId, filters);
+function PacketSession({ taskId, filters, agents, expression, onFilter, active }: { taskId: string; filters: TrafficFilters; agents: Props['agents']; expression: string; onFilter: (expression: string) => void; active: boolean }) {
+  const feed = usePacketFeed(taskId, filters, active);
   const [selectedRow, setSelectedRow] = useState<TrafficRow | null>(null);
   const [follow, setFollow] = useState(true);
   const [before, setBefore] = useState<number>();
@@ -115,7 +115,7 @@ function PacketSession({ taskId, filters, agents, expression, onFilter }: { task
   const capture = feed.page?.capture;
   const ended = Boolean(capture?.finished_at);
   const owner = (agentId: string | null, attribution: TrafficRow['attribution']) => attribution === 'shared' ? '共享网关' : agentId ? agents.find(agent => agent.id === agentId)?.name ?? agentId : '未归属';
-  const nativeQuery = useTrafficNative(taskId, filters.run, filters.agentId || '', expression, filtered, !feed.paused && !ended);
+  const nativeQuery = useTrafficNative(taskId, filters.run, filters.agentId || '', expression, filtered, active && !feed.paused && !ended);
   const nativeState = nativeQuery.data;
   const revision = nativeState?.revision;
   const offset = nativeOffset ?? Math.max(0, (nativeState?.matched_packets ?? 0) - 200);
@@ -125,7 +125,7 @@ function PacketSession({ taskId, filters, agents, expression, onFilter }: { task
   const selected = useQuery({ queryKey: ['traffic-record', taskId, filters.run, recordId], queryFn: ({ signal }) => trafficApi.detail(taskId, filters.run, recordId!, signal), enabled: Boolean(recordId), retry: false, gcTime: 60000 });
   const selectedSource = selectedRow?.native?.source_id ?? selectedRow?.legacy?.packet?.source_id;
   const selectedNumber = selectedRow?.native?.source_number ?? selectedRow?.legacy?.packet?.number;
-  const detailQuery = useTrafficNative(taskId, filters.run, selectedRow?.agentId || '', '', !filtered && Boolean(selectedSource), !feed.paused && !ended);
+  const detailQuery = useTrafficNative(taskId, filters.run, selectedRow?.agentId || '', '', !filtered && Boolean(selectedSource), active && !feed.paused && !ended);
   const activeAnalysis = filtered ? nativeQuery : detailQuery;
   const nativeFrame = useQuery({ queryKey: ['traffic-native-frame', taskId, activeAnalysis.data?.id, activeAnalysis.data?.revision, selectedSource, selectedNumber], queryFn: ({ signal }) => trafficApi.nativeFrame(taskId, activeAnalysis.data!.id, activeAnalysis.data!.revision!, selectedSource!, selectedNumber!, signal), enabled: Boolean(selectedSource && selectedNumber && activeAnalysis.data?.revision), retry: false, gcTime: 60000 });
   const staleRevision = [nativeListing.error, nativeFrame.error].some(error => error instanceof ApiError && error.status === 409);
@@ -185,7 +185,7 @@ function PacketSession({ taskId, filters, agents, expression, onFilter }: { task
   </div>;
 }
 
-export default function PacketInspector({ taskId, currentRun, runs, agents, initialAgentId }: Props) {
+export default function PacketInspector({ taskId, currentRun, runs, agents, initialAgentId, active }: Props) {
   const [run, setRun] = useState(currentRun), [agentId, setAgentId] = useState(initialAgentId || ''), [expression, setExpression] = useState('');
   const filters = useMemo(() => ({ run, agentId }), [run, agentId]);
   const options = [...agents];
@@ -193,6 +193,6 @@ export default function PacketInspector({ taskId, currentRun, runs, agents, init
   return <div className={styles.inspector}>
     <div className={styles.scopeBar}><span className={styles.scopeLabel}>捕获范围</span><Select size="small" aria-label="流量轮次" value={run} options={[...new Set([currentRun, ...runs])].sort((a, b) => b - a).map(value => ({ value, label: `第 ${value} 轮` }))} onChange={setRun} /><Select size="small" className={styles.agentSelect} aria-label="流量 Agent" showSearch={{ optionFilterProp: 'label' }} value={agentId} options={[{ value: '', label: '全部 Agent' }, ...options.map(agent => ({ value: agent.id, label: agent.name }))]} onChange={setAgentId} /></div>
     <DisplayFilter taskId={taskId} value={expression} onApply={setExpression} />
-    <PacketSession key={JSON.stringify(filters)} taskId={taskId} filters={filters} agents={agents} expression={expression} onFilter={setExpression} />
+    <PacketSession key={JSON.stringify(filters)} taskId={taskId} filters={filters} agents={agents} expression={expression} onFilter={setExpression} active={active && run === currentRun} />
   </div>;
 }

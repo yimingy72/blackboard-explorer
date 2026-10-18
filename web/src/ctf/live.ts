@@ -40,10 +40,14 @@ export function ctfEventsNeedSnapshot(events: readonly CtfEvent[]): boolean {
 /** Fold event payloads into the current snapshot without refetching the whole CTF state. */
 export function applyCtfEvents(state: CtfState | undefined, events: readonly CtfEvent[]): CtfState | undefined {
   if (!state || !events.length) return state;
-  const members = new Map((state.members ?? []).map((member) => [member.id, member]));
-  const challenges = new Map((state.challenges ?? []).map((challenge) => [challenge.id, challenge]));
-  const records = new Map((state.records ?? []).map((record) => [record.id, record]));
-  const artifacts = new Map((state.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
+  let members: Map<string, CtfState['members'][number]> | undefined;
+  let challenges: Map<string, CtfChallenge> | undefined;
+  let records: Map<string, CtfRecord> | undefined;
+  let artifacts: Map<string, CtfArtifact> | undefined;
+  const memberMap = () => members ??= new Map((state.members ?? []).map((member) => [member.id, member]));
+  const challengeMap = () => challenges ??= new Map((state.challenges ?? []).map((challenge) => [challenge.id, challenge]));
+  const recordMap = () => records ??= new Map((state.records ?? []).map((record) => [record.id, record]));
+  const artifactMap = () => artifacts ??= new Map((state.artifacts ?? []).map((artifact) => [artifact.id, artifact]));
   let membersChanged = false, challengesChanged = false, recordsChanged = false, artifactsChanged = false;
 
   for (const event of events) {
@@ -52,21 +56,21 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
     if (event.type === 'ctf.member.created') {
       const member = payload as unknown as CtfState['members'][number];
       if (typeof member.id === 'string' && member.id) {
-        members.set(member.id, member);
+        memberMap().set(member.id, member);
         membersChanged = true;
       }
     } else if (event.type === 'ctf.member.state_changed' || event.type === 'ctf.member.removed') {
       const id = typeof payload.id === 'string' ? payload.id : '';
-      const current = members.get(id);
+      const current = memberMap().get(id);
       if (current && typeof payload.lifecycle === 'string') {
-        members.set(id, { ...current, lifecycle: payload.lifecycle as typeof current.lifecycle });
+        memberMap().set(id, { ...current, lifecycle: payload.lifecycle as typeof current.lifecycle });
         membersChanged = true;
       }
     } else if (event.type === 'ctf.turn.started') {
       const id = typeof payload.agent_id === 'string' ? payload.agent_id : '';
-      const current = members.get(id);
+      const current = memberMap().get(id);
       if (current) {
-        members.set(id, {
+        memberMap().set(id, {
           ...current,
           run_state: 'running',
           current_turn_id: typeof payload.id === 'string' ? payload.id : current.current_turn_id,
@@ -76,28 +80,28 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
       }
     } else if (event.type === 'ctf.turn.finished') {
       const id = typeof payload.agent_id === 'string' ? payload.agent_id : '';
-      const current = members.get(id);
+      const current = memberMap().get(id);
       if (current) {
-        members.set(id, { ...current, run_state: 'idle', current_turn_id: null } as typeof current);
+        memberMap().set(id, { ...current, run_state: 'idle', current_turn_id: null } as typeof current);
         membersChanged = true;
       }
     } else if (event.type === 'ctf.challenge.created' || event.type === 'ctf.challenge.updated') {
       const challenge = result(event) as unknown as CtfChallenge | null;
       if (challenge && typeof challenge.id === 'string' && challenge.id) {
-        challenges.set(challenge.id, challenge);
+        challengeMap().set(challenge.id, challenge);
         challengesChanged = true;
       }
     } else if (event.type === 'ctf.record.appended') {
       const record = result(event) as unknown as CtfRecord | null;
       if (record && typeof record.id === 'string' && record.id && record.kind !== 'artifact_registration') {
-        records.set(record.id, record);
+        recordMap().set(record.id, record);
         recordsChanged = true;
       }
     } else if (event.type === 'ctf.artifact.registered') {
       const value = result(event);
       const artifact = object(value?.artifact) ?? value;
       if (artifact && typeof artifact.id === 'string' && artifact.id) {
-        artifacts.set(artifact.id, artifact as unknown as CtfArtifact);
+        artifactMap().set(artifact.id, artifact as unknown as CtfArtifact);
         artifactsChanged = true;
       }
     }
@@ -106,9 +110,9 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
   if (!membersChanged && !challengesChanged && !recordsChanged && !artifactsChanged) return state;
   return {
     ...state,
-    ...(membersChanged ? { members: [...members.values()] } : {}),
-    ...(challengesChanged ? { challenges: [...challenges.values()] } : {}),
-    ...(recordsChanged ? { records: [...records.values()] } : {}),
-    ...(artifactsChanged ? { artifacts: [...artifacts.values()] } : {}),
+    ...(membersChanged ? { members: [...memberMap().values()] } : {}),
+    ...(challengesChanged ? { challenges: [...challengeMap().values()] } : {}),
+    ...(recordsChanged ? { records: [...recordMap().values()] } : {}),
+    ...(artifactsChanged ? { artifacts: [...artifactMap().values()] } : {}),
   };
 }
