@@ -3485,6 +3485,11 @@ export interface components {
         TrafficNativeCoverage: {
             /** Agent Id */
             agent_id?: string | null;
+            /**
+             * Analyzed
+             * @default true
+             */
+            analyzed: boolean;
             /** Available Bytes */
             available_bytes: number;
             /** Complete */

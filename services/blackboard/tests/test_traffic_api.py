@@ -138,6 +138,32 @@ async def test_pagination_filters_detail_and_streamed_raw_file(traffic):
     assert raw.headers["cache-control"] == "no-store"
 
 
+async def test_agent_filter_learns_old_chunk_owners_without_caching_payloads(traffic):
+    t = traffic
+    for attempt in range(2):
+        t.objects.reads.clear()
+        response = await t.client.get(
+            t.path, params={"run": 1, "agent_id": "absent"}, headers=t.headers
+        )
+        assert response.status_code == 200 and response.json()["records"] == []
+        chunks = [key for key in t.objects.reads if "/chunks/" in key]
+        assert len(chunks) == (2 if attempt == 0 else 0)
+    assert all(isinstance(value, frozenset) for value in t.app.state.traffic_chunk_owners.values())
+
+
+async def test_published_chunk_owners_skip_unrelated_archive_reads(traffic):
+    t = traffic
+    key = t.root + "manifest.json"
+    manifest = json.loads(t.objects.data[key])
+    manifest["chunks"][0]["agent_ids"] = ["a", "b"]
+    manifest["chunks"][1]["agent_ids"] = ["a"]
+    t.objects.data[key] = json.dumps(manifest).encode()
+    response = await t.client.get(t.path, params={"run": 1, "agent_id": "b"}, headers=t.headers)
+    assert response.status_code == 200
+    assert [row["seq"] for row in response.json()["records"]] == [2]
+    assert t.root + "chunks/chunk-2.json.gz" not in t.objects.reads
+
+
 async def test_protocol_filter_and_search_cover_transport_and_application_without_inference(
     traffic,
 ):

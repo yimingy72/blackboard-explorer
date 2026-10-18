@@ -4590,6 +4590,11 @@
             ],
             "title": "Agent Id"
           },
+          "analyzed": {
+            "default": true,
+            "title": "Analyzed",
+            "type": "boolean"
+          },
           "available_bytes": {
             "minimum": 0.0,
             "title": "Available Bytes",

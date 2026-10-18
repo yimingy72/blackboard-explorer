@@ -331,6 +331,9 @@ class TrafficChunk(ContractModel):
     source_id: str | None = Field(default=None, max_length=160)
     local_chunk_id: str | None = Field(default=None, max_length=160)
     detail_storage: Literal["record", "chunk"] = "record"
+    agent_ids: list[Annotated[str, Field(min_length=1, max_length=160)] | None] | None = Field(
+        default=None, max_length=1000
+    )
 
     @model_validator(mode="after")
     def bounded_bundle(self) -> TrafficChunk:
@@ -431,6 +434,7 @@ class TrafficNativeCoverage(ContractModel):
     packet_count: int = Field(ge=0)
     available_bytes: int = Field(ge=0)
     complete: bool
+    analyzed: bool = True
     decryption: Literal["available", "unavailable"]
     error: str | None = None
 

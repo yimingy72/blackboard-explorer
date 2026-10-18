@@ -11,11 +11,14 @@ import sys
 
 
 def main() -> None:
-    if sys.platform != "linux" or len(sys.argv) != 2:
+    if sys.platform != "linux" or len(sys.argv) not in {2, 3}:
         raise SystemExit("Native analysis requires the Linux decoder sandbox")
+    memory_limit = int(sys.argv[2]) if len(sys.argv) == 3 else 1024**3
+    if memory_limit not in {1024**3, 2 * 1024**3}:
+        raise SystemExit("Invalid native decoder memory budget")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
-    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
+    resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
     resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
     if os.geteuid() == 0:
         owner = os.stat(os.environ["HOME"]).st_uid

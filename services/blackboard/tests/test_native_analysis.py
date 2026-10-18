@@ -19,6 +19,7 @@ from bbx_blackboard.native import (
     NativeUnavailable,
     NativeWorker,
     create_cache_instance,
+    decoder_memory_limit,
     native_detail,
     process_birth,
 )
@@ -293,6 +294,86 @@ async def test_missing_native_part_is_error_and_never_successful_empty_result(na
     await query.future
     assert query.status == "error" and query.revision is None
     assert "resource limit" in query.error
+
+
+async def test_failed_revision_does_not_rebuild_on_poll_but_explicit_retry_recovers(native_app):
+    n = native_app
+    cache = n.app.state.native_cache
+    part_key = next(key for key in n.objects.data if "/parts/" in key)
+    saved = n.objects.data.pop(part_key)
+    query = cache.create(n.tid, 1, "", None, n.objects)
+    await cache.refresh(query, [n.ref])
+    await query.future
+    failed = query.future
+    for _ in range(3):
+        await cache.refresh(query, [n.ref])
+        assert query.status == "error" and query.future is failed
+    n.objects.data[part_key] = saved
+    query.last_build = 0
+    await cache.refresh(query, [n.ref], retry=True)
+    await query.future
+    assert query.status == "ready" and query.error is None and len(query.records) == 2
+
+
+async def test_failed_source_keeps_healthy_agent_results(native_app):
+    n = native_app
+    second = publish(n.objects, n.tid, "source-b", "member-2")
+    for key in list(n.objects.data):
+        if "/source-a/parts/" in key:
+            del n.objects.data[key]
+    cache = n.app.state.native_cache
+    query = cache.create(n.tid, 1, "", None, n.objects)
+    await cache.refresh(query, [n.ref, second])
+    await query.future
+    assert query.status == "partial" and query.revision
+    assert {row.agent_id for row in query.records} == {"member-2"}
+    assert [item.analyzed for item in query.coverage] == [False, True]
+    assert query.coverage[0].error and "1 个来源" in query.error
+    previous = query.future
+    await cache.refresh(query, [n.ref, second])
+    assert query.future is previous and query.status == "partial"
+
+
+async def test_result_budget_preserves_each_source_and_exact_limit_is_not_truncated(
+    native_app, monkeypatch
+):
+    import bbx_blackboard.native as module
+
+    monkeypatch.setattr(module, "RESULT_LIMIT", 4)
+    n = native_app
+    first = publish(n.objects, n.tid, numbers=(1, 2, 3, 4, 5))
+    second = publish(n.objects, n.tid, "source-b", "member-2", numbers=(1, 2))
+    cache = n.app.state.native_cache
+    query = cache.create(n.tid, 1, "", None, n.objects)
+    await cache.refresh(query, [first, second])
+    await query.future
+    assert query.truncated and len(query.records) == 4
+    assert {row.source_id for row in query.records} == {"source-a", "source-b"}
+    exact = publish(n.objects, n.tid, "source-c", "member-3", numbers=(1, 2, 3, 4))
+    scoped = cache.create(n.tid, 1, "", "member-3", n.objects)
+    await cache.refresh(scoped, [exact])
+    await scoped.future
+    assert scoped.status == "ready" and not scoped.truncated
+
+
+async def test_large_source_uses_one_worker_without_exceeding_pool_memory(native_app):
+    n = native_app
+    cache = n.app.state.native_cache
+    assert decoder_memory_limit(1024) == 1024**3
+    assert decoder_memory_limit(512 * 1024**2) == 2 * 1024**3
+    index = await cache._source_index(n.objects, n.tid, 1, n.ref)
+    async with cache._lease("checker", None):
+        pass
+    # Keep bytes tiny; only the advertised source size exercises budget admission here.
+    large = n.ref.model_copy(update={"available_bytes": 512 * 1024**2})
+    async with cache._lease("large", n.tid, n.objects, 1, large, index):
+        assert list(cache.sessions) == ["large"]
+        assert cache.sessions["large"].memory_limit == 2 * 1024**3
+        assert await cache.check("") == "fake-for-unit-tests"
+        assert list(cache.sessions) == ["large"]
+        with pytest.raises(NativeUnavailable, match="busy"):
+            async with cache._lease("another", None):
+                pass
 
 
 def test_native_tree_has_real_data_sources_and_never_exposes_secret_match_expressions():

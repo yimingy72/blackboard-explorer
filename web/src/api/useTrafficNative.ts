@@ -23,6 +23,10 @@ export function useTrafficNative(taskId: string, run: number, agentId: string, e
   const expired = progress.error instanceof ApiError && progress.error.status === 404;
   useEffect(() => { if (enabled && expired) void reopen(); }, [enabled, expired, reopen]);
   useEffect(() => { seen.current = data?.revision ?? null; }, [data?.revision]);
-  const refresh = useCallback(() => queryId && !expired ? refreshProgress() : reopen(), [queryId, expired, refreshProgress, reopen]);
+  const refresh = useCallback(async () => {
+    const result = await reopen();
+    if (result.data?.id === queryId) await refreshProgress();
+    return result;
+  }, [reopen, refreshProgress, queryId]);
   return { data, error: expired ? created.error : progress.error ?? created.error, refresh };
 }

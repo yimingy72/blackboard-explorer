@@ -269,6 +269,9 @@ def test_packet_tree_limits_cover_count_depth_and_total_text():
 def test_packet_bundle_and_capture_counters_keep_legacy_defaults():
     old = TrafficChunk(id="old", first_seq=1, last_seq=200, count=200)
     assert old.detail_storage == "record"
+    assert TrafficChunk(
+        id="owners", first_seq=1, last_seq=2, count=2, agent_ids=["agent-1", None]
+    ).agent_ids == ["agent-1", None]
     with pytest.raises(ValidationError):
         TrafficChunk(id="new", first_seq=1, last_seq=129, count=129, detail_storage="chunk")
     capture = TrafficCapture.model_validate(

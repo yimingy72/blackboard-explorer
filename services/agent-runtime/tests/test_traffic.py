@@ -115,6 +115,7 @@ async def test_capture_uploads_before_manifest_ack_and_preserves_canonical_ident
         manifest = TrafficManifest.model_validate_json(objects.data[value.prefix + "manifest.json"])
         assert manifest.status == "complete" and manifest.record_count == 1
         assert manifest.last_seq == 1 and manifest.files[0].size_bytes == 4
+        assert manifest.chunks[0].agent_ids == ["member-1"]
         detail = TrafficRecordDetail.model_validate_json(
             gzip.decompress(objects.data[value.prefix + "records/r-1.json.gz"])
         )
@@ -125,6 +126,19 @@ async def test_capture_uploads_before_manifest_ack_and_preserves_canonical_ident
             value.prefix + f"chunks/{manifest.chunks[0].id}.json.gz"
         )
         assert envd.calls.index("stop") < envd.calls.index("ack")
+    finally:
+        await value.close(discard=True)
+
+
+async def test_preview_loss_uses_its_counter_without_inventing_a_capture_error():
+    value = await collector(Envd(), Objects())
+    try:
+        value._status({"status": "partial", "preview_dropped": 5, "https": "enabled"})
+        assert value.manifest["status"] == "partial"
+        assert value.manifest["preview_dropped"] == 5
+        assert value.manifest["error"] is None
+        value._status({"status": "partial", "error": "Raw source stopped unexpectedly"})
+        assert value.manifest["error"] == "Raw source stopped unexpectedly"
     finally:
         await value.close(discard=True)
 
