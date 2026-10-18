@@ -208,6 +208,29 @@ async def test_review_registration_carries_required_review_flag():
     assert not runner.started.is_set()
 
 
+@pytest.mark.parametrize("action", [SpawnDerive(), SpawnExplore(seed=True)])
+async def test_review_busy_registration_waits_for_next_tick(action):
+    executor, service, manager, runner, _ = setup_executor()
+    service.register_agent.side_effect = RemoteError(
+        409, "Review in progress", "agent_review_active"
+    )
+    await executor.execute([action])
+    assert not runner.started.is_set() and executor.tasks == {}
+    manager.create_user.assert_not_awaited()
+    service.register_agent.side_effect = None
+    await executor.execute([action])
+    await runner.started.wait()
+    assert service.register_agent.await_count == 2
+    await executor.cancel("agent-1", "test_complete")
+
+
+async def test_unrelated_registration_conflict_still_propagates():
+    executor, service, _, _, _ = setup_executor()
+    service.register_agent.side_effect = RemoteError(409, "Other conflict", "different_conflict")
+    with pytest.raises(RemoteError):
+        await executor.execute([SpawnDerive()])
+
+
 async def test_closing_transitions_then_concludes_and_failure_concludes_then_transitions():
     executor, _service, _manager, _runner, history = setup_executor()
     await executor.execute([EnterClosing("accepted")])

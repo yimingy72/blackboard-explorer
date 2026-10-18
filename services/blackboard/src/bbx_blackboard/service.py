@@ -226,6 +226,23 @@ class BoardService:
             ):
                 state = await self.repo.load(conn, tid, include_tool_calls=False)
             events = decide(state, command, actor, data)
+            if command == "register_agent" and events[0]["type"] == "agent.reactivated":
+                processing = await conn.execute(
+                    select(s.agent_messages.c.id)
+                    .where(
+                        s.agent_messages.c.task_id == tid,
+                        s.agent_messages.c.agent_id == events[0]["object_id"],
+                        s.agent_messages.c.role == "user",
+                        s.agent_messages.c.status == "processing",
+                        s.agent_messages.c.lease_until > func.now(),
+                    )
+                    .limit(1)
+                )
+                if processing.first():
+                    raise HTTPException(
+                        409,
+                        {"code": "agent_review_active", "message": "Agent 复盘中，请稍后重试。"},
+                    )
             written = await self.repo.append(conn, tid, events)
             if command == "finish_agent":
                 await conn.execute(
