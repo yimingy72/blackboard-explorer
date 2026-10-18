@@ -1752,6 +1752,13 @@
       },
       "EventType": {
         "enum": [
+          "progress.settings.updated",
+          "progress.message.posted",
+          "progress.message.replied",
+          "progress.turn.completed",
+          "progress.usage.settled",
+          "progress.tree.updated",
+          "progress.turn.failed",
           "cost.reconciled",
           "task.created",
           "task.provisioning",
@@ -1824,6 +1831,19 @@
             ],
             "description": "执行环境内的原路径",
             "title": "Path"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "登记内容的完整 SHA-256",
+            "title": "Sha256"
           },
           "size": {
             "anyOf": [
@@ -3408,6 +3428,658 @@
         "title": "ProfileVersion",
         "type": "object"
       },
+      "ProgressCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "nodes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProgressNode"
+                },
+                "maxItems": 300,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodes"
+          },
+          "overview": {
+            "anyOf": [
+              {
+                "maxLength": 6000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overview"
+          },
+          "removed_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 300,
+            "title": "Removed Ids",
+            "type": "array"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "upserts": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressNode"
+            },
+            "maxItems": 300,
+            "title": "Upserts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number",
+          "expected_revision"
+        ],
+        "title": "ProgressCandidate",
+        "type": "object"
+      },
+      "ProgressCheckpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "knowledge_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Version"
+          },
+          "opening_instructions": {
+            "default": "",
+            "title": "Opening Instructions",
+            "type": "string"
+          },
+          "origin": {
+            "default": "progress",
+            "title": "Origin",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "session": {
+            "additionalProperties": true,
+            "title": "Session",
+            "type": "object"
+          },
+          "source_version": {
+            "minimum": 0.0,
+            "title": "Source Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number",
+          "session",
+          "expected_revision",
+          "source_version"
+        ],
+        "title": "ProgressCheckpoint",
+        "type": "object"
+      },
+      "ProgressComplete": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 40000,
+            "title": "Content",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number"
+        ],
+        "title": "ProgressComplete",
+        "type": "object"
+      },
+      "ProgressFail": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "error": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Error",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number",
+          "error"
+        ],
+        "title": "ProgressFail",
+        "type": "object"
+      },
+      "ProgressGlobalSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enabled Tools",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "prompt": {
+            "default": "",
+            "maxLength": 40000,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "ProgressGlobalSettings",
+        "type": "object"
+      },
+      "ProgressKeyStep": {
+        "additionalProperties": false,
+        "properties": {
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressSourceRef"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Source Refs",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "source_refs"
+        ],
+        "title": "ProgressKeyStep",
+        "type": "object"
+      },
+      "ProgressNode": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "assessment": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Assessment",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "key_steps": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressKeyStep"
+            },
+            "maxItems": 20,
+            "title": "Key Steps",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "goal",
+              "direction",
+              "finding",
+              "attempt",
+              "gap"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "limitations": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Limitations",
+            "type": "string"
+          },
+          "next_step": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Next Step",
+            "type": "string"
+          },
+          "order": {
+            "default": 0,
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "question": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Question",
+            "type": "string"
+          },
+          "significance": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Significance",
+            "type": "string"
+          },
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ProgressSourceRef"
+            },
+            "maxItems": 50,
+            "title": "Source Refs",
+            "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title"
+        ],
+        "title": "ProgressNode",
+        "type": "object"
+      },
+      "ProgressQuestion": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "ProgressQuestion",
+        "type": "object"
+      },
+      "ProgressRefresh": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "ProgressRefresh",
+        "type": "object"
+      },
+      "ProgressReserve": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "maximum": 32768.0,
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number",
+          "request_id",
+          "input_tokens",
+          "max_output_tokens"
+        ],
+        "title": "ProgressReserve",
+        "type": "object"
+      },
+      "ProgressSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_cost": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "2",
+            "title": "Max Cost"
+          },
+          "max_output_tokens": {
+            "default": 8192,
+            "maximum": 32768.0,
+            "minimum": 256.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "merge_seconds": {
+            "default": 10,
+            "maximum": 3600.0,
+            "minimum": 0.0,
+            "title": "Merge Seconds",
+            "type": "integer"
+          },
+          "min_interval_seconds": {
+            "default": 60,
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Min Interval Seconds",
+            "type": "integer"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "system_prompt": {
+            "default": "",
+            "maxLength": 40000,
+            "title": "System Prompt",
+            "type": "string"
+          }
+        },
+        "title": "ProgressSettings",
+        "type": "object"
+      },
+      "ProgressSettle": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "executed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": true,
+            "title": "Executed"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "usage_known": {
+            "default": true,
+            "title": "Usage Known",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "claim_token",
+          "run_number",
+          "request_id"
+        ],
+        "title": "ProgressSettle",
+        "type": "object"
+      },
+      "ProgressSourceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_uri": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Uri"
+          },
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "task",
+              "fact",
+              "intent",
+              "event",
+              "evidence",
+              "acceptance"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "version": {
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "version"
+        ],
+        "title": "ProgressSourceRef",
+        "type": "object"
+      },
       "PromptPaths": {
         "additionalProperties": false,
         "properties": {
@@ -4034,6 +4706,13 @@
             "default": false,
             "title": "Cleanup Ready",
             "type": "boolean"
+          },
+          "cost_breakdown": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cost Breakdown",
+            "type": "object"
           },
           "cost_currency": {
             "anyOf": [
@@ -7018,6 +7697,81 @@
         "summary": "Profile Version",
         "tags": [
           "profiles"
+        ]
+      }
+    },
+    "/api/progress/jobs/claim": {
+      "post": {
+        "operationId": "claim_post_api_progress_jobs_claim_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Claim Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/progress/settings": {
+      "get": {
+        "operationId": "global_get_api_progress_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Global Get",
+        "tags": [
+          "progress"
+        ]
+      },
+      "put": {
+        "operationId": "global_put_api_progress_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressGlobalSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Global Put",
+        "tags": [
+          "progress"
         ]
       }
     },
@@ -12369,6 +13123,1136 @@
         "summary": "Workspace Tree",
         "tags": [
           "tasks"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress": {
+      "get": {
+        "operationId": "progress_get_api_tasks__tid__progress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Progress Get",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/evidence": {
+      "get": {
+        "operationId": "evidence_get_api_tasks__tid__progress_evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uri",
+            "required": true,
+            "schema": {
+              "maxLength": 1000,
+              "title": "Uri",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha256",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 16000,
+              "maximum": 64000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Get",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/candidate": {
+      "post": {
+        "operationId": "candidate_post_api_tasks__tid__progress_jobs__jid__candidate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressCandidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Candidate Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/checkpoint": {
+      "post": {
+        "operationId": "checkpoint_post_api_tasks__tid__progress_jobs__jid__checkpoint_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressCheckpoint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Checkpoint Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/complete": {
+      "post": {
+        "operationId": "complete_post_api_tasks__tid__progress_jobs__jid__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/fail": {
+      "post": {
+        "operationId": "fail_post_api_tasks__tid__progress_jobs__jid__fail_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressFail"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fail Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/reserve": {
+      "post": {
+        "operationId": "reserve_post_api_tasks__tid__progress_jobs__jid__reserve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressReserve"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reserve Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/jobs/{jid}/settle": {
+      "post": {
+        "operationId": "settle_post_api_tasks__tid__progress_jobs__jid__settle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Jid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressSettle"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Settle Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/messages": {
+      "get": {
+        "operationId": "messages_get_api_tasks__tid__progress_messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Messages Get",
+        "tags": [
+          "progress"
+        ]
+      },
+      "post": {
+        "operationId": "messages_post_api_tasks__tid__progress_messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Messages Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/objects/{oid}": {
+      "get": {
+        "operationId": "object_get_api_tasks__tid__progress_objects__oid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "oid",
+            "required": true,
+            "schema": {
+              "title": "Oid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Object Get",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/refresh": {
+      "post": {
+        "operationId": "refresh_post_api_tasks__tid__progress_refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressRefresh"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Post",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/search": {
+      "get": {
+        "operationId": "search_get_api_tasks__tid__progress_search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_version",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Get",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/session": {
+      "get": {
+        "operationId": "session_get_api_tasks__tid__progress_session_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "claim_token",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Claim Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_number",
+            "required": true,
+            "schema": {
+              "title": "Run Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Get",
+        "tags": [
+          "progress"
+        ]
+      },
+      "put": {
+        "operationId": "session_put_api_tasks__tid__progress_session_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressCheckpoint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Put",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/settings": {
+      "get": {
+        "operationId": "settings_get_api_tasks__tid__progress_settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Settings Get",
+        "tags": [
+          "progress"
+        ]
+      },
+      "put": {
+        "operationId": "settings_put_api_tasks__tid__progress_settings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Settings Put",
+        "tags": [
+          "progress"
+        ]
+      }
+    },
+    "/api/tasks/{tid}/progress/sources": {
+      "get": {
+        "operationId": "sources_get_api_tasks__tid__progress_sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_version",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "through_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Through Version"
+            }
+          },
+          {
+            "in": "query",
+            "name": "object_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Object Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sources Get",
+        "tags": [
+          "progress"
         ]
       }
     }

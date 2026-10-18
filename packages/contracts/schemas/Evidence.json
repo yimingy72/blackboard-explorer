@@ -82,6 +82,20 @@
       "description": "证据字节数",
       "title": "Size"
     },
+    "sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "登记内容的完整 SHA-256",
+      "title": "Sha256"
+    },
     "auto": {
       "default": false,
       "description": "是否由系统自动附加",

@@ -33,6 +33,10 @@ class Principal:
     mode: str = "blackboard"
     generation: int | None = None
     turn_id: UUID | None = None
+    purpose: str = "solver"
+    progress_job_id: UUID | None = None
+    progress_claim_token: UUID | None = None
+    progress_run_number: int | None = None
 
 
 def issue_agent_token(
@@ -56,6 +60,25 @@ def issue_agent_token(
             ),
             **({"derive_round": derive_round} if derive_round is not None else {}),
             "exp": datetime.now(UTC) + timedelta(days=7),
+        },
+        settings.agent_token_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+
+
+def issue_progress_token(
+    settings: Settings, task_id: UUID, job_id: UUID, claim_token: UUID, run_number: int
+) -> str:
+    return jwt.encode(
+        {
+            "aud": "agent",
+            "tid": str(task_id),
+            "aid": "__progress__",
+            "purpose": "progress",
+            "job_id": str(job_id),
+            "claim_token": str(claim_token),
+            "run_number": run_number,
+            "exp": datetime.now(UTC) + timedelta(minutes=30),
         },
         settings.agent_token_secret.get_secret_value(),
         algorithm="HS256",
@@ -111,6 +134,12 @@ def principal(request: Request) -> Principal:
                 agent_id=claims["aid"],
                 derive_round=int(claims["derive_round"]) if "derive_round" in claims else None,
                 mode=claims.get("mode", "blackboard"),
+                purpose=claims.get("purpose", "solver"),
+                progress_job_id=UUID(claims["job_id"]) if "job_id" in claims else None,
+                progress_claim_token=UUID(claims["claim_token"])
+                if "claim_token" in claims
+                else None,
+                progress_run_number=int(claims["run_number"]) if "run_number" in claims else None,
                 generation=int(claims["generation"]) if "generation" in claims else None,
                 turn_id=UUID(claims["turn_id"]) if "turn_id" in claims else None,
             )
@@ -125,13 +154,17 @@ def require_task_reader(request: Request, task_id: UUID) -> Principal:
     identity = principal(request)
     if identity.kind == "agent" and identity.task_id != task_id:
         raise HTTPException(403, "Task access denied")
+    if identity.purpose == "progress":
+        prefix = f"/api/tasks/{task_id}/progress"
+        if not (request.url.path == prefix or request.url.path.startswith(prefix + "/")):
+            raise HTTPException(403, "Progress capability cannot access solver APIs")
     return identity
 
 
 def require_agent_writer(request: Request, task_id: UUID) -> Principal:
     identity = require_task_reader(request, task_id)
-    if identity.kind != "agent":
-        raise HTTPException(403, "Agent token required")
+    if identity.kind != "agent" or identity.purpose != "solver":
+        raise HTTPException(403, "Solver agent token required")
     return identity
 
 

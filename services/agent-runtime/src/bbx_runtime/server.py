@@ -6,6 +6,7 @@ import signal
 from bbx_runtime.chatworker import ChatWorker
 from bbx_runtime.clients import BlackboardClient, object_store
 from bbx_runtime.execenv import ExecEnvManager
+from bbx_runtime.progress.worker import ProgressWorker
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.scheduler.lock import RuntimeLock
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
@@ -38,13 +39,16 @@ async def serve(settings: SchedulerSettings) -> None:
             supervisor = TaskSupervisor(settings, service, manager, runner)
             await service.recover_conversations()
             chat = ChatWorker(settings, service)
+            progress = ProgressWorker(settings, service)
             work = asyncio.create_task(supervisor.run(), name="task-supervision")
             chat_work = asyncio.create_task(chat.run(), name="review-conversations")
+            progress_work = asyncio.create_task(progress.run(), name="progress-curation")
             shutdown = asyncio.create_task(stopped.wait())
             lost = asyncio.create_task(instance.lost.wait())
             try:
                 done, _ = await asyncio.wait(
-                    [work, chat_work, shutdown, lost], return_when=asyncio.FIRST_COMPLETED
+                    [work, chat_work, progress_work, shutdown, lost],
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
                 if lost in done:
                     raise RuntimeError("Runtime database lock connection was lost")
@@ -52,7 +56,12 @@ async def serve(settings: SchedulerSettings) -> None:
                     await work
                 if chat_work in done:
                     await chat_work
+                if progress_work in done:
+                    await progress_work
             finally:
+                await progress.stop()
+                progress_work.cancel()
+                await asyncio.gather(progress_work, return_exceptions=True)
                 await chat.stop()
                 chat_work.cancel()
                 await asyncio.gather(chat_work, return_exceptions=True)

@@ -43,6 +43,7 @@ from bbx_blackboard.auth import (
     check_user_password,
     issue_agent_token,
     issue_user_token,
+    principal,
     require_agent_writer,
     require_service,
     require_task_reader,
@@ -61,6 +62,7 @@ from bbx_blackboard.native_api import router as native_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
+from bbx_blackboard.progress import router as progress_router
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
@@ -114,6 +116,7 @@ class TaskView(BaseModel):
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
     cost_currency: str | None = None
+    cost_breakdown: dict[str, str] = Field(default_factory=dict)
     id: UUID
     mode: Literal["blackboard", "ctf"] = "blackboard"
     goal: str
@@ -603,6 +606,28 @@ def create_app(
     app.state.native_cache = NativeAnalysisCache()
 
     async def ctf_boundary(request: Request) -> Response | None:
+        # Presentation capabilities never enter a solver endpoint, including future routes.
+        if request.headers.get("authorization") or request.cookies.get(COOKIE_NAME):
+            try:
+                identity = principal(request)
+                if identity.purpose == "progress":
+                    prefix = f"/api/tasks/{identity.task_id}/progress"
+                    path = request.url.path
+                    allowed_read = request.method == "GET" and (
+                        path == prefix
+                        or path in {prefix + "/sources", prefix + "/search", prefix + "/evidence"}
+                        or path.startswith(prefix + "/objects/")
+                    )
+                    allowed_candidate = request.method == "POST" and path == (
+                        prefix + f"/jobs/{identity.progress_job_id}/candidate"
+                    )
+                    if not (allowed_read or allowed_candidate):
+                        return JSONResponse(
+                            {"detail": "Progress capability cannot access this API"},
+                            status_code=403,
+                        )
+            except HTTPException:
+                pass
         if request.app.state.engine is None and request.app.state.ctf_service is None:
             return None
         match = re.match(r"^/api/tasks/([0-9a-fA-F-]{36})(/.*)?$", request.url.path)
@@ -961,6 +986,7 @@ def create_app(
             )
         ).mappings():
             runs.setdefault(row["task_id"], []).append(dict(row))
+        progress_costs = {task["id"]: task.get("progress_cost") or "0" for task in tasks}
         result = []
         for task in tasks:
             models = profiles.get((task["agent_profile"], task["agent_profile_version"]))
@@ -980,6 +1006,14 @@ def create_app(
                     deleting=task["deleting"],
                     acceptance_state=task["acceptance_state"],
                     usage=task["usage"],
+                    cost_breakdown={
+                        "solver": str(task["usage"].get("cost", 0)),
+                        "progress": str(progress_costs.get(task["id"], "0")),
+                        "total": str(
+                            Decimal(str(task["usage"].get("cost", 0)))
+                            + Decimal(str(progress_costs.get(task["id"], "0")))
+                        ),
+                    },
                     agents=agents.get(task["id"], []),
                     report_uri=task.get("report_uri"),
                     workspace_uri=task.get("workspace_uri"),
@@ -1011,7 +1045,13 @@ def create_app(
             await conn.execution_options(isolation_level="REPEATABLE READ")
             rows = (
                 await conn.execute(
-                    select(s.tasks)
+                    select(
+                        s.tasks,
+                        select(s.task_progress.c.data["cost"].astext)
+                        .where(s.task_progress.c.task_id == s.tasks.c.id)
+                        .scalar_subquery()
+                        .label("progress_cost"),
+                    )
                     .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
                     .limit(limit)
                     .offset(offset)
@@ -1055,7 +1095,13 @@ def create_app(
                 conditions.append(s.tasks.c.status.in_(states))
             rows = (
                 await conn.execute(
-                    select(s.tasks)
+                    select(
+                        s.tasks,
+                        select(s.task_progress.c.data["cost"].astext)
+                        .where(s.task_progress.c.task_id == s.tasks.c.id)
+                        .scalar_subquery()
+                        .label("progress_cost"),
+                    )
                     .where(*conditions)
                     .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
                     .limit(limit)
@@ -1076,7 +1122,17 @@ def create_app(
         async with request.app.state.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
             task = (
-                (await conn.execute(select(s.tasks).where(s.tasks.c.id == task_id)))
+                (
+                    await conn.execute(
+                        select(
+                            s.tasks,
+                            select(s.task_progress.c.data["cost"].astext)
+                            .where(s.task_progress.c.task_id == s.tasks.c.id)
+                            .scalar_subquery()
+                            .label("progress_cost"),
+                        ).where(s.tasks.c.id == task_id)
+                    )
+                )
                 .mappings()
                 .first()
             )
@@ -1879,6 +1935,7 @@ def create_app(
     app.include_router(ctf_router)
     app.include_router(platform_router)
     app.include_router(settings_router)
+    app.include_router(progress_router)
     web_dist = _web_dist()
     if web_dist.is_dir():
         app.mount("/", SPAStaticFiles(directory=web_dist, html=True), name="web")

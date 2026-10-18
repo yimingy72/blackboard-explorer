@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "content": {
+      "default": "",
+      "maxLength": 40000,
+      "title": "Content",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number"
+  ],
+  "title": "ProgressComplete",
+  "type": "object"
+}

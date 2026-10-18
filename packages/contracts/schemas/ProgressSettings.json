@@ -1,0 +1,79 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "max_cost": {
+      "anyOf": [
+        {
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "default": "2",
+      "title": "Max Cost"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "model_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Version"
+    },
+    "system_prompt": {
+      "default": "",
+      "maxLength": 40000,
+      "title": "System Prompt",
+      "type": "string"
+    },
+    "merge_seconds": {
+      "default": 10,
+      "maximum": 3600,
+      "minimum": 0,
+      "title": "Merge Seconds",
+      "type": "integer"
+    },
+    "min_interval_seconds": {
+      "default": 60,
+      "maximum": 86400,
+      "minimum": 0,
+      "title": "Min Interval Seconds",
+      "type": "integer"
+    },
+    "max_output_tokens": {
+      "default": 8192,
+      "maximum": 32768,
+      "minimum": 256,
+      "title": "Max Output Tokens",
+      "type": "integer"
+    }
+  },
+  "title": "ProgressSettings",
+  "type": "object"
+}

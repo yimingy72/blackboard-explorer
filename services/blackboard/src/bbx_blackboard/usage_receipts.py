@@ -220,6 +220,8 @@ async def reconcile_receipts(service, conn, tid, aid=None) -> bool:
         agents = [aid]
     changed = False
     for agent_id in agents:
+        if agent_id == "__progress__":
+            continue
         for value in await saved_receipts(conn, tid, agent_id):
             receipt = receipt_value(value)
             result = await settle_receipt(service, conn, tid, agent_id, receipt.request)

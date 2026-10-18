@@ -181,6 +181,8 @@ async def test_post_fact_uploads_file_and_system_toolcall_evidence(tmp_path: Pat
     digest = hashlib.sha256(b"proof").hexdigest()[:12]
     uri = f"evidence/{TASK}/agent-1/{digest}-proof.txt"
     assert evidence[0].uri == uri and evidence[0].auto is False
+    assert evidence[0].sha256 == hashlib.sha256(b"proof").hexdigest()
+    assert evidence[1].sha256 is None
     assert evidence[1].uri == f"toolcalls/{TASK}/{CALL_ID}.txt"
     assert evidence[1].auto is True and evidence[1].type == "command_output"
     assert objects.data[uri] == b"proof"

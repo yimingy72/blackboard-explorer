@@ -172,6 +172,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     """Project one durable event into folded tables."""
     tid, kind, p, version = evt["task_id"], evt["type"], evt["payload"], evt["version"]
     stamp = evt["created_at"]
+    if kind.startswith("progress."):
+        return
     if kind.startswith("ctf."):
         await apply_ctf_view(conn, evt)
     elif kind == "task.created":

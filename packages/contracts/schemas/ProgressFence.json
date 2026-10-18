@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number"
+  ],
+  "title": "ProgressFence",
+  "type": "object"
+}

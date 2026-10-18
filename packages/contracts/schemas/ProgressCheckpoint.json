@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "session": {
+      "additionalProperties": true,
+      "title": "Session",
+      "type": "object"
+    },
+    "opening_instructions": {
+      "default": "",
+      "title": "Opening Instructions",
+      "type": "string"
+    },
+    "origin": {
+      "default": "progress",
+      "title": "Origin",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "source_version": {
+      "minimum": 0,
+      "title": "Source Version",
+      "type": "integer"
+    },
+    "knowledge_version": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Knowledge Version"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number",
+    "session",
+    "expected_revision",
+    "source_version"
+  ],
+  "title": "ProgressCheckpoint",
+  "type": "object"
+}
