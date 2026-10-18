@@ -101,8 +101,8 @@ BBX_E2E_BROWSER='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' p
 ## 提交划分
 
 1. 已完成设计独立提交 `0c0b463`。
-2. `feat(progress): add fenced MAF curation and intent-guided progress storage`：合同、迁移、后端、MAF运行与提示词、集成回归。
-3. `feat(web): add readable task progress tree and curator conversation`：画布、详情、对话、配置、创建入口、双视图与浏览器检查。
-4. `docs: record progress tree delivery and deployment`：报告、交接与正式前端规范。
+2. `cfc8eef feat(progress): add fenced MAF curation and intent-guided progress storage`：合同、迁移、后端、MAF运行与提示词、集成回归。
+3. `5c39470 feat(web): add readable task progress tree and curator conversation`：画布、详情、对话、配置、创建入口、双视图与浏览器检查。
+4. `b6cc4bf docs: record progress tree delivery and deployment`：报告、交接与正式前端规范；后续文档补记提交标识。
 
 本轮不合并main、不推送GitHub；用户测试确认后可独立发布Git。
