@@ -82,6 +82,32 @@ async def test_sse_burst_debounces_once_and_stop_keeps_reason(monkeypatch):
     assert service.since == [0]
 
 
+async def test_diagnostic_storm_advances_cursor_without_decisions_but_progress_still_wakes():
+    service, executor = FakeStreamService(), FakeExecutor()
+    loop = SchedulerLoop(cast(ActionExecutor, executor), cast(BlackboardClient, service), Params())
+    loop._listener = asyncio.create_task(loop._listen())
+    try:
+        for version in range(1, 1001):
+            await service.events.put(
+                {
+                    "version": version,
+                    "type": "agent.trace.recorded" if version % 2 else "tool_call.recorded",
+                }
+            )
+        for _ in range(100):
+            if loop._last_version == 1000:
+                break
+            await asyncio.sleep(0)
+        assert loop._last_version == 1000
+        assert not loop._wake.is_set()
+        assert loop._event_serial == 0
+        await service.events.put({"version": 1001, "type": "agent.progress"})
+        await asyncio.wait_for(loop._wake.wait(), 1)
+        assert loop._last_version == 1001 and loop._event_serial == 1
+    finally:
+        await loop.stop()
+
+
 async def test_fallback_ticks_and_external_ticks_share_one_lock(monkeypatch):
     monkeypatch.setattr(loop_module, "FALLBACK_SECONDS", 0.05)
     monkeypatch.setattr(loop_module, "decide", lambda *_args: [])

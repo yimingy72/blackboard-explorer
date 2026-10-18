@@ -9,7 +9,7 @@ from agent_framework import AgentSession, Message
 
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
-from bbx_runtime.ctf.context import message_signature
+from bbx_runtime.ctf.context import message_signature, serialized_message_signature
 from bbx_runtime.session import SessionCheckpoint, repair_unpaired_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,8 @@ class TurnSessionClient:
 
     async def put_agent_session(self, task_id: str, agent_id: str, **payload: Any) -> Any:
         self.write_error = None
-        proof = confirmed_history(payload["session"])
+        messages = payload["session"].get("state", {}).get("in_memory", {}).get("messages", [])
+        proof = tuple(serialized_message_signature(message) for message in messages)
         epoch = payload["session"].get("state", {}).get("ctf_history_view", {}).get("epoch", 0)
         deliveries = payload.pop("deliveries")
         payload.pop("review_claim", None)
