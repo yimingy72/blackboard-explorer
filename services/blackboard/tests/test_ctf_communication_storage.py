@@ -11,7 +11,18 @@ import pytest
 from bbx_blackboard.ctf import CtfService
 from bbx_blackboard.store import schema as s
 from fastapi import HTTPException
-from sqlalchemy import ARRAY, JSON, Column, Integer, MetaData, Table, create_engine, insert, select
+from sqlalchemy import (
+    ARRAY,
+    JSON,
+    Column,
+    Integer,
+    MetaData,
+    Table,
+    create_engine,
+    event,
+    insert,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB, dialect
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.schema import CreateIndex
@@ -40,6 +51,11 @@ def storage(monkeypatch):
         if name != "events":
             monkeypatch.setattr(s, name, tables[name])
     database = create_engine("sqlite://")
+
+    @event.listens_for(database, "connect")
+    def postgres_uuid(dbapi_connection, _record):
+        dbapi_connection.create_function("gen_random_uuid", 0, lambda: str(uuid4()))
+
     metadata.create_all(database)
     queries = []
 

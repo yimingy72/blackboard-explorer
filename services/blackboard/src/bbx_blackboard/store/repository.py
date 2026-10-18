@@ -8,7 +8,7 @@ from uuid import UUID
 
 from bbx_contracts.billing import add_usage
 from bbx_contracts.storage import storage_safe
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -644,28 +644,65 @@ class Repository:
         if found.scalar_one_or_none() is None:
             raise KeyError(f"task {tid} does not exist")
 
+    async def load_agent(self, conn: AsyncConnection, tid: UUID, aid: str) -> BoardState:
+        task = await row(conn, s.tasks, tid)
+        agent = (
+            (
+                await conn.execute(
+                    select(s.agent_runs).where(
+                        s.agent_runs.c.task_id == tid, s.agent_runs.c.id == aid
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return BoardState(task=task, agents={aid: dict(agent)} if agent else {})
+
+    async def tool_call_refs(
+        self, conn: AsyncConnection, tid: UUID, identifiers: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        if not identifiers:
+            return {}
+        records = await conn.execute(
+            select(s.tool_calls.c.id, s.tool_calls.c.agent_id).where(
+                s.tool_calls.c.task_id == tid, s.tool_calls.c.id.in_(identifiers)
+            )
+        )
+        return {record["id"]: dict(record) for record in records.mappings()}
+
     async def load(
         self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
     ) -> BoardState:
         task = await row(conn, s.tasks, tid)
+        latest_version = select(func.max(s.events.c.version)).where(s.events.c.task_id == tid)
+        # Fixed predicates let generic prepared plans use the partial closing index.
+        latest_closing = (
+            select(s.events.c.payload)
+            .where(
+                s.events.c.task_id == tid,
+                s.events.c.type.in_(
+                    (literal_column("'task.closing'"), literal_column("'task.stopped'"))
+                ),
+            )
+            .order_by(s.events.c.version.desc())
+            .limit(1)
+        )
         event_state = (
             (
                 await conn.execute(
                     select(
-                        func.coalesce(func.max(s.events.c.version), 0).label("version"),
-                        func.array_agg(s.events.c.payload, order_by=s.events.c.version.desc())
-                        .filter(s.events.c.type.in_(("task.closing", "task.stopped")))
-                        .label("closings"),
-                    ).where(s.events.c.task_id == tid)
+                        func.coalesce(latest_version.scalar_subquery(), 0).label("version"),
+                        latest_closing.scalar_subquery().label("closing"),
+                    )
                 )
             )
             .mappings()
             .one()
         )
         task["version"] = int(event_state["version"])
-        closings = event_state["closings"] or []
-        if closings and isinstance(closings[0], dict):
-            task["closing_reason"] = closings[0].get("reason")
+        if isinstance(event_state["closing"], dict):
+            task["closing_reason"] = event_state["closing"].get("reason")
 
         async def mapped(table):
             rows = (

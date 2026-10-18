@@ -16,7 +16,7 @@ from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, insert, literal_column, select, update
+from sqlalchemy import cast, func, insert, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.conversations import Conversations
@@ -25,12 +25,14 @@ from bbx_blackboard.ctf_lifecycle import CtfLifecycleMixin
 from bbx_blackboard.ctf_platform import CtfPlatformMixin
 from bbx_blackboard.ctf_readback import CtfReadbackMixin
 from bbx_blackboard.ctf_review import CtfReviewMixin
+from bbx_blackboard.domain.rules import event
 from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
 
 LOGGER = logging.getLogger(__name__)
+MAILBOX_BATCH_SIZE = 1000
 
 
 def require(condition: bool, detail: str) -> None:
@@ -1431,35 +1433,54 @@ class CtfService(
             ):
                 return []
             messages = (
-                await conn.execute(
-                    select(s.ctf_messages)
-                    .where(
-                        s.ctf_messages.c.task_id == tid,
-                        s.ctf_messages.c.recipient_id == agent_id,
-                        s.ctf_messages.c.status.in_(["queued", "leased"]),
-                        s.ctf_messages.c.purpose == turn["purpose"],
-                        s.ctf_messages.c.kind != "review_result",
-                        s.ctf_messages.c.deferred.is_(False),
+                (
+                    await conn.execute(
+                        select(s.ctf_messages)
+                        .where(
+                            s.ctf_messages.c.task_id == tid,
+                            s.ctf_messages.c.recipient_id == agent_id,
+                            s.ctf_messages.c.status.in_(["queued", "leased"]),
+                            s.ctf_messages.c.purpose == turn["purpose"],
+                            s.ctf_messages.c.kind != "review_result",
+                            s.ctf_messages.c.deferred.is_(False),
+                        )
+                        .order_by(s.ctf_messages.c.recipient_sequence)
                     )
-                    .order_by(s.ctf_messages.c.recipient_sequence)
                 )
-            ).mappings()
-            result = []
+                .mappings()
+                .all()
+            )
             for message in messages:
-                values = {
-                    "status": "leased",
-                    "claim_turn_id": str(turn_id),
-                    "claim_generation": generation,
-                    "claim_token": message["claim_token"] or str(uuid4()),
-                    "lease_until": now() + timedelta(seconds=300),
-                }
                 require(
                     message["claim_turn_id"] in {None, str(turn_id)},
                     "Mailbox owned by another turn",
                 )
-                await patch(conn, s.ctf_messages, tid, values, message["id"])
-                result.append({**message, **values})
-            return result
+            if not messages:
+                return []
+            result = []
+            lease_until = now() + timedelta(seconds=300)
+            for offset in range(0, len(messages), MAILBOX_BATCH_SIZE):
+                batch = messages[offset : offset + MAILBOX_BATCH_SIZE]
+                updated = await conn.execute(
+                    update(s.ctf_messages)
+                    .where(
+                        s.ctf_messages.c.task_id == tid,
+                        s.ctf_messages.c.id.in_([message["id"] for message in batch]),
+                    )
+                    .values(
+                        status="leased",
+                        claim_turn_id=str(turn_id),
+                        claim_generation=generation,
+                        claim_token=func.coalesce(
+                            s.ctf_messages.c.claim_token,
+                            cast(func.gen_random_uuid(), s.ctf_messages.c.claim_token.type),
+                        ),
+                        lease_until=lease_until,
+                    )
+                    .returning(s.ctf_messages)
+                )
+                result.extend(dict(message) for message in updated.mappings())
+            return sorted(result, key=lambda message: message["recipient_sequence"])
 
     async def renew_turn(self, tid, agent_id, turn_id, generation):
         async with self.repo.engine.begin() as conn:
@@ -1633,11 +1654,37 @@ class CtfService(
             task = await self._task(conn, tid)
             _, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
             ids = history_ids(session)
+            message_ids = [
+                str(delivery.get("message_id", delivery.get("id"))) for delivery in deliveries
+            ]
+            claimed = {}
+            for offset in range(0, len(message_ids), MAILBOX_BATCH_SIZE):
+                records = await conn.execute(
+                    select(
+                        *(
+                            s.ctf_messages.c[name]
+                            for name in (
+                                "id",
+                                "recipient_id",
+                                "sender_id",
+                                "kind",
+                                "purpose",
+                                "claim_turn_id",
+                                "claim_generation",
+                                "claim_token",
+                            )
+                        )
+                    ).where(
+                        s.ctf_messages.c.task_id == tid,
+                        s.ctf_messages.c.id.in_(message_ids[offset : offset + MAILBOX_BATCH_SIZE]),
+                    )
+                )
+                claimed.update((message["id"], message) for message in records.mappings())
             accepted = []
-            for delivery in deliveries:
-                mid = str(delivery.get("message_id", delivery.get("id")))
-                msg = await row(conn, s.ctf_messages, tid, mid)
+            for mid, delivery in zip(message_ids, deliveries, strict=True):
                 require(mid in ids, "Delivery is absent from persisted history")
+                require(mid in claimed, "Stale mailbox claim")
+                msg = claimed[mid]
                 require(
                     msg["recipient_id"] == agent_id
                     and msg["purpose"] == turn["purpose"]
@@ -1657,32 +1704,47 @@ class CtfService(
                 expected_revision,
                 return_session=False,
             )
-            assignments = list(turn["assignment_message_ids"])
-            for msg in accepted:
-                await patch(
-                    conn,
-                    s.ctf_messages,
-                    tid,
-                    {
-                        "status": "delivered",
-                        "delivered_turn_id": str(turn_id),
-                        "session_revision": saved["revision"],
-                    },
-                    msg["id"],
+            for offset in range(0, len(accepted), MAILBOX_BATCH_SIZE):
+                await conn.execute(
+                    update(s.ctf_messages)
+                    .where(
+                        s.ctf_messages.c.task_id == tid,
+                        s.ctf_messages.c.id.in_(
+                            [msg["id"] for msg in accepted[offset : offset + MAILBOX_BATCH_SIZE]]
+                        ),
+                    )
+                    .values(
+                        status="delivered",
+                        delivered_turn_id=str(turn_id),
+                        session_revision=saved["revision"],
+                    )
                 )
+            assignments = list(turn["assignment_message_ids"])
+            assignment_ids = set(assignments)
+            for msg in accepted:
                 if (
                     turn["purpose"] == "execution"
                     and msg["kind"] == "instruction"
-                    and msg["id"] not in assignments
+                    and msg["id"] not in assignment_ids
                 ):
                     assignments.append(msg["id"])
-                await self._emit(
+                    assignment_ids.add(msg["id"])
+            if accepted:
+                written = await self.repo.append(
                     conn,
                     tid,
-                    "message.delivered",
-                    agent_id,
-                    {"id": msg["id"], "session_revision": saved["revision"]},
+                    [
+                        event(
+                            "ctf.message.delivered",
+                            agent_id,
+                            {"id": msg["id"], "session_revision": saved["revision"]},
+                            msg["id"],
+                            addressed_to=[msg["sender_id"], msg["recipient_id"]],
+                        )
+                        for msg in accepted
+                    ],
                 )
+                await self.repo.notify(tid, written[-1]["version"], connection=conn)
             await patch(
                 conn,
                 s.ctf_turns,
