@@ -56,7 +56,7 @@ function ProgressStep({ taskId, entry, name, latest }: { taskId: string; entry: 
     <div className={detailStyles.stepContent}>
       <div className={detailStyles.stepMeta}><span>{name(entry.actorId)}</span><span className={detailStyles.stage}>{stage ? stageLabels[stage] : record.kind === 'help_request' ? '增援' : '记录'}</span></div>
       <button type="button" className={detailStyles.stepToggle} aria-expanded={open} aria-controls={`progress-body-${record.id}`} onClick={() => setOpen(!open)}><strong>{entry.title}</strong><Icon name="chevron" className={open ? detailStyles.rotated : ''} /></button>
-      {!open && <p className={detailStyles.stepSummary}>{entry.detail}</p>}
+      {!open && entry.detail.trim() !== entry.title.trim() && <p className={detailStyles.stepSummary}>{entry.detail}</p>}
       {open && <div id={`progress-body-${record.id}`} className={detailStyles.stepBody}><Record taskId={taskId} record={record} name={name} compact /></div>}
       {!!record.artifact_refs?.length && <div className={detailStyles.fileChips}>{record.artifact_refs.map(artifact => <Artifact key={artifact.id} taskId={taskId} artifact={artifact} />)}</div>}
     </div>

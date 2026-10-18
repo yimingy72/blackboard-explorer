@@ -5,7 +5,7 @@
 .identity h2:focus { outline:none; }
 .identity h2 small { margin-left:7px; font-size:12px; color:var(--color-muted); font-weight:400; }
 .identity p { margin:3px 0 0; font-size:12px; color:var(--color-muted); }
-.messages { flex:1; min-height:0; padding:10px 12px; }
+.messages { flex:1; min-height:0; padding:12px 16px; }
 .entryHead { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; color:var(--color-muted); font-size:12px; line-height:1.4; }
 .entryHead strong { font-size:12px; color:#526175; font-weight:500; }
 .chatText { font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
@@ -27,7 +27,7 @@
 .contentActions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px; font-size:12px; }
 .contentActions a { color:var(--color-primary); }
 .reasoning,.rawSource { margin-top:8px; }
-.composer { flex:none; padding:9px 12px 10px; border-top:1px solid #eef1f5; }
+.composer { flex:none; padding:10px 14px; border-top:1px solid var(--color-line); }
 .composerHint { display:flex; justify-content:space-between; gap:8px; color:var(--color-muted); font-size:12px; padding-top:5px; }
 .metrics { display:grid; grid-template-columns:120px minmax(0,1fr); gap:10px; font-size:13px; }
 .metrics dt { color:var(--color-muted); }

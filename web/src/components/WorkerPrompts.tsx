@@ -54,7 +54,7 @@ export default function WorkerPrompts({ role, prompt, tools, onPromptChange, onT
         }
     }
     return <div className={styles.workerContent}>
-    <div className={styles.workerForm}><section className={styles.promptColumn}><div className={styles.promptLabel}><label className={controls.label} htmlFor={`prompt-${role}`}>完整系统提示词</label><span>下一次模型调用生效</span></div>
+    <div className={styles.workerForm}><section className={styles.promptColumn}><div className={styles.promptLabel}><label className={controls.label} htmlFor={`prompt-${role}`}>完整系统提示词</label></div>
     <Input.TextArea id={`prompt-${role}`} className={controls.textarea} classNames={{textarea:styles.promptEditor}} styles={{textarea:{height:"42vh",minHeight:360}}} value={prompt} onChange={(event) => onPromptChange(event.target.value)} spellCheck={false} disabled={disabled}/></section><aside className={styles.toolsColumn}>
 
     <fieldset className={styles.toolFieldset}><legend>内置工具</legend><div className={styles.toolChecks}>{builtin[role].map((name) => <label key={name} className={styles.checkRow}><Checkbox checked={tools.builtin.includes(name)} disabled={disabled || required[role].includes(name)} onChange={(event) => onToolsChange({ ...tools, builtin: event.target.checked ? [...tools.builtin, name] : tools.builtin.filter((item) => item !== name) })}/>{name}{required[role].includes(name) && <small>必需</small>}</label>)}</div></fieldset>

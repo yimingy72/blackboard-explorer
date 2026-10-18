@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { App as AntApp } from 'antd';
 import { XProvider } from '@ant-design/x';
 import zhCN from 'antd/locale/zh_CN';
 import xZhCN from '@ant-design/x/locale/zh_CN';
@@ -21,6 +20,6 @@ export default function AppRoot() {
   }, []);
   useEffect(() => { const media = matchMedia('(max-width: 899px)'); const update = () => setNarrow(media.matches); media.addEventListener('change', update); return () => media.removeEventListener('change', update); }, []);
   return <XProvider locale={{ ...zhCN, ...xZhCN }} virtual={false} wave={{disabled:true}} button={{autoInsertSpace:false}} theme={appTheme(reduced, narrow)}>
-    <AntApp><QueryClientProvider client={queryClient}><App /></QueryClientProvider></AntApp>
+    <QueryClientProvider client={queryClient}><App /></QueryClientProvider>
   </XProvider>;
 }

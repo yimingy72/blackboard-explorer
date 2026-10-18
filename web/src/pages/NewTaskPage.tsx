@@ -160,10 +160,9 @@ export default function NewTaskPage() {
         }
     }
     return <div className={styles.page}>
-      <header className={styles.heading}><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>返回任务</Button><h1>创建任务</h1></header>
+      <header className={styles.heading}><div className={styles.headingIdentity}><Button type="text" icon={<ArrowLeftOutlined />} aria-label="返回任务" onClick={() => navigate('/tasks')} /><h1>创建任务</h1></div><div className={styles.modePicker}><Segmented disabled={pending || locked} aria-label="协作模式" value={mode} options={[{ label: '黑板探索', value: 'blackboard' }, { label: 'CTF 团队', value: 'ctf' }]} onChange={(value) => setMode(value as typeof mode)} /></div></header>
       <form onSubmit={submit} className={styles.form} aria-busy={pending}>
         <Form component={false} layout="vertical" disabled={pending || locked}>
-          <div className={styles.modePicker}><Segmented disabled={pending || locked} aria-label="协作模式" value={mode} options={[{ label: '黑板探索', value: 'blackboard' }, { label: 'CTF 团队', value: 'ctf' }]} onChange={(value) => setMode(value as typeof mode)} /></div>
           <div className={styles.layout}>
             <section className={styles.editor} aria-label="任务内容">
               <Form.Item label="任务名" htmlFor="task-name"><Input id="task-name" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="为本次任务命名" /></Form.Item>
@@ -182,9 +181,10 @@ export default function NewTaskPage() {
               {(models.isError || providers.isError) && !unauthorized && <Alert type="error" title="模型选项读取失败" action={<Button size="small" onClick={() => { void models.refetch(); void providers.refetch(); }}>重试</Button>} />}
               {!models.isLoading && !models.isError && !models.data?.some((item) => item.enabled) && <Alert type="warning" title="当前没有可用模型" description="在新标签配置模型，返回后刷新模型列表。" action={<Button href="/profiles?section=models" target="_blank" rel="noopener noreferrer">添加模型</Button>} />}
               <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />
+              <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
             </aside>
           </div>
-          <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
+
         </Form>
       </form>
     </div>;
