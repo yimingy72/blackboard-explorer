@@ -221,6 +221,7 @@ export const api = {
     request<WorkerSettings>('/settings/runtime', { method: 'PUT', body: JSON.stringify({ expected_revision, ...input }) }),
   listProviders: () => request<ProviderSpec[]>('/platform/providers'),
   listPlatformModels: () => request<PlatformModel[]>('/platform/models'),
+  deletePlatformModel: (name: string) => request<void>(`/platform/models/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   createPlatformModel: (input: PlatformModelInput) =>
     request<PlatformModel>('/platform/models', { method: 'POST', body: JSON.stringify(input) }),
   setDefaultPlatformModel: (name: string) =>

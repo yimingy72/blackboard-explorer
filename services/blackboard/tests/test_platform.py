@@ -92,6 +92,27 @@ async def test_platform_credentials_are_service_only_and_validation_never_echoes
         assert "input" not in invalid.json()["detail"][0]
 
 
+async def test_delete_model_requires_user_or_service():
+    settings = config()
+    app = create_app(settings)
+    app.state.platform_store = AsyncMock()
+    path = "/api/platform/models/example"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.delete(path)).status_code == 401
+        denied = await client.delete(
+            path,
+            headers={"Authorization": f"Bearer {issue_agent_token(settings, uuid4(), 'agent-1')}"},
+        )
+        assert denied.status_code == 403
+        app.state.platform_store.delete_model.assert_not_awaited()
+        for token in [issue_user_token(settings, "tester"), "test-service"]:
+            response = await client.delete(path, headers={"Authorization": f"Bearer {token}"})
+            assert response.status_code == 204 and response.content == b""
+        assert app.state.platform_store.delete_model.await_count == 2
+
+
 async def test_mcp_discovery_lists_all_pages_without_executing_tools_or_leaking_errors(monkeypatch):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace

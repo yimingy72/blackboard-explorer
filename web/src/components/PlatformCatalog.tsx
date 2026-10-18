@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/ProfilesPage.module.css';
-import { PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { reasoningOptions } from './reasoningOptions';
 const blankModel: PlatformModelInput = {
     label: '', provider: '', model: '', base_url: '', reasoning_effort: 'none',
@@ -178,6 +178,38 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
             setSaving(false); onBusyChange?.(false);
         }
     }
+    async function removeModel() {
+        if (kind !== 'models' || !active || saving) return;
+        const target = active;
+        const confirmed = await new Promise<boolean>(resolve => modal.confirm({
+            title: `删除模型「${target.label}」？`,
+            content: <><p>从模型配置和新任务选项中移除。已有任务仍使用原模型快照和凭据。</p>{'is_default' in target && target.is_default && <p>同时取消平台默认模型，请重新指定。</p>}{dirty && <p>当前未保存的修改也会丢弃。</p>}</>,
+            okText: '删除模型', cancelText: '取消', okButtonProps: { danger: true },
+            onOk: () => resolve(true), onCancel: () => resolve(false),
+        }));
+        if (!confirmed) return;
+        setSaving(true); onBusyChange?.(true);
+        setError(''); setNotice('');
+        try {
+            await api.deletePlatformModel(target.name);
+            await queryClient.cancelQueries({ queryKey: ['platform-models'] });
+            const remaining = (queryClient.getQueryData<PlatformModel[]>(['platform-models']) ?? []).filter(item => item.name !== target.name);
+            queryClient.setQueryData(['platform-models'], remaining);
+            if (remaining.length) {
+                await choose(remaining.find(item => item.is_default) ?? remaining[0], true);
+            } else {
+                setName(''); setOriginalName(''); setOriginal(''); setModel(blankModel);
+                setAdvanced([]); setPriceError('');
+            }
+            onDirtyChange(false);
+            setNotice(`已删除 ${target.label}。`);
+            await queryClient.invalidateQueries({ queryKey: ['platform-models'] });
+        } catch (cause) {
+            setError(errorText(cause));
+        } finally {
+            setSaving(false); onBusyChange?.(false);
+        }
+    }
     const setPrice = (key: 'cache_hit_per_m' | 'cache_miss_per_m' | 'output_per_m', value: string) => setModel({ ...model, price: { ...model.price, [key]: value === '' ? '' : Number(value) } });
     function validUrl(value: string) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol); } catch { return false; } }
     function validateModel(): string {
@@ -212,7 +244,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
       <form className={styles.catalogForm} noValidate onSubmit={event=>{event.preventDefault();void save();}}>
         <header className={styles.contentHeader}>
           <div className={styles.connectionPicker}><Select aria-label={kind==='models'?'模型连接':'MCP 服务'} className={styles.resourceSelect} value={name || undefined} placeholder={original ? `新增${kind==='models'?'模型':'服务'}` : '选择连接'} loading={kind==='models'?models.isLoading:servers.isLoading} options={items?.map(item=>({value:item.name,label:item.label})) ?? []} onChange={value=>{const item=items?.find(entry=>entry.name===value);if(item)void choose(item);}} />{active && 'is_default' in active && active.is_default && <Tag>默认</Tag>}<Button type="text" icon={<PlusOutlined />} onClick={()=>void create()} disabled={saving}>新增{kind==='models'?'模型':'MCP 服务'}</Button></div>
-          {original && <div className={styles.headerActions}><Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}<Button aria-label="保存" aria-busy={saving} size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
+          {original && <div className={styles.headerActions}><Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}{kind==='models'&&active&&<Button aria-label="删除模型" size="small" type="text" danger icon={<DeleteOutlined />} disabled={saving} onClick={()=>void removeModel()}>删除模型</Button>}<Button aria-label="保存" aria-busy={saving} size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
         </header>
         {error && <Alert type="error" title={error} showIcon className={styles.feedback} />}{notice && <Alert role="status" type="success" title={notice} showIcon className={styles.feedback} />}
         {(kind==='models'?models.isError:servers.isError) && <Alert type="error" title={`加载失败：${errorText(kind==='models'?models.error:servers.error)}`} action={<Button onClick={()=>{void (kind==='models'?models.refetch():servers.refetch());}}>重试</Button>} />}

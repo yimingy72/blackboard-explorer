@@ -285,6 +285,7 @@ platform_configs = Table(
     col("credential_source", Text, nullable=False),
     col("secret_ciphertext", Text),
     col("enabled", Boolean, nullable=False, server_default=text("true")),
+    col("deleted", Boolean, nullable=False, server_default=text("false")),
     col("created_by", Text, nullable=False),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )

@@ -176,6 +176,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
   const events = structuredClone(options.largeGraph ? largeGraphEvents() : ordinaryEvents());
   const profiles = new Map<number, MockProfile>([[1, profile('旧版探索模板')], [2, profile('新版探索模板')]]);
   const modelSaves: Record<string, unknown>[] = [];
+  const modelDeletes: string[] = [];
   const workerSaves: Record<string, unknown>[] = [];
   const runtimeSaves: Record<string, unknown>[] = [];
   let revision = 2;
@@ -350,6 +351,13 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     if (path === '/api/platform/models' && method === 'GET') return json(route, platformModels);
     if (path === '/api/platform/mcp-servers' && method === 'GET') return json(route, mcpServers);
     const modelMatch = /^\/api\/platform\/models\/([^/]+)$/.exec(path);
+    if (modelMatch && method === 'DELETE') {
+      const name = decodeURIComponent(modelMatch[1]);
+      modelDeletes.push(name);
+      const index = platformModels.findIndex(item => item.name === name);
+      if (index >= 0) platformModels.splice(index, 1);
+      return route.fulfill({ status: 204 });
+    }
     const isModelCreate = path === '/api/platform/models' && method === 'POST';
     if (modelMatch && method === 'POST' || isModelCreate) {
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -392,7 +400,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);
   });
-  return { taskFixture: task, unexpected, events, profiles, modelSaves, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
+  return { taskFixture: task, unexpected, events, profiles, modelSaves, modelDeletes, mcpSaves, workerSaves, runtimeSaves, resumeSaves, platformModels, mcpServers, get revision() { return revision; }, set revision(value: number) { revision = value; } };
 }
 
 /** Send a synthetic event through the same listener path as the mocked SSE source. */
