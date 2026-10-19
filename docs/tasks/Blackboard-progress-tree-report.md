@@ -2,7 +2,7 @@
 
 日期：2026-10-19。分支 `feature/blackboard-progress-tree`，工作树 `/Users/yym/bbx-wt/platform-performance-audit`。
 
-用户2026-10-18批准方案后，设计先单独提交为 `0c0b463`。此前已部署的对话输入修复独立保留为 `6f7eece`、`50036ad`、`cdf1780`，未混为成果树修改，也未在本轮合并main或推送。
+用户2026-10-18批准方案后，设计先单独提交为 `0c0b463`。此前已部署的对话输入修复独立保留为 `6f7eece`、`50036ad`、`cdf1780`，未混为成果树修改。开发部署检查点与之后的Git发布分开记录，发布详情见文末。
 
 ## 已完成
 
@@ -105,4 +105,12 @@ BBX_E2E_BROWSER='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' p
 3. `5c39470 feat(web): add readable task progress tree and curator conversation`：画布、详情、对话、配置、创建入口、双视图与浏览器检查。
 4. `b6cc4bf docs: record progress tree delivery and deployment`：报告、交接与正式前端规范；后续文档补记提交标识。
 
-本轮不合并main、不推送GitHub；用户测试确认后可独立发布Git。
+上述开发部署检查点未合并main或推送；用户之后明确要求发布，执行结果如下。
+
+## Git发布（2026-10-19）
+
+用户明确要求提交、合并main并推送GitHub。先将已部署的前置对话修复单独合并为 `4888b45`，再将成果树分支合并为 `5540815`，两次均无冲突。设计 `0c0b463`、后端/MAF `cfc8eef`、前端 `5c39470` 和文档提交保持原有划分，没有压缩、改写提交或混入运行数据。
+
+合并树与已验证的 `feature/blackboard-progress-tree@7803777` 完全一致，沿用同版2247普通检查、20项隔离集成、155前端、151浏览器及生产构建，不为纯Git发布重复运行模型或集成测试。之后仅补记报告和交接的发布状态。推送目标为 `origin/main`（`yimingy72/blackboard-explorer`），完成时核对远端与本地HEAD一致。
+
+本次Git发布不重新构建镜像、不重启本地或公网服务，不启用旧任务的成果整理，也不改任务、预算、配置或存档。开发工作树及其中忽略的备份和发布证据保留，不在此处删除。

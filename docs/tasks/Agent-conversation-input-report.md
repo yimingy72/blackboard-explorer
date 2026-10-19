@@ -66,3 +66,7 @@ BBX_E2E_BROWSER='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
 1. `fix(web): restore agent messaging on HTTP origins`：统一 UUID、六处入口、键盘发送和前端回归。
 2. `fix(conversations): allow safe in-task derive reviews`：普通模式复盘准入、会话互斥、调度等待及后端回归。
 3. `docs: record agent conversation input repair`：任务、报告与交接记录。
+
+## Git发布补记（2026-10-19）
+
+代码已按上述三组提交为 `6f7eece`、`50036ad`、`cdf1780`。用户授权成果树发布后，本修复作为已部署的前置依赖先单独合并main为 `4888b45`，随后合入成果树，统一推送GitHub。Git发布没有代码冲突或服务重启，沿用同版既有检查，任务及费用数据保持。
