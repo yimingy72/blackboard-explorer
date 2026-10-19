@@ -320,6 +320,7 @@ def make_client(
     explore_max_steps: int,
     conclude_grace_calls: int,
     max_duration_seconds: int,
+    max_retries: int | None = None,
 ) -> BaseChatClient[Any]:
     provider = model.provider
     if provider not in PROVIDERS:
@@ -342,20 +343,39 @@ def make_client(
         "max_iterations": explore_max_steps + conclude_grace_calls + 5,
         "max_duration_seconds": max_duration_seconds,
     }
+    if max_retries is not None and max_retries < 0:
+        raise ValueError("Model retry limit must be nonnegative")
+
+    def configured(client: Any) -> Any:
+        if max_retries is not None:
+            if provider.startswith("anthropic"):
+                client.anthropic_client.max_retries = max_retries
+            elif provider == "mistral":
+                if max_retries != 0:
+                    raise ValueError("Explicit Mistral retries only support zero")
+                client.client.sdk_configuration.retry_config = None
+            elif provider == "foundry":
+                client.client.max_retries = max_retries
+        return client
+
     key = secrets.get("api_key", "not-required")
     if provider in {"anthropic", "anthropic_foundry", "anthropic_bedrock", "anthropic_vertex"}:
         common = {"model": model.model, "function_invocation_configuration": config}
         if provider == "anthropic":
-            return AnthropicClient(api_key=key, base_url=model.base_url, **common)
+            return configured(AnthropicClient(api_key=key, base_url=model.base_url, **common))
         if provider == "anthropic_foundry":
-            return AnthropicFoundryClient(api_key=key, base_url=model.base_url, **common)
+            return configured(
+                AnthropicFoundryClient(api_key=key, base_url=model.base_url, **common)
+            )
         if provider == "anthropic_bedrock":
-            return AnthropicBedrockClient(
-                aws_access_key=secrets["access_key_id"],
-                aws_secret_key=secrets["secret_access_key"],
-                aws_session_token=secrets.get("session_token"),
-                aws_region=options["region"],
-                **common,
+            return configured(
+                AnthropicBedrockClient(
+                    aws_access_key=secrets["access_key_id"],
+                    aws_secret_key=secrets["secret_access_key"],
+                    aws_session_token=secrets.get("session_token"),
+                    aws_region=options["region"],
+                    **common,
+                )
             )
         from google.oauth2 import service_account
 
@@ -363,13 +383,29 @@ def make_client(
             json.loads(secrets["service_account_json"]),
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        return AnthropicVertexClient(
-            project_id=options["project"],
-            region=options["location"],
-            credentials=google_credentials,
-            **common,
+        return configured(
+            AnthropicVertexClient(
+                project_id=options["project"],
+                region=options["location"],
+                credentials=google_credentials,
+                **common,
+            )
         )
     if provider == "bedrock":
+        extra: dict[str, Any] = {}
+        if max_retries is not None:
+            from boto3.session import Session as BotoSession
+            from botocore.config import Config as BotoConfig
+
+            extra["client"] = BotoSession(
+                aws_access_key_id=secrets["access_key_id"],
+                aws_secret_access_key=secrets["secret_access_key"],
+                aws_session_token=secrets.get("session_token"),
+                region_name=options["region"],
+            ).client(
+                "bedrock-runtime",
+                config=BotoConfig(retries={"total_max_attempts": max_retries + 1}),
+            )
         return BedrockChatClient(
             model=model.model,
             region=options["region"],
@@ -377,6 +413,7 @@ def make_client(
             secret_key=secrets["secret_access_key"],
             session_token=secrets.get("session_token"),
             function_invocation_configuration=config,
+            **extra,
         )
     if provider in {"gemini", "gemini_vertex"}:
         kwargs: dict[str, Any] = {"model": model.model, "function_invocation_configuration": config}
@@ -394,17 +431,34 @@ def make_client(
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 ),
             )
+        if max_retries is not None:
+            from google import genai
+
+            credentials = {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"model", "function_invocation_configuration"}
+            }
+            kwargs = {
+                "model": model.model,
+                "function_invocation_configuration": config,
+                "client": genai.Client(
+                    **credentials, http_options={"retry_options": {"attempts": max_retries + 1}}
+                ),
+            }
         return GeminiChatClient(**kwargs)
     if provider == "ollama":
         return OllamaChatClient(
             host=model.base_url, model=model.model, function_invocation_configuration=config
         )
     if provider == "mistral":
-        return MistralChatClient(
-            model=model.model,
-            api_key=key,
-            server_url=model.base_url,
-            function_invocation_configuration=config,
+        return configured(
+            MistralChatClient(
+                model=model.model,
+                api_key=key,
+                server_url=model.base_url,
+                function_invocation_configuration=config,
+            )
         )
     if provider == "foundry":
         identity = ClientSecretCredential(
@@ -419,21 +473,21 @@ def make_client(
             function_invocation_configuration=config,
         )
         client.identity = identity
-        return client
+        return configured(client)
     if provider in {"azure_openai_chat", "azure_openai_responses"}:
         openai_client = AsyncAzureOpenAI(
             api_key=key,
             azure_endpoint=model.base_url,
             api_version=options["api_version"],
             timeout=min(120, max_duration_seconds),
-            max_retries=4,
+            max_retries=4 if max_retries is None else max_retries,
         )
     else:
         openai_client = AsyncOpenAI(
             api_key=key,
             base_url=model.base_url,
             timeout=min(120, max_duration_seconds),
-            max_retries=4,
+            max_retries=4 if max_retries is None else max_retries,
         )
     client_type: Any
     if provider == "deepseek":

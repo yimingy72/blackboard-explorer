@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "input_tokens": {
+      "minimum": 0,
+      "title": "Input Tokens",
+      "type": "integer"
+    },
+    "max_output_tokens": {
+      "maximum": 32768,
+      "minimum": 1,
+      "title": "Max Output Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number",
+    "request_id",
+    "input_tokens",
+    "max_output_tokens"
+  ],
+  "title": "ProgressReserve",
+  "type": "object"
+}

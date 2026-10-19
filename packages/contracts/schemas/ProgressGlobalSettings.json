@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revision"
+    },
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "prompt": {
+      "default": "",
+      "maxLength": 40000,
+      "title": "Prompt",
+      "type": "string"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Id"
+    },
+    "enabled_tools": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Enabled Tools",
+      "type": "array"
+    }
+  },
+  "required": [
+    "expected_revision"
+  ],
+  "title": "ProgressGlobalSettings",
+  "type": "object"
+}

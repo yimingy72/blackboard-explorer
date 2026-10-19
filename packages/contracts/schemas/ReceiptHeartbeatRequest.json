@@ -29,6 +29,19 @@
           "default": null,
           "title": "Expected Derive Round"
         },
+        "expected_started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Started At"
+        },
         "steps": {
           "minimum": 0,
           "title": "Steps",

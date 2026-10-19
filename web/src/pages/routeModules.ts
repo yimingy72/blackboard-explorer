@@ -18,7 +18,7 @@ export function preloadPage(pathname: string): void {
     : pathname === '/tasks/new' ? pages.create
     : pathname === '/profiles' ? pages.profiles
     : /^\/tasks\/[^/]+\/report$/.test(pathname) ? pages.report
-    : /^\/tasks\/[^/]+$/.test(pathname) ? pages.workbench : undefined;
+    : /^\/tasks\/[^/]+(?:\/progress)?$/.test(pathname) ? pages.workbench : undefined;
   // A failed speculative load is retried by the router when the user navigates.
   void load?.().catch(() => undefined);
 }

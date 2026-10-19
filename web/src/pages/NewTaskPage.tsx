@@ -1,4 +1,4 @@
-import { Alert, Button, Collapse, Form, Input, Segmented, Select } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Segmented, Select } from 'antd';
 import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import styles from './NewTaskPage.module.css';
 import controls from '../styles/controls.module.css';
 import { reasoningOptions } from '../components/reasoningOptions';
 import TaskAttachments from '../components/TaskAttachments';
+import { progressApi } from '../progress/api';
 type AcceptanceDraft = {
     key: number;
     desc: string;
@@ -26,6 +27,9 @@ export default function NewTaskPage() {
     const [maxCost, setMaxCost] = useState('10');
     const [maxMinutes, setMaxMinutes] = useState('60');
     const [maxAgents, setMaxAgents] = useState('5');
+    const [progressEnabled, setProgressEnabled] = useState(true);
+    const [progressCap, setProgressCap] = useState('2');
+    const progressChoice = useRef<{ enabled: boolean; max_cost: string } | null>(null);
     const [allowlist, setAllowlist] = useState('');
     const [modelId, setModelId] = useState('');
     const [reasoningEffort, setReasoningEffort] = useState('');
@@ -111,6 +115,9 @@ export default function NewTaskPage() {
                 setFormError('所选模型不支持当前推理强度，请重新选择。');
                 return;
             }
+            if (mode === 'blackboard' && progressEnabled && (!Number.isFinite(Number(progressCap)) || Number(progressCap) <= 0)) {
+                setFormError('请填写大于0的独立成果整理上限。'); return;
+            }
             const common = {
                 name: name.trim() || null,
                 goal: goal.trim(),
@@ -138,15 +145,22 @@ export default function NewTaskPage() {
             if (!alive.current)
                 return;
             submitted.current = ready;
+            progressChoice.current ??= { enabled: mode === 'blackboard' && progressEnabled, max_cost: progressCap };
             const result = await api.createTask(ready);
             created.current = true;
+            if (progressChoice.current.enabled) {
+                try { await progressApi.configure(result.id, progressChoice.current); }
+                catch { if (alive.current) navigate(`/tasks/${result.id}/progress`, { replace: true, state: { progressSetupError: '任务已创建，成果整理尚未启用。可在此重试启用。' } }); return; }
+            }
             if (alive.current)
                 navigate(`/tasks/${result.id}`, { replace: true });
         }
         catch (cause) {
             const uncertain = submitted.current && (!(cause instanceof ApiError) || cause.status >= 500);
-            if (!uncertain)
+            if (!uncertain) {
                 submitted.current = null;
+                progressChoice.current = null;
+            }
             if (!alive.current)
                 return;
             if (!uncertain && cause instanceof ApiError && [404, 410].includes(cause.status))
@@ -180,6 +194,7 @@ export default function NewTaskPage() {
               {provider && !provider.supports_reasoning_effort && <p className={controls.hint}>该连接方式使用模型默认思考设置。</p>}
               {(models.isError || providers.isError) && !unauthorized && <Alert type="error" title="模型选项读取失败" action={<Button size="small" onClick={() => { void models.refetch(); void providers.refetch(); }}>重试</Button>} />}
               {!models.isLoading && !models.isError && !models.data?.some((item) => item.enabled) && <Alert type="warning" title="当前没有可用模型" description="在新标签配置模型，返回后刷新模型列表。" action={<Button href="/profiles?section=models" target="_blank" rel="noopener noreferrer">添加模型</Button>} />}
+              {mode === 'blackboard' && <Form.Item label={<Checkbox checked={progressEnabled} onChange={event => setProgressEnabled(event.target.checked)}>自动整理成果树</Checkbox>}><Input prefix="额外 ¥" suffix="独立上限" type="number" aria-label="创建任务成果整理上限" min="0.01" step="any" value={progressCap} disabled={!progressEnabled || pending || locked} onChange={event => setProgressCap(event.target.value)} /><span className={controls.hint}>独立于求解预算，触顶不影响探索。</span></Form.Item>}
               <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />
               <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
             </aside>

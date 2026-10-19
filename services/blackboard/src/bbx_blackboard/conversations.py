@@ -128,6 +128,19 @@ class Conversations:
                     "sessions": [dict(row) for row in sessions],
                     "messages": [dict(row) for row in messages],
                     "task_runs": [dict(row) for row in task_runs],
+                    "progress": (
+                        await conn.execute(
+                            select(s.task_progress.c.data).where(s.task_progress.c.task_id == tid)
+                        )
+                    ).scalar_one_or_none(),
+                    "progress_jobs": [
+                        dict(row)
+                        for row in (
+                            await conn.execute(
+                                select(s.progress_jobs).where(s.progress_jobs.c.task_id == tid)
+                            )
+                        ).mappings()
+                    ],
                 }
             )
 
@@ -704,6 +717,14 @@ class Conversations:
             if active_agent or processing or ctf_active:
                 raise HTTPException(409, "Task has active work")
             await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(deleting=True))
+            await conn.execute(
+                update(s.progress_jobs)
+                .where(
+                    s.progress_jobs.c.task_id == tid,
+                    s.progress_jobs.c.status.in_(("queued", "running")),
+                )
+                .values(status="cancelled")
+            )
             cancelled = (
                 (
                     await conn.execute(
@@ -724,7 +745,9 @@ class Conversations:
                     tid,
                     [
                         event(
-                            "agent.message.failed",
+                            "progress.turn.failed"
+                            if row["agent_id"] == "__progress__"
+                            else "agent.message.failed",
                             "system",
                             {
                                 "id": str(row["id"]),
@@ -757,6 +780,28 @@ class Conversations:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
+            jobs = (
+                (
+                    await conn.execute(
+                        select(s.progress_jobs.c.data).where(
+                            s.progress_jobs.c.task_id == tid,
+                            s.progress_jobs.c.status.in_(("running", "cancelled")),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if any(
+                job.get("lease_until")
+                and datetime.fromisoformat(job["lease_until"]) > _now()
+                and any(
+                    receipt.get("status") == "reserved"
+                    for receipt in job.get("receipts", {}).values()
+                )
+                for job in jobs
+            ):
+                raise HTTPException(409, "Progress request is still settling")
         for prefix in (
             f"evidence/{tid}/",
             f"toolcalls/{tid}/",
@@ -777,6 +822,8 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.progress_jobs,
+                s.task_progress,
                 s.ctf_records,
                 s.ctf_challenges,
                 s.ctf_messages,

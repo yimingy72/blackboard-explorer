@@ -13,7 +13,8 @@ function Shell() {
   const navigate = useNavigate(); const queryClient = useQueryClient();
   const { pathname } = useLocation();
   const pending = useNavigation().state === 'loading';
-  const workbench = /^\/tasks\/[^/]+$/.test(pathname) && pathname !== '/tasks/new';
+  const workbench = /^\/tasks\/[^/]+(?:\/progress)?$/.test(pathname) && pathname !== '/tasks/new';
+  const routeKey = pathname.replace(/^(\/tasks\/[^/]+)\/progress$/, '$1');
   const [expanded, setExpanded] = useState(false);
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 899px)').matches);
   const [logoutError, setLogoutError] = useState(''); const [loggingOut, setLoggingOut] = useState(false);
@@ -36,7 +37,7 @@ function Shell() {
   }
   function preload(path: string) {
     preloadPage(path);
-    const taskId = /^\/tasks\/([^/]+)(?:\/report)?$/.exec(path)?.[1];
+    const taskId = /^\/tasks\/([^/]+)(?:\/(?:report|progress))?$/.exec(path)?.[1];
     if (taskId && taskId !== 'new') void queryClient.prefetchQuery(taskQueryOptions(taskId));
   }
   const selected = pathname.startsWith('/profiles') ? 'profiles' : 'tasks';
@@ -60,7 +61,7 @@ function Shell() {
     <Layout className={styles.contentLayout}>
       <Layout.Header className={styles.topbar}><div className={styles.context}><Button className={styles.mobileToggle} type="text" icon={<MenuUnfoldOutlined aria-hidden="true" />} aria-label={expanded ? '收起导航' : '展开导航'} aria-expanded={expanded} aria-controls="workspace-navigation-drawer" onClick={event => {navigationTrigger.current=event.currentTarget;restoreNavigationFocus.current=false;setExpanded(!expanded);}} /><span>{pathname.startsWith('/profiles') ? '配置中心' : '工作空间'}</span></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'logout', label: '退出登录', icon: <LogoutOutlined aria-hidden="true" />, disabled: loggingOut }], onClick: ({key}) => { if (key === 'logout') void logout(); } }}><Button type="text" className={styles.account} aria-label="账户菜单" loading={loggingOut}><Avatar size={26} icon={<UserOutlined aria-hidden="true" />} style={{ background: '#edf1f6', color: '#526580' }} /><DownOutlined aria-hidden="true" /></Button></Dropdown></Layout.Header>
       {logoutError && <Alert type="error" showIcon title={logoutError} />}
-      <Layout.Content aria-busy={pending} data-navigating={pending || undefined} id="main-content" tabIndex={-1} className={styles.main}><div key={pathname} className={styles.route}><Outlet /></div></Layout.Content>
+      <Layout.Content aria-busy={pending} data-navigating={pending || undefined} id="main-content" tabIndex={-1} className={styles.main}><div key={routeKey} className={styles.route}><Outlet /></div></Layout.Content>
     </Layout>
     <Drawer title="工作空间" placement="left" size={230} open={narrow && expanded} onClose={closeNavigation} afterOpenChange={open => {
       const trigger = navigationTrigger.current;

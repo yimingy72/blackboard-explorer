@@ -397,3 +397,39 @@ ctf_members.append_column(
     col("operation_history", JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 )
 ctf_members.append_column(col("removed_at", DateTime(timezone=True)))
+
+# Independent presentation work never participates in solver ownership or budgets.
+task_progress = Table(
+    "task_progress",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("data", JSONB, nullable=False),
+)
+progress_jobs = Table(
+    "progress_jobs",
+    metadata,
+    col("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    ),
+    col("kind", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("run_number", Integer, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index("ix_progress_jobs_queue", progress_jobs.c.status, progress_jobs.c.created_at)
+Index(
+    "ux_progress_job_active",
+    progress_jobs.c.task_id,
+    unique=True,
+    postgresql_where=progress_jobs.c.status == "running",
+)
+Index(
+    "ux_progress_job_refresh",
+    progress_jobs.c.task_id,
+    unique=True,
+    postgresql_where=(progress_jobs.c.status == "queued") & (progress_jobs.c.kind == "refresh"),
+)

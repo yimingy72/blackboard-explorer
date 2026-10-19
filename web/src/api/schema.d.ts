@@ -314,6 +314,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/progress/jobs/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Post */
+        post: operations["claim_post_api_progress_jobs_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/progress/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Global Get */
+        get: operations["global_get_api_progress_settings_get"];
+        /** Global Put */
+        put: operations["global_put_api_progress_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/ctf/prompts/{role}": {
         parameters: {
             query?: never;
@@ -1650,6 +1685,264 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{tid}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress Get */
+        get: operations["progress_get_api_tasks__tid__progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Get */
+        get: operations["evidence_get_api_tasks__tid__progress_evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/candidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Candidate Post */
+        post: operations["candidate_post_api_tasks__tid__progress_jobs__jid__candidate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/checkpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Checkpoint Post */
+        post: operations["checkpoint_post_api_tasks__tid__progress_jobs__jid__checkpoint_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Post */
+        post: operations["complete_post_api_tasks__tid__progress_jobs__jid__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Post */
+        post: operations["fail_post_api_tasks__tid__progress_jobs__jid__fail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Post */
+        post: operations["reserve_post_api_tasks__tid__progress_jobs__jid__reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/jobs/{jid}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Settle Post */
+        post: operations["settle_post_api_tasks__tid__progress_jobs__jid__settle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Messages Get */
+        get: operations["messages_get_api_tasks__tid__progress_messages_get"];
+        put?: never;
+        /** Messages Post */
+        post: operations["messages_post_api_tasks__tid__progress_messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/objects/{oid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Object Get */
+        get: operations["object_get_api_tasks__tid__progress_objects__oid__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Post */
+        post: operations["refresh_post_api_tasks__tid__progress_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Get */
+        get: operations["search_get_api_tasks__tid__progress_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Session Get */
+        get: operations["session_get_api_tasks__tid__progress_session_get"];
+        /** Session Put */
+        put: operations["session_put_api_tasks__tid__progress_session_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Settings Get */
+        get: operations["settings_get_api_tasks__tid__progress_settings_get"];
+        /** Settings Put */
+        put: operations["settings_put_api_tasks__tid__progress_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{tid}/progress/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sources Get */
+        get: operations["sources_get_api_tasks__tid__progress_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2305,7 +2598,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
+        EventType: "progress.settings.updated" | "progress.message.posted" | "progress.message.replied" | "progress.turn.completed" | "progress.usage.settled" | "progress.tree.updated" | "progress.turn.failed" | "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
         /** Evidence */
         Evidence: {
             /**
@@ -2324,6 +2617,11 @@ export interface components {
              * @description 执行环境内的原路径
              */
             path?: string | null;
+            /**
+             * Sha256
+             * @description 登记内容的完整 SHA-256
+             */
+            sha256?: string | null;
             /**
              * Size
              * @description 证据字节数
@@ -3009,6 +3307,287 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ProgressCandidate */
+        ProgressCandidate: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Nodes */
+            nodes?: components["schemas"]["ProgressNode"][] | null;
+            /** Overview */
+            overview?: string | null;
+            /** Removed Ids */
+            removed_ids?: string[];
+            /** Run Number */
+            run_number: number;
+            /** Upserts */
+            upserts?: components["schemas"]["ProgressNode"][];
+        };
+        /** ProgressCheckpoint */
+        ProgressCheckpoint: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Knowledge Version */
+            knowledge_version?: number | null;
+            /**
+             * Opening Instructions
+             * @default
+             */
+            opening_instructions: string;
+            /**
+             * Origin
+             * @default progress
+             */
+            origin: string;
+            /** Run Number */
+            run_number: number;
+            /** Session */
+            session: {
+                [key: string]: unknown;
+            };
+            /** Source Version */
+            source_version: number;
+        };
+        /** ProgressComplete */
+        ProgressComplete: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /** Run Number */
+            run_number: number;
+        };
+        /** ProgressFail */
+        ProgressFail: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Error */
+            error: string;
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable: boolean;
+            /** Run Number */
+            run_number: number;
+        };
+        /** ProgressGlobalSettings */
+        ProgressGlobalSettings: {
+            /** Enabled Tools */
+            enabled_tools?: string[];
+            /** Expected Revision */
+            expected_revision: number;
+            /** Model Id */
+            model_id?: string | null;
+            /**
+             * Prompt
+             * @default
+             */
+            prompt: string;
+            /** Revision */
+            revision?: number | null;
+        };
+        /** ProgressKeyStep */
+        ProgressKeyStep: {
+            /** Source Refs */
+            source_refs: components["schemas"]["ProgressSourceRef"][];
+            /** Text */
+            text: string;
+        };
+        /** ProgressNode */
+        ProgressNode: {
+            /**
+             * Archived
+             * @default false
+             */
+            archived: boolean;
+            /**
+             * Assessment
+             * @default
+             */
+            assessment: string;
+            /** Id */
+            id: string;
+            /** Key Steps */
+            key_steps?: components["schemas"]["ProgressKeyStep"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "goal" | "direction" | "finding" | "attempt" | "gap";
+            /**
+             * Limitations
+             * @default
+             */
+            limitations: string;
+            /**
+             * Next Step
+             * @default
+             */
+            next_step: string;
+            /**
+             * Order
+             * @default 0
+             */
+            order: number;
+            /** Parent Id */
+            parent_id?: string | null;
+            /**
+             * Question
+             * @default
+             */
+            question: string;
+            /**
+             * Significance
+             * @default
+             */
+            significance: string;
+            /** Source Refs */
+            source_refs?: components["schemas"]["ProgressSourceRef"][];
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Title */
+            title: string;
+        };
+        /** ProgressQuestion */
+        ProgressQuestion: {
+            /** Content */
+            content: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Node Id */
+            node_id?: string | null;
+        };
+        /** ProgressRefresh */
+        ProgressRefresh: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** ProgressReserve */
+        ProgressReserve: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Run Number */
+            run_number: number;
+        };
+        /** ProgressSettings */
+        ProgressSettings: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Max Cost
+             * @default 2
+             */
+            max_cost: number | string;
+            /**
+             * Max Output Tokens
+             * @default 8192
+             */
+            max_output_tokens: number;
+            /**
+             * Merge Seconds
+             * @default 10
+             */
+            merge_seconds: number;
+            /**
+             * Min Interval Seconds
+             * @default 60
+             */
+            min_interval_seconds: number;
+            /** Model Id */
+            model_id?: string | null;
+            /** Model Version */
+            model_version?: number | null;
+            /**
+             * System Prompt
+             * @default
+             */
+            system_prompt: string;
+        };
+        /** ProgressSettle */
+        ProgressSettle: {
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /**
+             * Executed
+             * @default true
+             */
+            executed: boolean | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Run Number */
+            run_number: number;
+            usage?: components["schemas"]["Usage"];
+            /**
+             * Usage Known
+             * @default true
+             */
+            usage_known: boolean;
+        };
+        /** ProgressSourceRef */
+        ProgressSourceRef: {
+            /** Evidence Uri */
+            evidence_uri?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "task" | "fact" | "intent" | "event" | "evidence" | "acceptance";
+            /** Sha256 */
+            sha256?: string | null;
+            /** Version */
+            version: number;
+        };
         /** PromptPaths */
         PromptPaths: {
             /**
@@ -3260,6 +3839,10 @@ export interface components {
              * @default false
              */
             cleanup_ready: boolean;
+            /** Cost Breakdown */
+            cost_breakdown?: {
+                [key: string]: string;
+            };
             /** Cost Currency */
             cost_currency?: string | null;
             /**
@@ -4692,6 +5275,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_post_api_progress_jobs_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    global_get_api_progress_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    global_put_api_progress_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressGlobalSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -7736,6 +8392,637 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceTreeView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    progress_get_api_tasks__tid__progress_get: {
+        parameters: {
+            query?: {
+                at_version?: number | null;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evidence_get_api_tasks__tid__progress_evidence_get: {
+        parameters: {
+            query: {
+                version: number;
+                uri: string;
+                sha256: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    candidate_post_api_tasks__tid__progress_jobs__jid__candidate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressCandidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    checkpoint_post_api_tasks__tid__progress_jobs__jid__checkpoint_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressCheckpoint"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_post_api_tasks__tid__progress_jobs__jid__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressComplete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_post_api_tasks__tid__progress_jobs__jid__fail_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressFail"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_post_api_tasks__tid__progress_jobs__jid__reserve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressReserve"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settle_post_api_tasks__tid__progress_jobs__jid__settle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressSettle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    messages_get_api_tasks__tid__progress_messages_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    messages_post_api_tasks__tid__progress_messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressQuestion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    object_get_api_tasks__tid__progress_objects__oid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+                oid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_post_api_tasks__tid__progress_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressRefresh"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_get_api_tasks__tid__progress_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                after_version?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_get_api_tasks__tid__progress_session_get: {
+        parameters: {
+            query: {
+                job_id: string;
+                claim_token: string;
+                run_number: number;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_put_api_tasks__tid__progress_session_put: {
+        parameters: {
+            query: {
+                job_id: string;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressCheckpoint"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settings_get_api_tasks__tid__progress_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settings_put_api_tasks__tid__progress_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sources_get_api_tasks__tid__progress_sources_get: {
+        parameters: {
+            query?: {
+                after_version?: number;
+                through_version?: number | null;
+                object_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                tid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

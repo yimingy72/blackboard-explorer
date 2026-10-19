@@ -1,0 +1,274 @@
+{
+  "$defs": {
+    "ProgressKeyStep": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "source_refs": {
+          "items": {
+            "$ref": "#/$defs/ProgressSourceRef"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "title": "Source Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "source_refs"
+      ],
+      "title": "ProgressKeyStep",
+      "type": "object"
+    },
+    "ProgressNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "order": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "goal",
+            "direction",
+            "finding",
+            "attempt",
+            "gap"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "question": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Question",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Summary",
+          "type": "string"
+        },
+        "significance": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Significance",
+          "type": "string"
+        },
+        "next_step": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Next Step",
+          "type": "string"
+        },
+        "limitations": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Limitations",
+          "type": "string"
+        },
+        "assessment": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Assessment",
+          "type": "string"
+        },
+        "key_steps": {
+          "items": {
+            "$ref": "#/$defs/ProgressKeyStep"
+          },
+          "maxItems": 20,
+          "title": "Key Steps",
+          "type": "array"
+        },
+        "source_refs": {
+          "items": {
+            "$ref": "#/$defs/ProgressSourceRef"
+          },
+          "maxItems": 50,
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "archived": {
+          "default": false,
+          "title": "Archived",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title"
+      ],
+      "title": "ProgressNode",
+      "type": "object"
+    },
+    "ProgressSourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "task",
+            "fact",
+            "intent",
+            "event",
+            "evidence",
+            "acceptance"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 0,
+          "title": "Version",
+          "type": "integer"
+        },
+        "evidence_uri": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Uri"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "version"
+      ],
+      "title": "ProgressSourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "overview": {
+      "anyOf": [
+        {
+          "maxLength": 6000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Overview"
+    },
+    "upserts": {
+      "items": {
+        "$ref": "#/$defs/ProgressNode"
+      },
+      "maxItems": 300,
+      "title": "Upserts",
+      "type": "array"
+    },
+    "removed_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 300,
+      "title": "Removed Ids",
+      "type": "array"
+    },
+    "nodes": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ProgressNode"
+          },
+          "maxItems": 300,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Nodes"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number",
+    "expected_revision"
+  ],
+  "title": "ProgressCandidate",
+  "type": "object"
+}

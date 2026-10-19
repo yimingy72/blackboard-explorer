@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "task",
+        "fact",
+        "intent",
+        "event",
+        "evidence",
+        "acceptance"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 0,
+      "title": "Version",
+      "type": "integer"
+    },
+    "evidence_uri": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Uri"
+    },
+    "sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sha256"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "version"
+  ],
+  "title": "ProgressSourceRef",
+  "type": "object"
+}

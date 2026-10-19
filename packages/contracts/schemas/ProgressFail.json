@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "error": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Error",
+      "type": "string"
+    },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number",
+    "error"
+  ],
+  "title": "ProgressFail",
+  "type": "object"
+}

@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_tokens": {
+          "default": 0,
+          "description": "缓存命中输入 token",
+          "minimum": 0,
+          "title": "Cache Hit Tokens",
+          "type": "integer"
+        },
+        "cache_miss_tokens": {
+          "default": 0,
+          "description": "缓存未命中输入 token",
+          "minimum": 0,
+          "title": "Cache Miss Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "description": "输出 token",
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "推理 token",
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "description": "金额成本",
+          "title": "Cost"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "claim_token": {
+      "format": "uuid",
+      "title": "Claim Token",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "usage_known": {
+      "default": true,
+      "title": "Usage Known",
+      "type": "boolean"
+    },
+    "executed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": true,
+      "title": "Executed"
+    }
+  },
+  "required": [
+    "claim_token",
+    "run_number",
+    "request_id"
+  ],
+  "title": "ProgressSettle",
+  "type": "object"
+}

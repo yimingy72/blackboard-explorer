@@ -2,6 +2,13 @@
   "$defs": {
     "EventType": {
       "enum": [
+        "progress.settings.updated",
+        "progress.message.posted",
+        "progress.message.replied",
+        "progress.turn.completed",
+        "progress.usage.settled",
+        "progress.tree.updated",
+        "progress.turn.failed",
         "cost.reconciled",
         "task.created",
         "task.provisioning",

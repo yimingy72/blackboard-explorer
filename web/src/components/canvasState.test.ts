@@ -16,3 +16,17 @@ describe('canvas persistence boundaries',()=>{
     expect(saveCanvasState('blackboard','a',{positions:{},pinned:[],collapsed:true},{setItem:()=>{throw Error('quota');}})).toBe(false);
   });
 });
+
+describe('progress tree persistence', () => {
+  it('stores expansion and positions independently from both other task views', () => {
+    const entries = new Map<string, string>();
+    const storage = { getItem: (key: string) => entries.get(key) ?? null, setItem: (key: string, value: string) => entries.set(key, value) };
+    const state = { positions: { branch_1: { x: 600, y: 90 } }, pinned: ['branch_1'], collapsed: true, expanded: ['goal', 'branch_1'], viewport: { x: 5, y: 10, zoom: .8 } };
+    expect(saveCanvasState('progress-tree', 'a', state, storage)).toBe(true);
+    expect(loadCanvasState('progress-tree', 'a', storage)).toEqual(state);
+    expect(loadCanvasState('blackboard', 'a', storage)).toBeNull();
+    expect(loadCanvasState('ctf-board', 'a', storage)).toBeNull();
+    expect(loadCanvasState('progress-tree', 'b', storage)).toBeNull();
+    expect(saveCanvasState('progress-tree', 'a', { ...state, expanded: ['invalid id'] }, storage)).toBe(false);
+  });
+});

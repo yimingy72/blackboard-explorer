@@ -26,6 +26,8 @@ import controls from '../styles/controls.module.css';
 import { formatMoney, taskStatusLabel } from './format';
 import styles from './TaskWorkbenchPage.module.css';
 import TrafficDrawer from '../components/TrafficDrawer';
+import type { ProgressUiState } from '../progress/ProgressPage';
+const ProgressPage = lazy(() => import('../progress/ProgressPage'));
 const WorkbenchDrawer = lazy(() => import('../components/WorkbenchDrawer'));
 const loadCanvas = () => import('../components/TopologyFlowCanvas');
 const TopologyFlowCanvas = lazy(loadCanvas);
@@ -41,6 +43,8 @@ export default function BlackboardWorkbenchPage() {
     }>();
     const navigate = useNavigate();
     const location = useLocation();
+    const [progressUi, setProgressUi] = useState<ProgressUiState>({ selected: null, panel: null, draft: '', sending: false, intent: { message: null, revision: 0, busy: false } });
+    const saveProgressUi = useCallback((value: Partial<ProgressUiState>) => { setProgressUi(current => ({ ...current, ...value })); }, []);
     const queryClient = useQueryClient();
     const [recordsOpen, setRecordsOpen] = useState(false);
     const [trafficAgent, setTrafficAgent] = useState<string | null | undefined>(undefined);
@@ -177,6 +181,7 @@ export default function BlackboardWorkbenchPage() {
     const duration = <ElapsedTime seconds={boardTask?.activeSeconds ?? task?.active_seconds ?? 0}
       since={boardTask ? boardTask.activeSince && (!cutoffAt || Date.parse(cutoffAt) > Date.parse(boardTask.activeSince)) ? boardTask.activeSince : null : task?.active_since}
       until={cutoffAt} />;
+    if (location.pathname.endsWith('/progress') && task) return <Suspense fallback={<LoadingState page label="成果树" lines={6} />}><ProgressPage key={taskId} taskId={taskId} task={task} events={board.events} historicalVersion={version} savedUi={progressUi} onUiChange={saveProgressUi} /></Suspense>;
     return <TaskCurrency.Provider value={task?.cost_currency ?? null}><div className={styles.page}>
       <header className={styles.header}><div className={styles.titleRow}>
         <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
@@ -191,7 +196,7 @@ export default function BlackboardWorkbenchPage() {
         </div>
       </div>
       {task && task.run_number>1 && (task.runs?.length??0)>0 && <nav className={styles.runHistory} aria-label="历史轮次">{task.runs?.map(run=><span key={run.run_number}>第{run.run_number}轮 {run.report_uri&&<Link to={`/tasks/${encodeURIComponent(taskId)}/report?run=${run.run_number}`}>报告</Link>} {run.workspace_uri&&<a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace?run=${run.run_number}`}>归档</a>}</span>)}</nav>}
-      <div className={styles.runSummary}>{explanation&&<p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}<span className={styles.runStats} aria-label="运行统计">{boardTask?.usageIncomplete&&<span title="模型未提供完整用量，金额仅包含已记录部分。">用量不完整 · </span>}对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span></div>
+      <div className={styles.runSummary}><nav className={styles.viewNav} aria-label="任务视图"><Link aria-current="page" to={`/tasks/${taskId}`}>协作黑板</Link><Link to={`/tasks/${taskId}/progress`}>成果树</Link></nav>{explanation&&<p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}<span className={styles.runStats} aria-label="运行统计">{boardTask?.usageIncomplete&&<span title="模型未提供完整用量，金额仅包含已记录部分。">用量不完整 · </span>}对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span></div>
       {version!==null&&<Alert type="warning" title={`历史回放 · v${version}`} description={`已接收 ${board.events.length-viewEvents.length} 条后续事件；当前视图只读。`} action={<Button onClick={()=>setVersion(null)}>返回实时</Button>} />}
       {(actionError || (board.error&&!unauthorized))&&<Alert type="error" title={actionError||board.error?.message} action={board.error?<Button onClick={()=>window.location.reload()}>重新连接</Button>:undefined} />}
       {board.connection==='reconnecting'&&!board.error&&<Alert type="warning" title="实时连接暂时中断，正在自动重连" />}

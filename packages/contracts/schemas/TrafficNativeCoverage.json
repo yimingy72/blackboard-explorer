@@ -32,6 +32,11 @@
       "title": "Complete",
       "type": "boolean"
     },
+    "analyzed": {
+      "default": true,
+      "title": "Analyzed",
+      "type": "boolean"
+    },
     "decryption": {
       "enum": [
         "available",

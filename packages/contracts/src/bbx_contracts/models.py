@@ -97,6 +97,13 @@ class EndReason(StrEnum):
 
 
 class EventType(StrEnum):
+    PROGRESS_SETTINGS = "progress.settings.updated"
+    PROGRESS_MESSAGE = "progress.message.posted"
+    PROGRESS_MESSAGE_REPLIED = "progress.message.replied"
+    PROGRESS_TURN_COMPLETED = "progress.turn.completed"
+    PROGRESS_USAGE = "progress.usage.settled"
+    PROGRESS_PUBLISHED = "progress.tree.updated"
+    PROGRESS_FAILED = "progress.turn.failed"
     COST_RECONCILED = "cost.reconciled"
     TASK_CREATED = "task.created"
     TASK_PROVISIONING = "task.provisioning"
@@ -140,6 +147,9 @@ class Evidence(ContractModel):
     summary: str = Field(min_length=1, description="证据摘要")
     call_id: str | None = Field(default=None, min_length=1, description="产生证据的工具调用")
     size: int | None = Field(default=None, ge=0, description="证据字节数")
+    sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$", description="登记内容的完整 SHA-256"
+    )
     auto: bool = Field(default=False, description="是否由系统自动附加")
 
 

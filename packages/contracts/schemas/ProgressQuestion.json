@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "content": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "node_id": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Node Id"
+    }
+  },
+  "required": [
+    "id",
+    "content"
+  ],
+  "title": "ProgressQuestion",
+  "type": "object"
+}

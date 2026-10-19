@@ -138,6 +138,7 @@ def make_board_tools(ctx: RunContext) -> list[FunctionTool]:
                     summary=item.summary,
                     call_id=item.call_id,
                     size=len(data),
+                    sha256=digest,
                 )
             )
             if tool_uri is not None:
