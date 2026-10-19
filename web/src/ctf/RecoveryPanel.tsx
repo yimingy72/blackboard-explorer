@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { CtfChallenge, CtfState } from './types';
 import { formatMoney } from '../pages/format';
 import { ctfApi } from './api';
+import { randomUUID } from '../api/uuid';
 import { useAction } from './useAction';
 import { recoveryBlocker } from './view';
 import Markdown from './Markdown';
@@ -40,7 +41,7 @@ export default function RecoveryPanel({ taskId, task, challenges, onClose }: {
         const payload = { additional_cost: cost.trim(), additional_minutes: Number(minutes), refresh_tools: false };
         const signature = JSON.stringify(payload);
         if (pending.current?.signature !== signature)
-            pending.current = { signature, id: crypto.randomUUID() };
+            pending.current = { signature, id: randomUUID() };
         if (await action.run(async (signal) => {
             await ctfApi.resume(taskId, { ...payload, request_id: pending.current!.id }, signal);
             await queryClient.invalidateQueries({ queryKey: ['ctf', taskId] });

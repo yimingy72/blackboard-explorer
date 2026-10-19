@@ -11,6 +11,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSS
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { api, type AgentMessage, type PreviewData } from '../api/client';
+import { randomUUID } from '../api/uuid';
 import { agentEndReasonLabel, agentRole, agentStatusLabel, taskDuration } from '../board/agents';
 import { formatMoney, formatTime } from '../pages/format';
 import { conversationEntries, type TraceEntry } from '../board/conversation';
@@ -150,7 +151,7 @@ export default function AgentConversation({ taskId, agent, label, events, state,
         const content = draft.trim();
         if (historical || sending || !content || content.length > 20000)
             return;
-        if(client.message?.content!==content)client.message={id:crypto.randomUUID(),content};
+        if(client.message?.content!==content)client.message={id:randomUUID(),content};
         const outbound=client.message;const revision=client.draftRevision;
         setSending(true);
         setSendError('');
@@ -180,10 +181,10 @@ export default function AgentConversation({ taskId, agent, label, events, state,
       {!hasTrace&&<p className={styles.empty}>{agent.status==='running'||agent.status==='concluding'?'对话记录尚未到达；工具调用会在此显示。':'此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
       {agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
       <ConversationBubbles className={styles.messages} autoScroll={!historical} items={items} />
-      <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} onSubmit={()=>void send()} onKeyDown={event=>{if(event.key==='Enter'){if(event.ctrlKey||event.metaKey){event.preventDefault();void send();}return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
+      <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} submitType="enter" onSubmit={()=>void send()} onKeyDown={event=>{if(event.key!=='Enter')return;if(event.nativeEvent.isComposing||event.keyCode===229)return false;if(event.ctrlKey||event.metaKey){event.preventDefault();void send();return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
         {!historical&&review&&messages.data?.session_available===false&&<p className={styles.recordNote}>旧会话未保存，将基于已有黑板和记录开始复盘。</p>}{!historical&&review&&messages.data?.session_available&&messages.data.session_origin==='legacy'&&<p className={styles.recordNote}>此复盘会话基于旧任务记录初始化。</p>}
         {(sendError||messages.error)&&<Alert type="error" title={sendError||messages.error?.message} />}
-        <div className={styles.composerHint}><span>{historical?'回放期间不可发送':review?'只读复盘 · 费用单独记录':'下一轮模型调用时送达'}</span><span>Ctrl/⌘+Enter</span></div>
+        <div className={styles.composerHint}><span>{historical?'回放期间不可发送':review?'只读复盘 · 费用单独记录':'下一轮模型调用时送达'}</span><span>Enter 发送 · Shift+Enter 换行</span></div>
       </div>
       <Modal title={`${label} · 运行信息`} open={infoOpen} onCancel={()=>setInfoOpen(false)} footer={null}><dl className={styles.metrics}><dt>持续时间</dt><dd>{elapsed}</dd><dt>模型调用</dt><dd>{agent.steps}</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens??0).toLocaleString()} / {(agent.usage.reasoning_tokens??0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatMoney(agent.usage.cost,currency)}</dd><dt>会话</dt><dd>{messages.data?.session_available?'已保存':'未保存原生会话'}</dd></dl>{contribution&&<section><h3>产出 · {contribution.facts.length} Fact · {contribution.intents.length} Intent</h3><div className={styles.contribution}>{[...contribution.facts,...contribution.intents].map(id=><Button size="small" key={id} onClick={()=>{setInfoOpen(false);onSelect(id);}}>{id}</Button>)}</div>{contribution.judgments>0&&<p>裁定 {contribution.judgments} 次</p>}</section>}{agent.endReason&&<p>结束原因：{agentEndReasonLabel[agent.endReason]??agent.endReason}</p>}{agent.receipt!=null&&<Collapse ghost size="small" items={[{key:'receipt',label:'探索结束回执',children:<pre>{typeof agent.receipt==='string'?agent.receipt:JSON.stringify(agent.receipt,null,2)}</pre>}]} />}</Modal>
     </aside>;

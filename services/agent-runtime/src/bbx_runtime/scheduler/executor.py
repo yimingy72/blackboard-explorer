@@ -120,6 +120,8 @@ class ActionExecutor:
                 **({"derive_review": derive_review} if derive_review is not None else {}),
             )
         except RemoteError as error:
+            if error.status == 409 and error.code == "agent_review_active":
+                return
             if task_type == "derive" and error.status == 422 and error.code == "stale_derive":
                 return
             raise

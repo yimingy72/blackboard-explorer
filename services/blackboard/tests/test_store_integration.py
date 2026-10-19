@@ -734,6 +734,22 @@ async def task(service):
     return tid
 
 
+@pytest.fixture
+async def conversation_task(board_service):
+    tid = await task(board_service)
+    yield tid, Conversations(board_service.repo.engine)
+    async with board_service.repo.engine.begin() as conn:
+        await board_service.repo.lock(conn, tid)
+        await conn.execute(
+            update(s.agent_messages)
+            .where(
+                s.agent_messages.c.task_id == tid,
+                s.agent_messages.c.status.in_(["queued", "processing"]),
+            )
+            .values(status="failed", claim_token=None, lease_until=None)
+        )
+
+
 async def append_agent_finished(service, tid, aid, end_reason="runtime_error", **payload):
     async with service.repo.engine.begin() as conn:
         await service.repo.lock(conn, tid)
@@ -1119,31 +1135,155 @@ async def test_parallel_derive_registration_and_empty_result(board_service):
     assert (await board_service.state(tid))["task"]["derive_empty_streak"] == 2
 
 
-async def test_idle_derive_review_is_reserved_while_task_runs(board_service):
-    tid = await task(board_service)
+async def test_idle_derive_review_completes_while_task_runs(board_service, conversation_task):
+    tid, conversations = conversation_task
     explore = await board_service.register_agent(tid, "explore")
     await board_service.finish_agent(tid, explore, {"accepted": True}, "normal")
     derive = await board_service.register_agent(tid, "derive")
     await board_service.finish_agent(
         tid, derive, {"accepted": True, "data": {"posted": [], "excluded": []}}, "normal"
     )
-    conversations = Conversations(board_service.repo.engine)
     explore_message = uuid4()
     derive_message = uuid4()
     await conversations.post_message(tid, explore, explore_message, "Explore review")
     await conversations.post_message(tid, derive, derive_message, "Derive review")
     pending = await conversations.pending()
     assert any(item["id"] == explore_message for item in pending)
-    assert not any(item["id"] == derive_message for item in pending)
-    with pytest.raises(HTTPException) as reserved:
-        await conversations.claim(tid, derive, derive_message, "review")
-    assert reserved.value.status_code == 409
-    async with board_service.repo.engine.begin() as conn:
-        await conn.execute(
-            update(s.agent_messages)
-            .where(s.agent_messages.c.task_id == tid)
-            .values(status="failed")
+    assert any(item["id"] == derive_message for item in pending)
+    before = await board_service.state(tid)
+    claim = await conversations.claim(tid, derive, derive_message, "review")
+    reply = await conversations.complete(
+        tid,
+        derive,
+        derive_message,
+        claim["claim_token"],
+        {"type": "session"},
+        "opening",
+        "native",
+        0,
+        "Review answer",
+        {"cost": "0.1"},
+    )
+    assert reply["reply_to"] == derive_message
+    assert (await conversations.get_session(tid, derive))["revision"] == 1
+    after = await board_service.state(tid)
+    assert after["task"]["status"] == "running"
+    assert after["task"]["usage"] == before["task"]["usage"]
+    assert after["agents"][derive] == before["agents"][derive]
+    assert after["facts"] == before["facts"] and after["intents"] == before["intents"]
+
+
+async def test_concurrent_review_claims_serialize_the_same_agent(board_service, conversation_task):
+    tid, store = conversation_task
+    aid = await board_service.register_agent(tid, "derive")
+    await board_service.finish_agent(tid, aid, {"accepted": True}, "normal")
+    mids = [uuid4(), uuid4()]
+    for mid in mids:
+        await store.post_message(tid, aid, mid, "Question")
+    claims = await asyncio.gather(
+        *(store.claim(tid, aid, mid, "review") for mid in mids), return_exceptions=True
+    )
+    assert sum(isinstance(claim, dict) for claim in claims) == 1
+    conflict = next(claim for claim in claims if isinstance(claim, HTTPException))
+    assert conflict.status_code == 409
+    assert len((await store.list_messages(tid, aid, "processing"))["messages"]) == 1
+
+
+@pytest.mark.parametrize("kind", ["derive", "explore"])
+@pytest.mark.parametrize("release", ["complete", "expire"])
+async def test_review_blocks_reactivation_until_completed_or_expired(
+    board_service, conversation_task, kind, release
+):
+    tid, store = conversation_task
+    kwargs = {"is_seed": True} if kind == "explore" else {}
+    aid = await board_service.register_agent(tid, kind, **kwargs)
+    await board_service.finish_agent(
+        tid, aid, {"accepted": True}, "runtime_error" if kind == "explore" else "normal"
+    )
+    mid = uuid4()
+    await store.post_message(tid, aid, mid, "Review question")
+    claim = await store.claim(tid, aid, mid, "review")
+    with pytest.raises(HTTPException) as blocked:
+        await board_service.register_agent(tid, kind, **kwargs)
+    assert blocked.value.status_code == 409
+    assert blocked.value.detail == {
+        "code": "agent_review_active",
+        "message": "Agent 复盘中，请稍后重试。",
+    }
+    if release == "complete":
+        await store.complete(
+            tid,
+            aid,
+            mid,
+            claim["claim_token"],
+            {"type": "session"},
+            "opening",
+            "native",
+            0,
+            "Answer",
+            {},
         )
+    else:
+        async with board_service.repo.engine.begin() as conn:
+            await conn.execute(
+                update(s.agent_messages)
+                .where(s.agent_messages.c.id == mid)
+                .values(lease_until=datetime.now(UTC) - timedelta(seconds=1))
+            )
+    assert await board_service.register_agent(tid, kind, **kwargs) == aid
+    assert (await board_service.state(tid))["agents"][aid]["status"] == "running"
+    with pytest.raises(HTTPException) as active:
+        await store.claim(tid, aid, mid, "review")
+    assert active.value.status_code == 409
+    with pytest.raises(HTTPException) as stale:
+        await store.put_session(
+            tid,
+            aid,
+            {"type": "session"},
+            "opening",
+            "native",
+            1 if release == "complete" else 0,
+            [],
+            {"id": mid, "claim_token": claim["claim_token"]},
+        )
+    assert stale.value.status_code == 409
+    if release == "expire":
+        with pytest.raises(HTTPException) as stale_completion:
+            await store.complete(
+                tid,
+                aid,
+                mid,
+                claim["claim_token"],
+                {"type": "session"},
+                "opening",
+                "native",
+                0,
+                "Late answer",
+                {},
+            )
+        assert stale_completion.value.status_code == 409
+
+
+async def test_review_claim_and_derive_reactivation_are_mutually_exclusive(
+    board_service, conversation_task
+):
+    tid, store = conversation_task
+    aid = await board_service.register_agent(tid, "derive")
+    await board_service.finish_agent(tid, aid, {"accepted": True}, "normal")
+    mid = uuid4()
+    await store.post_message(tid, aid, mid, "Review question")
+    review, registration = await asyncio.gather(
+        store.claim(tid, aid, mid, "review"),
+        board_service.register_agent(tid, "derive"),
+        return_exceptions=True,
+    )
+    if isinstance(review, dict):
+        assert isinstance(registration, HTTPException) and registration.status_code == 409
+        assert (await board_service.state(tid))["agents"][aid]["status"] == "finished"
+    else:
+        assert isinstance(review, HTTPException) and review.status_code == 409
+        assert registration == aid
+        assert (await store.list_messages(tid, aid, "queued"))["messages"][0]["id"] == mid
 
 
 async def test_old_derive_round_cannot_write_after_reactivation(board_service):

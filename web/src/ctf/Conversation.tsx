@@ -6,6 +6,7 @@ import ConversationBubbles from '../components/ConversationBubbles';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ctfApi } from './api';
+import { randomUUID } from '../api/uuid';
 import type { CtfMember } from './types';
 import { canSend, conversationEntries, deliveryLabel, isReviewPhase, memberStatus } from './view';
 import { useAction } from './useAction';
@@ -43,7 +44,7 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
         const content = draft.trim();
         if (!content || !canSend(phase, member))
             return;
-        if(client.message?.content!==content)client.message={id:crypto.randomUUID(),content};
+        if(client.message?.content!==content)client.message={id:randomUUID(),content};
         const message=client.message;const revision=client.draftRevision;
         if (await sendAction.run(async (signal) => {
             await ctfApi.send(taskId, member.id, message, signal);
@@ -55,7 +56,7 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
     }
     async function manage(next: 'stop' | 'resume' | 'remove') {
         const key=`${next}:${member.generation}`;
-        const id=client.actions[key]??=crypto.randomUUID();
+        const id=client.actions[key]??=randomUUID();
         if (await memberAction.run(async (signal) => {
             await ctfApi.member(taskId, member.id, next, id, signal);
             await queryClient.invalidateQueries({ queryKey: ['ctf', taskId] });
@@ -82,8 +83,8 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
       {(messages.isLoading || session.isLoading) && <LoadingState label="正在读取会话…" />}
       {!entries.length && !messages.isLoading && !session.isLoading && <div className={styles.conversationEmpty}><Empty description={member.role === 'lead' ? '与 Lead 开始协作' : '尚无对话记录'} /></div>}
       <ConversationBubbles className={styles.chatList} autoScroll items={items} />
-      <div className={styles.composer}><Sender aria-label={`发给 ${member.display_name} 的消息`} value={draft} onChange={(value) => setDraft(value.slice(0,20000))} onSubmit={() => void send()} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:"8px 10px",gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} disabled={sendAction.busy || !canSend(phase,member)} placeholder={review ? '询问结论、证据或下一步建议…' : `发给 ${member.display_name}…`} onKeyDown={(event) => { if (event.key === 'Enter') { if (event.ctrlKey || event.metaKey) { event.preventDefault(); void send(); } return false; } }} suffix={(_, {components}) => <components.SendButton aria-label={sendAction.error ? '重试发送' : review ? '发送复盘消息' : '发送消息'} loading={sendAction.busy} disabled={sendAction.busy || !draft.trim() || !canSend(phase,member)} />} />
-        <div className={styles.composerFooter}><span>{review ? '复盘问答' : phase === 'closing' ? '收尾后待处理' : member.lifecycle === 'stopped' ? '恢复后送达' : '直接发给此 Agent'}</span><span>Ctrl/⌘+Enter</span></div>{sendAction.error && <Alert type="error" title={`${sendAction.error} 消息内容已保留。`} />}
+      <div className={styles.composer}><Sender aria-label={`发给 ${member.display_name} 的消息`} value={draft} onChange={(value) => setDraft(value.slice(0,20000))} onSubmit={() => void send()} submitType="enter" autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:"8px 10px",gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} disabled={sendAction.busy || !canSend(phase,member)} placeholder={review ? '询问结论、证据或下一步建议…' : `发给 ${member.display_name}…`} onKeyDown={event=>{if(event.key!=='Enter')return;if(event.nativeEvent.isComposing||event.keyCode===229)return false;if(event.ctrlKey||event.metaKey){event.preventDefault();void send();return false;}}} suffix={(_, {components}) => <components.SendButton aria-label={sendAction.error ? '重试发送' : review ? '发送复盘消息' : '发送消息'} loading={sendAction.busy} disabled={sendAction.busy || !draft.trim() || !canSend(phase,member)} />} />
+        <div className={styles.composerFooter}><span>{review ? '复盘问答' : phase === 'closing' ? '收尾后待处理' : member.lifecycle === 'stopped' ? '恢复后送达' : '直接发给此 Agent'}</span><span>Enter 发送 · Shift+Enter 换行</span></div>{sendAction.error && <Alert type="error" title={`${sendAction.error} 消息内容已保留。`} />}
       </div>
     </aside>;
 }

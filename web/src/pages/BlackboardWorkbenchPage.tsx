@@ -1,4 +1,5 @@
 import { Alert, Button, Checkbox, Dropdown, Input, Modal, Tag } from 'antd';
+import { randomUUID } from '../api/uuid';
 import ElapsedTime from '../components/ElapsedTime';
 import DeferredPanel from '../components/DeferredPanel';
 import InspectorLayout from '../components/InspectorLayout';
@@ -184,7 +185,7 @@ export default function BlackboardWorkbenchPage() {
         <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{formatMoney(usedCost,task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span></div>
         <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')openRecords();if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
           {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
-          {['finished','failed','stopped'].includes(status) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=crypto.randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
+          {['finished','failed','stopped'].includes(status) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
           {status==='created' && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
           {['created','provisioning','running'].includes(status) && <Button aria-label="停止" aria-busy={action==='stop'} danger loading={action==='stop'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('stop')}>停止</Button>}
         </div>

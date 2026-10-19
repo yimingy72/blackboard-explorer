@@ -439,16 +439,24 @@ class Conversations:
     async def claim(self, tid: UUID, aid: str, mid: UUID, mode: str) -> dict[str, Any]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            task, agent = await self._task_agent(conn, tid, aid, writable=True)
+            _, agent = await self._task_agent(conn, tid, aid, writable=True)
             active = agent["status"] in ACTIVE
             if (mode == "active") != active:
                 raise HTTPException(409, "Agent mode changed")
-            if (
-                mode == "review"
-                and agent["task_type"] == "derive"
-                and task["status"] not in {"finished", "failed", "stopped"}
-            ):
-                raise HTTPException(409, "Derive session is reserved for the task")
+            if mode == "review":
+                processing = await conn.execute(
+                    select(s.agent_messages.c.id)
+                    .where(
+                        s.agent_messages.c.task_id == tid,
+                        s.agent_messages.c.agent_id == aid,
+                        s.agent_messages.c.role == "user",
+                        s.agent_messages.c.status == "processing",
+                        s.agent_messages.c.lease_until > _now(),
+                    )
+                    .limit(1)
+                )
+                if processing.first():
+                    raise HTTPException(409, "Agent review is already processing")
             message = await self._message(conn, tid, aid, mid)
             if message["status"] != "queued" and not (
                 message["status"] == "processing" and message["lease_until"] <= _now()
@@ -610,10 +618,6 @@ class Conversations:
                         .where(
                             s.tasks.c.deleting.is_(False),
                             s.agent_runs.c.status.not_in(ACTIVE),
-                            or_(
-                                s.agent_runs.c.task_type != "derive",
-                                s.tasks.c.status.in_(("finished", "failed", "stopped")),
-                            ),
                             or_(
                                 s.agent_messages.c.status == "queued",
                                 and_(
