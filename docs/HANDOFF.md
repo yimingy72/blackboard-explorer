@@ -72,9 +72,13 @@
   | Agent-conversation-input | ✅ 两模式HTTP发送UUID故障、Enter/Shift+Enter及输入法误发修复，普通Derive任务内只读复盘与Session互斥；2221普通、11相关数据库、147前端及27浏览器通过；代码6f7eece/50036ad、报告cdf1780已独立提交，按用户确认单独合并main为4888b45，部署由下述成果树版本继承（2026-10-19 Git发布） |
   | Blackboard-progress-tree | ✅ 用户批准的成果树、意图引导全局归纳、独立MAF整理会话/工具/费用/鉴权及0019迁移已部署两端；2247普通、20数据库/HTTP/MAF联通、155前端、151浏览器通过，最后相关17项再验。19/23任务及预算/配置/存档保持，旧任务未自动启用，无活动任务中断；按用户确认合并main为5540815，Git发布不重启服务（2026-10-19） |
   | Progress-readme / current-image-cleanup | ✅ README同步成果树、整理Agent、费用/权限/问答/配置与既有部署入口；本地清19个旧标签/约505.5MB缓存，公网清18个旧标签/缓存0B，当前应用及执行依赖保留；两端全部容器/卷和23张表摘要、MinIO清单保持，服务零重启（2026-10-19） |
+  | Model-runtime-reliability | ✅ 模型目录/输入输出上限、Docker宿主机地址、Responses工具续传与整理Agent故障恢复已按已部署快照单独提交4bc9473并合并推送；前序验证与发布见对应报告（2026-10-28 Git发布） |
+  | CTF-architecture-refinement | ✅ 第一批完整任务索引、逐题批量派工/题目引用、关键成果事务通知、渐进提示词和读回工具校验已提交9dec897并合并推送；2463普通、220 CTF数据库集成、155前端通过。本地ctf-architecture-20261028/迁移0020，23任务191会话及88639对象保留；CTF新配置v19仅供新任务，资源适配/角色策略/长作业仍为后续阶段（2026-10-28） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **最新交付**：成果树与独立MAF成果整理Agent已合并main为 `5540815` 并推送GitHub，两端运行 `progress-tree-20261019`、迁移0019。入口为本地 `http://127.0.0.1:58000/` 和公网 `http://101.201.116.63:58000/`；普通任务可切换成果树，旧任务显式启用，新任务明确展示额外整理额度。19/23任务、150/223会话与预算/配置/归档保留，详见[成果树报告](tasks/Blackboard-progress-tree-report.md)。后续README及镜像/构建缓存清理不重启服务，保护当前版本和执行依赖，详见[清理报告](tasks/Progress-readme-image-cleanup-report.md)；两端数据不自动双向同步。
+- **最新本地交付（2026-10-28）**：`9dec897` 已合并main并推送GitHub，本地运行 `ctf-architecture-20261028`、迁移0020，入口 `http://127.0.0.1:58000/`。CTF模板与工具新版本为ctf v19 / ctf-task-settings v15；旧任务快照、模型价格、资源及已有工具保留。22张业务表原字段、23任务、191会话与88639对象在迁移前后核验一致，随后只新增2个配置版本。本次未更新公网、未续跑任务，见[架构改造报告](tasks/CTF-architecture-refinement-report.md)。
+
+- **成果树历史交付（2026-10-19）**：成果树与独立MAF成果整理Agent已合并main为 `5540815` 并推送GitHub，该次交付时两端运行 `progress-tree-20261019`、迁移0019。入口为本地 `http://127.0.0.1:58000/` 和公网 `http://101.201.116.63:58000/`；普通任务可切换成果树，旧任务显式启用，新任务明确展示额外整理额度。19/23任务、150/223会话与预算/配置/归档保留，详见[成果树报告](tasks/Blackboard-progress-tree-report.md)。后续README及镜像/构建缓存清理不重启服务，保护当前版本和执行依赖，详见[清理报告](tasks/Progress-readme-image-cleanup-report.md)；两端数据不自动双向同步。
 - **本地修复与迁移交付记录**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。该检查点公网17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致，本地18任务保持。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
 - **流量版本交付记录**：首页样式 `5c169de`、流量采集与原生解析 `4fd4da8`、统一查看前端 `acf5625` 已合并main为 `aec9f62`。两模式共用Agent归属、HTTPS解码、MinIO存档与官方Wireshark 4.4.19显示过滤；完整原生解析按快照更新，不把逻辑调用冒充数据包。沿用同版2129普通、345隔离集成、129前端及12项原生浏览器检查，合并后140个候选文件逐字节一致。该检查点入口 `http://127.0.0.1:58000/`；blackboard标签 `cdf594fc…`、runtime `7c7ee3ee…`、Kali `c83fc64a…`、Ubuntu `1735df94…`。当时本地17任务/99会话及配置保留；旧轮不能补录原生输入/密钥。该次Git发布未重启服务。见[流量报告](tasks/Traffic-observability-report.md)及第0.5节。
 - **登录修复记录**：`97aa713` 已合并main为 `b8b3f20`。成功登录后清除旧会话查询，避免旧401错误再次触发返回登录；117项前端检查、构建及浏览器过期重登验证通过。账号、任务及配置保持；其历史镜像由上述流量版本替代。见[登录修复报告](tasks/Login-session-cache-report.md)及第0.4节。
@@ -442,6 +446,8 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 **每个任务的标准流程**：建工作树 → 派发 → 读报告 → 独立运行 `make check` / `make test-integration` → 执行任务说明中"需要用户执行"的检查点 → 有问题写 `<T>-fix.md` 用 `--resume-last` 派回 → 按报告建议提交 → 合并 → 删除工作树。
 
 ## 6.1 设计文档待同步
+
+2026-10-28 CTF信息闭环与逐题派工已先同步独立提案（设计提交0a5cf68）再实现发布：短索引、按题事务批量派工、nullable消息题目引用、关键记录通知、配置读回能力及旧数据兼容合同均已记录。三份通用黑板正本未混入CTF规则；后续统一以[CTF独立提案](proposals/CTF-team-mode-design.md)的2026-10-28节为准。可信资源状态适配、角色模型策略和异步长作业尚未实施，保留独立阶段，不计作本轮完成。
 
 Blackboard-progress-tree已按用户批准先行同步三份正本及[扩展合同](design/成果树与整理Agent.md)，设计提交0c0b463。整理角色独立于三种求解Worker，以Intent为线索全局归并Fact和过程，独立费用/租约，不影响Close、求解水位和预算。没有新增未同步设计项，见[报告](tasks/Blackboard-progress-tree-report.md)。
 
