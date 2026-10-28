@@ -202,7 +202,7 @@ async def update_ctf_worker(
 ) -> dict[str, Any]:
     from bbx_contracts.ctf import CtfAgentProfile
 
-    from bbx_blackboard.profiles import ctf_profile
+    from bbx_blackboard.profiles import ctf_profile, require_ctf_tool_capabilities
 
     identity = require_user_or_service(request)
     store = request.app.state.profile_store
@@ -216,6 +216,7 @@ async def update_ctf_worker(
         profile = CtfAgentProfile.model_validate(content)
     except ValueError as error:
         raise HTTPException(422, "Invalid CTF prompt or role tools") from error
+    require_ctf_tool_capabilities(profile, (role,))
     for tools in profile.worker_tools.values():
         for binding in tools.mcp_servers:
             configured = await request.app.state.platform_store.get(

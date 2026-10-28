@@ -61,7 +61,7 @@ from bbx_blackboard.native import NativeAnalysisCache
 from bbx_blackboard.native_api import router as native_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
-from bbx_blackboard.profiles import ProfileStore, ctf_profile
+from bbx_blackboard.profiles import ProfileStore, ctf_profile, require_ctf_tool_capabilities
 from bbx_blackboard.progress import router as progress_router
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
@@ -788,6 +788,7 @@ def create_app(
             profiles = _profiles(request)
             row = await profiles.get(body.agent_profile, body.profile_version)
             profile = ctf_profile(row)
+            require_ctf_tool_capabilities(profile)
             platform = request.app.state.platform_store
             model_name = body.model_id or await platform.default_model_name()
             if not model_name:

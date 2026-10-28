@@ -16,6 +16,7 @@ from pydantic import AfterValidator, Field, field_validator, model_validator
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
 
 CtfRole = Literal["lead", "teammate"]
+CTF_BOARD_RESULT_MAX_BYTES = 16000
 CTF_COMMON_TOOLS = frozenset(
     {
         "list_members",
@@ -36,6 +37,8 @@ CTF_COMMON_TOOLS = frozenset(
     }
 )
 CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {
+    "create_challenges",
+    "assign_challenges",
     "create_teammate",
     "stop_teammate",
     "resume_teammate",
@@ -322,6 +325,7 @@ class CtfMessage(ContractModel):
     status: Literal["queued", "leased", "delivered", "cancelled", "failed"] = "queued"
     reply_to: UUID | None = None
     assignment_id: UUID | None = None
+    challenge_id: UUID | None = None
     source_turn_id: UUID | None = None
     recipient_sequence: int = Field(default=0, ge=0)
     deferred: bool = False
@@ -642,6 +646,54 @@ class CtfChallengeUpdateRequest(ContractModel):
             ):
                 raise ValueError("Instruction recipients must be nonempty unique member IDs")
         return self
+
+
+class CtfChallengeBatchCreateRequest(ContractModel):
+    items: list[CtfChallengeCreateRequest] = Field(min_length=1, max_length=20)
+
+
+class CtfChallengeAssignItem(ContractModel):
+    request_id: UUID
+    challenge_id: UUID
+    expected_revision: int = Field(ge=1)
+    owner_id: str = Field(min_length=1)
+    instructions: list[CtfAssignmentInstruction] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def assignment_fields(self) -> CtfChallengeAssignItem:
+        CtfChallengeUpdateRequest(
+            request_id=self.request_id,
+            expected_revision=self.expected_revision,
+            action="assign",
+            owner_id=self.owner_id,
+            instructions=self.instructions,
+        )
+        return self
+
+
+class CtfChallengeBatchAssignRequest(ContractModel):
+    items: list[CtfChallengeAssignItem] = Field(min_length=1, max_length=20)
+
+
+def ctf_tool_capability_issues(
+    profile: CtfAgentProfile, roles: tuple[CtfRole, ...] = ("lead", "teammate")
+) -> dict[str, list[str]]:
+    """Validate newly selected tools without invalidating frozen legacy profiles."""
+    issues: dict[str, list[str]] = {}
+    for role in roles:
+        tools = profile.worker_tools[role]
+        selected = set(tools.builtin)
+        missing = set()
+        if "list_challenges" in selected and "get_challenge" not in selected:
+            missing.add("get_challenge")
+        if (
+            selected & {"execute_command", "get_challenge", "list_records", "read_turn_result"}
+            or tools.mcp_servers
+        ) and "read_saved_tool_result" not in selected:
+            missing.add("read_saved_tool_result")
+        if missing:
+            issues[role] = sorted(missing)
+    return issues
 
 
 class CtfRecordAppendRequest(ContractModel):

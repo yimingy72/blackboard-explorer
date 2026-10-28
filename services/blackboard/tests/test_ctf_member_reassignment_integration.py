@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from test_ctf_integration import ctf as ctf
 from test_ctf_integration import ctf_url as ctf_url
 from test_ctf_integration import history, team
+from test_ctf_member_reassignment import assert_claim_blocked
 
 pytestmark = pytest.mark.integration
 
@@ -54,8 +55,10 @@ async def assigned_idle_owner(ctf):
 async def remove(ctf, tid, owner, operation="remove"):
     request = str(uuid4())
     await ctf.request_member_operation(tid, "user", owner, operation, request)
+    await assert_claim_blocked(ctf, tid, owner)
     proof = {"boot_id": "synthetic-boot", "generation": 0, "drained": True}
     await ctf.complete_member_operation(tid, owner, request, proof)
+    await assert_claim_blocked(ctf, tid, owner)
     return request
 
 
@@ -113,9 +116,24 @@ async def test_closed_work_keeps_history_until_reopened_without_unavailable_owne
         work_status=closed_status,
         solution=solution() if closed_status == "completed" else None,
     )
+    completion = [
+        message
+        for message in (await ctf.state(tid))["messages"]
+        if message["notification_purpose"] == "challenge_progress"
+    ]
+    assert len(completion) == (2 if closed_status == "completed" else 0)
+    assert all(
+        json.loads(message["body"])["record_id"] == closed["solution_record_id"]
+        for message in completion
+    )
+    completion_ids = {message["id"] for message in completion}
     await remove(ctf, tid, owner, operation)
     assert await ctf.get_challenge(tid, closed["id"]) == closed
-    assert "lead" not in (await ctf.runtime_state(tid))["ready_member_ids"]
+    assert ("lead" in (await ctf.runtime_state(tid))["ready_member_ids"]) == (
+        closed_status == "completed"
+    )
+    before = (await ctf.state(tid))["messages"]
+    assert not any(message["notification_purpose"] == "challenge_available" for message in before)
     request = str(uuid4())
     reopened = await ctf.update_challenge(
         tid, "user", closed["id"], request, closed["revision"], "reopen"
@@ -123,9 +141,19 @@ async def test_closed_work_keeps_history_until_reopened_without_unavailable_owne
     assert reopened["owner_id"] is None and reopened["work_status"] == "pending"
     assert reopened["previous_owner_id"] == owner and reopened["solution_record_id"] is None
     assert "lead" in (await ctf.runtime_state(tid))["ready_member_ids"]
+    messages = (await ctf.state(tid))["messages"]
+    assert {
+        message["id"]
+        for message in messages
+        if message["notification_purpose"] == "challenge_progress"
+    } == completion_ids
+    new = [message for message in messages if message["id"] not in {old["id"] for old in before}]
+    assert len(new) == 1 and new[0]["notification_purpose"] == "challenge_available"
+    assert new[0]["recipient_id"] == "lead"
     assert reopened == await ctf.update_challenge(
         tid, "user", closed["id"], request, closed["revision"], "reopen"
     )
+    assert (await ctf.state(tid))["messages"] == messages
 
 
 async def test_cancelled_owner_removal_does_not_block_goal_claim(ctf):

@@ -61,6 +61,11 @@ _ARGUMENT_ERRORS = frozenset(
         "Invalid CTF board request",
         "Invalid verification request",
         "Invalid pagination",
+        "Invalid challenge pagination",
+        "Invalid challenge cursor",
+        "Invalid challenge view",
+        "Challenge filters require summary view",
+        "Invalid challenge batch",
         "Invalid after_version",
         "Unexpected query arguments",
         "Unexpected artifact arguments",
@@ -105,6 +110,20 @@ def recoverable_tool_error(error: RemoteError) -> Content | None:
         and (code := error.code or CTF_BOARD_ERROR_CODES.get(error.message)) in _BOARD_ERROR_HINTS
     ):
         result = {"error": {"code": code, "message": _BOARD_ERROR_HINTS[code]}}
+    elif error.status == 422 and error.code == "challenge_page_too_small":
+        result = {
+            "error": {
+                "code": "challenge_page_too_small",
+                "message": "Increase list_challenges.max_bytes within its schema limit, "
+                "or read the named challenge with get_challenge. Do not repeat the same page.",
+            }
+        }
+        minimum = (error.detail or {}).get("minimum_bytes")
+        if type(minimum) is int and minimum > 0:
+            result["error"]["minimum_bytes"] = minimum
+        challenge_id = (error.detail or {}).get("challenge_id")
+        if isinstance(challenge_id, str) and len(challenge_id) <= 100:
+            result["error"]["challenge_id"] = challenge_id
     elif error.status == 422 and error.code == "invalid_solution_delivery":
         result = {
             "error": {

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from bbx_contracts.ctf import CtfAgentProfile, load_ctf_profile
+from bbx_contracts.ctf import CtfAgentProfile, CtfRole, ctf_tool_capability_issues, load_ctf_profile
 from bbx_contracts.models import AgentProfile
 from bbx_contracts.profile import load_profile
 from fastapi import HTTPException
@@ -49,6 +49,15 @@ def ctf_profile(row: dict[str, Any]) -> CtfAgentProfile:
             },
         }
     )
+
+
+def require_ctf_tool_capabilities(
+    profile: CtfAgentProfile, roles: tuple[CtfRole, ...] = ("lead", "teammate")
+) -> None:
+    missing = ctf_tool_capability_issues(profile, roles)
+    if missing:
+        detail = "; ".join(f"{role}: {', '.join(tools)}" for role, tools in missing.items())
+        raise HTTPException(422, f"请在 CTF 配置启用必要的详情/全文读取工具：{detail}")
 
 
 def _digest(content: dict[str, Any]) -> str:

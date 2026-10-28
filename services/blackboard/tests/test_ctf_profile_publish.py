@@ -71,6 +71,21 @@ def test_template_sync_preserves_distinct_family_settings_and_original_rows():
     assert "synthetic-task-image" not in rendered
 
 
+def test_publication_dry_run_reports_legacy_missing_readback_without_rewriting_tools():
+    rows = profile_rows()
+    rows["ctf"]["worker_tools"]["lead"]["builtin"].remove("read_saved_tool_result")
+    before = deepcopy(rows)
+    candidates, summary = publication_plan(rows)
+    assert summary["profiles"]["ctf"]["missing_readback_tools"] == {
+        "lead": ["read_saved_tool_result"]
+    }
+    assert (
+        candidates["ctf"].worker_tools["lead"].builtin
+        == rows["ctf"]["worker_tools"]["lead"]["builtin"]
+    )
+    assert rows == before
+
+
 def test_explicit_target_threshold_raises_capacity_without_changing_source_or_output():
     rows = profile_rows()
     candidates, summary = publication_plan(

@@ -237,7 +237,7 @@ async def test_native_maf_board_tools_read_record_and_append_registered_artifact
         "append_record",
         "post_message",
     ]
-    assert calls[0][1] == {"offset": 500, "limit": 50}
+    assert calls[0][1] == {"view": "summary", "offset": 500, "limit": 50, "max_bytes": 6000}
     assert calls[1][1]["offset"] == 100 and calls[1][1]["limit"] == 25
     assert calls[2][1]["artifact_ids"] == [artifact_id]
     assert calls[2][1]["kind"] == "note"

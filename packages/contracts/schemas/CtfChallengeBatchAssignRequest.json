@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "CtfAssignmentInstruction": {
+      "additionalProperties": false,
+      "properties": {
+        "recipient_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Recipient Id",
+          "type": "string"
+        },
+        "body": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Body",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recipient_id",
+        "body"
+      ],
+      "title": "CtfAssignmentInstruction",
+      "type": "object"
+    },
+    "CtfChallengeAssignItem": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "challenge_id": {
+          "format": "uuid",
+          "title": "Challenge Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "owner_id": {
+          "minLength": 1,
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "instructions": {
+          "items": {
+            "$ref": "#/$defs/CtfAssignmentInstruction"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Instructions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "request_id",
+        "challenge_id",
+        "expected_revision",
+        "owner_id",
+        "instructions"
+      ],
+      "title": "CtfChallengeAssignItem",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/CtfChallengeAssignItem"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "CtfChallengeBatchAssignRequest",
+  "type": "object"
+}

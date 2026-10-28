@@ -380,6 +380,8 @@ def test_role_tool_permissions_and_explicit_fake_execution():
         "request_help",
     }
     assert lead - board == {
+        "create_challenges",
+        "assign_challenges",
         "list_members",
         "send_message",
         "create_teammate",

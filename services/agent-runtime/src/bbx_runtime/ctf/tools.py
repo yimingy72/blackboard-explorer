@@ -52,10 +52,13 @@ def build_tools(
         body: Annotated[str, Field(min_length=1, max_length=20000)],
         instruction: bool = False,
         reply_to: str | None = None,
+        challenge_id: str | None = None,
     ) -> ToolJsonResult:
-        """Send a directed message with challenge IDs and record/artifact IDs in the body.
+        """Send a directed message with an explicit challenge reference when applicable.
 
-        instruction explicitly assigns work. reply_to is the original message UUID.
+        instruction explicitly assigns work. challenge_id is the existing board ID;
+        include scope and record/artifact references in body. reply_to is the original
+        message UUID. This does not assign ownership or change challenge permissions.
         """
         return await json_tool_result(
             service.tool(
@@ -67,6 +70,7 @@ def build_tools(
                 message_id=str(uuid4()),
                 kind="instruction" if instruction else "message",
                 reply_to=reply_to,
+                **({"challenge_id": challenge_id} if challenge_id is not None else {}),
             )
         )
 
@@ -249,6 +253,11 @@ def build_tools(
     ) -> str:
         """Execute in this member's fenced workspace; timeout uses the configured envd maximum.
 
+        Prefer short, coherent operations and inspect each result before starting the
+        next independent step. Publish a useful result or blocker before continuing a
+        long investigation. Do not use long sleeps or repeated shell polling to wait
+        for teammate replies. A timeout does not prove an external action had no effect.
+
         When BBX_AGENT_IP is set, localhost belongs to this Agent's network namespace.
         For cross-Agent services, bind to 0.0.0.0 and read peer IPs from
         /workspace/shared/network.json. BBX_TASK_GATEWAY identifies the shared gateway.
@@ -316,7 +325,7 @@ def build_tools(
         )
 
     return [
-        *build_board_tools(service, task_id, member_id, turn, artifacts),
+        *build_board_tools(service, task_id, member_id, turn, artifacts, role=role),
         *([execute_command] if envd is not None else []),
         *([view_image] if view_image is not None else []),
         list_members,

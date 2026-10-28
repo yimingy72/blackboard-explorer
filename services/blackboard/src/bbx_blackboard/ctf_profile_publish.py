@@ -13,7 +13,7 @@ import sys
 from copy import deepcopy
 from typing import Any
 
-from bbx_contracts.ctf import CtfAgentProfile, CtfOptions
+from bbx_contracts.ctf import CtfAgentProfile, CtfOptions, ctf_tool_capability_issues
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
@@ -84,6 +84,7 @@ def publication_plan(
             else None
         )
         summary["profiles"][name] = {
+            "missing_readback_tools": ctf_tool_capability_issues(profile),
             "before_version": rows[name]["version"],
             "version": rows[name]["version"] + int(before != after),
             "changed": before != after,
@@ -139,6 +140,8 @@ async def publish_ctf_profiles(
             reserved_output_tokens=reserved_output_tokens,
         )
         if apply:
+            if any(ctf_tool_capability_issues(profile) for profile in profiles.values()):
+                raise ValueError("Publication requires the readback tools shown in the dry-run")
             # The shared transaction rolls back both writes on either CAS conflict.
             for name in FAMILIES:
                 saved = await store.create_in_connection(

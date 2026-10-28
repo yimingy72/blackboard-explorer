@@ -29,6 +29,7 @@ class CtfPlatformMixin:
     _board_event: Any
     _delivery_solution: Any
     _complete_solution: Any
+    _notify_record: Any
 
     async def _verification_record(
         self,
@@ -67,6 +68,7 @@ class CtfPlatformMixin:
         record = await self._board_event(
             conn, tid, actor, "ctf.record.appended", request_id, digest, result
         )
+        updated = challenge
         if applied:
             updated = {**challenge, "revision": challenge["revision"] + 1}
             if verification is not None and not preserve_verification:
@@ -86,6 +88,8 @@ class CtfPlatformMixin:
                 digest,
                 updated,
             )
+        if verification is not None:
+            await self._notify_record(conn, tid, updated, record, "challenge_verification")
         return record
 
     async def set_verification_required(

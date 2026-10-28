@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
+from bbx_contracts.ctf import CTF_BOARD_RESULT_MAX_BYTES
 from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import ModelConfig
 
@@ -168,6 +169,44 @@ def fixed_prompt_tokens(instructions: str, tools: Sequence[Any]) -> int:
     )
 
 
+def complete_board_result(tool_name: str | None, result: str) -> bool:
+    """Protect bounded board pages/receipts, never arbitrary tool JSON or full details."""
+    if tool_name not in {"list_challenges", "create_challenges", "assign_challenges"}:
+        return False
+    if len(result.encode("utf-8")) > CTF_BOARD_RESULT_MAX_BYTES:
+        return False
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if tool_name == "list_challenges":
+        return (
+            payload.get("view") == "summary"
+            and isinstance(payload.get("challenges"), list)
+            and "next_cursor" in payload
+            and "next_offset" in payload
+            and all(
+                isinstance(item, dict)
+                and isinstance(item.get("id"), str)
+                and type(item.get("revision")) is int
+                and item["revision"] >= 1
+                for item in payload["challenges"]
+            )
+        )
+    return (
+        isinstance(payload.get("results"), list)
+        and 1 <= len(payload["results"]) <= 20
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("request_id"), str)
+            and item.get("status") in ("ok", "error")
+            for item in payload["results"]
+        )
+    )
+
+
 def stable_tool_previews(
     messages: Sequence[Message], state: dict[str, Any], limit_tokens: int
 ) -> list[Message]:
@@ -178,6 +217,13 @@ def stable_tool_previews(
     """
     previews = state.setdefault("ctf_tool_previews", {})
     view = list(messages)
+    tool_names = {
+        content.call_id: content.name
+        for message in messages
+        if message.role == "assistant"
+        for content in message.contents
+        if content.type == "function_call"
+    }
     allowance = max(64, min(8192, limit_tokens // 8))
     for index, message in enumerate(messages):
         if message.role != "tool":
@@ -188,7 +234,10 @@ def stable_tool_previews(
             key = f"{message.message_id}:{content.call_id}:{content_index}"
             if key not in previews:
                 result = str(content.result)
-                if estimate_text_tokens(result) <= allowance:
+                if estimate_text_tokens(result) <= allowance or complete_board_result(
+                    tool_names.get(content.call_id), result
+                ):
+                    # The total input gate still applies; a cursor/receipt cannot be cut.
                     previews[key] = None
                 else:
                     # A byte-bounded head/tail also bounds punctuation-heavy output.

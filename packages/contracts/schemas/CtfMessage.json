@@ -95,6 +95,19 @@
       "default": null,
       "title": "Assignment Id"
     },
+    "challenge_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Challenge Id"
+    },
     "source_turn_id": {
       "anyOf": [
         {

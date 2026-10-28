@@ -1111,9 +1111,12 @@ class CtfService(
         source_turn_id=None,
         notification_purpose=None,
         purpose="execution",
+        challenge_id=None,
     ):
         try:
             message_id = str(UUID(str(message_id)))
+            if challenge_id is not None:
+                challenge_id = str(UUID(str(challenge_id)))
             if reply_to is not None:
                 reply_to = str(UUID(str(reply_to)))
         except ValueError as exc:
@@ -1140,11 +1143,14 @@ class CtfService(
                         "kind": kind,
                         "reply_to": reply_to,
                         "purpose": purpose,
+                        "challenge_id": challenge_id,
                     }.items()
                 ),
                 "Message ID conflict",
             )
             return dict(existing)
+        if challenge_id is not None:
+            await self._challenge(conn, tid, challenge_id)
         recipient = await row(conn, s.ctf_members, tid, recipient_id)
         require(purpose == "review" or recipient["lifecycle"] != "removed", "Recipient is removed")
         require(purpose == "review" or actor != recipient_id, "Cannot send a message to yourself")
@@ -1170,6 +1176,7 @@ class CtfService(
             deferred=deferred,
             source_turn_id=source_turn_id,
             notification_purpose=notification_purpose,
+            challenge_id=challenge_id,
             created_at=now(),
         )
         await conn.execute(insert(s.ctf_messages).values(task_id=tid, **values))
@@ -1187,12 +1194,21 @@ class CtfService(
         reply_to=None,
         generation=None,
         turn_id=None,
+        challenge_id=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
             if actor == "user" and task["status"] in {"finished", "failed", "stopped"}:
                 return await self._message(
-                    conn, tid, actor, recipient_id, body, message_id, "review", purpose="review"
+                    conn,
+                    tid,
+                    actor,
+                    recipient_id,
+                    body,
+                    message_id,
+                    "review",
+                    purpose="review",
+                    challenge_id=challenge_id,
                 )
             await self._actor(conn, tid, actor, generation, turn_id)
             phase = task["ctf_control"]["phase"]
@@ -1202,7 +1218,16 @@ class CtfService(
             )
             require(kind in {"instruction", "message", "help_request"}, "Reserved message kind")
             result = await self._message(
-                conn, tid, actor, recipient_id, body, message_id, kind, reply_to, phase == "closing"
+                conn,
+                tid,
+                actor,
+                recipient_id,
+                body,
+                message_id,
+                kind,
+                reply_to,
+                phase == "closing",
+                challenge_id=challenge_id,
             )
             blocked = task["ctf_control"].get("context_blocked_members", {}).get(recipient_id)
             if blocked is not None and (actor == "user" or kind == "instruction"):

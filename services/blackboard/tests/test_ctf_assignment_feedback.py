@@ -33,7 +33,12 @@ async def feedback(storage, monkeypatch):
     async def append(conn, tid, entries):
         result = await original_append(conn, tid, entries)
         for event in result:
-            event.setdefault("created_at", datetime.now(UTC))
+            event.setdefault("created_at", datetime.now(UTC).replace(tzinfo=None))
+            await conn.execute(
+                update(storage.tables["events"])
+                .where(storage.tables["events"].c.version == event["version"])
+                .values(created_at=event["created_at"])
+            )
         for entry in entries:
             if entry["type"] in {"ctf.challenge.created", "ctf.challenge.updated"}:
                 challenge = entry["payload"]["result"]
@@ -381,7 +386,9 @@ async def test_no_advisory_without_a_newly_available_challenge(feedback):
         ),
     )
     assert reopened["owner_id"] == "alice" and reopened["work_status"] == "in_progress"
-    assert mailbox(feedback) == []
+    assert not [
+        item for item in mailbox(feedback) if item["notification_purpose"] == "challenge_available"
+    ]
 
 
 async def dispatched_turn(feedback):

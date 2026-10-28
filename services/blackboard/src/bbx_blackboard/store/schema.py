@@ -362,6 +362,7 @@ ctf_messages = scoped(
     col("session_revision", Integer),
     col("source_turn_id", Text),
     col("notification_purpose", Text),
+    col("challenge_id", Text),
     col("created_at", DateTime(timezone=True), nullable=False),
 )
 Index(

@@ -297,6 +297,25 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
             turn_id=identity.turn_id,
             **validated,
         )
+    if operation in {"create_challenges", "assign_challenges"}:
+        if member["role"] != "lead":
+            raise HTTPException(403, "Only Lead can batch challenges")
+        model = (
+            ctf_models.CtfChallengeBatchCreateRequest
+            if operation == "create_challenges"
+            else ctf_models.CtfChallengeBatchAssignRequest
+        )
+        try:
+            arguments = model.model_validate(body).model_dump(mode="json")
+        except ValueError as error:
+            raise HTTPException(422, "Invalid challenge batch") from error
+        return await getattr(service(request), operation)(
+            task_id,
+            actor=identity.agent_id,
+            generation=identity.generation,
+            turn_id=identity.turn_id,
+            **arguments,
+        )
     if operation in {
         "list_challenges",
         "get_challenge",
@@ -422,6 +441,22 @@ async def board_tool(
             if arguments:
                 raise HTTPException(422, "Unexpected query arguments")
             return await service(request).get_challenge(task_id, challenge_id)
+        if operation == "list_challenges" and arguments.get("view") == "summary":
+            if set(arguments) - {
+                "view",
+                "limit",
+                "offset",
+                "owner_id",
+                "work_status",
+                "cursor",
+                "max_bytes",
+            }:
+                raise HTTPException(422, "Unexpected challenge query arguments")
+            return await service(request).list_challenges(
+                task_id, **{"limit": 100, "offset": 0, **arguments}
+            )
+        if operation == "list_challenges" and arguments.get("view") == "full":
+            arguments.pop("view")
         limit, offset = arguments.pop("limit", 100), arguments.pop("offset", 0)
         after_version = None
         if operation == "list_records" and "after_version" in arguments:

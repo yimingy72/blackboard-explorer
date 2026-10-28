@@ -4,7 +4,17 @@ from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from agent_framework import tool
-from bbx_contracts.ctf import CtfAssignmentInstruction, CtfProgress, CtfSolution
+from bbx_contracts.ctf import (
+    CTF_BOARD_RESULT_MAX_BYTES,
+    CtfAssignmentInstruction,
+    CtfChallengeAssignItem,
+    CtfChallengeBatchAssignRequest,
+    CtfChallengeBatchCreateRequest,
+    CtfChallengeCreateRequest,
+    CtfProgress,
+    CtfSolution,
+    CtfWorkStatus,
+)
 from pydantic import Field
 
 from bbx_runtime.ctf.client import CtfClient
@@ -12,24 +22,89 @@ from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
 
 
 def build_board_tools(
-    service: CtfClient, task_id: str, member_id: str, turn: dict[str, Any], artifacts: Any = None
+    service: CtfClient,
+    task_id: str,
+    member_id: str,
+    turn: dict[str, Any],
+    artifacts: Any = None,
+    *,
+    role: str = "teammate",
 ) -> list[Any]:
     token = turn["token"]
 
     @tool
     async def list_challenges(
-        offset: Annotated[int, Field(ge=0)] = 0, limit: Annotated[int, Field(ge=1, le=500)] = 100
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
+        owner_id: str | None = None,
+        work_status: CtfWorkStatus | None = None,
+        cursor: str | None = None,
+        max_bytes: Annotated[int, Field(ge=1024, le=CTF_BOARD_RESULT_MAX_BYTES)] = 6000,
     ) -> ToolJsonResult:
-        """List the shared task board, including owners, collaborators and revisions."""
+        """Read a bounded index of IDs, owners, statuses and revisions; no full descriptions.
+
+        Filter by owner_id/work_status. Follow next_cursor with the same filters and
+        offset=0; do not combine cursor and offset. A page may contain fewer than limit
+        entries because max_bytes bounds its complete JSON. Read get_challenge by ID
+        for the exact description, requirements and evidence. Do not repeatedly scan
+        the whole board when an assignment already names the challenge. This is a live
+        index, not a frozen snapshot; start a new cursor sequence when changing filters.
+        """
         return await json_tool_result(
-            service.tool(task_id, token, "list_challenges", offset=offset, limit=limit)
+            service.tool(
+                task_id,
+                token,
+                "list_challenges",
+                view="summary",
+                offset=offset,
+                limit=limit,
+                max_bytes=max_bytes,
+                **({"owner_id": owner_id} if owner_id is not None else {}),
+                **({"work_status": work_status} if work_status is not None else {}),
+                **({"cursor": cursor} if cursor is not None else {}),
+            )
         )
 
     @tool
     async def get_challenge(challenge_id: str) -> ToolJsonResult:
-        """Read a challenge and its current revision before changing it."""
+        """Read one challenge's complete description, requirements and current revision."""
         return await json_tool_result(
             service.tool(task_id, token, "get_challenge", challenge_id=challenge_id)
+        )
+
+    @tool
+    async def create_challenges(
+        items: Annotated[list[CtfChallengeCreateRequest], Field(min_length=1, max_length=20)],
+    ) -> ToolJsonResult:
+        """Lead: register a small batch of independently deliverable challenges.
+
+        Each item needs its own stable request_id UUID. Each item commits independently;
+        inspect every receipt. If delivery is uncertain, resend the identical item with
+        the same request_id to read its committed outcome, never a fresh ID. Correct a
+        rejected item before a new request. Do not bundle independent goals into one
+        challenge or wait for the full inventory before assigning ready work.
+        """
+        request = CtfChallengeBatchCreateRequest(items=items)
+        return await json_tool_result(
+            service.tool(task_id, token, "create_challenges", **request.model_dump(mode="json"))
+        )
+
+    @tool
+    async def assign_challenges(
+        items: Annotated[list[CtfChallengeAssignItem], Field(min_length=1, max_length=20)],
+    ) -> ToolJsonResult:
+        """Lead: assign a small batch, with one atomic assignment and instruction per item.
+
+        Each item has a stable request_id UUID, challenge_id, expected_revision, owner_id
+        and instructions. Include scope, completion requirements and existing evidence
+        in each instruction. Partial errors do not undo successful items. Resend an
+        uncertain identical item with its original request_id; after a revision conflict,
+        read get_challenge and reconsider before a new request. Do not send duplicate
+        instruction messages after successful atomic dispatch.
+        """
+        request = CtfChallengeBatchAssignRequest(items=items)
+        return await json_tool_result(
+            service.tool(task_id, token, "assign_challenges", **request.model_dump(mode="json"))
         )
 
     @tool
@@ -248,4 +323,5 @@ def build_board_tools(
         append_record,
         register_artifact,
         request_help,
+        *([create_challenges, assign_challenges] if role == "lead" else []),
     ]

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import posixpath
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.ctf import (
+    CTF_BOARD_RESULT_MAX_BYTES,
     CtfAssignmentInstruction,
+    CtfChallengeBatchAssignRequest,
+    CtfChallengeBatchCreateRequest,
     CtfProgress,
     CtfSolution,
     execution_agent_id,
@@ -136,22 +141,222 @@ class CtfBoardMixin:
         await self.repo.notify(tid, events[-1]["version"], connection=conn)
         return result
 
-    async def list_challenges(self, tid, *, limit=None, offset=0):
+    @staticmethod
+    def _challenge_summary(challenge):
+        result = {
+            key: challenge.get(key)
+            for key in ("id", "revision", "owner_id", "work_status", "tombstone")
+        }
+        shortened = []
+        for key, size in (("title", 80), ("external_id", 96)):
+            value = challenge.get(key)
+            result[key] = value[:size] if isinstance(value, str) else value
+            if isinstance(value, str) and len(value) > size:
+                shortened.append(key)
+        verification = challenge.get("verification") or {}
+        result["verification"] = {
+            key: verification[key]
+            for key in ("required", "status", "source")
+            if key in verification
+        }
+        if shortened:
+            result["truncated_fields"] = shortened
+            result["detail_ref"] = challenge["id"]
+        return result
+
+    async def list_challenges(
+        self,
+        tid,
+        *,
+        limit=None,
+        offset=0,
+        view="full",
+        owner_id=None,
+        work_status=None,
+        cursor=None,
+        max_bytes=6000,
+    ):
+        if not isinstance(view, str) or view not in {"full", "summary"}:
+            raise HTTPException(422, "Invalid challenge view")
+        if view == "full" and any(value is not None for value in (owner_id, work_status, cursor)):
+            raise HTTPException(422, "Challenge filters require summary view")
+        if (
+            type(offset) is not int
+            or offset < 0
+            or (limit is not None and (type(limit) is not int or not 1 <= limit <= 500))
+            or type(max_bytes) is not int
+            or not 1024 <= max_bytes <= CTF_BOARD_RESULT_MAX_BYTES
+            or (owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip()))
+            or (work_status is not None and not isinstance(work_status, str))
+            or work_status
+            not in {None, "pending", "in_progress", "blocked", "completed", "cancelled"}
+        ):
+            raise HTTPException(422, "Invalid challenge pagination")
+        signature = hashlib.sha256(
+            json.dumps([str(tid), owner_id, work_status]).encode()
+        ).hexdigest()[:32]
+        after_id = None
+        if cursor is not None:
+            try:
+                if offset or not isinstance(cursor, str) or len(cursor) > 2048:
+                    raise ValueError
+                decoded = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                if (
+                    not isinstance(decoded, list)
+                    or len(decoded) != 3
+                    or decoded[0] != signature
+                    or not isinstance(decoded[1], str)
+                    or not decoded[1]
+                    or type(decoded[2]) is not int
+                    or decoded[2] < 0
+                ):
+                    raise ValueError
+                _, after_id, offset = decoded
+                if str(UUID(after_id)) != after_id:
+                    raise ValueError
+            except (ValueError, TypeError, binascii.Error) as exc:
+                raise HTTPException(422, "Invalid challenge cursor") from exc
         async with self.repo.engine.connect() as conn:
             query = (
                 select(s.ctf_challenges.c.data)
                 .where(s.ctf_challenges.c.task_id == tid)
                 .order_by(s.ctf_challenges.c.id)
             )
-            if limit is not None:
-                query = query.offset(offset).limit(limit + 1)
+            if owner_id is not None:
+                query = query.where(s.ctf_challenges.c.data["owner_id"].as_string() == owner_id)
+            if work_status is not None:
+                query = query.where(
+                    s.ctf_challenges.c.data["work_status"].as_string() == work_status
+                )
+            if after_id is not None:
+                query = query.where(s.ctf_challenges.c.id > after_id)
+            elif limit is not None or view == "summary":
+                query = query.offset(offset)
+            page_limit = limit if limit is not None else 100
+            if limit is not None or view == "summary":
+                query = query.limit(page_limit + 1)
             values = [dict(item) for item in (await conn.execute(query)).scalars()]
+        if view == "full":
             if limit is None:
                 return {"challenges": values}
             return {
                 "challenges": values[:limit],
                 "next_offset": offset + limit if len(values) > limit else None,
             }
+
+        def page(items, more):
+            next_offset = offset + len(items) if more else None
+            next_cursor = (
+                base64.urlsafe_b64encode(
+                    json.dumps([signature, items[-1]["id"], next_offset]).encode()
+                ).decode()
+                if more
+                else None
+            )
+            return {
+                "view": "summary",
+                "challenges": items,
+                "next_cursor": next_cursor,
+                "next_offset": next_offset,
+            }
+
+        selected = []
+        result = page([], False)
+        for index, value in enumerate(values[:page_limit]):
+            candidate = [*selected, self._challenge_summary(value)]
+            candidate_page = page(candidate, index + 1 < len(values))
+            size = len(json.dumps(candidate_page, ensure_ascii=False).encode())
+            if size > max_bytes:
+                if not selected:
+                    # Even an old oversized display field must not hide its identity.
+                    item = candidate[0]
+                    for field in ("title", "external_id"):
+                        if item.get(field):
+                            item[field] = item[field][:16]
+                    item["truncated_fields"] = ["title", "external_id"]
+                    item["detail_ref"] = value["id"]
+                    candidate_page = page([item], len(values) > 1)
+                    minimum = len(json.dumps(candidate_page, ensure_ascii=False).encode())
+                    if minimum > max_bytes:
+                        raise HTTPException(
+                            422,
+                            {
+                                "code": "challenge_page_too_small",
+                                "minimum_bytes": minimum,
+                                "challenge_id": value["id"],
+                            },
+                        )
+                    return candidate_page
+                return page(selected, True)
+            selected = candidate
+            result = candidate_page
+        return result
+
+    async def _challenge_batch(self, tid, actor, items, operation, generation, turn_id):
+        ensure(actor in {"lead", "user"}, "Only Lead can batch challenges")
+        model = (
+            CtfChallengeBatchCreateRequest
+            if operation == "create"
+            else CtfChallengeBatchAssignRequest
+        )
+        try:
+            entries = model.model_validate({"items": items}).model_dump(mode="json")["items"]
+        except ValidationError as exc:
+            raise HTTPException(422, "Invalid challenge batch") from exc
+        results = []
+        for item in entries:
+            receipt = {"request_id": item["request_id"]}
+            try:
+                if operation == "create":
+                    challenge = await self.create_challenge(
+                        tid,
+                        actor,
+                        **item,
+                        generation=generation,
+                        turn_id=turn_id,
+                    )
+                else:
+                    challenge = await self.update_challenge(
+                        tid,
+                        actor,
+                        **item,
+                        action="assign",
+                        generation=generation,
+                        turn_id=turn_id,
+                    )
+                receipt.update(
+                    status="ok",
+                    challenge={
+                        key: challenge.get(key) for key in ("id", "revision", "work_status")
+                    },
+                )
+            except HTTPException as exc:
+                if exc.status_code not in {400, 403, 404, 409, 422}:
+                    raise
+                detail: Any = exc.detail
+                if len(json.dumps(detail, ensure_ascii=False).encode()) > 400:
+                    if isinstance(detail, dict) and detail.get("code") == "external_id_conflict":
+                        detail = {
+                            "code": "external_id_conflict",
+                            "challenge_ids": detail["challenge_ids"][:3],
+                            "truncated": True,
+                        }
+                    else:
+                        detail = {
+                            "code": "challenge_request_failed",
+                            "message": "Read the individual request for full error details.",
+                        }
+                receipt.update(
+                    status="error", error={"status_code": exc.status_code, "detail": detail}
+                )
+            results.append(receipt)
+        return {"results": results}
+
+    async def create_challenges(self, tid, actor, items, generation=None, turn_id=None):
+        return await self._challenge_batch(tid, actor, items, "create", generation, turn_id)
+
+    async def assign_challenges(self, tid, actor, items, generation=None, turn_id=None):
+        return await self._challenge_batch(tid, actor, items, "assign", generation, turn_id)
 
     async def get_challenge(self, tid, challenge_id):
         async with self.repo.engine.connect() as conn:
@@ -202,6 +407,28 @@ class CtfBoardMixin:
             )
             if previous:
                 return previous
+            if external_id:
+                matches = list(
+                    (
+                        await conn.execute(
+                            select(s.ctf_challenges.c.id)
+                            .where(
+                                s.ctf_challenges.c.task_id == tid,
+                                s.ctf_challenges.c.data["external_id"].as_string() == external_id,
+                            )
+                            .order_by(s.ctf_challenges.c.id)
+                            .limit(20)
+                        )
+                    ).scalars()
+                )
+                if matches:
+                    raise HTTPException(
+                        409,
+                        {
+                            "code": "external_id_conflict",
+                            "challenge_ids": matches,
+                        },
+                    )
             result = {
                 "id": str(uuid5(NAMESPACE_URL, f"ctf-challenge:{tid}:{actor}:{request_id}")),
                 "task_id": str(tid),
@@ -469,6 +696,7 @@ class CtfBoardMixin:
                     "Instruction recipient must own or collaborate on the updated challenge",
                 )
                 await self._active_member(conn, tid, instruction["recipient_id"])
+            record = None
             if solution is not None:
                 record = await self._complete_solution(
                     conn,
@@ -485,6 +713,8 @@ class CtfBoardMixin:
             result = await self._board_event(
                 conn, tid, actor, "ctf.challenge.updated", request_id, digest, result
             )
+            if record is not None:
+                await self._notify_record(conn, tid, result, record, "challenge_progress")
             for instruction in instructions or []:
                 await self._message(
                     conn,
@@ -500,6 +730,7 @@ class CtfBoardMixin:
                         )
                     ),
                     "instruction",
+                    challenge_id=challenge_id,
                 )
             if (
                 action in {"release", "reopen"}
@@ -676,6 +907,66 @@ class CtfBoardMixin:
             conn, tid, actor, "ctf.record.appended", request_id, digest, result
         ), False
 
+    async def _notify_record(self, conn, tid, challenge, record, purpose):
+        task = await self._task(conn, tid)
+        if task["ctf_control"]["phase"] != "running" or task["status"] != "running":
+            return
+        recipients = {
+            "lead",
+            challenge.get("owner_id"),
+            *challenge.get("collaborator_ids", []),
+        } - {None, record["author_id"]}
+        members = (
+            await conn.execute(
+                select(s.ctf_members).where(
+                    s.ctf_members.c.task_id == tid,
+                    s.ctf_members.c.id.in_(recipients),
+                )
+            )
+        ).mappings()
+        progress = record.get("progress") or {}
+        verification = record.get("verification") or {}
+        body = json.dumps(
+            {
+                "challenge_id": challenge["id"],
+                "record_id": record["id"],
+                "created_version": record["created_version"],
+                "revision": challenge["revision"],
+                "summary": str(
+                    progress.get("summary") or verification.get("summary") or record["body"]
+                )[:160],
+                "stage": progress.get("stage"),
+                "verification_status": (challenge.get("verification") or {}).get("status"),
+                "record_verification_status": verification.get("status"),
+                "summary_applied": record.get("summary_applied", True),
+            },
+            ensure_ascii=False,
+        )
+        for member in members:
+            if (
+                member["lifecycle"] != "active"
+                or member["run_state"] == "stopping"
+                or member.get("pending_operation")
+            ):
+                continue
+            recipient = member["id"]
+            await self._message(
+                conn,
+                tid,
+                "system",
+                recipient,
+                body,
+                str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"ctf-record-notice:{tid}:{record['id']}:{recipient}:{purpose}",
+                    )
+                ),
+                "notification",
+                notification_purpose=purpose,
+                challenge_id=challenge["id"],
+            )
+
     async def append_record(
         self,
         tid,
@@ -697,7 +988,7 @@ class CtfBoardMixin:
         ensure(kind in {"note", "correction"}, "Reserved record kind")
         async with self.repo.engine.begin() as conn:
             await self._board_write(conn, tid, actor, generation, turn_id)
-            result, _ = await self._append_record(
+            result, duplicate = await self._append_record(
                 conn,
                 tid,
                 actor,
@@ -708,6 +999,18 @@ class CtfBoardMixin:
                 artifact_ids,
                 progress=progress,
             )
+            if (
+                not duplicate
+                and progress is not None
+                and progress["stage"] in {"result", "breakthrough"}
+            ):
+                await self._notify_record(
+                    conn,
+                    tid,
+                    await self._challenge(conn, tid, challenge_id),
+                    result,
+                    "challenge_progress",
+                )
             return result
 
     async def request_help(
@@ -790,6 +1093,7 @@ class CtfBoardMixin:
                 ),
                 str(uuid5(NAMESPACE_URL, f"ctf-help:{tid}:{actor}:{request_id}")),
                 "help_request",
+                challenge_id=challenge_id,
             )
             return record
 

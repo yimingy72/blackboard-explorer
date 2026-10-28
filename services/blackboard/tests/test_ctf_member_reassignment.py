@@ -15,6 +15,20 @@ feedback = feedback_fixture
 storage = storage_fixture
 
 
+async def assert_claim_blocked(service, tid, owner):
+    before = next(
+        member for member in (await service.runtime_state(tid))["members"] if member["id"] == owner
+    )
+    assert await service.claim_turn(tid, owner, "must-not-revive-stopped-owner") is None
+    after = next(
+        member for member in (await service.runtime_state(tid))["members"] if member["id"] == owner
+    )
+    assert (after["generation"], after["current_turn_id"]) == (
+        before["generation"],
+        before["current_turn_id"],
+    )
+
+
 async def idle_owner(feedback):
     await feedback.service.finish_turn(
         feedback.tid, "alice", feedback.turns["alice"], 1, "completed"
@@ -32,12 +46,14 @@ async def remove_owner(feedback, operation="remove"):
     await feedback.service.request_member_operation(
         feedback.tid, "user", "alice", operation, request
     )
+    await assert_claim_blocked(feedback.service, feedback.tid, "alice")
     result = await feedback.service.complete_member_operation(
         feedback.tid,
         "alice",
         request,
         {"boot_id": "synthetic-boot", "generation": 1, "drained": True},
     )
+    await assert_claim_blocked(feedback.service, feedback.tid, "alice")
     return request, result
 
 
@@ -60,6 +76,15 @@ async def test_reopen_keeps_only_available_owner_and_preserves_historical_delive
             solution=solution(),
         ),
     )
+    completion = mailbox(feedback)
+    assert len(completion) == 2
+    assert {message["recipient_id"] for message in completion} == {"lead", "alice"}
+    assert all(
+        message["notification_purpose"] == "challenge_progress"
+        and json.loads(message["body"])["record_id"] == closed["solution_record_id"]
+        for message in completion
+    )
+    completion_ids = {message["id"] for message in completion}
     await idle_owner(feedback)
     if availability in {"stopped", "removed"}:
         await remove_owner(feedback, "stop" if availability == "stopped" else "remove")
@@ -70,6 +95,7 @@ async def test_reopen_keeps_only_available_owner_and_preserves_historical_delive
         await feedback.service.request_member_operation(
             feedback.tid, "user", "alice", "stop", str(uuid4())
         )
+        await assert_claim_blocked(feedback.service, feedback.tid, "alice")
     elif availability == "missing":
         with feedback.database.begin() as conn:
             conn.execute(s.ctf_members.delete().where(s.ctf_members.c.id == "alice"))
@@ -78,17 +104,31 @@ async def test_reopen_keeps_only_available_owner_and_preserves_historical_delive
     )
     reopened = await feedback.service.update_challenge(feedback.tid, "user", **request)
     assert reopened["solution_record_id"] is None
+    messages = mailbox(feedback)
+    notifications = [message for message in messages if message["id"] not in completion_ids]
+    assert {
+        message["id"]
+        for message in messages
+        if message["notification_purpose"] == "challenge_progress"
+    } == completion_ids
     if availability == "active":
         assert reopened["owner_id"] == "alice" and reopened["work_status"] == "in_progress"
-        assert mailbox(feedback) == []
+        assert notifications == []
     else:
         assert reopened["owner_id"] is None and reopened["work_status"] == "pending"
         assert reopened["previous_owner_id"] == "alice"
-        assert (await feedback.service.runtime_state(feedback.tid))["ready_member_ids"] == ["lead"]
-        notifications = mailbox(feedback)
+        # The queue hint retains pre-stop input, but admission rejects a stopping owner.
+        expected_ready = {"lead", "alice"} if availability == "stopping" else {"lead"}
+        assert (
+            set((await feedback.service.runtime_state(feedback.tid))["ready_member_ids"])
+            == expected_ready
+        )
         assert len(notifications) == 1
+        assert notifications[0]["notification_purpose"] == "challenge_available"
+        assert notifications[0]["recipient_id"] == "lead"
         assert json.loads(notifications[0]["body"])["challenge_id"] == closed["id"]
     assert reopened == await feedback.service.update_challenge(feedback.tid, "user", **request)
+    assert mailbox(feedback) == messages
 
 
 async def test_removing_idle_owner_wakes_lead_while_another_member_is_running(feedback):
