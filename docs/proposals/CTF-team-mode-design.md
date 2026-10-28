@@ -1,5 +1,39 @@
 # CTF 团队模式设计提案
 
+## 2026-10-28：后续求解性能合同
+
+用户授权继续优化求解速度、共享与沟通，并允许必要架构调整。以下由三个GPT-6 Astra方案交叉审核后收敛；先保持旧行为默认，再通过显式配置采用新能力。
+
+### 共享记录与保护输入生命周期
+
+- 开放已有同任务精确读取能力 `get_record(challenge_id, record_id)`，执行与终态只读复盘均可使用。长记录通过本人保存结果分页补读；原始记录、附件及验收来源不改，不放宽跨题写证据权限。
+- 已知有效派工身份下append_record不要求每次先读题目；权限不明/冲突时才刷新，服务端仍独立验证。
+- 仅可信system notification的challenge_progress、challenge_verification加入既有一次性输入退休证明链。当前输入、未确认投递、未结束turn、未知命令/平台调用仍受保护；原始Session不删除，稳定预览不重算。
+- 异步命令通知command_result按下述独立结果证明退休，不将所有system通知泛化为可删输入。不另造通知digest或替换逐消息投递证明。
+
+### 可选角色运行参数
+
+- CtfAgentProfile增加默认空的role_run_options；lead/teammate仅支持reasoning_effort及正整数max_output_tokens，空值继承基础模型。
+- 复用现有Provider能力目录校验强度。角色输出额度不得超过平台基础模型的有效上限；更高额度需明确更新基础模型。任务换模型后重新验证全部角色覆盖。
+- 每turn只解析一次effective model，client、工具能力、请求、上下文容量、费用预留、记账和诊断共用此副本。不改变基础models快照；输出额度下降可能释放输入容量，不声称输入费用或总耗时必然下降。
+- 覆盖存于现有profile JSON元数据，非空才写role_run_options；空配置保持旧行往返摘要。设置保存省略run_options表示保留，显式null/全空表示清除该角色覆盖。新任务冻结配置，已有任务不热更新。
+- 配置界面沿用现有Ant Design组件，按当前角色显示继承/覆盖；不自动降低原max，不引入动态模型路由或收费摘要Agent。
+
+### 显式异步长命令
+
+- 新白名单工具start_command(command,cwd?,timeout_sec=120,privileged=false)、cancel_command(command_id)、read_command_result(command_id,offset=0,limit=2000)。旧execute_command保持同步，默认profile不自动启用异步工具。
+- start初始等待1秒，完成则返回已知结果，否则返回running/command_id。首版每成员最多一个异步作业，envd原子避免与该成员新同步执行交叉；不能杀掉已有同步命令来腾位置。其他成员正常并行。
+- envd现有registry是唯一进程事实源，复用command_id、参数摘要、task/member、boot和generation；增加按单command查询和取消，不新建作业数据库或事件服务。runtime有界1–2秒轮询，模型不轮询。
+- runner保持原turn/generation和单Session写者。MAF临时final遇command_pending只进入等待，不执行正常结束drain；完成或新邮箱输入后在同Session串行继续。步骤、原始截止时间和预算不因再次Agent.run重置。
+- 结果在原ctf_commands条目保存：mode=async、turn_id、identity、command_id、digest、state=prepared/running/finished/unknown、terminal_status、result、delivery=tool_result/notification、completion_notified。finished仅用于已知终态；该条目本身就是完成通知outbox。
+- 顺序为结果checkpoint确认→service-only notify_command_result核对已保存Session的同任务/成员/turn/代次/boot及terminal entry→固定ID短通知入现有mailbox→确认后再checkpoint。初始start已同步返回完整结果无需重复通知；原start结果不覆写。通知只给状态和本人结果读取引用，不灌入全部stdout。
+- 停止优先取消并确认进程回收，再结束和归档。HTTP断开、取消模型或临时final不等于命令已结束。重启首版沿用drain/interrupted，不跨generation保活，不重放未知命令；可确定的结果按原ID读回，未知结果保留。
+- 不将上述能力伪装为任意外部资源的可信状态。资源适配器与稳定连接服务仍须独立合同，不解析shell文案自动释放/重试外部资源。
+
+### 本轮验证边界
+
+离线与隔离环境覆盖通知多轮退休、伪来源/未知结果保护、精确记录读取；角色配置继承/清除/换模型验证与请求-上下文-费用一致；异步/同步并发工具、pending/完成竞态、checkpoint/通知/ACK三个断点、重复读回、停止、重启、boot变化和预算不重置。默认旧配置及同步路径回归必须通过，不自动续跑真实靶场。真实解题收益另作受控对照，不能由接口测试推断。
+
 ## 2026-10-28：已批准的信息闭环与逐题派工改造
 
 用户已认可 [架构审查方案](../tasks/CTF-architecture-review-20261028.md) 并授权实施。以下合同覆盖本次第一、第二阶段；此前同主题描述与此冲突时以本节为准。普通黑板语义保持不变。角色模型策略、异步长作业和稳定connector按第三阶段独立验收，不混入本次变更。
