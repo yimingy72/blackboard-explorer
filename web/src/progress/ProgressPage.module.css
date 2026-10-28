@@ -50,3 +50,8 @@
 .refreshText{display:inline}
 @media(max-width:899px){.refreshText{display:none}}
 @media(max-width:899px){.header{padding:8px 10px;gap:8px}.header h1{max-width:calc(100vw - 170px)}.id,.meta{display:none}.bar{padding:0 12px;gap:10px}.nav{gap:12px}.watermark{display:none}.summary{padding:9px 14px;gap:9px}.summary p{font-size:13px;max-height:5.5em;overflow:auto}.panelHeader{padding:16px}.settings{padding:16px}.settingsGrid{grid-template-columns:1fr}.setup{padding:22px}.messages{padding:16px}.composerHint{font-size:12px}}
+
+.modelSettings { margin:18px 0 12px; padding-block:12px; border-block:1px solid var(--color-line); font-size:13px; }
+.modelSettings > div { display:flex; align-items:baseline; justify-content:space-between; gap:16px; padding-block:4px; }
+.modelSettings dt { color:var(--color-muted); }
+.modelSettings dd { margin:0; text-align:right; overflow-wrap:anywhere; }

@@ -4,42 +4,24 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from bbx_contracts.billing import effective_price
+from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
-
-CTF_MAX_OUTPUT_TOKENS = 8192
 
 
 def ctf_max_output_tokens(model: ModelConfig) -> int:
     """Share the exact model output bound between requests and budget admission."""
-    # DeepSeek's official maximum includes reasoning tokens (checked 2026-10-09):
-    # https://api-docs.deepseek.com/api/create-chat-completion/
-    # Compatible transports can expose the same exact model ID.
-    if model.model in {
-        "deepseek-flash",
-        "deepseek-v4-flash",
-        "deepseek-v4-flash-vision-exp",
-        "deepseek-v4-pro",
-    }:
-        maximum = 393216
-    else:
-        maximum = CTF_MAX_OUTPUT_TOKENS
-    if model.context_window is not None:
-        # A configured smaller window must still leave room for the input.
-        maximum = min(maximum, max(1, model.context_window // 2))
-    return maximum
+    return effective_max_output_tokens(model)
 
 
-def ctf_call_reservation(
-    model: ModelConfig, *, context_tokens: int, max_output_tokens: int | None = None
-) -> Decimal | None:
+def ctf_call_reservation(model: ModelConfig, *, context_tokens: int) -> Decimal | None:
     """Return a cost bound only when both token and price bounds are explicit.
 
-    A missing context window or incomplete provider price table is deliberately
+    A missing input bound or incomplete provider price table is deliberately
     non-hard-cap: the caller must not invent a reservation from an estimate.
     """
-    if max_output_tokens is None:
-        max_output_tokens = ctf_max_output_tokens(model)
-    if model.context_window is None or context_tokens <= 0 or max_output_tokens <= 0:
+    max_output_tokens = ctf_max_output_tokens(model)
+    input_limit = effective_max_input_tokens(model)
+    if input_limit is None or context_tokens <= 0:
         return None
     price, _ = effective_price(model, datetime.now(UTC))
     rates = (price.cache_hit_per_m, price.cache_miss_per_m, price.output_per_m)
@@ -49,7 +31,7 @@ def ctf_call_reservation(
     assert price.cache_miss_per_m is not None
     assert price.output_per_m is not None
     input_rate = max(price.cache_hit_per_m, price.cache_miss_per_m)
-    input_tokens = min(context_tokens, max(0, model.context_window - max_output_tokens))
+    input_tokens = min(context_tokens, input_limit)
     return (
         Decimal(input_tokens) * input_rate + Decimal(max_output_tokens) * price.output_per_m
     ) / Decimal(1_000_000)

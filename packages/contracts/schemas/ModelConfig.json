@@ -123,9 +123,37 @@
           "type": "null"
         }
       ],
-      "default": null,
+      "default": 1000000,
       "description": "模型上下文容量，单位 token",
       "title": "Context Window"
+    },
+    "max_input_tokens": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "模型最大输入 token，空值按上下文容量计算",
+      "title": "Max Input Tokens"
+    },
+    "max_output_tokens": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "模型最大输出 token，空值使用兼容默认值",
+      "title": "Max Output Tokens"
     },
     "provider_options": {
       "additionalProperties": {

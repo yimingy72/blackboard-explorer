@@ -12,10 +12,11 @@ from uuid import uuid4
 
 import httpx
 from bbx_contracts.billing import supports_deepseek_schedule
+from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import AgentProfile, ModelConfig, Price
 from bbx_contracts.providers import PROVIDERS
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -24,6 +25,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.auth import require_service, require_user_or_service
+from bbx_blackboard.model_discovery import (
+    ModelCatalogResult,
+    ModelDiscoveryResult,
+    discover_models,
+    model_catalog,
+)
 from bbx_blackboard.store.schema import app_settings
 from bbx_blackboard.store.schema import platform_configs as table
 
@@ -53,7 +60,9 @@ class ModelInput(BaseModel):
     base_url: str = ""
     reasoning_effort: str = Field(default="none", min_length=1)
     supports_vision: bool | None = None
-    context_window: int | None = Field(default=None, strict=True, ge=1)
+    context_window: int | None = Field(default=1_000_000, strict=True, ge=1)
+    max_input_tokens: int | None = Field(default=None, strict=True, ge=1)
+    max_output_tokens: int | None = Field(default=None, strict=True, ge=1)
     price: Price
     provider_options: dict[str, str] = Field(default_factory=dict)
     credentials: dict[str, SecretStr] = Field(default_factory=dict)
@@ -63,6 +72,8 @@ class ModelInput(BaseModel):
 
     @model_validator(mode="after")
     def check_model(self) -> ModelInput:
+        if self.context_window is None:
+            self.context_window = 1_000_000
         spec = cast(dict[str, Any] | None, PROVIDERS.get(self.provider))
         if spec is None:
             raise ValueError("不支持此 Provider，请从平台目录选择")
@@ -85,9 +96,51 @@ class ModelInput(BaseModel):
         for item in spec["options_fields"]:
             if item.get("required") and not self.provider_options.get(item["name"], "").strip():
                 raise ValueError(f"缺少连接选项：{item['name']}")
+            value = self.provider_options.get(item["name"])
+            if (
+                item["name"] in self.provider_options
+                and item.get("options")
+                and value not in {choice["value"] for choice in item["options"]}
+            ):
+                raise ValueError(f"不支持的连接选项值：{item['label']}")
         allowed_credentials = {item["name"] for item in spec["credential_fields"]}
         if not set(self.credentials) <= allowed_credentials:
             raise ValueError("存在当前 Provider 不支持的凭据字段")
+        ModelConfig.model_validate(
+            self.model_dump(
+                exclude={"label", "credentials", "credential_source", "api_key", "enabled"}
+            )
+        )
+        return self
+
+
+class ModelDiscoveryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+    base_url: str = ""
+    provider_options: dict[str, str] = Field(default_factory=dict)
+    credentials: dict[str, SecretStr] = Field(default_factory=dict)
+    saved_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    saved_version: int | None = Field(default=None, strict=True, ge=1)
+
+    @model_validator(mode="after")
+    def check_connection(self) -> ModelDiscoveryInput:
+        spec = PROVIDERS.get(self.provider)
+        if spec is None:
+            raise ValueError("不支持此 Provider，请从平台目录选择")
+        default = spec["default_base_url"]
+        if default == "provider-default" and not spec["base_url_required"]:
+            if self.base_url not in {"", "provider-default"}:
+                raise ValueError("此服务端点由区域和项目确定，不接受自定义 API 地址")
+            self.base_url = "provider-default"
+        else:
+            self.base_url = check_url(self.base_url or default)
+        if not set(self.provider_options) <= {item["name"] for item in spec["options_fields"]}:
+            raise ValueError("存在当前 Provider 不支持的连接选项")
+        if not set(self.credentials) <= {item["name"] for item in spec["credential_fields"]}:
+            raise ValueError("存在当前 Provider 不支持的凭据字段")
+        if self.saved_version is not None and self.saved_name is None:
+            raise ValueError("指定已保存版本时须同时指定模型名称")
         return self
 
 
@@ -115,6 +168,7 @@ class PlatformStore:
         common = {key: row[key] for key in ("name", "version", "label", "enabled")}
         common["has_secret"] = bool(row["secret_ciphertext"])
         if row["kind"] == "models":
+            model = ModelConfig.model_validate(row["config"])
             return {
                 **common,
                 "config": {
@@ -124,6 +178,11 @@ class PlatformStore:
                 },
                 "credential_source": row["credential_source"],
                 "configured_credentials": sorted(self._decrypt_model_credentials(row)),
+                "effective_limits": {
+                    "context_window": model.context_window,
+                    "max_input_tokens": effective_max_input_tokens(model),
+                    "max_output_tokens": effective_max_output_tokens(model),
+                },
             }
         return {**common, **row["config"]}
 
@@ -199,7 +258,10 @@ class PlatformStore:
                 spec = cast(dict[str, Any], PROVIDERS[body.provider])
                 values = (
                     self._decrypt_model_credentials(dict(previous))
-                    if previous and previous["config"].get("provider") == body.provider
+                    if previous
+                    and previous["config"].get("provider") == body.provider
+                    and previous["config"].get("base_url", "").rstrip("/") == body.base_url
+                    and previous["config"].get("provider_options", {}) == body.provider_options
                     else {}
                 )
                 values.update(
@@ -454,10 +516,48 @@ async def providers(request: Request) -> list[dict[str, Any]]:
     return [dict(item) for item in PROVIDERS.values()]
 
 
+@router.get("/model-catalog", response_model=ModelCatalogResult, response_model_exclude_none=True)
+async def reference_model_catalog(
+    request: Request, provider: str | None = Query(default=None, max_length=200)
+) -> ModelCatalogResult:
+    require_user_or_service(request)
+    return await model_catalog(provider)
+
+
 @router.post("/models")
 async def new_model(request: Request, body: ModelInput) -> dict[str, Any]:
     identity = require_user_or_service(request)
     return await store(request).save("models", f"model-{uuid4().hex[:16]}", body, identity.name)
+
+
+@router.post(
+    "/models/discover", response_model=ModelDiscoveryResult, response_model_exclude_none=True
+)
+async def model_discovery(
+    request: Request, response: Response, body: ModelDiscoveryInput
+) -> ModelDiscoveryResult:
+    require_user_or_service(request)
+    response.headers["Cache-Control"] = "no-store"
+    values = {}
+    if body.saved_name:
+        platform = store(request)
+        row = await platform.get("models", body.saved_name, body.saved_version)
+        previous = row["config"]
+        # Saved secrets must never follow an edited endpoint or provider identity.
+        if (
+            previous.get("provider") == body.provider
+            and previous.get("base_url", "").rstrip("/") == body.base_url
+            and previous.get("provider_options", {}) == body.provider_options
+        ):
+            values = platform._decrypt_model_credentials(row)
+    values.update(
+        {
+            key: value.get_secret_value()
+            for key, value in body.credentials.items()
+            if value.get_secret_value()
+        }
+    )
+    return await discover_models(body.provider, body.base_url, values)
 
 
 @router.post("/models/{name}/default")

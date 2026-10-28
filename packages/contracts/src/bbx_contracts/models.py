@@ -462,7 +462,13 @@ class Price(ContractModel):
 class ModelConfig(ContractModel):
     supports_vision: bool | None = Field(default=None, description="模型是否支持图片输入")
     context_window: int | None = Field(
-        default=None, strict=True, ge=1, description="模型上下文容量，单位 token"
+        default=1_000_000, strict=True, ge=1, description="模型上下文容量，单位 token"
+    )
+    max_input_tokens: int | None = Field(
+        default=None, strict=True, ge=1, description="模型最大输入 token，空值按上下文容量计算"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, strict=True, ge=1, description="模型最大输出 token，空值使用兼容默认值"
     )
     provider_options: dict[str, str] = Field(default_factory=dict)
     platform_id: str | None = Field(default=None, min_length=1)
@@ -472,6 +478,15 @@ class ModelConfig(ContractModel):
     base_url: str = Field(min_length=1, description="模型接口地址")
     reasoning_effort: str = Field(min_length=1, description="推理强度")
     price: Price = Field(description="模型价格表")
+
+    @model_validator(mode="after")
+    def validate_token_limits(self) -> ModelConfig:
+        if self.context_window is not None:
+            if self.max_input_tokens is not None and self.max_input_tokens > self.context_window:
+                raise ValueError("最大输入 token 不能超过上下文容量")
+            if self.max_output_tokens is not None and self.max_output_tokens >= self.context_window:
+                raise ValueError("最大输出 token 必须小于上下文容量，为输入保留空间")
+        return self
 
     @model_validator(mode="after")
     def complete_platform_reference(self) -> ModelConfig:

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class ProviderField(TypedDict):
     name: str
     label: str
     required: bool
+    options: NotRequired[list[dict[str, str]]]
+    default_value: NotRequired[str]
 
 
 class ProviderSpec(TypedDict):
@@ -40,6 +42,17 @@ _AZURE_IDENTITY = [
     _field("client_secret", "Azure Client Secret"),
 ]
 _GOOGLE_IDENTITY = [_field("service_account_json", "Google 服务账号 JSON")]
+_RESPONSES_REPLAY: ProviderField = {
+    "name": "responses_replay_mode",
+    "label": "Responses 工具续传",
+    "required": False,
+    "default_value": "auto",
+    "options": [
+        {"value": "auto", "label": "自动识别（推荐）"},
+        {"value": "native", "label": "原生加密续传"},
+        {"value": "tool_observations", "label": "完整工具观察（兼容网关）"},
+    ],
+}
 
 
 def _provider(
@@ -102,6 +115,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         _provider(
             "openai_responses",
             "OpenAI Responses",
+            options=[_RESPONSES_REPLAY],
             credentials=_API_KEY,
             default_base_url="https://api.openai.com/v1",
         ),
@@ -123,7 +137,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         _provider(
             "azure_openai_responses",
             "Azure OpenAI Responses",
-            options=[_field("api_version", "Azure API 版本")],
+            options=[_field("api_version", "Azure API 版本"), _RESPONSES_REPLAY],
             credentials=_API_KEY,
             base_url_required=True,
             base_url_label="Azure 资源地址",

@@ -68,10 +68,29 @@
     },
     "max_output_tokens": {
       "default": 8192,
-      "maximum": 32768,
+      "description": "历史兼容字段，实际输出上限使用固定模型配置",
       "minimum": 256,
       "title": "Max Output Tokens",
       "type": "integer"
+    },
+    "reasoning_effort": {
+      "anyOf": [
+        {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "历史兼容字段，实际思考强度使用固定模型配置",
+      "title": "Reasoning Effort"
     }
   },
   "title": "ProgressSettings",

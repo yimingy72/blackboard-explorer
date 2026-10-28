@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Any
@@ -53,6 +53,9 @@ class ModelStreamError(RuntimeError):
         event_type: str | None = None,
         provider_code: str | None = None,
         incomplete_reason: str | None = None,
+        finish_reason: str | None = None,
+        provider_response_id: str | None = None,
+        terminal_usage: Mapping[str, Any] | None = None,
     ) -> None:
         self.category = category
         self.event_type = (
@@ -60,6 +63,9 @@ class ModelStreamError(RuntimeError):
         )
         self.provider_code = _bounded_identifier(provider_code, _IDENTIFIER)
         self.incomplete_reason = _bounded_identifier(incomplete_reason, _IDENTIFIER)
+        self.finish_reason = finish_reason if finish_reason in _FINISH_REASONS else None
+        self.provider_response_id = _bounded_identifier(provider_response_id, _REQUEST_ID)
+        self.terminal_usage = validated_terminal_usage(terminal_usage)
         super().__init__("Model stream did not complete successfully")
 
 
@@ -67,10 +73,15 @@ class IncompleteModelStreamError(httpx2.RemoteProtocolError):
     """A locally detected stream EOF without a valid completion event."""
 
 
+class ModelRequestValidationError(ChatClientInvalidRequestException):
+    """A request rejected by the local adapter before any provider HTTP call."""
+
+
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _SECONDS = re.compile(r"[0-9]{1,8}(?:\.[0-9]{1,3})?\Z")
 _STREAM_EVENTS = {"response.failed", "response.incomplete", "error"}
+_FINISH_REASONS = {"stop", "tool_calls", "length", "function_call", "content_filter"}
 _TRANSPORT_TYPES = (
     httpx2.ProxyError,
     httpx2.ConnectError,
@@ -85,6 +96,7 @@ _TRANSPORT_TYPES = (
 )
 _EXCEPTION_TYPES = {
     IncompleteModelStreamError,
+    ModelRequestValidationError,
     ModelStreamError,
     APIError,
     APIConnectionError,
@@ -104,6 +116,46 @@ _EXCEPTION_TYPES = {
 
 def _bounded_identifier(value: Any, pattern: re.Pattern[str]) -> str | None:
     return value if isinstance(value, str) and pattern.fullmatch(value) else None
+
+
+def validated_terminal_usage(details: Mapping[str, Any] | None) -> dict[str, int] | None:
+    """Accept complete, consistent terminal token counts without retaining raw provider data."""
+    if not details:
+        return None
+    required = ("input_token_count", "output_token_count", "total_token_count")
+    optional = ("cache_read_input_token_count", "reasoning_output_token_count")
+    if any(details.get(key) is None for key in required):
+        return None
+    counts = {key: details.get(key, 0) for key in (*required, *optional)}
+    if any(type(value) is not int or not 0 <= value <= 1_000_000_000 for value in counts.values()):
+        return None
+    if (
+        counts["total_token_count"] != counts["input_token_count"] + counts["output_token_count"]
+        or counts["cache_read_input_token_count"] > counts["input_token_count"]
+        or counts["reasoning_output_token_count"] > counts["output_token_count"]
+    ):
+        return None
+    return counts
+
+
+def terminal_model_error(error: BaseException) -> ModelStreamError | None:
+    """Unwrap only our rejected terminal response, never infer usage from transport failures."""
+    pending = [error]
+    seen: set[int] = set()
+    while pending and len(seen) < 16:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ModelStreamError):
+            return current
+        if isinstance(current, ChatClientException):
+            pending.extend(
+                item
+                for item in (current.__cause__, *current.args)
+                if isinstance(item, BaseException)
+            )
+    return None
 
 
 def _safe_exception_type(error: BaseException) -> str | None:
@@ -184,7 +236,9 @@ def model_error_metadata(
         if transport_error is not None
         else None
     )
-    if status is not None:
+    if any(isinstance(item, ModelRequestValidationError) for item in chain):
+        failure_phase = "request_validation"
+    elif status is not None:
         failure_phase = "http_response"
     elif any(isinstance(item, IncompleteModelStreamError) for item in chain) or stream_error:
         failure_phase = "stream_completion"
@@ -268,6 +322,8 @@ def model_error_metadata(
         "incomplete_reason": _bounded_identifier(stream_error.incomplete_reason, _IDENTIFIER)
         if stream_error is not None
         else None,
+        "finish_reason": stream_error.finish_reason if stream_error else None,
+        "provider_response_id": stream_error.provider_response_id if stream_error else None,
         "transient": category in {"connection", "timeout", "rate_limit", "conflict", "server_error"}
         and not any(
             isinstance(

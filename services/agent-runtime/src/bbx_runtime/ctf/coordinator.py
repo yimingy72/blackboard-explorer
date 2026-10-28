@@ -79,7 +79,11 @@ def failure_diagnostic(
         elif category == "authentication":
             summary = "模型服务鉴权失败，任务已停止；请查看模型错误记录。"
         elif category == "invalid_request":
-            summary = "模型服务拒绝了本次请求，任务已停止；请查看模型错误记录。"
+            summary = (
+                "本地模型请求组装失败，任务已停止；请检查会话兼容校验记录。"
+                if metadata.get("failure_phase") == "request_validation"
+                else "模型服务拒绝了本次请求，任务已停止；请查看模型错误记录。"
+            )
         elif category in {"rate_limit", "server_error", "connection", "timeout"}:
             summary = "模型服务持续不可用，任务已停止；已确认的记录与执行结果仍然保留。"
         # Persist only fixed diagnostics, never provider messages, prompts, or credentials.

@@ -334,5 +334,15 @@ def test_platform_model_reference_requires_both_name_and_version():
 def test_model_context_window_requires_positive_integer(value):
     with pytest.raises(ValidationError):
         m.ModelConfig.model_validate({**MODEL, "context_window": value})
-    assert m.ModelConfig.model_validate(MODEL).context_window is None
+    assert m.ModelConfig.model_validate(MODEL).context_window == 1_000_000
+    assert m.ModelConfig.model_validate({**MODEL, "context_window": None}).context_window is None
     assert m.ModelConfig.model_validate({**MODEL, "context_window": 2048}).context_window == 2048
+
+
+@pytest.mark.parametrize("field", ["max_input_tokens", "max_output_tokens"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "2048"])
+def test_model_token_limits_require_positive_integer(field, value):
+    with pytest.raises(ValidationError):
+        m.ModelConfig.model_validate({**MODEL, field: value})
+    assert getattr(m.ModelConfig.model_validate(MODEL), field) is None
+    assert getattr(m.ModelConfig.model_validate({**MODEL, field: 2048}), field) == 2048

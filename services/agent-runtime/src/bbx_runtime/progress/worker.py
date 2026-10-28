@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from copy import deepcopy
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -15,13 +16,15 @@ from agent_framework import (
     FunctionInvocationLayer,
     Message,
 )
+from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
+from bbx_contracts.progress import ProgressFailureDiagnostic
 
 from bbx_runtime.chatworker import _completed_text, _has_user_message
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError, is_control_transport_error
 from bbx_runtime.ctf.context import estimate_messages_tokens, fixed_prompt_tokens
 from bbx_runtime.ctf.provider_boundary import provider_call_boundary
-from bbx_runtime.model_errors import OPENAI_PROVIDERS
+from bbx_runtime.model_errors import OPENAI_PROVIDERS, ModelStreamError, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     make_client,
@@ -36,6 +39,7 @@ from bbx_runtime.progress.session import (
     ProgressUsageUnknown,
     checkpoint_for,
     flush_receipts,
+    settle_terminal_failure,
 )
 from bbx_runtime.progress.tools import data_block, progress_tools
 from bbx_runtime.session import ToolResultCheckpointMiddleware, repair_unpaired_tool_calls
@@ -82,6 +86,9 @@ class ProgressWorker:
         bound = self.control.bound(job)
         client: BaseChatClient | None = None
         checkpoint = None
+        request_started = monotonic()
+        request_messages: list[Message] = []
+        budget_exhausted = False
         try:
             page = await bound.sources(int(job["source_version"]))
             instructions = _instructions(job, page)
@@ -91,6 +98,28 @@ class ProgressWorker:
             adapter.source_version = int(page["next_version"])
             repair_unpaired_tool_calls(checkpoint.session, include_interrupted=True)
             await flush_receipts(checkpoint, bound)
+            failed_receipt = next(
+                (
+                    receipt
+                    for receipt in checkpoint.session.state.get(
+                        "bbx_progress_receipts", {}
+                    ).values()
+                    if receipt.get("job_id") == str(job["job_id"])
+                    and receipt.get("status") == "failed"
+                ),
+                None,
+            )
+            if failed_receipt:
+                # A failed terminal receipt can recover its charge, never replay its model turn.
+                prior = failed_receipt["diagnostic"]
+                raise ModelStreamError(
+                    prior["category"],
+                    event_type=prior.get("event_type"),
+                    provider_code=prior.get("provider_code"),
+                    incomplete_reason=prior.get("incomplete_reason"),
+                    finish_reason=prior.get("finish_reason"),
+                    provider_response_id=prior.get("provider_response_id"),
+                )
             cached = checkpoint.session.state.get("bbx_progress_completion")
             if (
                 cached
@@ -139,12 +168,13 @@ class ProgressWorker:
             tools = progress_tools(bound, checkpoint, tree, job["settings"]["enabled_tools"])
             model = ModelConfig.model_validate(job["model"])
             history = ProgressHistoryProvider(checkpoint, bound, model, tree, instructions, tools)
-            max_output = int(job["settings"]["max_output_tokens"])
+            max_output = effective_max_output_tokens(model)
+            max_input = effective_max_input_tokens(model)
             fixed_input = fixed_prompt_tokens(instructions, tools)
             active_request: dict[str, Any] | None = None
 
             async def before_send() -> None:
-                nonlocal active_request
+                nonlocal active_request, request_started, budget_exhausted
                 if vars(checkpoint).get("progress_control_error"):
                     raise vars(checkpoint)["progress_control_error"]
                 if checkpoint.session.state.get("bbx_progress_candidate_failures", 0) >= 2:
@@ -168,6 +198,7 @@ class ProgressWorker:
                         max_output_tokens=max_output,
                     )
                 except RemoteError as error:
+                    budget_exhausted = error.status == 402
                     if error.status < 500:
                         # A definitive API rejection happened before provider dispatch.
                         pending["reserve_rejected"] = True
@@ -181,16 +212,15 @@ class ProgressWorker:
                     # The provider has not been entered, even if this PUT committed.
                     pending["status"] = "preparing"
                     raise
+                request_started = monotonic()
 
             def prepare_messages(messages: Any) -> Any:
-                nonlocal active_request
+                nonlocal active_request, request_messages
+                request_messages = list(messages)
                 estimated = fixed_input + estimate_messages_tokens(
                     messages, provider=model.provider
                 )
-                if (
-                    model.context_window is not None
-                    and estimated + max_output > model.context_window
-                ):
+                if max_input is not None and estimated > max_input:
                     raise ValueError(
                         "Progress source batch exceeds the configured model context window"
                     )
@@ -233,7 +263,6 @@ class ProgressWorker:
                             False
                         )
                 options = model_run_options(model)
-                options["max_tokens"] = max_output
                 async with Agent(
                     client=client,
                     name="progress",
@@ -329,35 +358,59 @@ class ProgressWorker:
             await self._failed(bound, checkpoint, "Progress runtime stopped", retryable=False)
             raise
         except Exception as error:
+            diagnostic = ProgressFailureDiagnostic.model_validate(
+                model_error_metadata(
+                    error,
+                    elapsed_ms=int((monotonic() - request_started) * 1000),
+                    messages=request_messages,
+                    attempt_limit=1,
+                )
+            ).model_dump(mode="json")
             LOGGER.error(
-                "Progress job failed task=%s job=%s error_type=%s",
+                "Progress job failed task=%s job=%s diagnostic=%s",
                 job["task_id"],
                 job["job_id"],
-                type(error).__name__,
+                json.dumps(diagnostic, sort_keys=True),
             )
             await self._failed(
                 bound,
                 checkpoint,
-                error.message
+                "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
+                if budget_exhausted
+                else error.message
                 if isinstance(error, RemoteError)
                 else (
                     str(error) if isinstance(error, ProgressUsageUnknown) else type(error).__name__
                 ),
                 retryable=is_control_transport_error(error),
+                error=error,
+                diagnostic=diagnostic,
+                budget_exhausted=budget_exhausted,
             )
         finally:
             if client is not None:
                 await close_model_client(client)
 
     async def _failed(
-        self, bound: ProgressClient, checkpoint: Any, message: str, *, retryable: bool
+        self,
+        bound: ProgressClient,
+        checkpoint: Any,
+        message: str,
+        *,
+        retryable: bool,
+        error: BaseException | None = None,
+        diagnostic: dict[str, Any] | None = None,
+        budget_exhausted: bool = False,
     ) -> None:
         assert bound.job is not None
         try:
+            if error is not None and checkpoint is not None:
+                await settle_terminal_failure(checkpoint, bound, error, diagnostic or {})
             active = (
                 checkpoint.session.state.get("bbx_progress_active_request") if checkpoint else None
             )
             if active and active["job_id"] == str(bound.job["job_id"]):
+                assert checkpoint is not None
                 # Never release a reservation after crossing the provider dispatch boundary.
                 unsent = active["status"] == "preparing"
                 if not (unsent and active.get("reserve_rejected")):
@@ -386,7 +439,11 @@ class ProgressWorker:
             elif active:
                 retryable = False
             await bound.operation(
-                "fail", error=message[:2000] or "Progress failed", retryable=retryable
+                "fail",
+                error=message[:2000] or "Progress failed",
+                retryable=retryable,
+                diagnostic=diagnostic,
+                budget_exhausted=budget_exhausted,
             )
         except Exception as error:
             # A fenced lease expiry also keeps unresolved reservations occupied.

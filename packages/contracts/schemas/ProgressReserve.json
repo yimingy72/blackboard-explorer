@@ -22,7 +22,6 @@
       "type": "integer"
     },
     "max_output_tokens": {
-      "maximum": 32768,
       "minimum": 1,
       "title": "Max Output Tokens",
       "type": "integer"

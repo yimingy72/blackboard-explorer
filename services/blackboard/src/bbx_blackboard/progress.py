@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price, token_cost
+from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig, Price
 from bbx_contracts.progress import (
     ProgressCandidate,
@@ -331,10 +332,16 @@ class ProgressService:
                 state["model"] = await self.model(conn, task, chosen)
             previous = state["settings"]
             state["settings"] = {**previous, **body.model_dump(mode="json", exclude_unset=True)}
-            state["status"] = "idle" if body.enabled else "disabled"
-            state["error"] = None
-            if body.enabled and not previous["enabled"]:
+            unresolved = Decimal(state["unknown"]) > 0
+            state["status"] = (
+                "paused" if body.enabled and unresolved else "idle" if body.enabled else "disabled"
+            )
+            if not unresolved:
+                state["error"] = None
+            if body.enabled and not previous["enabled"] and not unresolved:
                 await self.refresh_queue(conn, task, state, automatic=True)
+            if unresolved:
+                await self.fail_blocked_queue(conn, tid, state)
             await self.save(conn, tid, state)
             await self.emit(conn, tid, "progress.settings.updated", {"settings": state["settings"]})
             return state["settings"]
@@ -355,7 +362,9 @@ class ProgressService:
             or 0
         )
 
-    async def refresh_queue(self, conn, task, state, *, request_id=None, automatic=False):
+    async def refresh_queue(
+        self, conn, task, state, *, request_id=None, automatic=False, continued_unknown=False
+    ):
         tid = task["id"]
         if request_id is not None:
             previous = (
@@ -416,6 +425,7 @@ class ProgressService:
         data = {
             "attempts": 0,
             "automatic": automatic,
+            "continued_unknown": continued_unknown,
             "not_before": (
                 now()
                 + timedelta(
@@ -446,25 +456,113 @@ class ProgressService:
         )
         return dict(row)
 
-    def resume_explicit(self, state):
-        check(
-            Decimal(state["unknown"]) == 0, "Progress usage requires confirmation before retry", 409
-        )
+    async def resume_explicit(self, conn, task, state, request_id):
         check(
             self.occupied(state) < Decimal(state["settings"]["max_cost"]),
             "Progress budget exhausted",
             402,
         )
-        if state["status"] == "paused":
+        continuing = Decimal(state["unknown"]) > 0
+        if continuing:
+            jobs = (
+                (
+                    await conn.execute(
+                        select(s.progress_jobs).where(s.progress_jobs.c.task_id == task["id"])
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            check(
+                not any(job["status"] == "running" for job in jobs),
+                "Running progress execution requires confirmation before continuation",
+                409,
+            )
+            unknown = {
+                (str(job["id"]), key): receipt
+                for job in jobs
+                for key, receipt in job["data"]["receipts"].items()
+                if receipt["status"] == "unknown"
+            }
+            check(
+                all(
+                    job["status"] == "failed"
+                    for job in jobs
+                    if any(r["status"] == "unknown" for r in job["data"]["receipts"].values())
+                ),
+                "Unknown progress requests require failed jobs before continuation",
+                409,
+            )
+            check(
+                sum((Decimal(receipt["reserved"]) for receipt in unknown.values()), Decimal(0))
+                == Decimal(state["unknown"]),
+                "Unknown progress usage ledger requires confirmation",
+                409,
+            )
+            session = await self.conversations._session(conn, task["id"], AGENT_ID)
+            saved_state = (session or {}).get("session", {}).get("state", {})
+            active = saved_state.get("bbx_progress_active_request")
+            if active:
+                assert session is not None
+                check(
+                    active.get("status") == "dispatching"
+                    and (active.get("job_id"), active.get("request_id")) in unknown,
+                    "Active progress request does not match the unknown usage ledger",
+                    409,
+                )
+                saved_state.setdefault("bbx_progress_retired_requests", {})[
+                    active["request_id"]
+                ] = {
+                    **active,
+                    "outcome": "unknown",
+                    "retired_by": str(request_id),
+                    "retired_at": now().isoformat(),
+                }
+                saved_state.pop("bbx_progress_active_request")
+                await self.conversations._save_session(
+                    conn,
+                    task["id"],
+                    AGENT_ID,
+                    session["session"],
+                    session["opening_instructions"],
+                    session["origin"],
+                    session["revision"],
+                )
+            await self.fail_blocked_queue(
+                conn,
+                task["id"],
+                state,
+                preserve_continuations=state["status"] not in {"paused", "budget_exhausted"},
+            )
+        if state["status"] in {"paused", "budget_exhausted"}:
             state.update(status="idle", error=None)
+            state.pop("diagnostic", None)
+        return continuing
 
     async def refresh(self, tid, request_id):
         async with self.repo.engine.begin() as conn:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
             check(state["settings"]["enabled"], "Progress is disabled")
-            self.resume_explicit(state)
-            job = await self.refresh_queue(conn, task, state, request_id=request_id)
+            existing = (
+                (
+                    await conn.execute(
+                        select(s.progress_jobs).where(s.progress_jobs.c.id == request_id)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if existing:
+                check(
+                    existing["task_id"] == tid and existing["kind"] == "refresh",
+                    "Request ID conflict",
+                )
+                return {"job_id": str(existing["id"]), "status": existing["status"]}
+            continuing = await self.resume_explicit(conn, task, state, request_id)
+            job = await self.refresh_queue(
+                conn, task, state, request_id=request_id, continued_unknown=continuing
+            )
             await self.save(conn, tid, state)
             return {
                 "job_id": str(job["id"]) if job else None,
@@ -493,13 +591,13 @@ class ProgressService:
                     "Message ID conflict",
                 )
                 return _public(existing)
-            self.resume_explicit(state)
             occupied_id = (
                 await conn.execute(
                     select(s.progress_jobs.c.id).where(s.progress_jobs.c.id == body.id)
                 )
             ).first()
             check(occupied_id is None, "Message ID conflicts with an existing progress request")
+            continuing = await self.resume_explicit(conn, task, state, body.id)
             check(
                 body.node_id is None or any(n["id"] == body.node_id for n in state["nodes"]),
                 "Unknown node",
@@ -535,6 +633,7 @@ class ProgressService:
                         "node_id": body.node_id,
                         "attempts": 0,
                         "automatic": False,
+                        "continued_unknown": continuing,
                         "receipts": {},
                     },
                 )
@@ -645,6 +744,59 @@ class ProgressService:
                 .values(status="failed", error=error, updated_at=now())
             )
 
+    async def fail_blocked_queue(
+        self, conn, tid, state, *, cause_job_id=None, preserve_continuations=False
+    ):
+        """A paused curator must not leave unstarted questions waiting forever."""
+        if state["status"] not in {"paused", "budget_exhausted"} and Decimal(state["unknown"]) == 0:
+            return 0
+        reason = (
+            "上一次模型请求用量待确认，成果整理已暂停；本条请求尚未调用模型。"
+            if Decimal(state["unknown"]) > 0
+            else "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
+            "本条请求尚未调用模型。"
+            if state["status"] == "budget_exhausted"
+            else "上一次成果整理失败，已暂停后续请求；检查报错后可重新发送。"
+        )
+        queued = (
+            (
+                await conn.execute(
+                    select(s.progress_jobs).where(
+                        s.progress_jobs.c.task_id == tid,
+                        s.progress_jobs.c.status == "queued",
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if preserve_continuations:
+            queued = [row for row in queued if not row["data"].get("continued_unknown")]
+        for row in queued:
+            job = dict(row)
+            job["status"] = "failed"
+            job["data"] = {
+                **job["data"],
+                "error": reason,
+                "never_started": True,
+                "blocked_by": str(cause_job_id) if cause_job_id else None,
+            }
+            await self.save_job(conn, job)
+            await self.fail_question(conn, job, reason)
+        if queued:
+            await self.emit(
+                conn,
+                tid,
+                "progress.turn.failed",
+                {
+                    "error": reason,
+                    "retryable": False,
+                    "blocked_requests": len(queued),
+                    "cause_job_id": str(cause_job_id) if cause_job_id else None,
+                },
+            )
+        return len(queued)
+
     async def save_job(self, conn, job):
         await conn.execute(
             update(s.progress_jobs)
@@ -675,6 +827,16 @@ class ProgressService:
                 .correlate(s.tasks)
                 .exists()
             )
+            explicit_continuation = (
+                select(s.progress_jobs.c.id)
+                .where(
+                    s.progress_jobs.c.task_id == s.tasks.c.id,
+                    s.progress_jobs.c.status.in_(("queued", "running")),
+                    s.progress_jobs.c.data["continued_unknown"].as_boolean().is_(True),
+                )
+                .correlate(s.tasks)
+                .exists()
+            )
             pending_sources = (
                 select(s.events.c.version)
                 .where(
@@ -697,13 +859,16 @@ class ProgressService:
                             s.tasks.c.deleting.is_(False),
                             s.tasks.c.mode == "blackboard",
                             s.task_progress.c.data["settings"]["enabled"].as_boolean(),
-                            s.task_progress.c.data["status"].astext != "paused",
+                            s.task_progress.c.data["status"].astext.not_in(
+                                ("paused", "budget_exhausted")
+                            ),
                             or_(
                                 func.coalesce(
                                     cast(s.task_progress.c.data["unknown"].astext, Numeric), 0
                                 )
                                 == 0,
                                 running_job,
+                                explicit_continuation,
                             ),
                             or_(
                                 s.tasks.c.status.in_(
@@ -757,7 +922,7 @@ class ProgressService:
                         if (
                             receipt["status"] in {"reserved", "unknown"}
                             and saved.get("job_id") == str(dead["id"])
-                            and saved.get("status") == "completed"
+                            and saved.get("status") in {"completed", "failed"}
                             and saved.get("usage_known") is True
                         ):
                             usage = ProgressSettle.model_validate(
@@ -778,6 +943,7 @@ class ProgressService:
                             state["cost"] = str(Decimal(state["cost"]) + amount)
                             receipt.update(
                                 status="settled",
+                                response_status=saved["status"],
                                 cost=str(amount),
                                 settlement=usage.model_dump(
                                     mode="json", exclude={"claim_token", "run_number"}
@@ -797,6 +963,16 @@ class ProgressService:
                                 },
                             )
                     active = saved_state.get("bbx_progress_active_request", {})
+                    failed_terminal = next(
+                        (
+                            receipt
+                            for receipt in saved_state.get("bbx_progress_receipts", {}).values()
+                            if receipt.get("job_id") == str(dead["id"])
+                            and receipt.get("status") == "failed"
+                            and receipt.get("usage_known") is True
+                        ),
+                        None,
+                    )
                     if (
                         active.get("status") == "preparing"
                         and active.get("request_id") not in dead["data"]["receipts"]
@@ -818,6 +994,7 @@ class ProgressService:
                         dead["run_number"] == task["run_number"]
                         and session is not None
                         and not active
+                        and failed_terminal is None
                         and all(r["status"] == "settled" for r in dead["data"]["receipts"].values())
                     ):
                         dead["data"]["lease_until"] = (
@@ -861,7 +1038,14 @@ class ProgressService:
                         }
                     self.unknown_reservations(state, dead["data"])
                     dead["status"] = "failed"
-                    dead["data"]["error"] = "Lease expired; request outcome requires confirmation"
+                    dead["data"]["error"] = (
+                        "Model response failed; confirmed usage was recovered"
+                        if failed_terminal
+                        else "Lease expired; request outcome requires confirmation"
+                    )
+                    if failed_terminal:
+                        dead["data"]["diagnostic"] = failed_terminal.get("diagnostic")
+                        state["diagnostic"] = failed_terminal.get("diagnostic")
                     await self.save_job(conn, dead)
                     await self.fail_question(conn, dead, dead["data"]["error"])
                     await self.emit(
@@ -875,17 +1059,17 @@ class ProgressService:
                         },
                     )
                     state.update(
-                        status="paused" if Decimal(state["unknown"]) else "idle",
+                        status="paused" if Decimal(state["unknown"]) or failed_terminal else "idle",
                         error=dead["data"]["error"],
                     )
-                if (
-                    state["status"] == "paused"
-                    or Decimal(state["unknown"]) > 0
-                    or self.occupied(state) >= Decimal(state["settings"]["max_cost"])
-                ):
+                    await self.fail_blocked_queue(conn, tid, state, cause_job_id=dead["id"])
+                if state["status"] in {"paused", "budget_exhausted"} or self.occupied(
+                    state
+                ) >= Decimal(state["settings"]["max_cost"]):
                     await self.save(conn, tid, state)
                     continue
-                await self.refresh_queue(conn, task, state, automatic=True)
+                if Decimal(state["unknown"]) == 0:
+                    await self.refresh_queue(conn, task, state, automatic=True)
                 jobs = (
                     (
                         await conn.execute(
@@ -906,6 +1090,8 @@ class ProgressService:
                 for row in jobs:
                     job = dict(row)
                     data = job["data"]
+                    if Decimal(state["unknown"]) > 0 and not data.get("continued_unknown"):
+                        continue
                     if data.get("not_before") and stamp(data["not_before"]) > now():
                         continue
                     if (
@@ -993,9 +1179,10 @@ class ProgressService:
                         message = (
                             (
                                 await conn.execute(
-                                    select(s.agent_messages).where(
-                                        s.agent_messages.c.id == job["id"]
-                                    )
+                                    update(s.agent_messages)
+                                    .where(s.agent_messages.c.id == job["id"])
+                                    .values(status="processing", updated_at=now())
+                                    .returning(s.agent_messages)
                                 )
                             )
                             .mappings()
@@ -1318,8 +1505,8 @@ class ProgressService:
                 + price.output_per_m * body.max_output_tokens
             ) / Decimal(1_000_000)
             check(
-                body.max_output_tokens <= job["data"]["settings"]["max_output_tokens"],
-                "Output limit exceeds job settings",
+                body.max_output_tokens <= effective_max_output_tokens(model),
+                "Output limit exceeds model configuration",
             )
             check(
                 self.occupied(state) + amount <= Decimal(state["settings"]["max_cost"]),
@@ -1363,12 +1550,14 @@ class ProgressService:
                 )
                 check(
                     saved is not None
-                    and saved.get("status") == "completed"
+                    and saved.get("status") in {"completed", "failed"}
                     and saved.get("job_id") == str(jid)
                     and saved.get("usage_known") is True
                     and saved.get("usage") == body.usage.model_dump(mode="json"),
                     "Usage is absent from the confirmed progress Session",
                 )
+                assert saved is not None
+                receipt["response_status"] = saved["status"]
             if body.executed is None or (body.executed and not body.usage_known):
                 if previous == "reserved":
                     state["reserved"] = str(
@@ -1416,6 +1605,10 @@ class ProgressService:
             check(
                 all(r["status"] == "settled" for r in data["receipts"].values()),
                 "Usage outcome requires confirmation",
+            )
+            check(
+                not any(r.get("response_status") == "failed" for r in data["receipts"].values()),
+                "Failed model responses cannot publish progress",
             )
             check(state["revision"] == data["base_revision"], "Graph revision conflict")
             previous_nodes = {node["id"]: node for node in state["nodes"]}
@@ -1508,7 +1701,12 @@ class ProgressService:
             state = await self.state(conn, task)
             self.unknown_reservations(state, job["data"])
             unknown = any(r["status"] == "unknown" for r in job["data"]["receipts"].values())
-            retry = body.retryable and not unknown and job["data"]["attempts"] < 3
+            retry = (
+                body.retryable
+                and not body.budget_exhausted
+                and not unknown
+                and job["data"]["attempts"] < 3
+            )
             queued_refresh = (
                 (
                     await conn.execute(
@@ -1525,14 +1723,37 @@ class ProgressService:
             job["status"] = "queued" if retry and queued_refresh is None else "failed"
             job["data"].update(
                 error=body.error,
+                budget_exhausted=body.budget_exhausted,
                 not_before=(now() + timedelta(seconds=30 * job["data"]["attempts"])).isoformat(),
             )
-            state.update(error=body.error, status="idle" if retry else "paused")
+            state.update(
+                error=body.error,
+                status="budget_exhausted"
+                if body.budget_exhausted
+                else "idle"
+                if retry
+                else "paused",
+            )
+            diagnostic = body.model_dump(mode="json").get("diagnostic")
+            if diagnostic is not None:
+                job["data"]["diagnostic"] = diagnostic
+                state["diagnostic"] = diagnostic
+            else:
+                state.pop("diagnostic", None)
             await self.save_job(conn, job)
             await self.fail_question(conn, job, body.error)
+            await self.fail_blocked_queue(conn, tid, state, cause_job_id=jid)
             await self.save(conn, tid, state)
             await self.emit(
-                conn, tid, "progress.turn.failed", {"error": body.error, "retryable": retry}
+                conn,
+                tid,
+                "progress.turn.failed",
+                {
+                    "error": body.error,
+                    "retryable": retry,
+                    "diagnostic": diagnostic,
+                    "budget_exhausted": body.budget_exhausted,
+                },
             )
             return {"status": job["status"]}
 
@@ -1708,8 +1929,17 @@ class ProgressService:
                 )
                 nodes.append(node)
             cost = Decimal(state["cost"])
+            model = ModelConfig.model_validate(state["model"]) if state.get("model") else None
             return {
                 **state,
+                "model_limits": {
+                    "context_window": model.context_window,
+                    "max_input_tokens": effective_max_input_tokens(model),
+                    "max_output_tokens": effective_max_output_tokens(model),
+                    "reasoning_effort": model.reasoning_effort,
+                }
+                if model is not None
+                else None,
                 "nodes": nodes,
                 "enabled": state["settings"]["enabled"],
                 "read_only": at_version is not None,

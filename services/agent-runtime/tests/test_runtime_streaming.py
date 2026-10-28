@@ -38,12 +38,12 @@ PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles/default"
 
 
 @pytest.mark.parametrize("provider", ["deepseek", "openai_chat", "openai_responses"])
-def test_ctf_profile_uses_deepseek_maximum_without_changing_ordinary_options(provider):
+def test_ctf_profile_and_ordinary_options_share_the_model_maximum(provider):
     profile = load_ctf_profile(PROFILE_DIR.parent / "ctf")
     model = profile.model.model_copy(update={"provider": provider})
     assert model.model == "deepseek-flash"
     assert ctf_model_run_options(model).get("max_tokens") == 393216
-    assert "max_tokens" not in model_run_options(model)
+    assert ctf_model_run_options(model) == model_run_options(model)
 
 
 @pytest.mark.parametrize("call_count", [1, 2])
@@ -200,7 +200,7 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(
         assert body["stream"] is True
         assert body["stream_options"] == {"include_usage": True}
         cap = 393216 if model_name == "deepseek-flash" else 8192
-        assert body.get("max_completion_tokens") == (cap if ctf else None)
+        assert body.get("max_completion_tokens") == cap
         if len(requests) == 1:
             return sse(
                 chat_chunk(1, {"role": "assistant", "reasoning_content": "part-A"}),
@@ -393,7 +393,7 @@ async def test_responses_sse_replays_local_function_history(
         requests.append(body)
         assert body["stream"] is True and body["store"] is False
         cap = 393216 if model_name == "deepseek-flash" else 8192
-        assert body.get("max_output_tokens") == (cap if ctf else None)
+        assert body.get("max_output_tokens") == cap
         if len(requests) == 1:
             first_events = (
                 [
@@ -632,10 +632,10 @@ async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status, reas
         metadata = model_error_metadata(failure.value)
         assert calls == []
         assert metadata["category"] == category
-        assert metadata["incomplete_reason"] == (reason if reason == "max_output_tokens" else None)
-        assert metadata["failure_phase"] == (
-            "unknown" if category == "content_filter" else "stream_completion"
+        assert metadata["incomplete_reason"] == (
+            reason if reason in {"max_output_tokens", "content_filter"} else None
         )
+        assert metadata["failure_phase"] == "stream_completion"
         if status == "missing":
             assert isinstance(failure.value, IncompleteModelStreamError)
         elif category != "content_filter":
@@ -700,5 +700,107 @@ async def test_responses_sse_error_codes_are_classified(monkeypatch, event_type,
         assert metadata["event_type"] == event_type
         assert metadata["provider_code"] == code
         assert "private body" not in str(metadata)
+    finally:
+        await close_model_client(client)
+
+
+@pytest.mark.parametrize("terminal", ["length", "incomplete", "failed"])
+@pytest.mark.parametrize("with_usage", [False, True])
+async def test_rejected_terminal_response_keeps_only_complete_usage(
+    monkeypatch, terminal, with_usage
+):
+    provider = "openai_chat" if terminal == "length" else "openai_responses"
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if terminal == "length":
+            events = [
+                chat_chunk(1, {"role": "assistant", "content": "secret partial response"}),
+                chat_chunk(
+                    1,
+                    {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": "{}"},
+                            }
+                        ]
+                    },
+                ),
+                chat_chunk(1, {}, "length"),
+            ]
+            if with_usage:
+                events.append(
+                    chat_chunk(
+                        1,
+                        {},
+                        usage={"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+                    )
+                )
+            return sse(*events)
+        response = responses_body(1, [], terminal)
+        response["usage"] = response["usage"] if with_usage else None
+        response["incomplete_details"] = (
+            {"reason": "max_output_tokens"} if terminal == "incomplete" else None
+        )
+        response["error"] = (
+            {"code": "server_error", "message": "secret provider body"}
+            if terminal == "failed"
+            else None
+        )
+        return sse(
+            {
+                "type": "response.output_text.delta",
+                "sequence_number": 1,
+                "output_index": 0,
+                "content_index": 0,
+                "item_id": "msg_1",
+                "delta": "secret partial response",
+            },
+            {"type": f"response.{terminal}", "sequence_number": 2, "response": response},
+        )
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        "bbx_runtime.models.AsyncOpenAI",
+        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
+    )
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={"provider": provider, "model": "test-model", "base_url": "https://model.test/v1"}
+    )
+    client = make_client(
+        model,
+        credentials={"api_key": "test-only-key"},
+        explore_max_steps=1,
+        conclude_grace_calls=0,
+        max_duration_seconds=10,
+        max_retries=0,
+    )
+    calls = []
+
+    def lookup() -> str:
+        calls.append(True)
+        return "must not execute"
+
+    try:
+        async with Agent(client=client, tools=[lookup]) as agent:
+            with pytest.raises(ModelStreamError) as failure:
+                await agent.run(
+                    "Start", stream=True, options=model_run_options(model)
+                ).get_final_response()
+        error = failure.value
+        assert (error.terminal_usage is not None) is with_usage
+        if with_usage:
+            assert error.terminal_usage is not None
+            assert error.terminal_usage["input_token_count"] == 7
+            assert error.terminal_usage["output_token_count"] == 3
+        metadata = model_error_metadata(error)
+        assert metadata["provider_response_id"] == ("chat-1" if terminal == "length" else "resp_1")
+        assert metadata["finish_reason"] == ("length" if terminal == "length" else None)
+        assert "secret" not in json.dumps(metadata)
+        assert calls == [] and len(requests) == 1
     finally:
         await close_model_client(client)

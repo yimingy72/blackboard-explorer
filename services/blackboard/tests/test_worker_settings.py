@@ -7,9 +7,36 @@ from unittest.mock import MagicMock
 import pytest
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.profiles import ProfileStore
-from bbx_blackboard.worker_settings import override_reasoning_effort, task_profile
+from bbx_blackboard.worker_settings import (
+    model_context_threshold,
+    override_reasoning_effort,
+    task_profile,
+)
 from bbx_contracts.profile import load_profile
 from fastapi import HTTPException
+
+
+@pytest.mark.parametrize(
+    "limits, expected",
+    [
+        (
+            {"context_window": 100_000, "max_input_tokens": 40_000, "max_output_tokens": 20_000},
+            32_000,
+        ),
+        (
+            {"context_window": 100_000, "max_input_tokens": 100_000, "max_output_tokens": 80_000},
+            16_000,
+        ),
+        ({"context_window": None, "max_input_tokens": 20_000}, 16_000),
+        ({"context_window": None}, None),
+    ],
+)
+def test_new_task_threshold_uses_effective_input_capacity_without_mutating_models(limits, expected):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    configured = {**profile.models.explore.model_dump(mode="json"), **limits}
+    original = deepcopy(configured)
+    assert model_context_threshold({"explore": configured}) == expected
+    assert configured == original
 
 
 @pytest.mark.parametrize(
@@ -49,7 +76,7 @@ async def test_task_effort_snapshots_preserve_model_and_prior_tasks(effort, prov
     assert {value["reasoning_effort"] for value in result["models"].values()} == {
         "xhigh" if effort is None else effort
     }
-    assert result["params"]["context_threshold"] == 400000
+    assert result["params"]["context_threshold"] == 200000
     assert workers == prior_task
     assert model == original_model
     old_snapshot = deepcopy(result)

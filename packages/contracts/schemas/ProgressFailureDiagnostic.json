@@ -1,0 +1,296 @@
+{
+  "additionalProperties": false,
+  "description": "Content-free model failure fields; provider bodies and arbitrary extras are forbidden.",
+  "properties": {
+    "category": {
+      "enum": [
+        "authentication",
+        "connection",
+        "conflict",
+        "payment_required",
+        "rate_limit",
+        "server_error",
+        "timeout",
+        "content_filter",
+        "invalid_request",
+        "invalid_response",
+        "unknown"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "provider",
+        "request"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "exception_type": {
+      "enum": [
+        "OtherException",
+        "IncompleteModelStreamError",
+        "ModelStreamError",
+        "APIError",
+        "APIConnectionError",
+        "APIStatusError",
+        "APITimeoutError",
+        "ChatClientException",
+        "ChatClientContentFilterException",
+        "ChatClientInvalidAuthException",
+        "ChatClientInvalidRequestException",
+        "ContentFilterFinishReasonError",
+        "RuntimeError",
+        "ValueError",
+        "TypeError",
+        "ProxyError",
+        "ConnectError",
+        "ReadError",
+        "RemoteProtocolError",
+        "LocalProtocolError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteError",
+        "WriteTimeout",
+        "PoolTimeout"
+      ],
+      "title": "Exception Type",
+      "type": "string"
+    },
+    "cause_type": {
+      "anyOf": [
+        {
+          "enum": [
+            "OtherException",
+            "IncompleteModelStreamError",
+            "ModelStreamError",
+            "APIError",
+            "APIConnectionError",
+            "APIStatusError",
+            "APITimeoutError",
+            "ChatClientException",
+            "ChatClientContentFilterException",
+            "ChatClientInvalidAuthException",
+            "ChatClientInvalidRequestException",
+            "ContentFilterFinishReasonError",
+            "RuntimeError",
+            "ValueError",
+            "TypeError",
+            "ProxyError",
+            "ConnectError",
+            "ReadError",
+            "RemoteProtocolError",
+            "LocalProtocolError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteError",
+            "WriteTimeout",
+            "PoolTimeout"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cause Type"
+    },
+    "transport_type": {
+      "anyOf": [
+        {
+          "enum": [
+            "ProxyError",
+            "ConnectError",
+            "ReadError",
+            "RemoteProtocolError",
+            "LocalProtocolError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteError",
+            "WriteTimeout",
+            "PoolTimeout"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Transport Type"
+    },
+    "failure_phase": {
+      "enum": [
+        "request_validation",
+        "http_response",
+        "stream_completion",
+        "proxy_connect",
+        "connect",
+        "request_write",
+        "response_read",
+        "unknown"
+      ],
+      "title": "Failure Phase",
+      "type": "string"
+    },
+    "event_type": {
+      "anyOf": [
+        {
+          "enum": [
+            "response.failed",
+            "response.incomplete",
+            "error"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Type"
+    },
+    "incomplete_reason": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Incomplete Reason"
+    },
+    "finish_reason": {
+      "anyOf": [
+        {
+          "enum": [
+            "stop",
+            "tool_calls",
+            "length",
+            "function_call",
+            "content_filter"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finish Reason"
+    },
+    "transient": {
+      "title": "Transient",
+      "type": "boolean"
+    },
+    "http_status": {
+      "anyOf": [
+        {
+          "maximum": 599,
+          "minimum": 100,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Http Status"
+    },
+    "provider_code": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Code"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request Id"
+    },
+    "provider_response_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Response Id"
+    },
+    "retry_after": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9, :.\\-]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry After"
+    },
+    "elapsed_ms": {
+      "default": 0,
+      "maximum": 86400000,
+      "minimum": 0,
+      "title": "Elapsed Ms",
+      "type": "integer"
+    },
+    "message_count": {
+      "default": 0,
+      "maximum": 1000000,
+      "minimum": 0,
+      "title": "Message Count",
+      "type": "integer"
+    },
+    "text_chars": {
+      "default": 0,
+      "maximum": 1000000000,
+      "minimum": 0,
+      "title": "Text Chars",
+      "type": "integer"
+    },
+    "attempt_limit": {
+      "default": 1,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Attempt Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "category",
+    "scope",
+    "exception_type",
+    "failure_phase",
+    "transient"
+  ],
+  "title": "ProgressFailureDiagnostic",
+  "type": "object"
+}

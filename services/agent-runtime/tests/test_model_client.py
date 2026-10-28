@@ -3,13 +3,15 @@
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx2 as httpx
 import pytest
 from agent_framework import Agent, Content, FunctionInvocationLayer, FunctionTool, Message
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.providers import PROVIDERS
+from bbx_runtime import models as runtime_models
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
@@ -59,7 +61,7 @@ def test_make_client_is_explicit_and_bounded(monkeypatch):
     assert client.function_invocation_configuration.get("max_iterations") == 68
     assert client.function_invocation_configuration.get("max_duration_seconds") == 3600
     assert client.client.timeout == 120
-    assert model_run_options(model) == {"reasoning_effort": "high"}
+    assert model_run_options(model) == {"reasoning_effort": "high", "max_tokens": 393216}
 
 
 def test_make_client_rejects_invalid_configuration():
@@ -112,14 +114,96 @@ def test_platform_provider_uses_pinned_endpoint(provider, client_type):
     assert isinstance(client, client_type)
     assert client.model == "snapshot-model"
     assert str(client.client.base_url) == "https://model.test/v1/"
-    assert model_run_options(model) == (
+    options = model_run_options(model)
+    assert options.pop("max_tokens") == 8192
+    assert options == (
         {"store": False, "reasoning": {"effort": "high"}}
         if provider == "openai_responses"
         else {"reasoning_effort": "high"}
     )
-    assert model_run_options(model.model_copy(update={"reasoning_effort": "off"})) == (
-        {"store": False} if provider == "openai_responses" else {}
+    options = model_run_options(model.model_copy(update={"reasoning_effort": "off"}))
+    assert options.pop("max_tokens") == 8192
+    assert options == ({"store": False} if provider == "openai_responses" else {})
+
+
+@pytest.mark.parametrize("containerized", [False, True])
+async def test_local_sdk_base_url_keeps_original_model_snapshot(monkeypatch, containerized):
+    monkeypatch.setattr(runtime_models, "in_container", lambda: containerized)
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={"provider": "openai_compatible", "base_url": "http://127.0.0.1:3425/v1"}
     )
+    snapshot = model.model_dump(mode="json")
+    client = cast(
+        Any,
+        make_client(
+            model,
+            api_key="local-fixture-key",
+            explore_max_steps=4,
+            conclude_grace_calls=1,
+            max_duration_seconds=180,
+        ),
+    )
+    try:
+        assert str(client.client.base_url) == (
+            "http://host.docker.internal:3425/v1/" if containerized else "http://127.0.0.1:3425/v1/"
+        )
+        assert model.model_dump(mode="json") == snapshot
+    finally:
+        await close_model_client(client)
+
+
+@pytest.mark.parametrize("containerized", [False, True])
+@pytest.mark.parametrize(
+    ("provider", "constructor", "url_field"),
+    [
+        ("openai_chat", "AsyncOpenAI", "base_url"),
+        ("openai_responses", "AsyncOpenAI", "base_url"),
+        ("azure_openai_chat", "AsyncAzureOpenAI", "azure_endpoint"),
+        ("azure_openai_responses", "AsyncAzureOpenAI", "azure_endpoint"),
+        ("anthropic", "AnthropicClient", "base_url"),
+        ("anthropic_foundry", "AnthropicFoundryClient", "base_url"),
+        ("ollama", "OllamaChatClient", "host"),
+        ("mistral", "MistralChatClient", "server_url"),
+        ("foundry", "PlatformFoundryChatClient", "project_endpoint"),
+    ],
+)
+def test_local_endpoint_routes_for_every_url_client_without_changing_snapshot(
+    monkeypatch, caplog, containerized, provider, constructor, url_field
+):
+    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
+        update={
+            "provider": provider,
+            "base_url": "http://[::1]:3425/gateway/v1",
+            "provider_options": {"api_version": "test-version"},
+        }
+    )
+    snapshot = model.model_dump(mode="json")
+    transport = Mock()
+    monkeypatch.setattr(runtime_models, "in_container", lambda: containerized)
+    monkeypatch.setattr(runtime_models, constructor, transport)
+    monkeypatch.setattr(runtime_models, "CompleteChatCompletionClient", Mock())
+    monkeypatch.setattr(runtime_models, "CompleteResponsesClient", Mock())
+    monkeypatch.setattr(runtime_models, "ClientSecretCredential", Mock())
+    make_client(
+        model,
+        credentials={
+            "api_key": "local-fixture-key",
+            "tenant_id": "fixture-tenant",
+            "client_id": "fixture-client",
+            "client_secret": "local-fixture-secret",
+        },
+        explore_max_steps=4,
+        conclude_grace_calls=1,
+        max_duration_seconds=180,
+    )
+    assert transport.call_args.kwargs[url_field] == (
+        "http://host.docker.internal:3425/gateway/v1"
+        if containerized
+        else "http://[::1]:3425/gateway/v1"
+    )
+    assert model.model_dump(mode="json") == snapshot
+    assert "local-fixture-key" not in caplog.text
+    assert "local-fixture-secret" not in caplog.text
 
 
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
@@ -129,6 +213,7 @@ def test_only_responses_providers_disable_service_side_history(provider, effort)
         update={"provider": provider, "reasoning_effort": effort}
     )
     options = model_run_options(model)
+    assert options.pop("max_tokens") == effective_max_output_tokens(model)
     if provider in {"openai_responses", "azure_openai_responses"}:
         assert options == (
             {"store": False, "reasoning": {"effort": "high"}}

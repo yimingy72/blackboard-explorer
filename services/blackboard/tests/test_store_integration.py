@@ -2441,10 +2441,10 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
         snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
         assert {item["model"] for item in snapshot["models"].values()} == {"chosen-model"}
         assert {item["context_window"] for item in snapshot["models"].values()} == {500000}
-        assert snapshot["params"]["context_threshold"] == 400000
+        assert snapshot["params"]["context_threshold"] == 393446
         assert (await board_service.state(UUID(task["id"])))["task"]["params"][
             "context_threshold"
-        ] == 400000
+        ] == 393446
         assert snapshot["prompt_templates"]["explore"] == body["prompt"]
         await client.put(
             "/api/settings/workers/explore",

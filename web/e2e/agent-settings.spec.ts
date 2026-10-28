@@ -2,16 +2,17 @@ import { selectOption, expandSection } from './ui';
 import { expect, test } from '@playwright/test';
 import { installMockApi } from './fixtures';
 
-test('模型上下文容量保存、回显与清除，拒绝小数提交', async ({ page }) => {
+test('模型上下文容量保存、回显与清除后恢复默认，拒绝小数提交', async ({ page }) => {
   const mock = await installMockApi(page);
   await page.goto('/profiles');
   await page.getByRole('tab', { name: /模型配置$/ }).click();
   await selectOption(page, page.getByRole('combobox', { name: '模型连接', exact: true }), '审查模型');
   const input = page.getByLabel('上下文大小（token）');
-  await expect(input).toBeEmpty();
+  await expect(input).toHaveValue('1000000');
   await input.fill('500000');
   await expandSection(page.getByRole('button', { name: '连接与上下文说明', exact: true }));
-  await expect(page.getByText(/新任务交接阈值 400,000/)).toBeVisible();
+  await expect(page.getByText(/上下文默认 1M/)).toBeVisible();
+  await expect(page.getByText(/新任务交接阈值 400,000/)).toHaveCount(0);
   await page.getByRole('button', { name: /保存$/ }).click();
   expect(mock.modelSaves[0]).toMatchObject({ context_window: 500000 });
   await expect(input).toHaveValue('500000');
@@ -20,7 +21,8 @@ test('模型上下文容量保存、回显与清除，拒绝小数提交', async
   expect(mock.modelSaves).toHaveLength(1);
   await input.fill('');
   await page.getByRole('button', { name: /保存$/ }).click();
-  expect(mock.modelSaves[1]).toMatchObject({ context_window: null });
+  expect(mock.modelSaves[1]).toMatchObject({ context_window: 1000000 });
+  await expect(input).toHaveValue('1000000');
   expect(mock.unexpected).toEqual([]);
 });
 

@@ -62,7 +62,7 @@ function Canvas({ taskId, nodes: source, selectedId, onSelect, historical = fals
     return () => media.removeEventListener('change', update);
   }, []);
   useEffect(() => {
-    if (!hadNodes.current && source.length && !saved?.expanded) setExpanded(defaultExpanded(source));
+    if ((!hadNodes.current || (signatures.current.size === 1 && source.length > 1)) && source.length && !saved?.expanded?.length) setExpanded(defaultExpanded(source));
     hadNodes.current = Boolean(source.length);
     const next = new Map(source.map(node => [node.id, JSON.stringify(node)]));
     const updated = [...next].filter(([id, value]) => signatures.current.get(id) !== value).map(([id]) => id);

@@ -44,7 +44,7 @@ def result(identifier: str, value: str) -> Message:
     )
 
 
-def provider(messages, *, turn="turn", state=None, threshold=1000, fixed=0):
+def provider(messages, *, turn="turn", state=None, threshold=1000, fixed=0, configured_model=None):
     session = AgentSession()
     session.state.update(state or {})
     session.state["in_memory"] = {"messages": messages}
@@ -59,7 +59,7 @@ def provider(messages, *, turn="turn", state=None, threshold=1000, fixed=0):
         cast(Any, service),
         checkpoint,
         {"id": turn},
-        model(),
+        configured_model or model(),
         threshold,
         fixed_input_tokens=fixed,
     )
@@ -80,6 +80,15 @@ def test_budget_uses_tokens_model_window_output_reserve_and_one_margin():
     assert estimate_text_tokens("abc" * 1000) == 1000
     assert estimate_text_tokens("汉" * 1000) == 3000
     assert estimate_text_tokens("{}" * 1000) == 2000
+
+
+def test_zero_input_capacity_blocks_dispatch_without_dividing_by_the_limit():
+    configured = model().model_copy(update={"context_window": 1})
+    view = provider([], configured_model=configured)
+    assert view.input_limit == 0
+    with pytest.raises(TurnBoundary):
+        view.prepare_provider_messages([text("new", "A real model input")])
+    assert view.checkpoint.session.state["ctf_context_blocked"]["limit_tokens"] == 0
 
 
 @pytest.mark.parametrize(

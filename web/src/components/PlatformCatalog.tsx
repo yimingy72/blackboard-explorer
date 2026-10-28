@@ -1,22 +1,30 @@
-import { App, Button, Checkbox, Collapse, Alert, Empty, Skeleton, Form, Input, Select, Switch, Tag } from 'antd';
+import { App, Button, Checkbox, Collapse, Alert, Empty, Skeleton, Form, Input, InputNumber, Select, Switch, Tag } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput } from '../api/client';
+import { api, type McpServer, type McpServerInput, type McpTool, type PlatformModel, type PlatformModelInput, type ProviderField } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/ProfilesPage.module.css';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { reasoningOptions } from './reasoningOptions';
+import ModelDiscoveryField from './ModelDiscoveryField';
 const blankModel: PlatformModelInput = {
     label: '', provider: '', model: '', base_url: '', reasoning_effort: 'none',
-    supports_vision: null, context_window: null,
+    supports_vision: null, context_window: 1000000, max_input_tokens: null, max_output_tokens: null,
     price: { currency: 'CNY', cache_hit_per_m: '', cache_miss_per_m: '', output_per_m: '', off_peak: false, billing_mode: 'fixed' },
     provider_options: {}, credentials: {}, enabled: true,
 };
 const blankServer: McpServerInput = { label: '', url: '', auth_header: 'Authorization', auth_scheme: 'Bearer', enabled: true };
 function errorText(error: unknown) { return error instanceof Error ? error.message : '操作失败。'; }
+function isHostModelUrl(value: string) {
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+        return ['localhost', '[::1]', 'host.docker.internal'].includes(host) || /^127\.\d+\.\d+\.\d+$/.test(host);
+    } catch { return false; }
+}
 function modelPayload(model: PlatformModelInput): PlatformModelInput {
     return {
         ...model,
+        context_window: model.context_window ?? 1000000,
         credentials: Object.fromEntries(Object.entries(model.credentials ?? {}).filter(([, value]) => value)),
     };
 }
@@ -70,7 +78,8 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
             const next: PlatformModelInput = {
                 label: item.label, provider: item.config.provider as PlatformModelInput['provider'], model: item.config.model,
                 base_url: item.config.base_url, reasoning_effort: item.config.reasoning_effort,
-                supports_vision: item.config.supports_vision ?? null, context_window: item.config.context_window ?? null,
+                supports_vision: item.config.supports_vision ?? null, context_window: item.config.context_window ?? 1000000,
+                max_input_tokens: item.config.max_input_tokens ?? null, max_output_tokens: item.config.max_output_tokens ?? null,
                 price: item.config.price.currency === 'CNY' ? { ...blankModel.price, ...item.config.price } : { ...blankModel.price }, provider_options: item.config.provider_options ?? {}, credentials: {}, enabled: item.enabled,
             };
             setModel(next);
@@ -157,7 +166,10 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         }
     }
     const active = items?.find((item) => item.name === name);
-    const configuredCredentials = active && 'config' in active && active.config.provider === model.provider ? active.configured_credentials ?? [] : [];
+    const sameConnection = active && 'config' in active && active.config.provider === model.provider
+        && active.config.base_url.replace(/\/+$/, '') === model.base_url.replace(/\/+$/, '')
+        && Object.keys({ ...active.config.provider_options, ...model.provider_options }).every(key => active.config.provider_options?.[key] === model.provider_options?.[key]);
+    const configuredCredentials = sameConnection && active && 'config' in active ? active.configured_credentials ?? [] : [];
     const provider = providers.data?.find((item) => item.id === model.provider);
     const efforts = reasoningOptions(provider, model.model);
     const showBaseUrl = Boolean(provider && (provider.base_url_required || provider.default_base_url !== 'provider-default'));
@@ -219,6 +231,11 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
         if (!model.model.trim()) return '请填写模型 ID。';
         if ((provider.base_url_required || showBaseUrl && Boolean(model.base_url)) && !validUrl(model.base_url)) return '请填写有效的 Base URL。';
         if (model.context_window != null && (!Number.isInteger(model.context_window) || model.context_window < 1)) return '上下文大小必须为正整数。';
+        for (const key of ['max_input_tokens', 'max_output_tokens'] as const) {
+            const value = model[key];
+            if (value != null && (!Number.isInteger(value) || value < 1)) return '输入和输出上限须为正整数。';
+            if (value != null && (key === 'max_output_tokens' ? value >= (model.context_window ?? 1000000) : value > (model.context_window ?? 1000000))) return '输入上限不能超过上下文窗口，输出上限须小于上下文窗口。';
+        }
         for (const field of provider.options_fields) if (field.required && !model.provider_options?.[field.name]?.trim()) return `请填写 ${field.label ?? field.name}。`;
         for (const field of provider.credential_fields) if (field.required && !provider.allow_no_auth && !configuredCredentials.includes(field.name) && !model.credentials?.[field.name]?.trim()) return `请填写 ${field.label ?? field.name}。`;
         for (const key of ['cache_hit_per_m','cache_miss_per_m','output_per_m'] as const) if (model.price[key] === '' || !Number.isFinite(Number(model.price[key])) || Number(model.price[key]) < 0) {setPriceError(key);setAdvanced(keys=>[...new Set([...keys,'prices'])]);return '请填写完整的非负计费单价。';}
@@ -231,6 +248,7 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
     }
     // Initialize the editor once; polling must never replace an unsaved draft.
     useEffect(() => { if (!original && items?.length) void choose(items.find(item => 'is_default' in item && item.is_default) ?? items[0], true); });
+    const optionField = (field: ProviderField) => <label className={controls.field} key={field.name}><span className={controls.label}>{field.label??field.name}</span>{field.options ? <Select aria-label={field.label??field.name} value={model.provider_options?.[field.name] || field.default_value} options={field.options} onChange={value=>setModel({...model,provider_options:{...model.provider_options,[field.name]:value}})} /> : <Input aria-label={field.label??field.name} value={model.provider_options?.[field.name]??''} onChange={event=>setModel({...model,provider_options:{...model.provider_options,[field.name]:event.target.value}})} />}</label>;
     const prices = <div ref={pricesRef} className={styles.formGrid}>
       {active && 'config' in active && active.config.price.currency!=='CNY' && <Alert className={styles.wideField} type="warning" title="原配置不是人民币，请重新录入人民币单价。" description={`原单价（${active.config.price.currency} / 百万 token）：缓存命中 ${active.config.price.cache_hit_per_m}，未命中 ${active.config.price.cache_miss_per_m}，输出 ${active.config.price.output_per_m}。`} />}
       {priceError && <p id="price-error" role="alert" className={`${controls.error} ${styles.wideField}`}>单价须为非负数；免费模型请明确填写 0。</p>}
@@ -243,25 +261,30 @@ export default function PlatformCatalog({ kind, onDirtyChange, onBusyChange }: {
       <Form component={false} disabled={saving}>
       <form className={styles.catalogForm} noValidate onSubmit={event=>{event.preventDefault();void save();}}>
         <header className={styles.contentHeader}>
-          <div className={styles.connectionPicker}><Select aria-label={kind==='models'?'模型连接':'MCP 服务'} className={styles.resourceSelect} value={name || undefined} placeholder={original ? `新增${kind==='models'?'模型':'服务'}` : '选择连接'} loading={kind==='models'?models.isLoading:servers.isLoading} options={items?.map(item=>({value:item.name,label:item.label})) ?? []} onChange={value=>{const item=items?.find(entry=>entry.name===value);if(item)void choose(item);}} />{active && 'is_default' in active && active.is_default && <Tag>默认</Tag>}<Button type="text" icon={<PlusOutlined />} onClick={()=>void create()} disabled={saving}>新增{kind==='models'?'模型':'MCP 服务'}</Button></div>
-          {original && <div className={styles.headerActions}><Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}{kind==='models'&&active&&<Button aria-label="删除模型" size="small" type="text" danger icon={<DeleteOutlined />} disabled={saving} onClick={()=>void removeModel()}>删除模型</Button>}<Button aria-label="保存" aria-busy={saving} size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
+          <div className={styles.connectionPicker}><Select aria-label={kind==='models'?'模型连接':'MCP 服务'} className={styles.resourceSelect} value={name || undefined} placeholder={original ? `新增${kind==='models'?'模型':'服务'}` : '选择连接'} loading={kind==='models'?models.isLoading:servers.isLoading} options={items?.map(item=>({value:item.name,label:item.label})) ?? []} onChange={value=>{const item=items?.find(entry=>entry.name===value);if(item)void choose(item);}} /><Button type="text" icon={<PlusOutlined />} aria-label={kind==='models'?'新增模型':'新增MCP 服务'} onClick={()=>void create()} disabled={saving}><span className={styles.createLabel}>新增{kind==='models'?'模型':'MCP 服务'}</span></Button></div>
+          {original && <div className={styles.headerActions}>{active && 'is_default' in active && active.is_default && <Tag>默认</Tag>}<Switch aria-label={kind==='models'?'启用此模型':'启用此服务'} size="small" checked={draft.enabled} onChange={checked=>kind==='models'?setModel({...model,enabled:checked}):setServer({...server,enabled:checked})} /><span className={controls.hint}>启用</span>{kind==='models'&&active&&'is_default' in active&&!active.is_default&&<Button size="small" disabled={saving||dirty||!active.enabled} onClick={()=>void setDefault()}>设为默认模型</Button>}{kind==='models'&&active&&<Button aria-label="删除模型" size="small" type="text" danger icon={<DeleteOutlined />} disabled={saving} onClick={()=>void removeModel()}>删除模型</Button>}<Button aria-label="保存" aria-busy={saving} size="small" type="primary" htmlType="submit" loading={saving} disabled={saving||!dirty}>保存</Button></div>}
         </header>
         {error && <Alert type="error" title={error} showIcon className={styles.feedback} />}{notice && <Alert role="status" type="success" title={notice} showIcon className={styles.feedback} />}
         {(kind==='models'?models.isError:servers.isError) && <Alert type="error" title={`加载失败：${errorText(kind==='models'?models.error:servers.error)}`} action={<Button onClick={()=>{void (kind==='models'?models.refetch():servers.refetch());}}>重试</Button>} />}
         {!original ? (kind==='models'?models.isLoading:servers.isLoading) ? <div className={styles.formSection} role="status" aria-label="正在读取配置"><Skeleton active={false} paragraph={{rows:5}} /></div> : (kind==='models'?models.isError:servers.isError) ? null : <Empty className={styles.emptyDetail} description={kind==='models'?'添加或选择模型':'添加或选择 MCP 服务'} /> : <div className={styles.catalogFields}>
           {kind==='models'?<>
-          <div className={styles.formSection}><div className={styles.formGrid}>
-            <label className={controls.field}><span className={controls.label}>显示名称</span><Input aria-label="显示名称" value={model.label} onChange={event=>setModel({...model,label:event.target.value})} /></label>
+          <div className={styles.formSection}><h2 className={styles.sectionTitle}>连接设置</h2><div className={styles.formGrid}>
             <label className={controls.field}><span className={controls.label}>Provider</span><Select aria-label="Provider" value={model.provider || undefined} placeholder="选择 Provider" loading={providers.isLoading} disabled={saving||providers.isLoading} options={providers.data?.map(item=>({value:item.id,label:item.label})) ?? []} onChange={value=>{const next=providers.data?.find(item=>item.id===value);setModel({...model,provider:value,price:{...model.price,billing_mode:value==='deepseek'?'deepseek_schedule':'fixed'},supports_vision:null,base_url:next?.default_base_url==='provider-default'?'':next?.default_base_url??'',reasoning_effort:next?.supports_reasoning_effort?model.reasoning_effort:'none',provider_options:{},credentials:{}});}} /></label>
-            <label className={controls.field}><span className={controls.label}>模型 ID</span><Input aria-label="模型 ID" value={model.model} onChange={event=>setModel({...model,model:event.target.value})} /></label>
-            {showBaseUrl && <label className={`${controls.field} ${styles.spanTwo}`}><span className={controls.label}>Base URL</span><Input aria-label="Base URL" value={model.base_url==='provider-default'?'':model.base_url} onChange={event=>setModel({...model,base_url:event.target.value})} /></label>}
-            {provider?.credential_fields.map(field=><label className={`${controls.field} ${field.name.endsWith('_json')?styles.wideField:''}`} key={field.name}><span className={controls.label}>{field.label??field.name}</span>{field.name.endsWith('_json')?<Input.TextArea aria-label={field.label??field.name} autoSize={{minRows:2,maxRows:6}} value={model.credentials?.[field.name]??''} onChange={event=>setModel({...model,credentials:{...model.credentials,[field.name]:event.target.value}})} />:<Input.Password aria-label={field.label??field.name} autoComplete="new-password" value={model.credentials?.[field.name]??''} placeholder={configuredCredentials.includes(field.name)?'已保存；留空沿用当前凭据':provider.allow_no_auth?'可留空':'输入凭据'} onChange={event=>setModel({...model,credentials:{...model.credentials,[field.name]:event.target.value}})} />}</label>)}
-            {provider?.options_fields.map(field=><label className={controls.field} key={field.name}><span className={controls.label}>{field.label??field.name}</span><Input aria-label={field.label??field.name} value={model.provider_options?.[field.name]??''} onChange={event=>setModel({...model,provider_options:{...model.provider_options,[field.name]:event.target.value}})} /></label>)}
-            <label className={controls.field}><span className={controls.label}>上下文大小（token）</span><Input aria-label="上下文大小（token）" type="number" min="1" step="1" placeholder="留空沿用全局阈值" value={model.context_window??''} onChange={event=>setModel({...model,context_window:event.target.value===''?null:Number(event.target.value)})} /></label>
+            {showBaseUrl && <label className={`${controls.field} ${styles.spanTwo}`}><span className={controls.label}>Base URL</span><Input aria-label="Base URL" value={model.base_url==='provider-default'?'':model.base_url} onChange={event=>setModel({...model,base_url:event.target.value})} />{isHostModelUrl(model.base_url) && <small className={controls.hint}>连接由平台服务器发起。Docker 部署时，本机地址会连接到平台宿主机；服务需允许容器访问。</small>}</label>}
+            <label className={controls.field}><span className={controls.label}>显示名称</span><Input aria-label="显示名称" value={model.label} onChange={event=>setModel({...model,label:event.target.value})} /></label>
+            {provider?.credential_fields.map(field=><label className={`${controls.field} ${field.name.endsWith('_json')?styles.wideField:provider.credential_fields.length===1?styles.spanTwo:''}`} key={field.name}><span className={controls.label}>{field.label??field.name}</span>{field.name.endsWith('_json')?<Input.TextArea aria-label={field.label??field.name} autoSize={{minRows:2,maxRows:6}} value={model.credentials?.[field.name]??''} onChange={event=>setModel({...model,credentials:{...model.credentials,[field.name]:event.target.value}})} />:<Input.Password aria-label={field.label??field.name} autoComplete="new-password" value={model.credentials?.[field.name]??''} placeholder={configuredCredentials.includes(field.name)?'已保存；留空沿用当前凭据':provider.allow_no_auth?'可留空':'输入凭据'} onChange={event=>setModel({...model,credentials:{...model.credentials,[field.name]:event.target.value}})} />}</label>)}
+            {provider?.options_fields.filter(field=>field.name!=='responses_replay_mode').map(optionField)}
+          </div>{providers.isError&&<Alert type="error" title="Provider 目录读取失败" action={<Button onClick={()=>void providers.refetch()}>重试</Button>} />}</div>
+          <div className={styles.formSection}><h2 className={styles.sectionTitle}>模型与输出</h2><div className={styles.formGrid}>
+            <ModelDiscoveryField model={model} saved={active && 'config' in active ? active : undefined} onChange={setModel} disabled={saving} />
+            <label className={controls.field}><span className={controls.label}>上下文大小（token）</span><InputNumber className={styles.numericInput} aria-label="上下文大小（token）" min={1} step={1} placeholder="1,000,000" value={model.context_window} onChange={value=>setModel({...model,context_window:value})} /></label>
+            <label className={controls.field}><span className={controls.label}>最大输入（token）</span><InputNumber className={styles.numericInput} aria-label="最大输入（token）" min={1} step={1} placeholder="按上下文窗口计算" value={model.max_input_tokens} onChange={value=>setModel({...model,max_input_tokens:value})} /></label>
+            <label className={controls.field}><span className={controls.label}>单次最大输出（token）</span><InputNumber className={styles.numericInput} aria-label="单次最大输出（token）" min={1} step={1} placeholder="模型兼容默认值" value={model.max_output_tokens} onChange={value=>setModel({...model,max_output_tokens:value})} /></label>
             {provider?.supports_reasoning_effort?<label className={controls.field}><span className={controls.label}>推理强度</span><Select aria-label="推理强度" value={model.reasoning_effort} onChange={value=>setModel({...model,reasoning_effort:value})} options={[{value:'none',label:'模型默认（不传参数）'},...(model.reasoning_effort!=='none'&&!efforts.includes(model.reasoning_effort)?[{value:model.reasoning_effort,label:`${model.reasoning_effort}（当前兼容设置）`}]:[]),...efforts.map(value=>({value,label:value}))]} /></label>:<label className={controls.field}><span className={controls.label}>推理强度</span><Input value="模型默认" readOnly disabled /></label>}
             <label className={controls.field}><span className={controls.label}>图片输入</span><Select aria-label="图片输入" value={model.supports_vision==null?'auto':String(model.supports_vision)} onChange={value=>setModel({...model,supports_vision:value==='auto'?null:value==='true'})} options={[{value:'auto',label:'由模型接口判断'},{value:'true',label:'支持看图'},{value:'false',label:'仅文本'}]} /></label>
-          </div>{providers.isError&&<Alert type="error" title="Provider 目录读取失败" action={<Button onClick={()=>void providers.refetch()}>重试</Button>} />}</div>
-          <Collapse activeKey={advanced} onChange={keys=>setAdvanced(Array.isArray(keys)?keys:[keys])} className={styles.catalogAdvanced} ghost size="small" items={[{key:'prices',label:'人民币计费',forceRender:true,children:prices},{key:'help',label:'连接与上下文说明',children:<>{model.provider==='openai_compatible'&&<p className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</p>}<p className={controls.hint}>宿主机服务使用 host.docker.internal。凭据仅写入，留空保留已保存的值。</p><p className={controls.hint}>{model.context_window!=null&&Number.isInteger(model.context_window)&&model.context_window>0?`新任务交接阈值 ${Math.max(1,Math.floor(model.context_window*4/5)).toLocaleString()} token（80%），其余 20% 留给输出与黑板增量。`:'未设置时沿用全局交接阈值（默认 128,000 token）。'} 修改不会改变已有任务。</p></>}]} />
+            {provider?.options_fields.filter(field=>field.name==='responses_replay_mode').map(optionField)}
+          </div>{active && 'config' in active && active.effective_limits && !dirty && <div className={styles.effectiveLimits}><span>当前生效</span><span>输入 {active.effective_limits.max_input_tokens?.toLocaleString() ?? '按上下文限制'} token</span><span>输出 {active.effective_limits.max_output_tokens.toLocaleString()} token</span></div>}</div>
+          <Collapse activeKey={advanced} onChange={keys=>setAdvanced(Array.isArray(keys)?keys:[keys])} className={styles.catalogAdvanced} ghost size="small" items={[{key:'prices',label:'人民币计费',forceRender:true,children:prices},{key:'help',label:'连接与上下文说明',children:<>{model.provider==='openai_compatible'&&<p className={controls.hint}>推理强度需兼容接口支持；若不支持，请选模型默认。</p>}<p className={controls.hint}>宿主机服务使用 host.docker.internal。凭据仅写入，留空保留已保存的值。</p><p className={controls.hint}>所有求解、团队与整理 Agent 采用该模型的输出配置。上下文默认 1M，实际输入还会为输出预留空间。已创建任务保留模型快照。</p></>}]} />
           </>:<div className={styles.formSection}><div className={styles.formGrid}>
             <label className={controls.field}><span className={controls.label}>显示名称</span><Input aria-label="显示名称" value={server.label} onChange={event=>setServer({...server,label:event.target.value})} /></label>
             <label className={`${controls.field} ${styles.spanTwo}`}><span className={controls.label}>Streamable HTTP URL</span><Input aria-label="Streamable HTTP URL" value={server.url} onChange={event=>setServer({...server,url:event.target.value})} /></label>

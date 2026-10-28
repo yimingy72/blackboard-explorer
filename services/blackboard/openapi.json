@@ -404,6 +404,24 @@
         "title": "BudgetAdjustBody",
         "type": "object"
       },
+      "CatalogProvider": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CatalogProvider",
+        "type": "object"
+      },
       "ClaimBody": {
         "properties": {
           "mode": {
@@ -1663,6 +1681,89 @@
         "title": "DeliveryBody",
         "type": "object"
       },
+      "DiscoveredModel": {
+        "properties": {
+          "context_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "metadata_source": {
+            "default": "provider_api",
+            "title": "Metadata Source",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supports_vision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Vision"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DiscoveredModel",
+        "type": "object"
+      },
       "DisplayFilterRequest": {
         "properties": {
           "display_filter": {
@@ -2459,6 +2560,47 @@
         "title": "McpInput",
         "type": "object"
       },
+      "ModelCatalogResult": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredModel"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ModelCatalogResult",
+        "type": "object"
+      },
       "ModelConfig-Input": {
         "additionalProperties": false,
         "properties": {
@@ -2478,8 +2620,35 @@
                 "type": "null"
               }
             ],
+            "default": 1000000,
             "description": "模型上下文容量，单位 token",
             "title": "Context Window"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型最大输入 token，空值按上下文容量计算",
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型最大输出 token，空值使用兼容默认值",
+            "title": "Max Output Tokens"
           },
           "model": {
             "description": "模型名称",
@@ -2576,8 +2745,35 @@
                 "type": "null"
               }
             ],
+            "default": 1000000,
             "description": "模型上下文容量，单位 token",
             "title": "Context Window"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型最大输入 token，空值按上下文容量计算",
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型最大输出 token，空值使用兼容默认值",
+            "title": "Max Output Tokens"
           },
           "model": {
             "description": "模型名称",
@@ -2655,6 +2851,90 @@
         "title": "ModelConfig",
         "type": "object"
       },
+      "ModelDiscoveryInput": {
+        "additionalProperties": false,
+        "properties": {
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "credentials": {
+            "additionalProperties": {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            "title": "Credentials",
+            "type": "object"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Provider Options",
+            "type": "object"
+          },
+          "saved_name": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved Name"
+          },
+          "saved_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved Version"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "ModelDiscoveryInput",
+        "type": "object"
+      },
+      "ModelDiscoveryResult": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredModel"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "supported": {
+            "default": true,
+            "title": "Supported",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "title": "ModelDiscoveryResult",
+        "type": "object"
+      },
       "ModelInput": {
         "additionalProperties": false,
         "properties": {
@@ -2686,6 +2966,7 @@
                 "type": "null"
               }
             ],
+            "default": 1000000,
             "title": "Context Window"
           },
           "credential_source": {
@@ -2716,6 +2997,30 @@
             "minLength": 1,
             "title": "Label",
             "type": "string"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
           },
           "model": {
             "maxLength": 200,
@@ -3589,10 +3894,25 @@
       "ProgressFail": {
         "additionalProperties": false,
         "properties": {
+          "budget_exhausted": {
+            "default": false,
+            "title": "Budget Exhausted",
+            "type": "boolean"
+          },
           "claim_token": {
             "format": "uuid",
             "title": "Claim Token",
             "type": "string"
+          },
+          "diagnostic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProgressFailureDiagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
             "maxLength": 2000,
@@ -3617,6 +3937,292 @@
           "error"
         ],
         "title": "ProgressFail",
+        "type": "object"
+      },
+      "ProgressFailureDiagnostic": {
+        "additionalProperties": false,
+        "description": "Content-free model failure fields; provider bodies and arbitrary extras are forbidden.",
+        "properties": {
+          "attempt_limit": {
+            "default": 1,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Attempt Limit",
+            "type": "integer"
+          },
+          "category": {
+            "enum": [
+              "authentication",
+              "connection",
+              "conflict",
+              "payment_required",
+              "rate_limit",
+              "server_error",
+              "timeout",
+              "content_filter",
+              "invalid_request",
+              "invalid_response",
+              "unknown"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "cause_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "OtherException",
+                  "IncompleteModelStreamError",
+                  "ModelStreamError",
+                  "APIError",
+                  "APIConnectionError",
+                  "APIStatusError",
+                  "APITimeoutError",
+                  "ChatClientException",
+                  "ChatClientContentFilterException",
+                  "ChatClientInvalidAuthException",
+                  "ChatClientInvalidRequestException",
+                  "ContentFilterFinishReasonError",
+                  "RuntimeError",
+                  "ValueError",
+                  "TypeError",
+                  "ProxyError",
+                  "ConnectError",
+                  "ReadError",
+                  "RemoteProtocolError",
+                  "LocalProtocolError",
+                  "ConnectTimeout",
+                  "ReadTimeout",
+                  "WriteError",
+                  "WriteTimeout",
+                  "PoolTimeout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cause Type"
+          },
+          "elapsed_ms": {
+            "default": 0,
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "event_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "response.failed",
+                  "response.incomplete",
+                  "error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
+          "exception_type": {
+            "enum": [
+              "OtherException",
+              "IncompleteModelStreamError",
+              "ModelStreamError",
+              "APIError",
+              "APIConnectionError",
+              "APIStatusError",
+              "APITimeoutError",
+              "ChatClientException",
+              "ChatClientContentFilterException",
+              "ChatClientInvalidAuthException",
+              "ChatClientInvalidRequestException",
+              "ContentFilterFinishReasonError",
+              "RuntimeError",
+              "ValueError",
+              "TypeError",
+              "ProxyError",
+              "ConnectError",
+              "ReadError",
+              "RemoteProtocolError",
+              "LocalProtocolError",
+              "ConnectTimeout",
+              "ReadTimeout",
+              "WriteError",
+              "WriteTimeout",
+              "PoolTimeout"
+            ],
+            "title": "Exception Type",
+            "type": "string"
+          },
+          "failure_phase": {
+            "enum": [
+              "request_validation",
+              "http_response",
+              "stream_completion",
+              "proxy_connect",
+              "connect",
+              "request_write",
+              "response_read",
+              "unknown"
+            ],
+            "title": "Failure Phase",
+            "type": "string"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stop",
+                  "tool_calls",
+                  "length",
+                  "function_call",
+                  "content_filter"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "incomplete_reason": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incomplete Reason"
+          },
+          "message_count": {
+            "default": 0,
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "provider_code": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Code"
+          },
+          "provider_response_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Response Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9, :.\\-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After"
+          },
+          "scope": {
+            "enum": [
+              "provider",
+              "request"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "text_chars": {
+            "default": 0,
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Text Chars",
+            "type": "integer"
+          },
+          "transient": {
+            "title": "Transient",
+            "type": "boolean"
+          },
+          "transport_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ProxyError",
+                  "ConnectError",
+                  "ReadError",
+                  "RemoteProtocolError",
+                  "LocalProtocolError",
+                  "ConnectTimeout",
+                  "ReadTimeout",
+                  "WriteError",
+                  "WriteTimeout",
+                  "PoolTimeout"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Type"
+          }
+        },
+        "required": [
+          "category",
+          "scope",
+          "exception_type",
+          "failure_phase",
+          "transient"
+        ],
+        "title": "ProgressFailureDiagnostic",
         "type": "object"
       },
       "ProgressGlobalSettings": {
@@ -3871,7 +4477,6 @@
             "type": "integer"
           },
           "max_output_tokens": {
-            "maximum": 32768.0,
             "minimum": 1.0,
             "title": "Max Output Tokens",
             "type": "integer"
@@ -3922,7 +4527,7 @@
           },
           "max_output_tokens": {
             "default": 8192,
-            "maximum": 32768.0,
+            "description": "历史兼容字段，实际输出上限使用固定模型配置",
             "minimum": 256.0,
             "title": "Max Output Tokens",
             "type": "integer"
@@ -3963,6 +4568,24 @@
               }
             ],
             "title": "Model Version"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "历史兼容字段，实际思考强度使用固定模型配置",
+            "title": "Reasoning Effort"
           },
           "system_prompt": {
             "default": "",
@@ -7170,6 +7793,56 @@
         ]
       }
     },
+    "/api/platform/model-catalog": {
+      "get": {
+        "operationId": "reference_model_catalog_api_platform_model_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reference Model Catalog",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/platform/models": {
       "get": {
         "operationId": "models_api_platform_models_get",
@@ -7232,6 +7905,47 @@
           }
         },
         "summary": "New Model",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/models/discover": {
+      "post": {
+        "operationId": "model_discovery_api_platform_models_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelDiscoveryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelDiscoveryResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Model Discovery",
         "tags": [
           "platform"
         ]

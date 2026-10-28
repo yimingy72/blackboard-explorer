@@ -63,7 +63,7 @@ class MemoryCtf:
             return {}
         if operation == "checkpoint_failed":
             return {}
-        if operation == "authorize_member":
+        if operation in {"authorize_member", "mark_reservation_sent"}:
             return {}
         if operation == "claim_messages":
             return [row for row in self.rows if row["id"] not in self.delivered]
@@ -695,7 +695,12 @@ def test_ctf_reservation_requires_a_real_context_bound():
     from bbx_runtime.models import ctf_model_run_options
 
     model = load_ctf_profile(Path("profiles/ctf")).model
-    assert ctf_call_reservation(model, context_tokens=128000) is None
+    assert (
+        ctf_call_reservation(
+            model.model_copy(update={"context_window": None}), context_tokens=128000
+        )
+        is None
+    )
     price = model.price.model_copy(update={"billing_mode": "fixed"})
     bounded = model.model_copy(update={"context_window": 128000, "price": price})
     assert (
@@ -705,9 +710,8 @@ def test_ctf_reservation_requires_a_real_context_bound():
     assert ctf_call_reservation(bounded, context_tokens=128000) == (
         Decimal(64000) * Decimal("2.00") + Decimal(ctf_max_output_tokens(bounded)) * Decimal("8.00")
     ) / Decimal(1_000_000)
-    assert ctf_call_reservation(bounded, context_tokens=128000, max_output_tokens=8192) == Decimal(
-        "0.305152"
-    )
+    configured = bounded.model_copy(update={"max_output_tokens": 8192})
+    assert ctf_call_reservation(configured, context_tokens=128000) == Decimal("0.305152")
 
 
 @pytest.mark.parametrize("provider", ["deepseek", "openai_responses", "openai_compatible"])
@@ -734,13 +738,13 @@ def test_ctf_other_models_keep_fallback_output_bound(model_id):
     from pathlib import Path
 
     from bbx_contracts.ctf import load_ctf_profile
-    from bbx_runtime.ctf.budget import CTF_MAX_OUTPUT_TOKENS, ctf_max_output_tokens
+    from bbx_runtime.ctf.budget import ctf_max_output_tokens
     from bbx_runtime.models import ctf_model_run_options
 
     model = load_ctf_profile(Path("profiles/ctf")).model.model_copy(
         update={"provider": "openai_responses", "model": model_id}
     )
-    assert ctf_max_output_tokens(model) == CTF_MAX_OUTPUT_TOKENS == 8192
+    assert ctf_max_output_tokens(model) == 8192
     assert ctf_model_run_options(model).get("max_tokens") == 8192
 
 
@@ -779,6 +783,10 @@ async def test_model_error_observation_failure_preserves_original_exception():
     [
         ({"incomplete_reason": "max_output_tokens", "payload": "secret payload"}, "输出上限"),
         ({"category": "content_filter", "payload": "secret payload"}, "内容审核"),
+        (
+            {"category": "invalid_request", "failure_phase": "request_validation"},
+            "本地模型请求组装失败",
+        ),
         (
             {
                 "category": "payment_required",

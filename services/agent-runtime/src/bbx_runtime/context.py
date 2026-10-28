@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import AgentProfile, Params
 from bbx_objects import ObjectStore
 
@@ -47,4 +48,9 @@ class RunContext:
 
     @property
     def params(self) -> Params:
-        return Params.model_validate(self.state["task"]["params"])
+        params = Params.model_validate(self.state["task"]["params"])
+        model = getattr(self.profile.models, self.task_type)
+        input_limit = effective_max_input_tokens(model)
+        if input_limit is not None:
+            params.context_threshold = min(params.context_threshold, max(1, int(input_limit * 0.8)))
+        return params

@@ -354,12 +354,12 @@ async def test_task_uses_smallest_explicit_profile_context_window() -> None:
 
         async def create(self, name, snapshot, actor):
             assert (name, actor) == ("task-settings", "task")
-            assert snapshot.params.context_threshold == 240000
+            assert snapshot.params.context_threshold == 120000
             return {"name": name, "version": 1, **snapshot.model_dump(mode="json")}
 
     class Service:
         async def create_task(self, spec, *, profile_version):
-            assert spec["params"]["context_threshold"] == 240000
+            assert spec["params"]["context_threshold"] == 120000
             assert profile_version == 1
             return uuid4()
 
@@ -443,7 +443,7 @@ async def test_task_reasoning_creates_isolated_snapshot_and_not_task_spec(overri
         model.reasoning_effort
         for model in (snapshot.models.explore, snapshot.models.derive, snapshot.models.close)
     } == {expected}
-    assert snapshot.params.context_threshold == 240000
+    assert snapshot.params.context_threshold == 120000
     spec = service.create_task.call_args.args[0]
     assert "reasoning_effort" not in spec
     assert spec["agent_profile"] == "task-settings"

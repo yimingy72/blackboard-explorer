@@ -1,6 +1,9 @@
 """Progress security and graph invariants without external services."""
 
+from contextlib import asynccontextmanager
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -9,7 +12,8 @@ from bbx_blackboard.api import create_app
 from bbx_blackboard.auth import issue_progress_token
 from bbx_blackboard.progress import ProgressService, apply_candidate, fold_sources, initial
 from bbx_blackboard.settings import Settings
-from bbx_contracts.progress import ProgressCandidate, ProgressNode
+from bbx_contracts.models import ModelConfig, Price
+from bbx_contracts.progress import ProgressCandidate, ProgressNode, ProgressReserve
 from fastapi import HTTPException
 from pydantic import SecretStr
 
@@ -30,6 +34,57 @@ def tree():
 
 def candidate(**kwargs):
     return ProgressCandidate(claim_token=uuid4(), run_number=1, expected_revision=0, **kwargs)
+
+
+async def test_reservation_uses_frozen_model_limit_instead_of_legacy_role_setting(monkeypatch):
+    @asynccontextmanager
+    async def begin():
+        yield object()
+
+    service = ProgressService(SimpleNamespace(begin=begin))
+    model = ModelConfig(
+        provider="openai_compatible",
+        model="synthetic",
+        base_url="https://offline.invalid",
+        reasoning_effort="none",
+        max_output_tokens=500_000,
+        price=Price(
+            currency="CNY",
+            cache_hit_per_m=Decimal("1"),
+            cache_miss_per_m=Decimal("2"),
+            output_per_m=Decimal("3"),
+            off_peak=False,
+        ),
+    ).model_dump(mode="json")
+    job = {"data": {"model": model, "settings": {"max_output_tokens": 8192}, "receipts": {}}}
+    state = {
+        "settings": {"enabled": True, "max_cost": "10"},
+        "cost": "0",
+        "reserved": "0",
+        "unknown": "0",
+    }
+    monkeypatch.setattr(service, "job", AsyncMock(return_value=({}, job)))
+    monkeypatch.setattr(service, "state", AsyncMock(return_value=state))
+    monkeypatch.setattr(service, "save_job", AsyncMock())
+    monkeypatch.setattr(service, "save", AsyncMock())
+    body = ProgressReserve(
+        claim_token=uuid4(),
+        run_number=1,
+        request_id=uuid4(),
+        input_tokens=1000,
+        max_output_tokens=500_000,
+    )
+    receipt = await service.reserve(uuid4(), uuid4(), body)
+    assert Decimal(receipt["reserved"]) == Decimal("1.502")
+    assert receipt["args"]["max_output_tokens"] == model["max_output_tokens"]
+    assert job["data"]["settings"]["max_output_tokens"] == 8192
+    job["data"]["receipts"].clear()
+    with pytest.raises(HTTPException, match="model configuration"):
+        await service.reserve(
+            uuid4(),
+            uuid4(),
+            body.model_copy(update={"request_id": uuid4(), "max_output_tokens": 500_001}),
+        )
 
 
 def test_incremental_candidates_keep_stable_nodes_and_reject_cycles():

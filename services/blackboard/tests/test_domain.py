@@ -566,6 +566,11 @@ def test_transient_model_error_starts_new_window_after_120_seconds() -> None:
         ({"category": "payment_required", "http_status": 402}, "模型账户余额不足（HTTP 402）"),
         ({"category": "authentication"}, "模型服务鉴权失败"),
         ({"category": "server_error"}, "模型服务持续不可用"),
+        ({"category": "invalid_request", "http_status": 400}, "模型服务拒绝请求"),
+        (
+            {"category": "invalid_request", "failure_phase": "request_validation"},
+            "本地模型请求组装失败（会话兼容校验）",
+        ),
         ({"category": "unknown"}, "连续运行失败达到保护阈值"),
     ],
 )

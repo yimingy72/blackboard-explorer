@@ -115,6 +115,8 @@ def _failure_threshold_reason(error: dict[str, Any] | None) -> str:
     category = error.get("category")
     if not isinstance(category, str):
         return "连续运行失败达到保护阈值"
+    if category == "invalid_request" and error.get("failure_phase") == "request_validation":
+        return "本地模型请求组装失败（会话兼容校验）"
     messages = {
         "payment_required": "模型账户余额不足（HTTP 402）",
         "authentication": "模型服务鉴权失败",

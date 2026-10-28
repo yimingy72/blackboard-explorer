@@ -158,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/model-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reference Model Catalog */
+        get: operations["reference_model_catalog_api_platform_model_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/models": {
         parameters: {
             query?: never;
@@ -170,6 +187,23 @@ export interface paths {
         put?: never;
         /** New Model */
         post: operations["new_model_api_platform_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/models/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Model Discovery */
+        post: operations["model_discovery_api_platform_models_discover_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2106,6 +2140,13 @@ export interface components {
             /** Max Minutes */
             max_minutes?: number | null;
         };
+        /** CatalogProvider */
+        CatalogProvider: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /** ClaimBody */
         ClaimBody: {
             /**
@@ -2542,6 +2583,27 @@ export interface components {
              */
             id: string;
         };
+        /** DiscoveredModel */
+        DiscoveredModel: {
+            /** Context Window */
+            context_window?: number | null;
+            /** Id */
+            id: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /**
+             * Metadata Source
+             * @default provider_api
+             */
+            metadata_source: string;
+            /** Name */
+            name?: string | null;
+            price?: components["schemas"]["Price-Output"] | null;
+            /** Supports Vision */
+            supports_vision?: boolean | null;
+        };
         /** DisplayFilterRequest */
         DisplayFilterRequest: {
             /**
@@ -2846,6 +2908,17 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** ModelCatalogResult */
+        ModelCatalogResult: {
+            /** Models */
+            models?: components["schemas"]["DiscoveredModel"][];
+            /** Provider */
+            provider?: string | null;
+            /** Providers */
+            providers: components["schemas"]["CatalogProvider"][];
+            /** Warnings */
+            warnings?: string[];
+        };
         /** ModelConfig */
         "ModelConfig-Input": {
             /**
@@ -2856,8 +2929,19 @@ export interface components {
             /**
              * Context Window
              * @description 模型上下文容量，单位 token
+             * @default 1000000
              */
-            context_window?: number | null;
+            context_window: number | null;
+            /**
+             * Max Input Tokens
+             * @description 模型最大输入 token，空值按上下文容量计算
+             */
+            max_input_tokens?: number | null;
+            /**
+             * Max Output Tokens
+             * @description 模型最大输出 token，空值使用兼容默认值
+             */
+            max_output_tokens?: number | null;
             /**
              * Model
              * @description 模型名称
@@ -2899,8 +2983,19 @@ export interface components {
             /**
              * Context Window
              * @description 模型上下文容量，单位 token
+             * @default 1000000
              */
-            context_window?: number | null;
+            context_window: number | null;
+            /**
+             * Max Input Tokens
+             * @description 模型最大输入 token，空值按上下文容量计算
+             */
+            max_input_tokens?: number | null;
+            /**
+             * Max Output Tokens
+             * @description 模型最大输出 token，空值使用兼容默认值
+             */
+            max_output_tokens?: number | null;
             /**
              * Model
              * @description 模型名称
@@ -2932,6 +3027,40 @@ export interface components {
              */
             supports_vision?: boolean | null;
         };
+        /** ModelDiscoveryInput */
+        ModelDiscoveryInput: {
+            /**
+             * Base Url
+             * @default
+             */
+            base_url: string;
+            /** Credentials */
+            credentials?: {
+                [key: string]: string;
+            };
+            /** Provider */
+            provider: string;
+            /** Provider Options */
+            provider_options?: {
+                [key: string]: string;
+            };
+            /** Saved Name */
+            saved_name?: string | null;
+            /** Saved Version */
+            saved_version?: number | null;
+        };
+        /** ModelDiscoveryResult */
+        ModelDiscoveryResult: {
+            /** Models */
+            models?: components["schemas"]["DiscoveredModel"][];
+            /**
+             * Supported
+             * @default true
+             */
+            supported: boolean;
+            /** Warnings */
+            warnings?: string[];
+        };
         /** ModelInput */
         ModelInput: {
             /** Api Key */
@@ -2941,8 +3070,11 @@ export interface components {
              * @default
              */
             base_url: string;
-            /** Context Window */
-            context_window?: number | null;
+            /**
+             * Context Window
+             * @default 1000000
+             */
+            context_window: number | null;
             /**
              * Credential Source
              * @default stored
@@ -2960,6 +3092,10 @@ export interface components {
             enabled: boolean;
             /** Label */
             label: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
             /** Model */
             model: string;
             price: components["schemas"]["Price-Input"];
@@ -3375,10 +3511,16 @@ export interface components {
         /** ProgressFail */
         ProgressFail: {
             /**
+             * Budget Exhausted
+             * @default false
+             */
+            budget_exhausted: boolean;
+            /**
              * Claim Token
              * Format: uuid
              */
             claim_token: string;
+            diagnostic?: components["schemas"]["ProgressFailureDiagnostic"] | null;
             /** Error */
             error: string;
             /**
@@ -3388,6 +3530,74 @@ export interface components {
             retryable: boolean;
             /** Run Number */
             run_number: number;
+        };
+        /**
+         * ProgressFailureDiagnostic
+         * @description Content-free model failure fields; provider bodies and arbitrary extras are forbidden.
+         */
+        ProgressFailureDiagnostic: {
+            /**
+             * Attempt Limit
+             * @default 1
+             */
+            attempt_limit: number;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "authentication" | "connection" | "conflict" | "payment_required" | "rate_limit" | "server_error" | "timeout" | "content_filter" | "invalid_request" | "invalid_response" | "unknown";
+            /** Cause Type */
+            cause_type?: ("OtherException" | "IncompleteModelStreamError" | "ModelStreamError" | "APIError" | "APIConnectionError" | "APIStatusError" | "APITimeoutError" | "ChatClientException" | "ChatClientContentFilterException" | "ChatClientInvalidAuthException" | "ChatClientInvalidRequestException" | "ContentFilterFinishReasonError" | "RuntimeError" | "ValueError" | "TypeError" | "ProxyError" | "ConnectError" | "ReadError" | "RemoteProtocolError" | "LocalProtocolError" | "ConnectTimeout" | "ReadTimeout" | "WriteError" | "WriteTimeout" | "PoolTimeout") | null;
+            /**
+             * Elapsed Ms
+             * @default 0
+             */
+            elapsed_ms: number;
+            /** Event Type */
+            event_type?: ("response.failed" | "response.incomplete" | "error") | null;
+            /**
+             * Exception Type
+             * @enum {string}
+             */
+            exception_type: "OtherException" | "IncompleteModelStreamError" | "ModelStreamError" | "APIError" | "APIConnectionError" | "APIStatusError" | "APITimeoutError" | "ChatClientException" | "ChatClientContentFilterException" | "ChatClientInvalidAuthException" | "ChatClientInvalidRequestException" | "ContentFilterFinishReasonError" | "RuntimeError" | "ValueError" | "TypeError" | "ProxyError" | "ConnectError" | "ReadError" | "RemoteProtocolError" | "LocalProtocolError" | "ConnectTimeout" | "ReadTimeout" | "WriteError" | "WriteTimeout" | "PoolTimeout";
+            /**
+             * Failure Phase
+             * @enum {string}
+             */
+            failure_phase: "request_validation" | "http_response" | "stream_completion" | "proxy_connect" | "connect" | "request_write" | "response_read" | "unknown";
+            /** Finish Reason */
+            finish_reason?: ("stop" | "tool_calls" | "length" | "function_call" | "content_filter") | null;
+            /** Http Status */
+            http_status?: number | null;
+            /** Incomplete Reason */
+            incomplete_reason?: string | null;
+            /**
+             * Message Count
+             * @default 0
+             */
+            message_count: number;
+            /** Provider Code */
+            provider_code?: string | null;
+            /** Provider Response Id */
+            provider_response_id?: string | null;
+            /** Request Id */
+            request_id?: string | null;
+            /** Retry After */
+            retry_after?: string | null;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "provider" | "request";
+            /**
+             * Text Chars
+             * @default 0
+             */
+            text_chars: number;
+            /** Transient */
+            transient: boolean;
+            /** Transport Type */
+            transport_type?: ("ProxyError" | "ConnectError" | "ReadError" | "RemoteProtocolError" | "LocalProtocolError" | "ConnectTimeout" | "ReadTimeout" | "WriteError" | "WriteTimeout" | "PoolTimeout") | null;
         };
         /** ProgressGlobalSettings */
         ProgressGlobalSettings: {
@@ -3523,6 +3733,7 @@ export interface components {
             max_cost: number | string;
             /**
              * Max Output Tokens
+             * @description 历史兼容字段，实际输出上限使用固定模型配置
              * @default 8192
              */
             max_output_tokens: number;
@@ -3540,6 +3751,11 @@ export interface components {
             model_id?: string | null;
             /** Model Version */
             model_version?: number | null;
+            /**
+             * Reasoning Effort
+             * @description 历史兼容字段，实际思考强度使用固定模型配置
+             */
+            reasoning_effort?: ("low" | "medium" | "high" | "max") | null;
             /**
              * System Prompt
              * @default
@@ -4922,6 +5138,37 @@ export interface operations {
             };
         };
     };
+    reference_model_catalog_api_platform_model_catalog_get: {
+        parameters: {
+            query?: {
+                provider?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     models_api_platform_models_get: {
         parameters: {
             query?: never;
@@ -4966,6 +5213,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    model_discovery_api_platform_models_discover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelDiscoveryInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDiscoveryResult"];
                 };
             };
             /** @description Validation Error */

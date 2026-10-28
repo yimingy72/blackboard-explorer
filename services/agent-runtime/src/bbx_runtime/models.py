@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Mapping, Sequence
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from agent_framework import (
     BaseChatClient,
@@ -25,7 +26,10 @@ from agent_framework.anthropic import (
     AnthropicFoundryClient,
     AnthropicVertexClient,
 )
-from agent_framework.exceptions import ChatClientContentFilterException
+from agent_framework.exceptions import (
+    ChatClientContentFilterException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.gemini import GeminiChatClient
 from agent_framework.mistral import MistralChatClient
@@ -36,6 +40,8 @@ from agent_framework.openai import (
     OpenAIChatCompletionOptions,
 )
 from azure.identity.aio import ClientSecretCredential
+from bbx_contracts.model_limits import effective_max_output_tokens
+from bbx_contracts.model_urls import in_container, resolve_model_url
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.profile import load_profile
 from bbx_contracts.providers import PROVIDERS
@@ -45,8 +51,12 @@ from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.completion_usage import CompletionUsage
 
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.ctf.budget import ctf_max_output_tokens
-from bbx_runtime.model_errors import IncompleteModelStreamError, ModelStreamError
+from bbx_runtime.model_errors import (
+    IncompleteModelStreamError,
+    ModelRequestValidationError,
+    ModelStreamError,
+)
+from bbx_runtime.responses_history import project_tool_observations
 
 
 def preserve_reasoning(
@@ -73,9 +83,33 @@ def _require_complete_stream(
 ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
     """Reject an incomplete provider turn before MAF executes its tool calls."""
     completed = False
+    rejected: ModelStreamError | None = None
+
+    def terminal_usage(raw: Any, *, chat: bool = False) -> dict[str, Any] | None:
+        if raw is None:
+            return None
+        input_details = getattr(
+            raw, "prompt_tokens_details" if chat else "input_tokens_details", None
+        )
+        output_details = getattr(
+            raw, "completion_tokens_details" if chat else "output_tokens_details", None
+        )
+        cached = getattr(raw, "prompt_cache_hit_tokens", None) if chat else None
+        if cached is None:
+            cached = getattr(input_details, "cached_tokens", None)
+        reasoning = getattr(output_details, "reasoning_tokens", None)
+        return {
+            "input_token_count": getattr(raw, "prompt_tokens" if chat else "input_tokens", None),
+            "output_token_count": getattr(
+                raw, "completion_tokens" if chat else "output_tokens", None
+            ),
+            "total_token_count": getattr(raw, "total_tokens", None),
+            "cache_read_input_token_count": 0 if cached is None else cached,
+            "reasoning_output_token_count": 0 if reasoning is None else reasoning,
+        }
 
     def observe(update: ChatResponseUpdate) -> ChatResponseUpdate:
-        nonlocal completed
+        nonlocal completed, rejected
         if responses:
             event = update.raw_representation
             kind = getattr(event, "type", None)
@@ -95,8 +129,6 @@ def _require_complete_stream(
                     else getattr(getattr(response, "error", None), "code", None)
                 )
                 reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
-                if reason == "content_filter" or code == "content_filter":
-                    raise ChatClientContentFilterException("Model stream was filtered")
                 category = (
                     "rate_limit"
                     if code in {"rate_limit", "rate_limit_exceeded"}
@@ -106,20 +138,51 @@ def _require_complete_stream(
                     if kind == "response.incomplete"
                     else "unknown"
                 )
-                raise ModelStreamError(
-                    category, event_type=kind, provider_code=code, incomplete_reason=reason
+                terminal_error = ModelStreamError(
+                    category,
+                    event_type=kind,
+                    provider_code=code,
+                    incomplete_reason=reason,
+                    provider_response_id=getattr(response, "id", None),
+                    terminal_usage=terminal_usage(getattr(response, "usage", None))
+                    if kind in {"response.failed", "response.incomplete"}
+                    and getattr(response, "status", None) == kind.removeprefix("response.")
+                    else None,
                 )
+                if reason == "content_filter" or code == "content_filter":
+                    raise ChatClientContentFilterException(
+                        "Model stream was filtered"
+                    ) from terminal_error
+                raise terminal_error
             if kind == "response.completed":
                 completed = getattr(getattr(event, "response", None), "status", None) == "completed"
-        elif update.finish_reason is not None:
-            if update.finish_reason not in {"stop", "tool_calls"}:
-                if update.finish_reason == "content_filter":
-                    raise ChatClientContentFilterException("Model stream was filtered")
-                raise ModelStreamError("invalid_response")
-            completed = True
+        else:
+            if update.finish_reason is not None:
+                if update.finish_reason not in {"stop", "tool_calls"}:
+                    if update.finish_reason == "content_filter":
+                        raise ChatClientContentFilterException("Model stream was filtered")
+                    rejected = ModelStreamError(
+                        "invalid_response",
+                        finish_reason=str(update.finish_reason),
+                        provider_response_id=update.response_id,
+                    )
+                else:
+                    completed = True
+            if rejected is not None:
+                # Chat usage commonly follows the finish_reason in a separate final chunk.
+                usage = terminal_usage(getattr(update.raw_representation, "usage", None), chat=True)
+                if usage is not None:
+                    rejected = ModelStreamError(
+                        "invalid_response",
+                        finish_reason=rejected.finish_reason,
+                        provider_response_id=rejected.provider_response_id,
+                        terminal_usage=usage,
+                    )
         return update
 
     def verify(response: ChatResponse) -> ChatResponse:
+        if rejected is not None:
+            raise rejected
         if not completed:
             raise IncompleteModelStreamError("Model stream ended without a completed response")
         return response
@@ -147,6 +210,32 @@ class CompleteChatCompletionClient(OpenAIChatCompletionClient):
 
 
 class CompleteResponsesClient(OpenAIChatClient):
+    def __init__(self, *args: Any, responses_replay_mode: str = "native", **kwargs: Any) -> None:
+        if responses_replay_mode not in {"native", "tool_observations"}:
+            raise ValueError("Invalid resolved Responses replay mode")
+        super().__init__(*args, **kwargs)
+        self.responses_replay_mode = responses_replay_mode
+
+    def _prepare_messages_for_openai(
+        self,
+        chat_messages: Sequence[Message],
+        *,
+        request_uses_service_side_storage: bool = True,
+    ) -> list[dict[str, Any]]:
+        if (
+            self.responses_replay_mode == "tool_observations"
+            and not request_uses_service_side_storage
+        ):
+            chat_messages = project_tool_observations(chat_messages)
+        try:
+            return super()._prepare_messages_for_openai(
+                chat_messages, request_uses_service_side_storage=request_uses_service_side_storage
+            )
+        except ChatClientInvalidRequestException as error:
+            raise ModelRequestValidationError(
+                "Local Responses history validation failed", log_level=None
+            ) from error
+
     def _prepare_message_for_openai(
         self,
         message: Message,
@@ -345,6 +434,9 @@ def make_client(
     }
     if max_retries is not None and max_retries < 0:
         raise ValueError("Model retry limit must be nonnegative")
+    model = model.model_copy(
+        update={"base_url": resolve_model_url(model.base_url, containerized=in_container())}
+    )
 
     def configured(client: Any) -> Any:
         if max_retries is not None:
@@ -499,6 +591,19 @@ def make_client(
     kwargs: dict[str, Any] = (
         {"response_parser": preserve_reasoning} if provider == "deepseek" else {}
     )
+    if provider in {"openai_responses", "azure_openai_responses"}:
+        mode = options.get("responses_replay_mode", "auto")
+        if mode not in {"auto", "native", "tool_observations"}:
+            raise ValueError("Invalid Responses replay mode")
+        if mode == "auto":
+            mode = (
+                "native"
+                if provider == "azure_openai_responses"
+                or not model.base_url
+                or urlsplit(model.base_url).hostname == "api.openai.com"
+                else "tool_observations"
+            )
+        kwargs["responses_replay_mode"] = mode
     return client_type(
         model=model.model,
         async_client=openai_client,
@@ -541,15 +646,16 @@ async def close_model_client(client: BaseChatClient[Any]) -> None:
 
 def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
     """Use the option shape expected by the pinned provider's API."""
+    options: DeepSeekChatOptions = {"max_tokens": effective_max_output_tokens(model)}
     effort = model.reasoning_effort
     if model.provider in {"openai_responses", "azure_openai_responses"}:
         # Keep history in the platform instead of relying on provider-side storage.
-        options: DeepSeekChatOptions = {"store": False}
+        options["store"] = False
         if effort not in {"none", "off", ""}:
             options["reasoning"] = {"effort": effort}
         return options
     if effort in {"none", "off", ""}:
-        return {}
+        return options
     if model.provider in {
         "deepseek",
         "openai_chat",
@@ -557,12 +663,10 @@ def model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
         "azure_openai_chat",
         "mistral",
     }:
-        return {"reasoning_effort": effort}
-    return {}
+        options["reasoning_effort"] = effort
+    return options
 
 
 def ctf_model_run_options(model: ModelConfig) -> DeepSeekChatOptions:
-    """Bound CTF response size while leaving ordinary profiles unchanged."""
-    options = model_run_options(model)
-    options["max_tokens"] = ctf_max_output_tokens(model)
-    return options
+    """Keep the CTF compatibility entry point on the shared model policy."""
+    return model_run_options(model)

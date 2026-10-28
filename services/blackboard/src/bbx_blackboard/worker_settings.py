@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from bbx_contracts.ctf import CtfPlatformToolBinding
-from bbx_contracts.models import AgentProfile, ExecResources, Params, WorkerTools
+from bbx_contracts.model_limits import effective_max_input_tokens
+from bbx_contracts.models import AgentProfile, ExecResources, ModelConfig, Params, WorkerTools
 from bbx_contracts.providers import reasoning_efforts
 from fastapi import APIRouter, HTTPException, Request
 from jinja2 import TemplateSyntaxError, meta
@@ -75,12 +76,12 @@ async def read_workers(profiles: ProfileStore) -> dict[str, Any]:
 
 
 def model_context_threshold(models: dict[str, Any]) -> int | None:
-    windows = [
-        model["context_window"]
+    limits = [
+        limit
         for model in models.values()
-        if model.get("context_window") is not None
+        if (limit := effective_max_input_tokens(ModelConfig.model_validate(model))) is not None
     ]
-    return max(1, min(windows) * 4 // 5) if windows else None
+    return max(1, min(limits) * 4 // 5) if limits else None
 
 
 def override_reasoning_effort(models: dict[str, Any], effort: str) -> dict[str, Any]:

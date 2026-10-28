@@ -133,6 +133,7 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
             return await super().put_agent_session(*args, **kwargs)
 
     service = AuditedService(native=True)
+    service.profile["models"]["explore"]["max_output_tokens"] = 32768
     script = ScriptedChatClient(
         [
             ScriptStep(
@@ -159,6 +160,7 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
     assert service.completed["usage"]["cache_miss_tokens"] == 9
     assert service.completed["usage"]["output_tokens"] == 11
     assert script.received_streams == [True, True]
+    assert [option["max_tokens"] for option in script.received_options] == [32768, 32768]
     tools = script.received_options[0]["tools"]
     assert {item.name for item in tools} == {"get", "search", "read_evidence", "view_image"}
     assert "JSON 回执要求已结束" in script.received_options[0]["instructions"]

@@ -9,9 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
+from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import ModelConfig
-
-from bbx_runtime.ctf.budget import ctf_max_output_tokens
 
 
 def message_signature(message: Message) -> str:
@@ -151,8 +150,9 @@ def estimate_messages_tokens(messages: Sequence[Message], *, provider: str | Non
 def input_token_limit(model: ModelConfig, threshold: int) -> int:
     """Reserve output capacity, then leave 20% input headroom; this is a hard gate."""
     available = threshold
-    if model.context_window is not None:
-        available = min(available, max(0, model.context_window - ctf_max_output_tokens(model)))
+    model_limit = effective_max_input_tokens(model)
+    if model_limit is not None:
+        available = min(available, model_limit)
     return max(0, int(available * 0.8))
 
 

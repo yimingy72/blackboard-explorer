@@ -1,7 +1,7 @@
 """Task-scoped progress projection and fenced runtime protocol."""
 
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -47,7 +47,12 @@ class ProgressSettings(ContractModel):
     system_prompt: str = Field(default="", max_length=40000)
     merge_seconds: int = Field(default=10, ge=0, le=3600)
     min_interval_seconds: int = Field(default=60, ge=0, le=86400)
-    max_output_tokens: int = Field(default=8192, ge=256, le=32768)
+    max_output_tokens: int = Field(
+        default=8192, ge=256, description="历史兼容字段，实际输出上限使用固定模型配置"
+    )
+    reasoning_effort: Literal["low", "medium", "high", "max"] | None = Field(
+        default=None, description="历史兼容字段，实际思考强度使用固定模型配置"
+    )
 
 
 class ProgressGlobalSettings(ContractModel):
@@ -102,7 +107,7 @@ class ProgressCheckpoint(ProgressFence):
 class ProgressReserve(ProgressFence):
     request_id: UUID
     input_tokens: int = Field(ge=0)
-    max_output_tokens: int = Field(ge=1, le=32768)
+    max_output_tokens: int = Field(ge=1)
 
 
 class ProgressSettle(ProgressFence):
@@ -116,6 +121,100 @@ class ProgressComplete(ProgressFence):
     content: str = Field(default="", max_length=40000)
 
 
+_DiagnosticIdentifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")]
+_ProviderRequestId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
+_ExceptionName = Literal[
+    "OtherException",
+    "IncompleteModelStreamError",
+    "ModelStreamError",
+    "APIError",
+    "APIConnectionError",
+    "APIStatusError",
+    "APITimeoutError",
+    "ChatClientException",
+    "ChatClientContentFilterException",
+    "ChatClientInvalidAuthException",
+    "ChatClientInvalidRequestException",
+    "ContentFilterFinishReasonError",
+    "RuntimeError",
+    "ValueError",
+    "TypeError",
+    "ProxyError",
+    "ConnectError",
+    "ReadError",
+    "RemoteProtocolError",
+    "LocalProtocolError",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteError",
+    "WriteTimeout",
+    "PoolTimeout",
+]
+
+
+class ProgressFailureDiagnostic(ContractModel):
+    """Content-free model failure fields; provider bodies and arbitrary extras are forbidden."""
+
+    category: Literal[
+        "authentication",
+        "connection",
+        "conflict",
+        "payment_required",
+        "rate_limit",
+        "server_error",
+        "timeout",
+        "content_filter",
+        "invalid_request",
+        "invalid_response",
+        "unknown",
+    ]
+    scope: Literal["provider", "request"]
+    exception_type: _ExceptionName
+    cause_type: _ExceptionName | None = None
+    transport_type: (
+        Literal[
+            "ProxyError",
+            "ConnectError",
+            "ReadError",
+            "RemoteProtocolError",
+            "LocalProtocolError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteError",
+            "WriteTimeout",
+            "PoolTimeout",
+        ]
+        | None
+    ) = None
+    failure_phase: Literal[
+        "request_validation",
+        "http_response",
+        "stream_completion",
+        "proxy_connect",
+        "connect",
+        "request_write",
+        "response_read",
+        "unknown",
+    ]
+    event_type: Literal["response.failed", "response.incomplete", "error"] | None = None
+    incomplete_reason: _DiagnosticIdentifier | None = None
+    finish_reason: (
+        Literal["stop", "tool_calls", "length", "function_call", "content_filter"] | None
+    ) = None
+    transient: bool
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    provider_code: _DiagnosticIdentifier | None = None
+    request_id: _ProviderRequestId | None = None
+    provider_response_id: _ProviderRequestId | None = None
+    retry_after: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9, :.\-]+$")
+    elapsed_ms: int = Field(default=0, ge=0, le=86_400_000)
+    message_count: int = Field(default=0, ge=0, le=1_000_000)
+    text_chars: int = Field(default=0, ge=0, le=1_000_000_000)
+    attempt_limit: int = Field(default=1, ge=1, le=100)
+
+
 class ProgressFail(ProgressFence):
     error: str = Field(min_length=1, max_length=2000)
     retryable: bool = False
+    budget_exhausted: bool = False
+    diagnostic: ProgressFailureDiagnostic | None = None

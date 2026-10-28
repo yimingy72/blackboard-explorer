@@ -6,8 +6,13 @@ from typing import Any, cast
 import httpx2
 import pytest
 from agent_framework import Content, Message
-from agent_framework.exceptions import ChatClientException
-from bbx_runtime.model_errors import ModelStreamError, model_attempt_limit, model_error_metadata
+from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
+from bbx_runtime.model_errors import (
+    ModelRequestValidationError,
+    ModelStreamError,
+    model_attempt_limit,
+    model_error_metadata,
+)
 from bbx_runtime.models import make_client
 from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
@@ -20,6 +25,22 @@ def status_error(status: int, code: str = "safe_code", **headers: str) -> APISta
         json={"error": {"code": code, "message": "secret provider body"}},
     )
     return APIStatusError("secret provider message", response=response, body=response.json())
+
+
+def test_local_request_validation_is_distinct_from_provider_rejection():
+    from bbx_contracts.progress import ProgressFailureDiagnostic
+
+    original = ChatClientInvalidRequestException("secret local history details")
+    error = ModelRequestValidationError("Local Responses history validation failed", log_level=None)
+    error.__cause__ = original
+    assert "secret" not in str(error)
+    metadata = model_error_metadata(ChatClientException("safe wrapper", error))
+    assert metadata["category"] == "invalid_request"
+    assert metadata["failure_phase"] == "request_validation"
+    assert metadata["transient"] is False
+    assert metadata["http_status"] is None
+    assert "secret" not in json.dumps(metadata)
+    ProgressFailureDiagnostic.model_validate(metadata)
 
 
 @pytest.mark.parametrize(
@@ -54,6 +75,8 @@ def test_status_error_category_and_safe_metadata(status, code, category, transie
         "failure_phase": "http_response",
         "event_type": None,
         "incomplete_reason": None,
+        "finish_reason": None,
+        "provider_response_id": None,
         "transient": transient,
         "http_status": status,
         "provider_code": code,
@@ -65,6 +88,50 @@ def test_status_error_category_and_safe_metadata(status, code, category, transie
         "attempt_limit": 5,
     }
     assert "secret" not in json.dumps(metadata)
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        None,
+        {"input_token_count": 1, "output_token_count": 2},
+        {"input_token_count": 1, "output_token_count": 2, "total_token_count": 4},
+        {"input_token_count": True, "output_token_count": 2, "total_token_count": 3},
+        {"input_token_count": -1, "output_token_count": 2, "total_token_count": 1},
+        {
+            "input_token_count": 1,
+            "output_token_count": 2,
+            "total_token_count": 3,
+            "cache_read_input_token_count": 2,
+        },
+    ],
+)
+def test_terminal_usage_requires_complete_consistent_counts(details):
+    error = ModelStreamError("invalid_response", terminal_usage=details)
+    assert error.terminal_usage is None
+
+
+def test_stream_diagnostics_drop_body_and_invalid_identifiers():
+    from bbx_contracts.progress import ProgressFailureDiagnostic
+
+    error = ModelStreamError(
+        "invalid_response",
+        finish_reason="secret provider text",
+        provider_response_id="secret key with spaces",
+        terminal_usage={
+            "input_token_count": 1,
+            "output_token_count": 2,
+            "total_token_count": 3,
+            "body": "secret prompt",
+        },
+    )
+    metadata = model_error_metadata(error)
+    assert metadata["finish_reason"] is metadata["provider_response_id"] is None
+    assert "secret" not in json.dumps(metadata)
+    assert error.terminal_usage is not None and "body" not in error.terminal_usage
+    ProgressFailureDiagnostic.model_validate(metadata)
+    with pytest.raises(ValueError):
+        ProgressFailureDiagnostic.model_validate({**metadata, "body": "secret"})
 
 
 @pytest.mark.parametrize(

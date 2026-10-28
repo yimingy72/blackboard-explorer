@@ -16,6 +16,7 @@ from agent_framework import ResponseStream
 from agent_framework.exceptions import ChatClientException
 from bbx_contracts.models import McpBinding, Params, WorkerTools
 from bbx_contracts.profile import load_profile
+from bbx_runtime.context import RunContext
 from bbx_runtime.execenv import ExecEnvHandle
 from bbx_runtime.middleware import GraceGateMiddleware, ToolLogMiddleware
 from bbx_runtime.runner import AgentRunner
@@ -32,6 +33,75 @@ def fake_stream(response: Awaitable[Any], *, stream: bool):
         yield await response
 
     return ResponseStream(updates(), finalizer=lambda items: items[-1])
+
+
+@pytest.mark.parametrize("role", ["explore", "derive", "close"])
+async def test_all_ordinary_workers_dispatch_the_frozen_model_output_limit(monkeypatch, role):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    getattr(profile.models, role).max_output_tokens = 32768
+    service = SimpleNamespace(
+        state=AsyncMock(
+            return_value={
+                "task": {
+                    "agent_profile": "default",
+                    "agent_profile_version": 1,
+                    "params": Params().model_dump(),
+                    "budget": {"max_minutes": 1},
+                },
+                "agents": {"agent-1": {"task_type": role, "status": "running"}},
+            }
+        ),
+        get_profile=AsyncMock(return_value=profile.model_dump()),
+        finish_agent=AsyncMock(),
+        with_token=Mock(),
+    )
+    options = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def create_session(self):
+            return object()
+
+        def run(self, *args, stream=False, **kwargs):
+            options.append(kwargs["options"])
+
+            async def response():
+                return SimpleNamespace(text='{"accepted":false,"reason":"Synthetic handoff"}')
+
+            return fake_stream(response(), stream=stream)
+
+    monkeypatch.setattr("bbx_runtime.runner.Agent", FakeAgent)
+    runner = AgentRunner(Settings.model_construct(), service, Mock(), Mock())  # type: ignore[arg-type]
+    await runner.run_agent(
+        "task",
+        "agent-1",
+        role,
+        agent_token="issued",
+        client=ScriptedChatClient([]),
+        handle=ExecEnvHandle(
+            task_id=uuid4(), container_id="envd", name="envd", base_url="http://envd", token="test"
+        ),
+    )
+    assert [option["max_tokens"] for option in options] == [32768]
+
+
+@pytest.mark.parametrize("role", ["explore", "derive", "close"])
+def test_worker_context_threshold_respects_frozen_model_input_without_changing_task(role):
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    model = getattr(profile.models, role)
+    model.context_window, model.max_input_tokens, model.max_output_tokens = 100_000, 20_000, 30_000
+    state = {"task": {"params": {"context_threshold": 90_000}}}
+    context = RunContext("task", "agent", role, state, profile, Mock(), Mock(), Mock())
+    assert context.params.context_threshold == 16_000
+    assert state["task"]["params"]["context_threshold"] == 90_000
 
 
 @pytest.mark.parametrize(

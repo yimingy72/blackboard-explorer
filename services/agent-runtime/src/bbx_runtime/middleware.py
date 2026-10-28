@@ -239,6 +239,15 @@ def append_board_update(messages: Sequence[Message], update: str) -> None:
     if message.role == "tool":
         for content in reversed(message.contents):
             if content.type == "function_result":
+                items = (
+                    content.items
+                    or Content.from_function_result(
+                        content.call_id or "", result=content.result
+                    ).items
+                    or []
+                )
+                # MAF serializes rich results from items; keep both representations current.
+                content.items = [*items, Content.from_text(framed)]
                 content.result = f"{_result_text(content.result)}\n{framed}"
                 return
     if message.role == "user":

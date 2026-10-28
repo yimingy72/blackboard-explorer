@@ -13,6 +13,9 @@ export type ProgressView = {
   enabled: boolean; status: string; overview: string; nodes: ProgressNode[]; revision: number;
   source_version: number; desired_source_version: number; published_version: number; run_number: number;
   updated_at: string | null; error: string | null;
+  diagnostic?: { category: string; event_type?: string | null; incomplete_reason?: string | null; finish_reason?: string | null; provider_code?: string | null; request_id?: string | null; provider_response_id?: string | null } | null;
+  model?: { model: string; reasoning_effort: string };
+  model_limits?: { context_window: number | null; max_input_tokens: number | null; max_output_tokens: number; reasoning_effort: string } | null;
   budget: { max_cost: string; spent: string; reserved: string; unknown: string };
 };
 export type ProgressSettings = { revision: number; prompt: string; model_id: string | null; enabled_tools: string[] };

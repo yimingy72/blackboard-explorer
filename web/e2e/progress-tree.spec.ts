@@ -38,7 +38,7 @@ async function fixture(page: Page, enabled = true) {
     }
     return route.fulfill({ status: 404, json: { detail: 'Unknown progress fixture route' } });
   });
-  return { board, state, configs, sent, reads, refreshes, failSend: () => { failure = true; } };
+  return { board, state, messages, configs, sent, reads, refreshes, failSend: () => { failure = true; } };
 }
 async function selectFinding(page: Page) {
   await page.getByRole('button', { name: /^阶段发现：高峰请求在获取连接时等待/ }).click();
@@ -95,6 +95,104 @@ test('旧任务必须显式启用，独立金额不改变原求解预算', async
   await expect(page.getByRole('region', { name: '成果树画布' })).toBeVisible();
   expect(mock.configs).toEqual([{ enabled: true, max_cost: '3' }]);
   expect(mock.board.taskFixture.budget).toEqual(budget);
+});
+
+test('整理设置只读显示模型输出上限，只保存独立费用额度', async ({ page }) => {
+  const mock = await fixture(page), budget = structuredClone(mock.board.taskFixture.budget);
+  mock.state.model_limits = { context_window: 1000000, max_input_tokens: 934464, max_output_tokens: 65536, reasoning_effort: 'medium' };
+  await page.goto(`/tasks/${TASK_ID}/progress`);
+  await page.getByRole('button', { name: '成果整理设置', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '成果整理设置', exact: true });
+  await expect(dialog.getByText(/65,?536/)).toBeVisible();
+  await expect(dialog.getByLabel('整理单次输出上限', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('combobox', { name: '整理推理强度', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('link')).toHaveAttribute('href', '/profiles?section=models');
+  await dialog.getByLabel('修改独立整理上限', { exact: true }).fill('4');
+  await dialog.getByRole('button', { name: '保存并启用', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(mock.configs).toEqual([{ enabled: true, max_cost: '4' }]);
+  expect(mock.board.taskFixture.budget).toEqual(budget);
+  await page.reload();
+  await page.getByRole('button', { name: '成果整理设置', exact: true }).click();
+  await expect(dialog.getByText(/65,?536/)).toBeVisible();
+  await expect(dialog.getByLabel('修改独立整理上限', { exact: true })).toHaveValue('4');
+  expect(mock.board.unexpected).toEqual([]);
+});
+
+test('整理暂停仅显示一条故障说明，区分已确认费用与待确认预留', async ({ page }) => {
+  const mock = await fixture(page);
+  mock.state.status = 'paused'; mock.state.error = 'ModelStreamError'; mock.state.budget.unknown = '0.6';
+  await page.goto(`/tasks/${TASK_ID}/progress`);
+  const alert = page.getByRole('alert');
+  await expect(alert).toHaveCount(1);
+  await expect(alert).toContainText('整理已暂停，上一笔请求用量待确认');
+  await expect(alert).toContainText('已确认费用 ¥0.080');
+  await expect(alert).toContainText('¥0.600 为待确认预留，并非确认消费');
+  await expect(alert).toContainText('继续整理时保留该预留并计入额度');
+  await expect(page.getByText('ModelStreamError', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^阶段发现：高峰请求在获取连接时等待/ })).toBeVisible();
+  expect(mock.board.unexpected).toEqual([]);
+});
+
+test('用量待确认不会显示额度用尽，仍可在原上限内继续提问或整理', async ({ page }) => {
+  const mock = await fixture(page);
+  mock.state.status = 'unknown_usage'; mock.state.budget.unknown = '0.6';
+  await page.goto(`/tasks/${TASK_ID}/progress`);
+  await expect(page.getByRole('alert')).toContainText('上一笔请求用量待确认');
+  await expect(page.getByText('整理额度已用尽', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '整理最新进展', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '问整理 Agent', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: '成果详情与对话', exact: true });
+  await expect(panel.getByRole('textbox')).toBeEnabled();
+  await panel.getByRole('textbox').fill('继续核对连接释放路径');
+  await expect(panel.getByRole('button', { name: '发送整理问题', exact: true })).toBeEnabled();
+  expect(mock.configs).toEqual([]);
+  expect(mock.state.budget.max_cost).toBe('2');
+  expect(mock.board.unexpected).toEqual([]);
+});
+
+test('排队提问被整理失败阻断时，turn.failed 事件立即刷新失败状态', async ({ page }) => {
+  const mock = await fixture(page), now = '2026-10-19T00:00:00Z';
+  mock.messages.push({ id: 'queued-question', task_id: TASK_ID, agent_id: '__progress__', role: 'user', content: '连接释放路径还有哪些缺口？', node_id: null, status: 'queued', reply_to: null, usage: null, created_at: now, updated_at: now });
+  await page.goto(`/tasks/${TASK_ID}/progress`);
+  await page.getByRole('button', { name: '问整理 Agent', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: '成果详情与对话', exact: true });
+  await expect(panel).toContainText('等待处理');
+  mock.state.status = 'paused'; mock.state.error = 'ModelStreamError'; mock.state.budget.unknown = '0.6';
+  mock.messages[0].status = 'failed'; mock.messages[0].error = '上一笔整理请求用量待确认，本次提问未执行。';
+  const refreshed = page.waitForResponse(response => response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/tasks/${TASK_ID}/progress/messages`, { timeout: 1500 });
+  await pushMockBoardEvent(page, { ...mock.board.events[0], version: 1000, type: 'progress.turn.failed', payload: { error: 'ModelStreamError' } });
+  await refreshed;
+  await expect(panel).toContainText('回复失败');
+  await expect(panel).toContainText('上一笔整理请求用量待确认，本次提问未执行。');
+  await expect(panel).not.toContainText('等待处理');
+  await expect(panel.getByRole('button', { name: '重新编辑', exact: true })).toBeVisible();
+  expect(mock.board.unexpected).toEqual([]);
+});
+
+test('首次成果发布自动展开子节点，后续更新保留手动收起状态', async ({ page }) => {
+  const mock = await fixture(page), published = mock.state.nodes;
+  mock.state.nodes = [published[0]];
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto(`/tasks/${TASK_ID}/progress`);
+  const canvas = page.getByRole('region', { name: '成果树画布', exact: true });
+  await expect(canvas).toContainText('1 / 1 个节点');
+  mock.state.nodes = published; mock.state.revision = 2;
+  await pushMockBoardEvent(page, { ...mock.board.events[0], version: 1000, type: 'progress.tree.updated', payload: { revision: 2 } });
+  await expect(canvas).toContainText('3 / 3 个节点');
+  const direction = canvas.getByRole('button', { name: /^探索方向：连接资源是当前优先方向/ });
+  const finding = canvas.getByRole('button', { name: /^阶段发现：高峰请求在获取连接时等待/ });
+  await expect(direction).toBeVisible();
+  await expect(finding).toBeVisible();
+  await canvas.getByRole('button', { name: '收起「查明延迟并保留复现依据」的 1 个子节点', exact: true }).click();
+  await expect(canvas).toContainText('1 / 3 个节点');
+  mock.state.nodes[0].title = '查明延迟并保留复现依据（更新）'; mock.state.revision = 3;
+  await pushMockBoardEvent(page, { ...mock.board.events[0], version: 1001, type: 'progress.tree.updated', payload: { revision: 3 } });
+  await expect(canvas.getByRole('button', { name: '展开「查明延迟并保留复现依据（更新）」的 1 个子节点', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  await expect(canvas).toContainText('1 / 3 个节点');
+  await expect(direction).toHaveCount(0);
+  await expect(finding).toHaveCount(0);
+  expect(mock.board.unexpected).toEqual([]);
 });
 
 test('拖动坐标刷新保持，来源变化不重排已固定节点', async ({ page }) => {

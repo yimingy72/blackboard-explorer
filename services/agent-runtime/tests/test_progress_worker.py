@@ -12,7 +12,7 @@ import pytest
 from agent_framework import AgentSession
 from bbx_contracts.models import ModelConfig, Price
 from bbx_runtime.clients.blackboard import BlackboardClient
-from bbx_runtime.models import close_model_client, make_client
+from bbx_runtime.models import close_model_client, make_client, model_run_options
 from bbx_runtime.progress.prompt import PROGRESS_INSTRUCTIONS, default_progress_prompt
 from bbx_runtime.progress.worker import ProgressWorker, _instructions
 from bbx_runtime.settings import Settings
@@ -222,6 +222,63 @@ async def process(endpoint: ProgressEndpoint, script: ScriptedChatClient, monkey
         await ProgressWorker(Settings.model_construct(), service).process(endpoint.job)
 
 
+@pytest.mark.parametrize("provider", ["deepseek", "openai_responses"])
+@pytest.mark.parametrize("override", [None, "medium"])
+async def test_curator_uses_model_reasoning_and_ignores_legacy_role_override(
+    monkeypatch, provider, override
+):
+    from bbx_contracts.progress import ProgressSettings
+
+    assert ProgressSettings().reasoning_effort is None
+    endpoint = ProgressEndpoint(kind="question")
+    endpoint.job["model"].update(provider=provider, reasoning_effort="max")
+    original = deepcopy(endpoint.job["model"])
+    endpoint.job["settings"]["reasoning_effort"] = override
+    script = ScriptedChatClient([ScriptStep(text="A concise answer", usage=ScriptUsage(1, 2, 3))])
+    await process(endpoint, script, monkeypatch)
+    assert endpoint.completed is not None and endpoint.failed is None
+    effort = "max"
+    if provider == "openai_responses":
+        assert script.received_options[0]["reasoning"] == {"effort": effort}
+        assert model_run_options(ModelConfig.model_validate(original)).get("reasoning") == {
+            "effort": "max"
+        }
+    else:
+        assert script.received_options[0]["reasoning_effort"] == effort
+        assert (
+            model_run_options(ModelConfig.model_validate(original)).get("reasoning_effort") == "max"
+        )
+    assert endpoint.job["model"] == original
+
+
+@pytest.mark.parametrize("maximum", [32768, 500000])
+async def test_progress_request_and_reservation_use_the_frozen_platform_output_limit(
+    monkeypatch, maximum
+):
+    endpoint = ProgressEndpoint(kind="question")
+    endpoint.job["model"].update(context_window=1_000_000, max_output_tokens=maximum)
+    endpoint.job["settings"]["max_output_tokens"] = 256
+    original = deepcopy(endpoint.job["model"])
+    script = ScriptedChatClient([ScriptStep(text="A concise answer", usage=ScriptUsage(1, 2, 3))])
+    await process(endpoint, script, monkeypatch)
+    assert endpoint.completed is not None and endpoint.failed is None
+    assert script.received_options[0]["max_tokens"] == maximum
+    reservations = [body for _, path, body in endpoint.requests if path.endswith("/reserve")]
+    assert [body["max_output_tokens"] for body in reservations] == [maximum]
+    assert endpoint.job["model"] == original
+
+
+@pytest.mark.parametrize("limits", [{"max_input_tokens": 100}, {"context_window": 1}])
+async def test_progress_rejects_input_above_the_frozen_platform_input_limit(monkeypatch, limits):
+    endpoint = ProgressEndpoint(kind="question")
+    endpoint.job["model"].update(limits)
+    script = ScriptedChatClient([])
+    await process(endpoint, script, monkeypatch)
+    assert endpoint.completed is None and endpoint.failed is not None
+    assert not script.received_messages
+    assert not any(path.endswith("/reserve") for _, path, _ in endpoint.requests)
+
+
 async def test_progress_native_tool_loop_checkpoints_before_settlement(monkeypatch):
     endpoint = ProgressEndpoint(kind="question")
     script = ScriptedChatClient(
@@ -396,8 +453,39 @@ async def test_budget_refusal_sends_no_provider_request(monkeypatch):
     await process(endpoint, script, monkeypatch)
     assert endpoint.receipts == {} and script.received_messages == []
     assert endpoint.failed is not None and endpoint.completed is None
+    assert endpoint.failed["budget_exhausted"] is True
+    assert endpoint.failed["retryable"] is False
+    assert endpoint.failed["error"] == (
+        "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
+    )
+    assert not any(path.endswith("/settle") for _, path, _ in endpoint.requests)
     assert endpoint.saved is not None
     assert "bbx_progress_active_request" not in endpoint.saved["session"]["state"]
+
+
+async def test_provider_payment_error_is_not_a_progress_budget_refusal(monkeypatch):
+    import httpx2 as provider_httpx
+    from openai import APIStatusError
+
+    class PaymentFailure(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            self.received_messages.append(list(kwargs["messages"]))
+            raise APIStatusError(
+                "provider payment required",
+                response=provider_httpx.Response(
+                    402, request=provider_httpx.Request("POST", "https://model.invalid")
+                ),
+                body=None,
+            )
+
+    endpoint = ProgressEndpoint()
+    script = PaymentFailure([])
+    await process(endpoint, script, monkeypatch)
+    assert len(script.received_messages) == 1
+    assert endpoint.failed is not None and endpoint.failed["budget_exhausted"] is False
+    assert next(iter(endpoint.receipts.values()))["status"] == "unknown"
+    settlements = [body for _, path, body in endpoint.requests if path.endswith("/settle")]
+    assert all(body["executed"] is None for body in settlements)
 
 
 async def test_invalid_candidate_correction_is_bounded_and_calls_still_billed(monkeypatch):
@@ -572,3 +660,89 @@ async def test_progress_clients_disable_sdk_retries(provider):
             assert client.client.sdk_configuration.retry_config is None  # type: ignore[attr-defined]
     finally:
         await close_model_client(client)
+
+
+@pytest.mark.parametrize("with_usage", [False, True])
+async def test_terminal_failure_settles_known_usage_without_publishing_or_replay(
+    monkeypatch, with_usage
+):
+    from bbx_runtime.model_errors import ModelStreamError
+
+    endpoint = ProgressEndpoint(kind="question")
+
+    class TerminalFailure(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            self.received_messages.append(list(kwargs["messages"]))
+            raise ModelStreamError(
+                "invalid_response",
+                event_type="response.incomplete",
+                incomplete_reason="max_output_tokens",
+                provider_response_id="resp_failure",
+                terminal_usage={
+                    "input_token_count": 7,
+                    "output_token_count": 3,
+                    "total_token_count": 10,
+                    "cache_read_input_token_count": 2,
+                    "reasoning_output_token_count": 1,
+                }
+                if with_usage
+                else None,
+            )
+
+    script = TerminalFailure([])
+    await process(endpoint, script, monkeypatch)
+    assert endpoint.completed is None and endpoint.failed is not None
+    assert endpoint.failed["retryable"] is False
+    assert endpoint.failed["diagnostic"]["incomplete_reason"] == "max_output_tokens"
+    receipt = next(iter(endpoint.receipts.values()))
+    assert receipt["status"] == ("settled" if with_usage else "unknown")
+    assert endpoint.saved is not None
+    state = endpoint.saved["session"]["state"]
+    assert "bbx_progress_completion" not in state
+    if with_usage:
+        durable = next(iter(state["bbx_progress_receipts"].values()))
+        assert durable["status"] == "failed" and durable["usage_known"] is True
+        assert durable["usage"]["output_tokens"] == 3
+        assert durable["usage"]["cache_miss_tokens"] == 5
+        assert "bbx_progress_active_request" not in state
+        settled = [body for _, path, body in endpoint.requests if path.endswith("/settle")]
+        assert settled[0]["executed"] is True
+        assert receipt["usage"]["cost"] != "0"
+    else:
+        assert state["bbx_progress_active_request"]["status"] == "dispatching"
+    assert len(script.received_messages) == 1
+    endpoint.job["session"] = endpoint.saved
+    await process(endpoint, script, monkeypatch)
+    assert len(script.received_messages) == 1 and endpoint.completed is None
+
+
+async def test_terminal_usage_settlement_recovers_without_replaying_failed_response(monkeypatch):
+    from bbx_runtime.model_errors import ModelStreamError
+
+    endpoint = ProgressEndpoint()
+    endpoint.loss_settle = 3
+
+    class TerminalFailure(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            self.received_messages.append(list(kwargs["messages"]))
+            raise ModelStreamError(
+                "invalid_response",
+                finish_reason="length",
+                terminal_usage={
+                    "input_token_count": 1,
+                    "output_token_count": 2,
+                    "total_token_count": 3,
+                },
+            )
+
+    script = TerminalFailure([])
+    await process(endpoint, script, monkeypatch)
+    assert endpoint.saved is not None
+    durable = next(iter(endpoint.saved["session"]["state"]["bbx_progress_receipts"].values()))
+    assert durable["status"] == "failed" and durable["usage_known"] is True
+    assert next(iter(endpoint.receipts.values()))["status"] == "reserved"
+    endpoint.job["session"] = endpoint.saved
+    await process(endpoint, script, monkeypatch)
+    assert next(iter(endpoint.receipts.values()))["status"] == "settled"
+    assert endpoint.failed is not None and endpoint.completed is None
+    assert len(script.received_messages) == 1

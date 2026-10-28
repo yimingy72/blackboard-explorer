@@ -67,6 +67,8 @@ services:
       ADMIN_USERS: ${ADMIN_USERS}
     ports:
       - "127.0.0.1:58000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

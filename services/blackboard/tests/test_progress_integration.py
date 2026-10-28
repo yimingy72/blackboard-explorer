@@ -1,6 +1,9 @@
 """Progress transactions against an isolated PostgreSQL container."""
 
+from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,6 +16,7 @@ from bbx_contracts.progress import (
     ProgressCandidate,
     ProgressCheckpoint,
     ProgressComplete,
+    ProgressFail,
     ProgressFence,
     ProgressNode,
     ProgressQuestion,
@@ -65,6 +69,199 @@ async def scan(svc, tid, job, fence):
         after = page["next_version"]
         if not page["has_more"]:
             return page
+
+
+@pytest.mark.parametrize("resume", ["explicit", "settings"])
+async def test_budget_admission_failure_blocks_auto_retry_until_user_action(progress_task, resume):
+    svc, tid = progress_task
+    async with svc.repo.engine.begin() as conn:
+        state = await svc.state(conn, await svc.task(conn, tid, writable=True))
+        state["model"]["price"]["billing_mode"] = "fixed"
+        await svc.save(conn, tid, state)
+    job = await svc.claim()
+    assert job
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    queued_id = uuid4()
+    await svc.question(tid, ProgressQuestion(id=queued_id, content="What is known?"))
+    before = await svc.view(tid)
+    with pytest.raises(HTTPException) as refused:
+        await svc.reserve(
+            tid,
+            job["job_id"],
+            ProgressReserve(
+                **fence.model_dump(),
+                request_id=uuid4(),
+                input_tokens=1000,
+                max_output_tokens=393216,
+            ),
+        )
+    assert refused.value.status_code == 402
+    await svc.fail(
+        tid,
+        job["job_id"],
+        ProgressFail(
+            **fence.model_dump(),
+            error="整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。",
+            retryable=True,
+            budget_exhausted=True,
+        ),
+    )
+    blocked = await svc.view(tid)
+    assert blocked["status"] == "budget_exhausted" and blocked["budget"] == before["budget"]
+    message = next(
+        item for item in (await svc.messages(tid))["messages"] if item["id"] == queued_id
+    )
+    assert message["status"] == "failed" and "额度不足" in message["error"]
+    assert await svc.claim() is None
+    assert await svc.claim() is None
+    async with svc.repo.engine.connect() as conn:
+        rows = (
+            (await conn.execute(select(s.progress_jobs).where(s.progress_jobs.c.task_id == tid)))
+            .mappings()
+            .all()
+        )
+    assert len(rows) == 2 and all(row["status"] == "failed" for row in rows)
+    if resume == "settings":
+        await svc.settings(tid, ProgressSettings(enabled=True, max_cost=Decimal("5")))
+    else:
+        await svc.question(tid, ProgressQuestion(id=uuid4(), content="Try again explicitly"))
+        assert (await svc.view(tid))["budget"] == before["budget"]
+    assert (await svc.view(tid))["status"] == "idle"
+    fresh = await svc.claim()
+    assert fresh and fresh["job_id"] != job["job_id"]
+    if resume == "settings":
+        receipt = await svc.reserve(
+            tid,
+            fresh["job_id"],
+            ProgressReserve(
+                claim_token=UUID(fresh["claim_token"]),
+                run_number=fresh["run_number"],
+                request_id=uuid4(),
+                input_tokens=1000,
+                max_output_tokens=393216,
+            ),
+        )
+        assert receipt["status"] == "reserved"
+
+
+async def test_reservation_uses_job_model_snapshot_above_legacy_output_setting(progress_task):
+    svc, tid = progress_task
+    await svc.settings(tid, ProgressSettings(enabled=True, max_cost=Decimal("10")))
+    async with svc.repo.engine.begin() as conn:
+        data = deepcopy(
+            (
+                await conn.execute(
+                    select(s.task_progress.c.data).where(s.task_progress.c.task_id == tid)
+                )
+            ).scalar_one()
+        )
+        data["model"].update(context_window=1_000_000, max_output_tokens=500_000)
+        data["model"]["price"]["billing_mode"] = "fixed"
+        await conn.execute(
+            update(s.task_progress).where(s.task_progress.c.task_id == tid).values(data=data)
+        )
+    assert (await svc.view(tid))["model_limits"] == {
+        "context_window": 1_000_000,
+        "max_input_tokens": 500_000,
+        "max_output_tokens": 500_000,
+        "reasoning_effort": data["model"]["reasoning_effort"],
+    }
+    job = await svc.claim()
+    assert job and job["model"]["max_output_tokens"] == 500_000
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    async with svc.repo.engine.begin() as conn:
+        data["model"]["max_output_tokens"] = 1024
+        await conn.execute(
+            update(s.task_progress).where(s.task_progress.c.task_id == tid).values(data=data)
+        )
+    with pytest.raises(HTTPException, match="model configuration"):
+        await svc.reserve(
+            tid,
+            job["job_id"],
+            ProgressReserve(
+                **fence.model_dump(),
+                request_id=uuid4(),
+                input_tokens=1000,
+                max_output_tokens=500_001,
+            ),
+        )
+    reservation = await svc.reserve(
+        tid,
+        job["job_id"],
+        ProgressReserve(
+            **fence.model_dump(), request_id=uuid4(), input_tokens=1000, max_output_tokens=500_000
+        ),
+    )
+    assert Decimal(reservation["reserved"]) == Decimal("4.002")
+    assert job["settings"]["max_output_tokens"] == 8192
+
+
+async def test_refresh_failure_finishes_unstarted_questions_without_charging(
+    progress_task, board_service
+):
+    svc, tid = progress_task
+    job = await svc.claim()
+    assert job
+    mid = uuid4()
+    await svc.question(tid, ProgressQuestion(id=mid, content="What is known?"))
+    before = await board_service.state(tid)
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    await svc.fail(
+        tid, job["job_id"], ProgressFail(**fence.model_dump(), error="Model response incomplete")
+    )
+    message = next(item for item in (await svc.messages(tid))["messages"] if item["id"] == mid)
+    assert message["status"] == "failed" and "暂停" in message["error"]
+    async with svc.repo.engine.connect() as conn:
+        pending = (
+            (await conn.execute(select(s.progress_jobs).where(s.progress_jobs.c.id == mid)))
+            .mappings()
+            .one()
+        )
+    assert pending["status"] == "failed" and pending["data"]["never_started"] is True
+    view = await svc.view(tid)
+    assert view["budget"]["spent"] == "0" and view["budget"]["unknown"] == "0"
+    after = await board_service.state(tid)
+    assert before["task"]["usage"] == after["task"]["usage"]
+    assert before["last_change_version"] == after["last_change_version"]
+    assert await svc.claim() is None
+
+
+async def test_expired_unknown_refresh_finishes_queued_questions_and_preserves_reservation(
+    progress_task,
+):
+    svc, tid = progress_task
+    job = await svc.claim()
+    assert job
+    mid = uuid4()
+    await svc.question(tid, ProgressQuestion(id=mid, content="Explain the current result"))
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    await svc.reserve(
+        tid,
+        job["job_id"],
+        ProgressReserve(
+            **fence.model_dump(), request_id=uuid4(), input_tokens=1000, max_output_tokens=1000
+        ),
+    )
+    async with svc.repo.engine.begin() as conn:
+        data = (
+            await conn.execute(
+                select(s.progress_jobs.c.data).where(s.progress_jobs.c.id == job["job_id"])
+            )
+        ).scalar_one()
+        data["lease_until"] = "2000-01-01T00:00:00+00:00"
+        await conn.execute(
+            update(s.progress_jobs).where(s.progress_jobs.c.id == job["job_id"]).values(data=data)
+        )
+    assert await svc.claim() is None
+    message = next(item for item in (await svc.messages(tid))["messages"] if item["id"] == mid)
+    assert message["status"] == "failed" and "尚未调用模型" in message["error"]
+    before = await svc.view(tid)
+    assert float(before["budget"]["unknown"]) > 0 and before["status"] == "paused"
+    await svc.settings(tid, ProgressSettings(enabled=False))
+    await svc.settings(tid, ProgressSettings(enabled=True))
+    after = await svc.view(tid)
+    assert after["status"] == "paused" and after["budget"]["unknown"] == before["budget"]["unknown"]
+    assert await svc.claim() is None
 
 
 async def test_serial_queue_source_cutoff_candidates_and_idempotent_publish(
@@ -998,3 +1195,301 @@ async def test_initial_evidence_requires_created_manifest_and_bound_input_group(
             await svc.authorize_evidence_uri(
                 conn, tid, f"evidence/{tid}/../{other}/proof.txt", digest, created["version"]
             )
+
+
+async def failed_unknown_request(svc, tid, *, active=True):
+    job = await svc.claim()
+    assert job
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    await scan(svc, tid, job, fence)
+    request_id = uuid4()
+    reserved = await svc.reserve(
+        tid,
+        job["job_id"],
+        ProgressReserve(
+            **fence.model_dump(), request_id=request_id, input_tokens=1000, max_output_tokens=8192
+        ),
+    )
+    state: dict[str, Any] = {
+        "in_memory": {
+            "messages": [
+                {
+                    "role": "user",
+                    "contents": [{"type": "text", "text": "Preserve the prior conversation"}],
+                }
+            ]
+        }
+    }
+    if active:
+        state["bbx_progress_active_request"] = {
+            "job_id": str(job["job_id"]),
+            "request_id": str(request_id),
+            "status": "dispatching",
+            "input_tokens": 1000,
+            "price": reserved["price"],
+            "pricing": reserved["pricing"],
+        }
+    saved = await svc.checkpoint(
+        tid,
+        job["job_id"],
+        ProgressCheckpoint(
+            **fence.model_dump(),
+            session={"state": state},
+            opening_instructions="Preserve instructions",
+            expected_revision=0,
+            source_version=job["through_version"],
+        ),
+    )
+    await svc.fail(tid, job["job_id"], ProgressFail(**fence.model_dump(), error="ModelStreamError"))
+    return job, fence, request_id, saved
+
+
+@pytest.mark.parametrize("kind", ["question", "refresh"])
+async def test_explicit_new_request_continues_without_replaying_or_releasing_unknown(
+    progress_task, kind
+):
+    svc, tid = progress_task
+    old, old_fence, request_id, saved = await failed_unknown_request(svc, tid)
+    before = await svc.view(tid)
+    old_result = await svc.refresh(tid, old["job_id"])
+    assert old_result["status"] == "failed" and (await svc.view(tid))["status"] == "paused"
+    async with svc.repo.engine.connect() as conn:
+        unchanged = await svc.conversations._session(conn, tid, "__progress__")
+    assert unchanged["revision"] == saved["revision"]
+    new_id = uuid4()
+    if kind == "question":
+        await svc.question(
+            tid, ProgressQuestion(id=new_id, content="Continue with a fresh question")
+        )
+    else:
+        await svc.refresh(tid, new_id)
+    resumed = await svc.view(tid)
+    assert resumed["budget"] == before["budget"] and resumed["status"] == "idle"
+    for key in (
+        "source_version",
+        "session_source_version",
+        "session_knowledge_version",
+        "revision",
+    ):
+        assert resumed[key] == before[key]
+    async with svc.repo.engine.connect() as conn:
+        session = await svc.conversations._session(conn, tid, "__progress__")
+        old_row = (
+            (
+                await conn.execute(
+                    select(s.progress_jobs).where(s.progress_jobs.c.id == old["job_id"])
+                )
+            )
+            .mappings()
+            .one()
+        )
+    state = session["session"]["state"]
+    assert session["revision"] == saved["revision"] + 1
+    assert session["opening_instructions"] == "Preserve instructions"
+    assert state["in_memory"] == saved["session"]["state"]["in_memory"]
+    assert "bbx_progress_active_request" not in state
+    retired = state["bbx_progress_retired_requests"][str(request_id)]
+    assert retired["retired_by"] == str(new_id) and retired["outcome"] == "unknown"
+    assert old_row["status"] == "failed" and old_row["data"]["attempts"] == 1
+    assert old_row["data"]["receipts"][str(request_id)]["status"] == "unknown"
+    fresh = await svc.claim()
+    assert fresh and fresh["job_id"] == new_id
+    if kind == "question":
+        assert fresh["message"]["status"] == "processing"
+        assert (
+            next(m for m in (await svc.messages(tid))["messages"] if m["id"] == new_id)["status"]
+            == "processing"
+        )
+    fresh_fence = ProgressFence(
+        claim_token=UUID(fresh["claim_token"]), run_number=fresh["run_number"]
+    )
+    with pytest.raises(HTTPException, match="lease"):
+        await svc.sources(tid, old["job_id"], old_fence, 0)
+    await scan(svc, tid, fresh, fresh_fence)
+    await svc.checkpoint(
+        tid,
+        new_id,
+        ProgressCheckpoint(
+            **fresh_fence.model_dump(),
+            session=session["session"],
+            expected_revision=session["revision"],
+            source_version=fresh["through_version"],
+        ),
+    )
+    fresh_request = uuid4()
+    await svc.reserve(
+        tid,
+        new_id,
+        ProgressReserve(
+            **fresh_fence.model_dump(),
+            request_id=fresh_request,
+            input_tokens=1000,
+            max_output_tokens=256,
+        ),
+    )
+    assert (await svc.view(tid))["budget"]["unknown"] == before["budget"]["unknown"]
+    await svc.settle(
+        tid,
+        new_id,
+        ProgressSettle(**fresh_fence.model_dump(), request_id=fresh_request, executed=False),
+    )
+    await svc.complete(
+        tid, new_id, ProgressComplete(**fresh_fence.model_dump(), content="A fresh answer")
+    )
+    assert (
+        await svc.claim() is None
+    )  # Pending sources cannot start an automatic refresh under unknown use.
+    after = await svc.view(tid)
+    assert after["budget"] == before["budget"]
+    if kind == "question":
+        # Reusing a completed question ID is also a read, even while paused.
+        async with svc.repo.engine.begin() as conn:
+            state = await svc.state(conn, await svc.task(conn, tid, writable=True))
+            state["status"] = "paused"
+            await svc.save(conn, tid, state)
+        await svc.question(
+            tid, ProgressQuestion(id=new_id, content="Continue with a fresh question")
+        )
+        assert (await svc.view(tid))["status"] == "paused"
+
+
+async def test_explicit_continuation_without_active_marker_requires_matching_ledger(progress_task):
+    svc, tid = progress_task
+    _, _, _, _ = await failed_unknown_request(svc, tid, active=False)
+    before = await svc.view(tid)
+    mid = uuid4()
+    await svc.question(tid, ProgressQuestion(id=mid, content="Continue after the unknown request"))
+    claimed = await svc.claim()
+    assert claimed and claimed["job_id"] == mid
+    assert (await svc.view(tid))["budget"] == before["budget"]
+
+
+@pytest.mark.parametrize("mismatch", ["request_id", "amount", "running"])
+async def test_explicit_continuation_rejects_unverified_unknown_ledger(progress_task, mismatch):
+    from decimal import Decimal
+
+    svc, tid = progress_task
+    old, _, _, saved = await failed_unknown_request(svc, tid, active=mismatch != "amount")
+    async with svc.repo.engine.begin() as conn:
+        if mismatch == "request_id":
+            session = await svc.conversations._session(conn, tid, "__progress__")
+            session["session"]["state"]["bbx_progress_active_request"]["request_id"] = str(uuid4())
+            await svc.conversations._save_session(
+                conn,
+                tid,
+                "__progress__",
+                session["session"],
+                session["opening_instructions"],
+                session["origin"],
+                session["revision"],
+            )
+        elif mismatch == "running":
+            await conn.execute(
+                update(s.progress_jobs)
+                .where(s.progress_jobs.c.id == old["job_id"])
+                .values(status="running")
+            )
+        else:
+            state = await svc.state(conn, await svc.task(conn, tid, writable=True))
+            state["unknown"] = str(Decimal(state["unknown"]) + 1)
+            await svc.save(conn, tid, state)
+    before = await svc.view(tid)
+    with pytest.raises(HTTPException) as rejected:
+        await svc.question(tid, ProgressQuestion(id=uuid4(), content="Must not start"))
+    assert rejected.value.status_code == 409
+    after = await svc.view(tid)
+    assert after["budget"] == before["budget"] and after["status"] == "paused"
+    async with svc.repo.engine.connect() as conn:
+        session = await svc.conversations._session(conn, tid, "__progress__")
+    assert session["revision"] == saved["revision"] + int(mismatch == "request_id")
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_failed_terminal_receipt_charges_usage_and_never_reclaims_model_turn(
+    progress_task, expired
+):
+    svc, tid = progress_task
+    job = await svc.claim()
+    assert job
+    fence = ProgressFence(claim_token=UUID(job["claim_token"]), run_number=job["run_number"])
+    await scan(svc, tid, job, fence)
+    request_id = uuid4()
+    await svc.reserve(
+        tid,
+        job["job_id"],
+        ProgressReserve(
+            **fence.model_dump(), request_id=request_id, input_tokens=1000, max_output_tokens=8192
+        ),
+    )
+    usage = Usage(cache_miss_tokens=1000, output_tokens=8192, reasoning_tokens=8000)
+    diagnostic = {"category": "invalid_response", "incomplete_reason": "max_output_tokens"}
+    await svc.checkpoint(
+        tid,
+        job["job_id"],
+        ProgressCheckpoint(
+            **fence.model_dump(),
+            expected_revision=0,
+            source_version=job["through_version"],
+            session={
+                "state": {
+                    "bbx_progress_receipts": {
+                        str(request_id): {
+                            "job_id": str(job["job_id"]),
+                            "status": "failed",
+                            "usage_known": True,
+                            "usage": usage.model_dump(mode="json"),
+                            "diagnostic": diagnostic,
+                        }
+                    }
+                }
+            },
+        ),
+    )
+    if expired:
+        async with svc.repo.engine.begin() as conn:
+            data = (
+                await conn.execute(
+                    select(s.progress_jobs.c.data).where(s.progress_jobs.c.id == job["job_id"])
+                )
+            ).scalar_one()
+            data["lease_until"] = "2000-01-01T00:00:00+00:00"
+            await conn.execute(
+                update(s.progress_jobs)
+                .where(s.progress_jobs.c.id == job["job_id"])
+                .values(data=data)
+            )
+        assert await svc.claim() is None
+    else:
+        result = await svc.settle(
+            tid,
+            job["job_id"],
+            ProgressSettle(**fence.model_dump(), request_id=request_id, usage=usage),
+        )
+        assert result["status"] == "settled"
+        with pytest.raises(HTTPException, match="cannot publish"):
+            await svc.complete(
+                tid,
+                job["job_id"],
+                ProgressComplete(**fence.model_dump(), content="Unusable partial answer"),
+            )
+        await svc.fail(
+            tid, job["job_id"], ProgressFail(**fence.model_dump(), error="ModelStreamError")
+        )
+    view = await svc.view(tid)
+    assert view["status"] == "paused" and view["budget"]["unknown"] == "0"
+    assert float(view["budget"]["spent"]) > 0 and float(view["budget"]["reserved"]) == 0
+    assert view["revision"] == 0 and view["source_version"] == 0
+    async with svc.repo.engine.connect() as conn:
+        stored = (
+            (
+                await conn.execute(
+                    select(s.progress_jobs).where(s.progress_jobs.c.id == job["job_id"])
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert stored["status"] == "failed"
+    receipt = stored["data"]["receipts"][str(request_id)]
+    assert receipt["status"] == "settled" and receipt["response_status"] == "failed"
+    assert await svc.claim() is None
