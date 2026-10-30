@@ -591,3 +591,6 @@ execution turn 结束后不能重写最后 checkpoint。未确认屏障退役为
 CTF 的 context_threshold 是输入预算参数，输入硬上限为 min(threshold, context_window − max_output_tokens) × 0.8，包含固定提示和工具 schema。达到硬上限的九成时主动尝试安全裁剪，六成仅为理想低水位。复用 MAF 的公开消息分组；仅已确认、无 replay 分组的纯文本派工可原文迁移到持久恢复前缀，并继续计入预算。完整历史、工具组及未知结果不改写或重放。阻塞保存真实分支、可裁范围、估计输入与末次单次 provider usage；自动恢复仍每成员每轮一次，发放、耗尽、禁用、延期和取消均留痕，耗尽先盘点在办成果。
 
 恢复耗尽与闲置通知附有界诊断及延期消息 ID，沿用 confirm_messages 显式确认仍适用的 queued/deferred 输入，不新增释放工具。cancelled 不复活，被阻塞的原输入仍受 admission 门禁，需较小新指令；成员操作与新指令不增加自动额度。终态旧标记的运维清理复用 task 锁和 clear_context_blocks，仅 closed 且无执行/复盘回合及成员操作时转存历史；不改变完成状态、Session、mailbox 或计数，操作幂等并记录既有事件。
+# PI 执行框架迁移补充（2026-10-30）
+
+用户要求以 PI 替换 MAF，框架合同见 [PI 运行时迁移](../design/PI运行时迁移.md)。本文原 MAF 描述仅为历史实现；PI 原生 Agent 循环接入现有 CTF 工具和受控模型边界。Lead/队友权限、题目原子交付、邮箱确认、固定模型/角色策略、预算预留、Session CAS、未知命令不重放和收尾 drain 屏障保持。不能用 PI 的通用重试/工具错误吞吐行为取代这些业务边界。
