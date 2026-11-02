@@ -1012,17 +1012,24 @@ class CtfService(
                 ("turns", s.ctf_turns),
                 ("messages", s.ctf_messages),
             ):
+                timestamp = table.c.started_at if key == "turns" else table.c.created_at
                 result[key] = [
                     dict(r)
                     for r in (
-                        await conn.execute(select(table).where(table.c.task_id == tid))
+                        await conn.execute(
+                            select(table)
+                            .where(table.c.task_id == tid)
+                            .order_by(timestamp, table.c.id)
+                        )
                     ).mappings()
                 ]
             result["challenges"] = [
                 item["data"]
                 for item in (
                     await conn.execute(
-                        select(s.ctf_challenges).where(s.ctf_challenges.c.task_id == tid)
+                        select(s.ctf_challenges)
+                        .where(s.ctf_challenges.c.task_id == tid)
+                        .order_by(s.ctf_challenges.c.id)
                     )
                 ).mappings()
             ]
