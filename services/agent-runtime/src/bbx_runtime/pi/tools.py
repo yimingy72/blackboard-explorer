@@ -11,6 +11,7 @@ from typing import Any, get_type_hints
 import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import EmbeddedResource, TextResourceContents, Tool
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from bbx_runtime.pi.data import Content, result_contents
@@ -135,7 +136,8 @@ class MCPStreamableHTTPTool:
         self.load_prompts_flag = False
         self.sampling_max_requests = 0
         self._static_headers = dict(static_headers or {})
-        self.allowed_tools, self.tool_name_prefix = allowed_tools, tool_name_prefix
+        self.allowed_tools = frozenset(allowed_tools) if allowed_tools is not None else None
+        self.tool_name_prefix = tool_name_prefix
         self.load_tools, self.request_timeout = load_tools, request_timeout
         self._httpx_client = http_client
         self.session = session
@@ -143,6 +145,19 @@ class MCPStreamableHTTPTool:
         self._owner: asyncio.Task | None = None
         self._ready: asyncio.Future | None = None
         self._closed: asyncio.Event | None = None
+
+    def _function(self, definition: Tool) -> FunctionTool:
+        remote_name = definition.name
+
+        async def invoke(**arguments):
+            return await self.call_tool(remote_name, **arguments)
+
+        return FunctionTool(
+            name=f"{self.tool_name_prefix}_{remote_name}" if self.tool_name_prefix else remote_name,
+            description=definition.description or "",
+            func=invoke,
+            input_schema=definition.inputSchema,
+        )
 
     async def _lifecycle(self) -> None:
         assert self._ready is not None and self._closed is not None
@@ -158,28 +173,24 @@ class MCPStreamableHTTPTool:
                     self.session = session
                     await session.initialize()
                     if self.load_tools:
-                        catalog = await session.list_tools()
-                        for definition in catalog.tools:
-                            if (
-                                self.allowed_tools is not None
-                                and definition.name not in self.allowed_tools
-                            ):
-                                continue
-                            remote_name = definition.name
-
-                            async def invoke(_remote_name=remote_name, **arguments):
-                                return await self.call_tool(_remote_name, **arguments)
-
-                            self.functions.append(
-                                FunctionTool(
-                                    name=f"{self.tool_name_prefix}_{remote_name}"
-                                    if self.tool_name_prefix
-                                    else remote_name,
-                                    description=definition.description or "",
-                                    func=invoke,
-                                    input_schema=definition.inputSchema,
-                                )
+                        functions = []
+                        cursor = None
+                        seen = set()
+                        while True:
+                            catalog = await session.list_tools(cursor=cursor)
+                            functions.extend(
+                                self._function(definition)
+                                for definition in catalog.tools
+                                if self.allowed_tools is None
+                                or definition.name in self.allowed_tools
                             )
+                            cursor = catalog.nextCursor
+                            if not cursor:
+                                break
+                            if cursor in seen:
+                                raise ValueError("Repeated MCP cursor")
+                            seen.add(cursor)
+                        self.functions = functions
                     self._ready.set_result(None)
                     await self._closed.wait()
         except BaseException as error:
@@ -206,7 +217,9 @@ class MCPStreamableHTTPTool:
             await self.close()
             raise
 
-    async def call_tool(self, tool_name: str, **arguments: Any) -> list[Content]:
+    async def call_tool(self, tool_name: str, /, **arguments: Any) -> list[Content]:
+        if self.allowed_tools is not None and tool_name not in self.allowed_tools:
+            raise PermissionError("MCP tool is outside the pinned allowlist")
         if self.session is None:
             raise RuntimeError("MCP connection is unavailable")
         result = await self.session.call_tool(tool_name, arguments)
@@ -220,6 +233,21 @@ class MCPStreamableHTTPTool:
                 contents.append(Content.from_text(item.text))
             elif item.type == "image":
                 contents.append(Content.from_data(item.data, item.mimeType))
+            elif isinstance(item, EmbeddedResource) and isinstance(
+                item.resource, TextResourceContents
+            ):
+                contents.append(
+                    Content.from_text(
+                        item.resource.text,
+                        additional_properties={
+                            "mcp_resource": item.resource.model_dump(
+                                mode="json", by_alias=True, exclude={"text"}, exclude_none=True
+                            )
+                        },
+                    )
+                )
+            else:
+                contents.append(Content.from_text(item.model_dump_json(by_alias=True)))
         return contents
 
     async def close(self) -> None:
