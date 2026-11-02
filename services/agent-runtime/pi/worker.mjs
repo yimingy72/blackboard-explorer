@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,16 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { createParser } from "eventsource-parser";
+
+// Google ignores onResponse and rejects custom fetch. Observe headers in its
+// native SDK path without consuming the body or mixing concurrent requests.
+const responseObservers = new AsyncLocalStorage();
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = async (...args) => {
+  const response = await nativeFetch(...args);
+  responseObservers.getStore()?.(response);
+  return response;
+};
 
 const callbacks = new Map();
 const jobs = new Map();
@@ -165,10 +176,15 @@ async function streamModel(job, params) {
     let inputObserved = false;
     let outputObserved = false;
     const terminal = { prepared: false };
-    const observeResponse = async (response) => {
+    const observeHeaders = (response) => {
       status = response.status;
-      requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
-      terminal.retry_after = response.headers.get("retry-after");
+      const headers = response.headers;
+      const header = (name) => typeof headers?.get === "function" ? headers.get(name) : headers?.[name];
+      requestId = header("x-request-id") ?? header("request-id");
+      terminal.retry_after = header("retry-after");
+    };
+    const observeResponse = async (response) => {
+      observeHeaders(response);
       if (!response.ok) {
         try {
           const body = await response.clone().json();
@@ -243,46 +259,46 @@ async function streamModel(job, params) {
       }
       return observeResponse(await fetch(url, { ...init, headers }));
     };
-    const stream = models.streamSimple(model, params.context, {
-      ...params.options, apiKey: scopedCredentials ? undefined : params.api_key || "not-required",
-      telemetry: span, signal: job.controller.signal,
-      onPayload: async () => {
-        terminal.prepared = true;
-        await callback(job, "provider_ready", {});
-      },
-      ...(["bedrock-converse-stream", "google-generative-ai", "google-vertex"].includes(model.api)
-        ? {} : { fetch: transport }),
-      onResponse(response) {
-        status = response.status;
-        requestId = response.headers?.["x-request-id"] ?? response.headers?.["request-id"];
-      },
-      onProviderStreamEvent(event) {
-        if (typeof event?.id === "string") terminal.response_id = event.id;
-        const usage = event?.usage ?? event?.response?.usage ?? event?.message?.usage
-          ?? event?.usageMetadata ?? event?.metadata?.usage;
-        if (usage) {
-          inputObserved ||= [usage.prompt_tokens, usage.input_tokens, usage.promptTokenCount, usage.inputTokens]
-            .some((value) => Number.isSafeInteger(value) && value >= 0);
-          outputObserved ||= [usage.completion_tokens, usage.output_tokens, usage.candidatesTokenCount, usage.outputTokens]
-            .some((value) => Number.isSafeInteger(value) && value >= 0);
-        }
-        if (["response.incomplete", "response.failed", "error"].includes(event?.type)) {
-          terminal.event_type = event.type;
-          terminal.code = event.code ?? event.response?.error?.code;
-          terminal.incomplete_reason = event.response?.incomplete_details?.reason;
-          terminal.response_id = event.response?.id ?? terminal.response_id;
-          const usage = event.response?.usage;
-          if (usage && event.response.status === event.type.slice("response.".length)) {
-            terminal.usage_details = {
-              input_token_count: usage.input_tokens, output_token_count: usage.output_tokens,
-              total_token_count: usage.total_tokens,
-              cache_read_input_token_count: usage.input_tokens_details?.cached_tokens ?? 0,
-              reasoning_output_token_count: usage.output_tokens_details?.reasoning_tokens ?? 0,
-            };
+    const stream = responseObservers.run(
+      ["google-generative-ai", "google-vertex"].includes(model.api) ? observeHeaders : undefined,
+      () => models.streamSimple(model, params.context, {
+        ...params.options, apiKey: scopedCredentials ? undefined : params.api_key || "not-required",
+        telemetry: span, signal: job.controller.signal,
+        onPayload: async () => {
+          terminal.prepared = true;
+          await callback(job, "provider_ready", {});
+        },
+        ...(["bedrock-converse-stream", "google-generative-ai", "google-vertex"].includes(model.api)
+          ? {} : { fetch: transport }),
+        onResponse: observeHeaders,
+        onProviderStreamEvent(event) {
+          if (typeof event?.id === "string") terminal.response_id = event.id;
+          const usage = event?.usage ?? event?.response?.usage ?? event?.message?.usage
+            ?? event?.usageMetadata ?? event?.metadata?.usage;
+          if (usage) {
+            inputObserved ||= [usage.prompt_tokens, usage.input_tokens, usage.promptTokenCount, usage.inputTokens]
+              .some((value) => Number.isSafeInteger(value) && value >= 0);
+            outputObserved ||= [usage.completion_tokens, usage.output_tokens, usage.candidatesTokenCount, usage.outputTokens]
+              .some((value) => Number.isSafeInteger(value) && value >= 0);
           }
-        }
-      },
-    });
+          if (["response.incomplete", "response.failed", "error"].includes(event?.type)) {
+            terminal.event_type = event.type;
+            terminal.code = event.code ?? event.response?.error?.code;
+            terminal.incomplete_reason = event.response?.incomplete_details?.reason;
+            terminal.response_id = event.response?.id ?? terminal.response_id;
+            const usage = event.response?.usage;
+            if (usage && event.response.status === event.type.slice("response.".length)) {
+              terminal.usage_details = {
+                input_token_count: usage.input_tokens, output_token_count: usage.output_tokens,
+                total_token_count: usage.total_tokens,
+                cache_read_input_token_count: usage.input_tokens_details?.cached_tokens ?? 0,
+                reasoning_output_token_count: usage.output_tokens_details?.reasoning_tokens ?? 0,
+              };
+            }
+          }
+        },
+      }),
+    );
     for await (const event of stream) {
       // Usage and the terminal message arrive once in the final response. Do
       // not repeatedly serialize the growing partial transcript for each token.
