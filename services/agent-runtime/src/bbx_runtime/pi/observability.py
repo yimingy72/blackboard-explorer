@@ -6,7 +6,23 @@ from contextlib import contextmanager
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from bbx_runtime.traffic import redaction
+from bbx_runtime.traffic import observation, redaction
+
+_NATIVE_METADATA = frozenset(
+    {
+        "provider",
+        "api",
+        "model",
+        "reasoning",
+        "stop",
+        "usage.input",
+        "usage.output",
+        "usage.cache_read",
+        "usage.cache_write",
+        "cost.total",
+        "response.id",
+    }
+)
 
 
 def get_tracer():
@@ -14,9 +30,9 @@ def get_tracer():
 
 
 def set_preview(span, key, value, *, partial=False):
-    from bbx_runtime.traffic.observation import _identity
-
-    identity = _identity.get()
+    if not observation._sensitive_pipeline:
+        return
+    identity = observation._identity.get()
     secrets = identity["secrets"] if identity else ()
     body = json.dumps(redaction.clean(value, secrets), ensure_ascii=False, default=str)
     span.set_attribute(key, redaction.bounded(body))
@@ -25,6 +41,8 @@ def set_preview(span, key, value, *, partial=False):
 
 def record_native_model(result, *, model, messages) -> None:
     """Export Pi-owned request metadata through the existing sanitizing processor."""
+    identity = observation._identity.get()
+    secrets = identity["secrets"] if identity else ()
     for native in result.get("telemetry", []):
         span = get_tracer().start_span(
             native["name"],
@@ -33,21 +51,22 @@ def record_native_model(result, *, model, messages) -> None:
         )
         try:
             for key, value in native.get("attributes", {}).items():
-                if isinstance(value, (str, int, float, bool)):
-                    span.set_attribute("pi." + key, value)
-            previews = []
-            for message in messages[-16:]:
-                body = message.to_dict()
-                for content in body["contents"]:
-                    if content.get("type") in {"data", "uri"} and str(
-                        content.get("uri", "")
-                    ).startswith("data:"):
-                        content["uri"] = "[binary image omitted from logical preview]"
-                previews.append(body)
-            set_preview(span, "gen_ai.input.messages", previews, partial=len(messages) > 16)
-            set_preview(
-                span, "gen_ai.output.messages", result.get("message", {}).get("content", [])
-            )
+                if key in _NATIVE_METADATA and isinstance(value, (str, int, float, bool)):
+                    span.set_attribute("pi." + key, redaction.clean(value, secrets))
+            if observation._sensitive_pipeline:
+                previews = []
+                for message in messages[-16:]:
+                    body = message.to_dict()
+                    for content in body["contents"]:
+                        if content.get("type") in {"data", "uri"} and str(
+                            content.get("uri", "")
+                        ).startswith("data:"):
+                            content["uri"] = "[binary image omitted from logical preview]"
+                    previews.append(body)
+                set_preview(span, "gen_ai.input.messages", previews, partial=len(messages) > 16)
+                set_preview(
+                    span, "gen_ai.output.messages", result.get("message", {}).get("content", [])
+                )
             if native.get("error"):
                 span.set_status(Status(StatusCode.ERROR, "Pi model response failed"))
         finally:
