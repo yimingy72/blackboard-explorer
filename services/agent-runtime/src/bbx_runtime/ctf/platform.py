@@ -10,12 +10,12 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 from uuid import uuid4
 
-from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool, tool
 from mcp import types
 from pydantic import Field
 
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.tool_results import ToolJsonResult, recoverable_tool_error
+from bbx_runtime.pi import FunctionInvocationContext, MCPStreamableHTTPTool, tool
 
 logger = logging.getLogger(__name__)
 

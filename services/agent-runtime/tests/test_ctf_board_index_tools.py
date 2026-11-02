@@ -8,7 +8,6 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from agent_framework import Agent, Content, Message
 from bbx_contracts.ctf import CTF_BOARD_RESULT_MAX_BYTES, load_ctf_profile
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.context import stable_tool_previews
@@ -16,6 +15,7 @@ from bbx_runtime.ctf.middleware import TurnBoundary, mailbox_message
 from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.tool_results import recoverable_tool_error
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, Content, Message
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_context import provider
 from test_ctf_provider_boundary import DispatchService, native

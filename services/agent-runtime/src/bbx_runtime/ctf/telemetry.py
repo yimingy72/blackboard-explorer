@@ -7,7 +7,6 @@ from time import monotonic
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from agent_framework import Content, FunctionInvocationContext, FunctionMiddleware
 from bbx_contracts.storage import storage_safe
 from bbx_contracts.tool_errors import validation_issues
 from pydantic import TypeAdapter, ValidationError
@@ -15,13 +14,14 @@ from pydantic import TypeAdapter, ValidationError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.failures import CtfToolFailure, tool_failure_cause
 from bbx_runtime.ctf.tool_results import tool_error_content
+from bbx_runtime.pi import Content, FunctionInvocationContext, FunctionMiddleware
 
 logger = logging.getLogger(__name__)
 _JSON_ARGUMENTS = TypeAdapter(Any)
 
 
 class ToolArgumentFeedbackMiddleware(FunctionMiddleware):
-    """Use MAF's own Pydantic input model for bounded, value-free field feedback."""
+    """Use the registered tool's Pydantic input model for bounded, value-free field feedback."""
 
     async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
         model = context.function.input_model
@@ -81,7 +81,7 @@ class ToolObservationMiddleware(FunctionMiddleware):
             payload = {
                 "tool": context.function.name,
                 "call_id": str(occurrence),
-                # MAF normalizes nested models to Python values (including UUIDs).
+                # The tool boundary retains Python values, including nested UUIDs.
                 # Serialize only the observation; preserve the tool's typed arguments.
                 "arguments": _JSON_ARGUMENTS.dump_python(context.arguments, mode="json"),
             }
@@ -138,10 +138,13 @@ class ToolObservationMiddleware(FunctionMiddleware):
         try:
             result = context.result
             error_code = None
+            if isinstance(result, Content):
+                result = [result]
             if isinstance(result, list):
                 error_code = next(
                     (
                         item.additional_properties.get("ctf_tool_error")
+                        or item.additional_properties.get("bbx_tool_error")
                         for item in result
                         if isinstance(item, Content) and item.additional_properties
                     ),

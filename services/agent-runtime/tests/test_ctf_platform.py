@@ -8,12 +8,12 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import Agent, Content, FunctionInvocationContext
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.failures import propagate_tool_failure
 from bbx_runtime.ctf.platform import PlatformAdapter
 from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.telemetry import ToolArgumentFeedbackMiddleware, ToolObservationMiddleware
+from bbx_runtime.pi import Agent, Content, FunctionInvocationContext
 from bbx_runtime.session import CheckpointHistoryProvider, ToolResultCheckpointMiddleware
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import MemoryCtf
@@ -208,7 +208,8 @@ async def test_no_platform_needs_no_registry_or_credentials():
 async def test_preflight_denies_before_remote_write():
     tools, _, service, remote = await setup()
     service.denied = True
-    await run(tools, [("platform_fake_submit", {"flag": "correct"})])
+    with pytest.raises(ValueError, match="denied"):
+        await run(tools, [("platform_fake_submit", {"flag": "correct"})])
     assert not remote.calls and not service.records
 
 
@@ -660,7 +661,8 @@ async def test_inflight_response_is_recorded_after_stop_disallows_new_calls():
     tools = await adapter.build(
         profile(), "lead", "task", "lead", {"id": "turn", "generation": 1}, lambda: checkpoint
     )
-    await run(tools, [("platform_fake_start", {}), ("platform_fake_start", {"second": True})])
+    with pytest.raises(ValueError, match="denied"):
+        await run(tools, [("platform_fake_start", {}), ("platform_fake_start", {"second": True})])
     assert len(remote.calls) == 1
     assert len(service.records) == 1
     assert service.records[0][1]["structuredContent"]["target_id"] == "fake-target"

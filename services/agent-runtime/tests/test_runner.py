@@ -12,13 +12,13 @@ from uuid import uuid4
 import httpx
 import httpx2
 import pytest
-from agent_framework import ResponseStream
-from agent_framework.exceptions import ChatClientException
 from bbx_contracts.models import McpBinding, Params, WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_runtime.context import RunContext
 from bbx_runtime.execenv import ExecEnvHandle
 from bbx_runtime.middleware import GraceGateMiddleware, ToolLogMiddleware
+from bbx_runtime.pi import ResponseStream
+from bbx_runtime.pi.exceptions import ChatClientException
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient

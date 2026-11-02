@@ -78,7 +78,7 @@ async def test_review_removed_member_preserves_session_and_only_claims_review_ma
     cp = await load_checkpoint(
         cast(CtfClient, service), "task", "member-1", TURN, "Original teammate instructions"
     )
-    from agent_framework import Content, Message
+    from bbx_runtime.pi import Content, Message
 
     cp.session.state["message_injection.pending_messages"] = [
         Message(

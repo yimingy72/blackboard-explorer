@@ -208,7 +208,7 @@ async def test_official_native_filters_tls_reassembly_data_sources_and_archive_r
             uid, gid = home.stat().st_uid, home.stat().st_gid
             name = "bbx-traffic-native-" + uuid4().hex[:8]
             container = (
-                DockerContainer(os.environ.get("BBX_NATIVE_TEST_IMAGE", "bbx-traffic-envd:latest"))
+                DockerContainer(os.environ.get("BBX_NATIVE_TEST_IMAGE", "bbx-exec-env:latest"))
                 .with_name(name)
                 .with_volume_mapping(str(home), str(home), mode="rw")
                 .with_volume_mapping(str(helper), "/native_worker.py", mode="ro")

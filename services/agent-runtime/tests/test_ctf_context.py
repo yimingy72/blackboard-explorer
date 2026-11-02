@@ -5,9 +5,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from agent_framework import AgentSession, Content, Message, annotate_message_groups
-from agent_framework.exceptions import ChatClientInvalidRequestException
-from agent_framework.openai import OpenAIChatClient
 from bbx_contracts.ctf import load_ctf_profile
 from bbx_contracts.storage import storage_safe
 from bbx_runtime.ctf.context import (
@@ -23,6 +20,8 @@ from bbx_runtime.ctf.context import (
 from bbx_runtime.ctf.middleware import CtfHistoryProvider, TurnBoundary
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.ctf.session import CtfCheckpoint
+from bbx_runtime.pi import AgentSession, Content, Message, annotate_message_groups
+from bbx_runtime.pi.data import pi_messages
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
 from test_ctf_provider_boundary import DispatchService
 from test_ctf_runtime import TURN
@@ -321,18 +320,14 @@ async def test_legacy_checkpoint_cutoff_moves_forward_then_responses_replay_is_v
     original.checkpoint.session.state["ctf_history_view"] = {"excluded_before": 1, "epoch": 4}
     restored = AgentSession.from_dict(original.checkpoint.session.to_dict())
     durable = restored.state["in_memory"]["messages"]
-    # SDK serialization only: no provider request or credential resolution.
-    client = OpenAIChatClient(model="synthetic", api_key="not-used")
-    with pytest.raises(ChatClientInvalidRequestException, match="encrypted reasoning"):
-        client._prepare_messages_for_openai(durable[1:], request_uses_service_side_storage=False)
     value = provider(durable, state=restored.state)
     before = [message.to_dict() for message in durable]
     view = await history(value)
     assert value.checkpoint.session.state["ctf_history_view"]["excluded_before"] == 3
     assert value.checkpoint.session.state["ctf_history_view"]["epoch"] == 5
     assert "Synthetic task" in view[0].text and view[-1].message_id == "latest"
-    replay = client._prepare_messages_for_openai(view, request_uses_service_side_storage=False)
-    assert all(item.get("type") not in {"function_call", "function_call_output"} for item in replay)
+    replay = pi_messages(view)
+    assert all(item["role"] != "toolResult" for item in replay)
     assert [message.to_dict() for message in durable] == before
     assert [message.to_dict() for message in await history(value)] == [
         message.to_dict() for message in view

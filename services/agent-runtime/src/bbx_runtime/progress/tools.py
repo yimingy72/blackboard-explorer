@@ -4,11 +4,11 @@ import html
 import json
 from typing import Any
 
-from agent_framework import tool
 from bbx_contracts.progress import ProgressNode
 from pydantic import ValidationError
 
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.pi import tool
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.progress.session import ProgressSessionClient
 from bbx_runtime.session import SessionCheckpoint

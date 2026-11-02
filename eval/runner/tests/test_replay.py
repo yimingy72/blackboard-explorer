@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 import tarfile
 
 import pytest
@@ -149,7 +150,9 @@ Path('previous.txt').write_text('one')
 print('value', VALUE)
 """
     for _ in range(2):
-        result = execute(script, target, "bbx-eval-env:latest", 30)
+        result = execute(
+            script, target, os.environ.get("BBX_EVAL_TEST_IMAGE", "bbx-eval-env:latest"), 30
+        )
         assert result["exit_code"] == 0, result["output"]
         assert "value 42" in result["output"]
 
@@ -232,7 +235,9 @@ with sqlite3.connect(os.environ['SHOP_DB']) as connection:
         )
     )
     for _ in range(2):
-        document = await replay(tmp_path, target, "bbx-eval-env:latest", 60)
+        document = await replay(
+            tmp_path, target, os.environ.get("BBX_EVAL_TEST_IMAGE", "bbx-eval-env:latest"), 60
+        )
         result = document["scripts"][0]
         assert result["status"] == "passed", result
         assert result["service_port"] == 8127

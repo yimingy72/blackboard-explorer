@@ -7,16 +7,16 @@ from typing import Any, cast
 
 import httpx2
 import pytest
-from agent_framework import ChatResponseUpdate, Content
-from agent_framework.exceptions import (
-    ChatClientContentFilterException,
-    ChatClientException,
-    ChatClientInvalidRequestException,
-)
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.execution import DrainPending
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.model_errors import is_transient_model_error, model_error_metadata
+from bbx_runtime.pi import ChatResponseUpdate, Content
+from bbx_runtime.pi.exceptions import (
+    ChatClientContentFilterException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
+)
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from test_ctf_coordination import Runtime

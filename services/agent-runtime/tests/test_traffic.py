@@ -10,8 +10,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from agent_framework.observability import get_tracer
 from bbx_contracts.traffic import TrafficManifest, TrafficRecordDetail
+from bbx_runtime.pi.observability import get_tracer
 from bbx_runtime.traffic.collector import TrafficCollector
 from bbx_runtime.traffic.observation import observation_context
 
@@ -262,9 +262,13 @@ async def test_bounded_observation_queue_reports_partial() -> None:
 
 
 @pytest.mark.asyncio
-async def test_actual_maf_agent_stream_is_not_waiting_for_capture_upload() -> None:
-    from agent_framework import Agent, tool
-    from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
+async def test_actual_pi_agent_stream_is_not_waiting_for_capture_upload() -> None:
+    from pathlib import Path
+
+    import httpx2
+    from bbx_runtime.models import load_runtime_profile, make_client
+    from bbx_runtime.pi import Agent, tool
+    from test_runtime_streaming import chat_chunk, sse
 
     @tool
     async def echo(value: str) -> str:
@@ -275,12 +279,45 @@ async def test_actual_maf_agent_stream_is_not_waiting_for_capture_upload() -> No
     envd.chunk = envd.file = False
     value = await collector(envd, objects)
     try:
-        client = ScriptedChatClient(
-            [
-                ScriptStep(calls=(ScriptToolCall("echo", {"value": "hello"}),)),
-                ScriptStep(text="finished"),
-            ]
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            delta = (
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "echo-1",
+                            "type": "function",
+                            "function": {"name": "echo", "arguments": '{"value":"hello"}'},
+                        }
+                    ]
+                }
+                if len(requests) == 1
+                else {"content": "finished"}
+            )
+            return sse(
+                chat_chunk(
+                    1,
+                    delta,
+                    "tool_calls" if len(requests) == 1 else "stop",
+                    {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 2,
+                    },
+                )
+            )
+
+        profile = load_runtime_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+        client = make_client(
+            profile.models.explore,
+            api_key="test-only",
+            explore_max_steps=2,
+            conclude_grace_calls=0,
+            max_duration_seconds=20,
         )
+        client.request_transport = httpx2.MockTransport(respond)
         with observation_context(value.task_id, 1, "agent-1"):
             async with Agent(client=client, name="agent-1", tools=[echo]) as agent:
                 stream = agent.run("offline", stream=True)

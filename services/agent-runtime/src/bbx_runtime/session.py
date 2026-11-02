@@ -1,4 +1,4 @@
-"""Durable snapshots of the real Agent Framework conversation session."""
+"""Durable snapshots of the Pi conversations and legacy history."""
 
 from __future__ import annotations
 
@@ -7,14 +7,6 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
-from agent_framework import (
-    AgentSession,
-    Content,
-    FunctionInvocationContext,
-    FunctionMiddleware,
-    InMemoryHistoryProvider,
-    Message,
-)
 from bbx_contracts.billing import add_usage
 from bbx_contracts.heartbeat import USAGE_RECEIPT_PROTOCOL, OrdinaryUsageReceipt
 from bbx_contracts.storage import storage_safe
@@ -22,6 +14,14 @@ from bbx_contracts.storage import storage_safe
 from bbx_runtime.billing import _input_tokens, _usage, _usage_known
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.image_view import hydrate_image_messages, strip_image_history
+from bbx_runtime.pi import (
+    AgentSession,
+    Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    InMemoryHistoryProvider,
+    Message,
+)
 from bbx_runtime.usage_receipts import flush_ordinary_usage
 
 INTERRUPTED_TOOL_RESULT = (
@@ -229,7 +229,7 @@ class SessionCheckpoint:
 
 
 class CheckpointHistoryProvider(InMemoryHistoryProvider):
-    """Save the MAF session after each model call, including tool-loop turns."""
+    """Save the conversation after each model call, including tool-loop turns."""
 
     def __init__(self, checkpoint: SessionCheckpoint, *, usage_key: str | None = None) -> None:
         super().__init__(source_id="in_memory")

@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from agent_framework import Agent, Message, SessionContext
 from bbx_contracts.profile import load_profile
 from bbx_runtime.context import RunContext
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.pi import Agent, Message, SessionContext
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
 from jinja2 import UndefinedError
 from jinja2.exceptions import SecurityError
@@ -141,7 +141,7 @@ async def test_seed_explore_has_only_l0_and_uses_pinned_template(profile_name: s
 
     context = SessionContext(input_messages=[Message(role="user", contents=["开始。"])])
     await provider.before_run(agent=None, session=None, context=context, state={})
-    assert any("查明网关 502 的原因" in value for value in context.instructions)
+    assert any("查明网关 502 的原因" in value for value in context.instructions.values())
 
     client = ScriptedChatClient([ScriptStep(text="done")])
     agent = Agent(client=client, context_providers=[provider])

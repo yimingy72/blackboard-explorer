@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import ResponseStream
 from bbx_contracts.models import Params
 from bbx_contracts.profile import load_profile
+from bbx_runtime.pi import ResponseStream
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient

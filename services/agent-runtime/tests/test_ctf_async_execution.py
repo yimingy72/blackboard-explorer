@@ -10,7 +10,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 import pytest
-from agent_framework import AgentSession
 from bbx_contracts.ctf import CtfRoleRunOptions, load_ctf_profile, resolve_ctf_model
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.budget import ctf_call_reservation
@@ -19,6 +18,7 @@ from bbx_runtime.ctf.execution import CtfExecutionAdapter
 from bbx_runtime.ctf.failures import CtfToolFailure
 from bbx_runtime.ctf.middleware import TurnBoundary
 from bbx_runtime.ctf.runner import CtfRunner
+from bbx_runtime.pi import AgentSession
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_execution import Checkpoint, Env, Service
 from test_ctf_runtime import TURN, MemoryCtf

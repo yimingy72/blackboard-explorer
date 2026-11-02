@@ -1,9 +1,9 @@
-"""Carry CTF tool failures through MAF's public fail-closed boundary."""
+"""Carry CTF tool failures across the native Pi callback boundary."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from agent_framework import MiddlewareFailure
+from bbx_runtime.pi import MiddlewareFailure
 
 
 class CtfToolFailure(MiddlewareFailure):

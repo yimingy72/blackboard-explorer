@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from agent_framework import Agent, ChatResponse, Content, Message, tool
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.context import RunContext
 from bbx_runtime.middleware import BoardSyncMiddleware
 from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.pi import Agent, ChatResponse, Content, Message, tool
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from bbx_runtime.trace import model_content
 

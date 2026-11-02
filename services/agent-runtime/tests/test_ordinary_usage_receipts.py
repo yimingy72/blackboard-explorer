@@ -10,10 +10,10 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from agent_framework import Content, tool
 from bbx_contracts.heartbeat import UNKNOWN_USAGE_WARNING, ReceiptHeartbeatRequest
 from bbx_runtime.billing import _usage_known
 from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.pi import Content, tool
 from bbx_runtime.session import SessionCheckpoint
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,

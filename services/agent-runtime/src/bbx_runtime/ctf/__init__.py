@@ -1,1 +1,1 @@
-"""Independent CTF team runtime using native MAF sessions."""
+"""Independent CTF team runtime using native Pi execution."""

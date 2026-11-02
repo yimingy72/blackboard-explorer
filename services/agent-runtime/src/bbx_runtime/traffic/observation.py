@@ -1,4 +1,4 @@
-"""Route MAF OpenTelemetry logical spans to their task capture without network exporters."""
+"""Route Pi/OpenTelemetry logical spans to their task capture without network exporters."""
 
 from __future__ import annotations
 
@@ -54,7 +54,6 @@ def observation_context(
 def register(collector: Any) -> None:
     global _provider, _sensitive_pipeline
     if _provider is None:
-        from agent_framework.observability import enable_instrumentation
         from opentelemetry import trace
         from opentelemetry.sdk.trace import SpanLimits, SpanProcessor, TracerProvider
 
@@ -93,7 +92,6 @@ def register(collector: Any) -> None:
             _provider = TracerProvider(span_limits=SpanLimits(max_attribute_length=32768))
             trace.set_tracer_provider(_provider)
         _provider.add_span_processor(Processor())
-        enable_instrumentation(enable_sensitive_data=owned, enable_message_events=False)
     if not _sensitive_pipeline:
         collector.error = "An external OpenTelemetry provider limits logical calls to metadata"
     _collectors[(collector.task_id, collector.run)] = collector
@@ -143,7 +141,8 @@ def _record(span: Any, attributes: dict[str, Any], secrets: tuple[str, ...]) -> 
             "body_preview": redaction.bounded(body),
             "body_bytes": len(original.encode()),
             "body_encoding": "utf-8",
-            "body_truncated": len(original.encode()) > redaction.LIMIT,
+            "body_truncated": bool(attributes.get(key + ".truncated"))
+            or len(original.encode()) > redaction.LIMIT,
         }
 
     return {

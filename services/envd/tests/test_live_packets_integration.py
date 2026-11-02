@@ -52,7 +52,7 @@ async def test_packet_visible_before_command_and_raw_seal_with_two_agent_rss():
     task_id = str(uuid.uuid4())
     report = {"profile": {"memory": "4g", "cpus": 2}, "samples": []}
     container = (
-        DockerContainer(os.environ.get("BBX_TRAFFIC_TEST_IMAGE", "bbx-traffic-envd:latest"))
+        DockerContainer(os.environ.get("BBX_TRAFFIC_TEST_IMAGE", "bbx-exec-env:latest"))
         .with_name("bbx-traffic-live-" + uuid.uuid4().hex[:8])
         .with_env("ENVD_TOKEN", TOKEN)
         .with_env("ENVD_TASK_ID", task_id)

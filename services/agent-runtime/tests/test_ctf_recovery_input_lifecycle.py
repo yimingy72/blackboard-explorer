@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from agent_framework import Agent, Content, Message, MessageInjectionMiddleware
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.context import message_signature
 from bbx_runtime.ctf.middleware import (
@@ -17,6 +16,7 @@ from bbx_runtime.ctf.middleware import (
 )
 from bbx_runtime.ctf.provider_boundary import provider_call_boundary
 from bbx_runtime.ctf.session import CtfCheckpoint, load_checkpoint
+from bbx_runtime.pi import Agent, Content, Message, MessageInjectionMiddleware
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
 from test_ctf_context import text
 from test_ctf_leaf_context import loaded

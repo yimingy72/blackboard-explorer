@@ -11,7 +11,6 @@ import re
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
-from agent_framework import FunctionTool, tool
 from bbx_contracts.models import (
     Evidence,
     EvidenceType,
@@ -28,6 +27,7 @@ from bbx_runtime.clients import RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.evidence import evidence_page
 from bbx_runtime.image_view import make_view_image_tool
+from bbx_runtime.pi import FunctionTool, tool
 from bbx_runtime.tool_failures import ToolResult, remote_tool_feedback
 
 EVIDENCE_MAX_BYTES = 50 * 1024 * 1024

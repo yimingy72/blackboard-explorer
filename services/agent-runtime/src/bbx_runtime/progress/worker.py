@@ -8,14 +8,6 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from agent_framework import (
-    Agent,
-    AgentSession,
-    BaseChatClient,
-    Content,
-    FunctionInvocationLayer,
-    Message,
-)
 from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
 from bbx_contracts.progress import ProgressFailureDiagnostic
@@ -30,6 +22,13 @@ from bbx_runtime.models import (
     make_client,
     model_run_options,
     resolve_model_credentials,
+)
+from bbx_runtime.pi import (
+    Agent,
+    AgentSession,
+    BaseChatClient,
+    Content,
+    Message,
 )
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.progress.prompt import PROGRESS_INSTRUCTIONS, default_progress_prompt
@@ -258,7 +257,7 @@ class ProgressWorker:
                         max_duration_seconds=JOB_TIMEOUT_SECONDS,
                         max_retries=0,
                     )
-                    if isinstance(client, FunctionInvocationLayer):
+                    if isinstance(client, BaseChatClient):
                         client.function_invocation_configuration["allow_concurrent_invocation"] = (
                             False
                         )

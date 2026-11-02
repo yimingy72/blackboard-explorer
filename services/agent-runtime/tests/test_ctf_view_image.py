@@ -8,9 +8,9 @@ import zlib
 from types import SimpleNamespace
 from typing import Any, cast
 
-from agent_framework import AgentSession, ChatContext, Content, FunctionTool, Message
 from bbx_runtime.ctf.images import ImageInjectionMiddleware, make_view_image_tool
 from bbx_runtime.image_view import IMAGE_STATE_KEY, inject_pending_images
+from bbx_runtime.pi import AgentSession, ChatContext, Content, FunctionTool, Message
 
 TASK = "11111111-1111-4111-8111-111111111111"
 
@@ -135,7 +135,6 @@ async def test_view_image_refuses_when_the_task_model_cannot_receive_images() ->
             SimpleNamespace(provider="deepseek", model="deepseek-flash", supports_vision=False),
             "明确不支持",
         ),
-        (SimpleNamespace(provider="bedrock", model="claude", base_url=""), "丢弃图片"),
         (
             SimpleNamespace(
                 provider="deepseek", model="deepseek-v4-pro", base_url="https://api.deepseek.com"

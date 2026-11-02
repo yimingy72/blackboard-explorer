@@ -2,11 +2,11 @@
 
 from typing import Annotated, Any
 
-from agent_framework import tool
 from pydantic import Field
 
 from bbx_runtime.ctf.board_tools import build_board_tools
 from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
+from bbx_runtime.pi import tool
 
 
 def build_review_tools(service: Any, task_id: str, member_id: str, turn: dict) -> list[Any]:

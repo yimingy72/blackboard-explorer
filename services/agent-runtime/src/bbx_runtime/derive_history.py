@@ -2,9 +2,8 @@
 
 from typing import Any
 
-from agent_framework import InMemoryHistoryProvider, Message
-
 from bbx_runtime.image_view import hydrate_image_messages
+from bbx_runtime.pi import InMemoryHistoryProvider, Message
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 
 

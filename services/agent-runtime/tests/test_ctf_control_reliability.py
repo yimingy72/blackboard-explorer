@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent, Content
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.tool_results import json_tool_result
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, Content
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_coordination import Runtime
 

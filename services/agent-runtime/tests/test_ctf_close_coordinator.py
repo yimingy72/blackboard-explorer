@@ -9,12 +9,12 @@ from typing import Any, cast
 import bbx_runtime.ctf.coordinator as control
 import httpx
 import pytest
-from agent_framework import AgentSession
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.execution import DrainPending, UnknownCommandOutcome
 from bbx_runtime.ctf.runner import CtfRunner
+from bbx_runtime.pi import AgentSession
 
 
 class Clock:

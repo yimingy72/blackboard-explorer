@@ -79,7 +79,16 @@ test:
 test-integration: image-exec-env image-egress-proxy image-agent-runtime image-eval-env
 	$(VENV)/pytest -m "integration and not live"
 
-check: lint typecheck test
+.PHONY: pi-install pi-check
+
+pi-install:
+	npm --prefix services/agent-runtime/pi ci --ignore-scripts --no-audit --no-fund
+
+pi-check:
+	node --check services/agent-runtime/pi/worker.mjs
+	npm --prefix services/agent-runtime/pi test
+
+check: lint typecheck pi-check test
 
 check-all: check test-integration
 

@@ -10,13 +10,13 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import Agent, FunctionTool
 from bbx_contracts.models import WorkerTools
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.middleware import ToolArgumentFeedbackMiddleware, ToolLogMiddleware
+from bbx_runtime.pi import Agent, FunctionTool
 from bbx_runtime.testing.fake_envd import FakeEnvd
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from bbx_runtime.tools import EvidenceInput, make_board_tools

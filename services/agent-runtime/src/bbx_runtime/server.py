@@ -6,6 +6,7 @@ import signal
 from bbx_runtime.chatworker import ChatWorker
 from bbx_runtime.clients import BlackboardClient, object_store
 from bbx_runtime.execenv import ExecEnvManager
+from bbx_runtime.pi.bridge import ensure_pi_runtime
 from bbx_runtime.progress.worker import ProgressWorker
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.scheduler.lock import RuntimeLock
@@ -20,6 +21,7 @@ async def _import_legacy_key(settings: SchedulerSettings, service: BlackboardCli
 
 
 async def serve(settings: SchedulerSettings) -> None:
+    await ensure_pi_runtime()
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

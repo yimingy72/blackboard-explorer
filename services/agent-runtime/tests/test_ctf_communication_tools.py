@@ -4,9 +4,9 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
-from agent_framework import Agent
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
 

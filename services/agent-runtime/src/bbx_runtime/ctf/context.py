@@ -8,10 +8,11 @@ from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
 from bbx_contracts.ctf import CTF_BOARD_RESULT_MAX_BYTES
 from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import ModelConfig
+
+from bbx_runtime.pi import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
 
 
 def message_signature(message: Message) -> str:
@@ -28,7 +29,7 @@ def message_signature(message: Message) -> str:
 
 
 def serialized_message_signature(message: dict[str, Any]) -> str:
-    """Hash the native MAF snapshot directly; it has already serialized every Content."""
+    """Hash the persisted snapshot with its already serialized content."""
     payload = {
         "role": str(message["role"]),
         "message_id": message.get("message_id"),
@@ -59,7 +60,7 @@ def estimate_text_tokens(text: str) -> int:
 
 
 def clear_protected_text(value: str | None) -> str:
-    """Match MAF basis 2: tokenise clear JSON reasoning, never opaque signatures."""
+    """Retain legacy sizing basis 2: tokenise clear JSON reasoning, never opaque signatures."""
     if not value:
         return ""
     try:
@@ -282,7 +283,7 @@ class HistoryBoundaries:
 
 
 def history_boundaries(messages: Sequence[Message]) -> HistoryBoundaries:
-    """Use MAF's native atomic groups, with CTF admission/completion safeguards."""
+    """Respect saved atomic tool and reasoning groups, with CTF admission/completion safeguards."""
     grouped = []
     original_spans: dict[str, tuple[int, int]] = {}
 

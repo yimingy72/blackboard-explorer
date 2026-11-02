@@ -4,10 +4,10 @@ import json
 from collections.abc import Awaitable
 from typing import Any
 
-from agent_framework import Content
 from bbx_contracts.tool_errors import CTF_BOARD_ERROR_CODES, solution_validation_details
 
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.pi import Content
 
 ToolJsonResult = str | Content
 
@@ -45,7 +45,7 @@ _BOARD_ERROR_HINTS = {
 
 
 def tool_error_content(error: dict[str, Any]) -> Content:
-    """Keep JSON feedback model-visible and carry an explicit public MAF failure marker."""
+    """Keep JSON feedback model-visible and carry an explicit recoverable tool marker."""
     return Content.from_text(
         json.dumps({"error": error}, ensure_ascii=False),
         additional_properties={"ctf_tool_error": error["code"]},

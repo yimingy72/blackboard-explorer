@@ -12,7 +12,6 @@ from uuid import uuid4
 import httpx
 import httpx2
 import pytest
-from agent_framework import Agent, AgentSession, ChatResponseUpdate, Content, Message, tool
 from bbx_blackboard.domain import BoardState
 from bbx_blackboard.domain import decide as board_decide
 from bbx_contracts.heartbeat import usage_receipt_support
@@ -24,12 +23,13 @@ from bbx_runtime.context import RunContext
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware
 from bbx_runtime.models import close_model_client, make_client
+from bbx_runtime.pi import Agent, AgentSession, ChatResponseUpdate, Content, Message, tool
 from bbx_runtime.recovery import ModelRecoveryGate, RecoveryExhausted
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.session import SessionCheckpoint, _unpaired_calls
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
-from openai import APIStatusError, AsyncOpenAI
+from openai import APIStatusError
 from usage_receipt_fixtures import heartbeat_ack
 
 RECEIPT = '{"accepted":true,"data":{"posted":[],"excluded":[]}}'
@@ -833,7 +833,22 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
         assert any(
             "durable native tool output" in str(item.get("content")) for item in body["messages"]
         )
-        assert sum(item.get("content") == "native user question" for item in body["messages"]) == 1
+        assert (
+            sum(
+                (
+                    item.get("content")
+                    if isinstance(item.get("content"), str)
+                    else "".join(
+                        part.get("text", "")
+                        for part in item.get("content") or []
+                        if part.get("type") == "text"
+                    )
+                )
+                == "native user question"
+                for item in body["messages"]
+            )
+            == 1
+        )
         assert "POISON" not in json.dumps(body)
         return httpx2.Response(
             200,
@@ -844,12 +859,9 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
             headers={"content-type": "text/event-stream"},
         )
 
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(
-            **kwargs, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-        ),
-    )
+    from bbx_runtime.testing.pi_client import patch_transport
+
+    patch_transport(monkeypatch, httpx2.MockTransport(respond))
     model = service.profile.models.derive.model_copy(
         update={"base_url": "https://offline.invalid/v1"}
     )
@@ -861,7 +873,7 @@ async def test_native_sdk_sse_recovery_preserves_tool_and_claim_without_partial_
         max_duration_seconds=60,
     )
     try:
-        assert client.client.max_retries == 4  # type: ignore[attr-defined]
+        assert client.max_retries == 4
         assert (await invoke(runner, client)).end_reason == "normal"
     finally:
         await close_model_client(client)

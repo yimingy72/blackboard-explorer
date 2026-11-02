@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent, MCPStreamableHTTPTool, tool
 from anyio import ClosedResourceError
 from bbx_runtime.clients.envd import EnvdClient
 from bbx_runtime.middleware import ToolLogMiddleware
+from bbx_runtime.pi import Agent, MCPStreamableHTTPTool, tool
 from bbx_runtime.single_dispatch import SingleDispatchExecutionTool
 from bbx_runtime.testing.fake_envd import CommandOutput, FakeEnvd
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall

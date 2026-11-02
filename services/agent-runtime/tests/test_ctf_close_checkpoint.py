@@ -7,12 +7,12 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import AgentSession
 from bbx_contracts.ctf import load_ctf_profile
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.ctf.session import CtfCheckpoint, load_checkpoint
+from bbx_runtime.pi import AgentSession
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import TURN, MemoryCtf
 

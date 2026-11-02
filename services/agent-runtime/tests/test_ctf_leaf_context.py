@@ -5,10 +5,10 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from agent_framework import Content, Message, tool
 from bbx_runtime.ctf.context import estimate_messages_tokens, message_signature
 from bbx_runtime.ctf.middleware import CtfHistoryProvider, TurnBoundary
 from bbx_runtime.ctf.session import CtfCheckpoint, load_checkpoint
+from bbx_runtime.pi import Content, Message, tool
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_context import result, text
 from test_ctf_provider_boundary import DispatchService, native

@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-from agent_framework import AgentSession, Content, Message
 from bbx_contracts.profile import load_profile
 from bbx_runtime.chatworker import ChatWorker, _completed_text
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
+from bbx_runtime.pi import AgentSession, Content, Message
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,

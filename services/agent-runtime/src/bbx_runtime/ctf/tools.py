@@ -4,7 +4,6 @@ import json
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from agent_framework import FunctionInvocationContext, tool
 from bbx_contracts.ctf import CtfSolution
 from pydantic import Field
 
@@ -12,6 +11,7 @@ from bbx_runtime.ctf.board_tools import build_board_tools
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.images import make_view_image_tool
 from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result, tool_error_content
+from bbx_runtime.pi import FunctionInvocationContext, tool
 
 
 def build_tools(

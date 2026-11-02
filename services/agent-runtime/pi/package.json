@@ -1,0 +1,18 @@
+{
+  "name": "bbx-pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.21.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-telemetry": "1.4.0",
+    "eventsource-parser": "4.1.3"
+  }
+}

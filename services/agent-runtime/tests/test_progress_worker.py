@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from agent_framework import AgentSession
 from bbx_contracts.models import ModelConfig, Price
 from bbx_runtime.clients.blackboard import BlackboardClient
 from bbx_runtime.models import close_model_client, make_client, model_run_options
+from bbx_runtime.pi import AgentSession
 from bbx_runtime.progress.prompt import PROGRESS_INSTRUCTIONS, default_progress_prompt
 from bbx_runtime.progress.worker import ProgressWorker, _instructions
 from bbx_runtime.settings import Settings
@@ -532,7 +532,7 @@ async def test_saved_completion_republishes_candidate_without_model(monkeypatch)
 
 
 async def test_compaction_preserves_session_and_supplies_whole_candidate(monkeypatch):
-    from agent_framework import Content, Message
+    from bbx_runtime.pi import Content, Message
 
     endpoint = ProgressEndpoint(kind="question")
     endpoint.job["model"]["context_window"] = 24000
@@ -648,16 +648,7 @@ async def test_progress_clients_disable_sdk_retries(provider):
         max_retries=0,
     )
     try:
-        if provider in {"deepseek", "openai_responses"}:
-            assert client.client.max_retries == 0  # type: ignore[attr-defined]
-        elif provider == "anthropic":
-            assert client.anthropic_client.max_retries == 0  # type: ignore[attr-defined]
-        elif provider == "bedrock":
-            assert client._bedrock_client.meta.config.retries["total_max_attempts"] == 1  # type: ignore[attr-defined]
-        elif provider == "gemini":
-            assert client._genai_client._api_client._http_options.retry_options.attempts == 1  # type: ignore[attr-defined]
-        elif provider == "mistral":
-            assert client.client.sdk_configuration.retry_config is None  # type: ignore[attr-defined]
+        assert client.max_retries == 0
     finally:
         await close_model_client(client)
 

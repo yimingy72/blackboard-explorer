@@ -7,12 +7,12 @@ from typing import cast
 
 import httpx
 import pytest
-from agent_framework import Agent, AgentSession, Content, Message, tool
 from bbx_objects import ObjectStore
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.middleware import ToolLogMiddleware
 from bbx_runtime.models import load_runtime_profile
+from bbx_runtime.pi import Agent, AgentSession, Content, Message, tool
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
     SessionCheckpoint,

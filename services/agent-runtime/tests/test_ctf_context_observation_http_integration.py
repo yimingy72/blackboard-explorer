@@ -4,10 +4,10 @@ import json
 from uuid import UUID
 
 import pytest
-from agent_framework import Content, Message
 from bbx_blackboard.store import schema as s
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.ctf.session import load_checkpoint
+from bbx_runtime.pi import Content, Message
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
 from pydantic import SecretStr

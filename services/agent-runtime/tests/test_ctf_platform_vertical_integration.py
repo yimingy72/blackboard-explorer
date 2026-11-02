@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from agent_framework import Agent
 from bbx_blackboard.api import create_app
 from bbx_blackboard.platform import McpInput
 from bbx_blackboard.settings import Settings
@@ -16,6 +15,7 @@ from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.platform import PlatformAdapter
 from bbx_runtime.ctf.session import load_checkpoint
+from bbx_runtime.pi import Agent
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import create_async_engine

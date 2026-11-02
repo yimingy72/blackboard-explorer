@@ -1,9 +1,8 @@
-"""Use the native MAF Session checkpoint with an independent progress fence."""
+"""Use the durable conversation checkpoint with an independent progress fence."""
 
 import json
 from typing import Any, cast
 
-from agent_framework import AgentSession, Content, Message
 from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import ModelConfig, Price
 
@@ -15,6 +14,7 @@ from bbx_runtime.ctf.context import (
     fixed_prompt_tokens,
 )
 from bbx_runtime.model_errors import terminal_model_error
+from bbx_runtime.pi import AgentSession, Content, Message
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 

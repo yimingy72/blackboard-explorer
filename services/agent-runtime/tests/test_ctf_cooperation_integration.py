@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agent_framework import ResponseStream
 from bbx_blackboard.api import create_app
 from bbx_blackboard.platform import ModelInput
 from bbx_blackboard.settings import Settings as BoardSettings
@@ -22,6 +21,7 @@ from bbx_runtime.ctf.budget import ctf_call_reservation
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.runner import CtfRunner
+from bbx_runtime.pi import ResponseStream
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptUsage
 from pydantic import SecretStr

@@ -14,18 +14,6 @@ from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, cast
 
-from agent_framework import (
-    ChatContext,
-    ChatMiddleware,
-    ChatResponse,
-    Content,
-    FunctionInvocationContext,
-    FunctionMiddleware,
-    Message,
-    MiddlewareFailure,
-    MiddlewareTermination,
-    ResponseStream,
-)
 from bbx_contracts.billing import effective_price
 from bbx_contracts.storage import storage_safe
 from bbx_contracts.tool_errors import validation_issues
@@ -37,6 +25,18 @@ from bbx_runtime.context import RunContext, execution_timestamp
 from bbx_runtime.image_view import append_pending_images, finish_pending_images
 from bbx_runtime.model_errors import model_attempt_limit, model_error_metadata
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.pi import (
+    ChatContext,
+    ChatMiddleware,
+    ChatResponse,
+    Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    Message,
+    MiddlewareFailure,
+    MiddlewareTermination,
+    ResponseStream,
+)
 from bbx_runtime.recovery import (
     ModelCallPermit,
     ModelRecoveryGate,
@@ -163,7 +163,7 @@ class ToolLogMiddleware(FunctionMiddleware):
 
 
 class ToolArgumentFeedbackMiddleware(FunctionMiddleware):
-    """Let MAF's public input model reject invalid arguments before tool dispatch."""
+    """Reject invalid typed arguments before dispatch through the Pi tool boundary."""
 
     async def process(self, context: FunctionInvocationContext, call_next) -> None:
         model = context.function.input_model
@@ -246,7 +246,7 @@ def append_board_update(messages: Sequence[Message], update: str) -> None:
                     ).items
                     or []
                 )
-                # MAF serializes rich results from items; keep both representations current.
+                # Rich results retain both text and items; keep both representations current.
                 content.items = [*items, Content.from_text(framed)]
                 content.result = f"{_result_text(content.result)}\n{framed}"
                 return
@@ -713,7 +713,7 @@ class BoardSyncMiddleware(ChatMiddleware):
                 await record(result)
 
             context.result = ResponseStream(
-                updates(), finalizer=lambda _: inner.get_final_response()
+                updates(), finalizer=lambda _: inner.get_final_response(), retain_updates=False
             )
         else:
             finish_pending_images(messages, injection, sent=True)

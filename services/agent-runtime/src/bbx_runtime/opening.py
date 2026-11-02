@@ -3,12 +3,12 @@
 import json
 from typing import Any
 
-from agent_framework import ContextProvider, SessionContext
 from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.context import RunContext
+from bbx_runtime.pi import ContextProvider, SessionContext
 from bbx_runtime.session import SessionCheckpoint
 from bbx_runtime.trace import record_trace
 

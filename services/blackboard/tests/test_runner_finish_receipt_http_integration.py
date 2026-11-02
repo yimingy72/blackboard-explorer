@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from agent_framework import AgentSession
+from bbx_runtime.pi import AgentSession
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from test_final_receipt_fence_integration import finish_http as finish_http

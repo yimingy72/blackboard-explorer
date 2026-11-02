@@ -8,14 +8,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from agent_framework import (
-    Agent,
-    Content,
-    Message,
-    MessageInjectionMiddleware,
-    ResponseStream,
-    tool,
-)
 from bbx_contracts.ctf import load_ctf_profile
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.context import visible_message_text
@@ -28,6 +20,14 @@ from bbx_runtime.ctf.middleware import (
 from bbx_runtime.ctf.provider_boundary import provider_call_boundary
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.ctf.session import load_checkpoint
+from bbx_runtime.pi import (
+    Agent,
+    Content,
+    Message,
+    MessageInjectionMiddleware,
+    ResponseStream,
+    tool,
+)
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import TURN, MemoryCtf
 

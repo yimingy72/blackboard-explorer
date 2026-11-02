@@ -1,4 +1,4 @@
-"""Reconcile the durable mailbox before MAF's native injection boundary."""
+"""Reconcile the durable mailbox before the Pi model boundary."""
 
 import asyncio
 import hashlib
@@ -14,14 +14,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-from agent_framework import (
-    GROUP_ANNOTATION_KEY,
-    ChatContext,
-    ChatMiddleware,
-    Content,
-    Message,
-    MessageInjectionMiddleware,
-)
 from bbx_contracts.billing import effective_price
 from bbx_contracts.models import ModelConfig
 
@@ -40,6 +32,14 @@ from bbx_runtime.ctf.context import (
     visible_message_text,
 )
 from bbx_runtime.ctf.telemetry import observe
+from bbx_runtime.pi import (
+    GROUP_ANNOTATION_KEY,
+    ChatContext,
+    ChatMiddleware,
+    Content,
+    Message,
+    MessageInjectionMiddleware,
+)
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 
 logger = logging.getLogger(__name__)

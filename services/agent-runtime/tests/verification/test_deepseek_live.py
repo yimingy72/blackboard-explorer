@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from agent_framework import Agent, ChatMiddleware, Message, tool
 from bbx_runtime.models import (
-    DeepSeekChatClient,
     load_runtime_profile,
     make_client,
     model_run_options,
 )
+from bbx_runtime.pi import Agent, ChatMiddleware, Message, PiChatClient, tool
 
 pytestmark = pytest.mark.live
 PROFILE_DIR = Path(__file__).resolve().parents[4] / "profiles" / "default"
@@ -27,7 +26,7 @@ def _client(*, max_steps: int = 8):
     if base_url := os.environ.get("DEEPSEEK_BASE_URL"):
         model = model.model_copy(update={"base_url": base_url})
     client = cast(
-        DeepSeekChatClient,
+        PiChatClient,
         make_client(
             model,
             api_key=key,

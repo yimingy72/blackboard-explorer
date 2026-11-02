@@ -32,7 +32,7 @@ from testcontainers.core.container import DockerContainer
 from services.envd.tests.test_traffic_integration import RAW, SERVER, TOKEN, command
 
 pytestmark = pytest.mark.integration
-ENVD_IMAGE = "bbx-traffic-envd:latest"
+ENVD_IMAGE = "bbx-exec-env:latest"
 MINIO_IMAGE = "pgsty/minio:RELEASE.2026-04-17T00-00-00Z"
 SERVICE_TOKEN = "traffic-archive-service-token"
 MINIO_USER = "trafficarchive"

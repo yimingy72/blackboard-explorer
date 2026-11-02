@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 from uuid import uuid4
@@ -145,7 +146,7 @@ asyncio.run(main())
     with Network() as attached, Network() as other:
         source = root / "services/agent-runtime/src/bbx_runtime/execenv/manager.py"
         controller = (
-            DockerContainer("bbx-agent-runtime:latest")
+            DockerContainer(os.environ.get("BBX_RUNTIME_TEST_IMAGE", "bbx-agent-runtime:latest"))
             .with_name(f"bbx-runtime-network-{identifier}")
             .with_network(attached)
             .with_kwargs(hostname=hostname)

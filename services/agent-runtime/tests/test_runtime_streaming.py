@@ -6,17 +6,6 @@ from typing import Any
 
 import httpx2 as httpx
 import pytest
-from agent_framework import (
-    Agent,
-    ChatContext,
-    ChatMiddleware,
-    ChatResponse,
-    Content,
-    Message,
-    ResponseStream,
-)
-from agent_framework.exceptions import ChatClientContentFilterException
-from agent_framework.openai import OpenAIChatClient
 from bbx_contracts.ctf import load_ctf_profile
 from bbx_runtime.model_errors import (
     IncompleteModelStreamError,
@@ -24,15 +13,22 @@ from bbx_runtime.model_errors import (
     model_error_metadata,
 )
 from bbx_runtime.models import (
-    CompleteResponsesClient,
     close_model_client,
     ctf_model_run_options,
     load_runtime_profile,
     make_client,
     model_run_options,
 )
+from bbx_runtime.pi import (
+    Agent,
+    ChatContext,
+    ChatMiddleware,
+    ChatResponse,
+    ResponseStream,
+)
+from bbx_runtime.pi.exceptions import ChatClientContentFilterException
+from bbx_runtime.testing.pi_client import patch_transport
 from bbx_runtime.trace import model_content
-from openai import AsyncOpenAI
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles/default"
 
@@ -46,126 +42,22 @@ def test_ctf_profile_and_ordinary_options_share_the_model_maximum(provider):
     assert ctf_model_run_options(model) == model_run_options(model)
 
 
-@pytest.mark.parametrize("call_count", [1, 2])
-@pytest.mark.parametrize("with_reasoning", [False, True])
-async def test_responses_local_replay_keeps_mixed_assistant_text_before_its_calls(
-    call_count, with_reasoning
-):
-    client = CompleteResponsesClient(
-        model="offline",
-        async_client=AsyncOpenAI(api_key="test-only", base_url="https://offline.invalid"),
-    )
-    contents = [Content.from_text_reasoning(id="rs_1", protected_data="opaque")]
-    if not with_reasoning:
-        contents.clear()
-    contents.extend(
-        [Content.from_text("neutral explanation")]
-        + [
-            Content.from_function_call(f"call-{n}", "echo", arguments={"value": n})
-            for n in range(call_count)
-        ]
-    )
-    messages = [
-        Message(role="user", contents=[Content.from_text("neutral request")]),
-        Message(role="assistant", contents=contents),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_function_result(f"call-{n}", result=str(n)) for n in range(call_count)
-            ],
-        ),
-    ]
-    snapshot = [message.to_dict() for message in messages]
-    try:
-        items = client._prepare_messages_for_openai(
-            messages, request_uses_service_side_storage=False
-        )
-        kinds = [item["type"] for item in items]
-        assert kinds == (
-            ["message"]
-            + (["reasoning"] if with_reasoning else [])
-            + ["message"]
-            + ["function_call"] * call_count
-            + ["function_call_output"] * call_count
-        )
-        assert items[1 + int(with_reasoning)]["role"] == "assistant"
-        assert [item["call_id"] for item in items if item["type"] == "function_call"] == [
-            f"call-{n}" for n in range(call_count)
-        ]
-        assert [item["call_id"] for item in items if item["type"] == "function_call_output"] == [
-            f"call-{n}" for n in range(call_count)
-        ]
-        assert [message.to_dict() for message in messages] == snapshot
-    finally:
-        await client.client.close()
-
-
-async def test_responses_local_replay_does_not_cross_message_boundaries_or_change_plain_tool_path():
-    transport = AsyncOpenAI(api_key="test-only", base_url="https://offline.invalid")
-    client = CompleteResponsesClient(model="offline", async_client=transport)
-    base = OpenAIChatClient(model="offline", async_client=transport)
-    mixed = Message(
-        role="assistant",
-        contents=[
-            Content.from_text("first"),
-            Content.from_function_call("call-a", "echo", arguments={}),
-        ],
-    )
-    plain = Message(
-        role="assistant", contents=[Content.from_function_call("call-b", "echo", arguments={})]
-    )
-    later = Message(
-        role="assistant",
-        contents=[
-            Content.from_text("second"),
-            Content.from_function_call("call-c", "echo", arguments={}),
-        ],
-    )
-    messages = [
-        mixed,
-        Message(role="tool", contents=[Content.from_function_result("call-a", result="a")]),
-        Message(role="user", contents=[Content.from_text("later request")]),
-        plain,
-        Message(role="tool", contents=[Content.from_function_result("call-b", result="b")]),
-        later,
-        Message(role="tool", contents=[Content.from_function_result("call-c", result="c")]),
-    ]
-    try:
-        items = client._prepare_messages_for_openai(
-            messages, request_uses_service_side_storage=False
-        )
-        assert [(item["type"], item.get("role")) for item in items] == [
-            ("message", "assistant"),
-            ("function_call", None),
-            ("function_call_output", None),
-            ("message", "user"),
-            ("function_call", None),
-            ("function_call_output", None),
-            ("message", "assistant"),
-            ("function_call", None),
-            ("function_call_output", None),
-        ]
-        assert client._prepare_message_for_openai(
-            plain, request_uses_service_side_storage=False
-        ) == base._prepare_message_for_openai(plain, request_uses_service_side_storage=False)
-        assert client._prepare_message_for_openai(
-            mixed, request_uses_service_side_storage=True
-        ) == base._prepare_message_for_openai(mixed, request_uses_service_side_storage=True)
-        empty_text = Message(
-            role="assistant",
-            contents=[
-                Content.from_text(""),
-                Content.from_function_call("call-d", "echo", arguments={}),
-            ],
-        )
-        assert client._prepare_message_for_openai(
-            empty_text, request_uses_service_side_storage=False
-        ) == base._prepare_message_for_openai(empty_text, request_uses_service_side_storage=False)
-    finally:
-        await transport.close()
-
-
 def sse(*events: dict[str, Any]) -> httpx.Response:
+    expanded = []
+    for event in events:
+        if event.get("type") == "response.completed":
+            # Canonical Responses SSE finalizes each item before the response.
+            for index, item in enumerate(event["response"].get("output", [])):
+                expanded.append(
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": index,
+                        "sequence_number": 900 + index,
+                        "item": item,
+                    }
+                )
+        expanded.append(event)
+    events = tuple(expanded)
     return httpx.Response(
         200,
         text="".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n",
@@ -200,7 +92,7 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(
         assert body["stream"] is True
         assert body["stream_options"] == {"include_usage": True}
         cap = 393216 if model_name == "deepseek-flash" else 8192
-        assert body.get("max_completion_tokens") == cap
+        assert body.get("max_completion_tokens", body.get("max_tokens")) == cap
         if len(requests) == 1:
             return sse(
                 chat_chunk(1, {"role": "assistant", "reasoning_content": "part-A"}),
@@ -254,10 +146,7 @@ async def test_chat_sse_tool_loop_usage_reasoning_and_history(
         )
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={"provider": provider, "model": model_name, "base_url": "https://model.test/v1"}
     )
@@ -307,10 +196,7 @@ async def test_chat_sse_partial_reply_is_rejected(monkeypatch, terminal):
         return sse(*events)
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={
             "provider": "openai_chat",
@@ -398,13 +284,19 @@ async def test_responses_sse_replays_local_function_history(
             first_events = (
                 [
                     {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "sequence_number": 0,
+                        "item": {**prelude, "content": [], "status": "in_progress"},
+                    },
+                    {
                         "type": "response.output_text.delta",
                         "sequence_number": 1,
                         "output_index": 0,
                         "content_index": 0,
                         "item_id": "msg_0",
                         "delta": "checking",
-                    }
+                    },
                 ]
                 if mixed_text
                 else []
@@ -496,10 +388,7 @@ async def test_responses_sse_replays_local_function_history(
         )
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={
             "provider": "openai_responses",
@@ -597,10 +486,7 @@ async def test_responses_sse_partial_reply_is_rejected(monkeypatch, status, reas
         return sse(*events)
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={
             "provider": "openai_responses",
@@ -670,10 +556,7 @@ async def test_responses_sse_error_codes_are_classified(monkeypatch, event_type,
         return sse(event)
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={
             "provider": "openai_responses",
@@ -764,10 +647,7 @@ async def test_rejected_terminal_response_keeps_only_complete_usage(
         )
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        "bbx_runtime.models.AsyncOpenAI",
-        lambda **kwargs: AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=transport)),
-    )
+    patch_transport(monkeypatch, transport)
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
         update={"provider": provider, "model": "test-model", "base_url": "https://model.test/v1"}
     )

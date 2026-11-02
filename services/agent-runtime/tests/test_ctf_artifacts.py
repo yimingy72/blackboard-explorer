@@ -152,8 +152,8 @@ def test_shared_script_path_is_allowed():
 
 
 async def test_native_maf_board_tools_read_record_and_append_registered_artifact_reference():
-    from agent_framework import Agent
     from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.pi import Agent
     from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
     calls = []

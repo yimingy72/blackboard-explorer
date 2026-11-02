@@ -6,9 +6,10 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from agent_framework import ChatContext, ChatMiddleware
 from bbx_contracts.billing import effective_price, token_cost
 from bbx_contracts.models import ModelConfig, Price, Usage
+
+from bbx_runtime.pi import ChatContext, ChatMiddleware
 
 
 def _separate_cache_input(provider: str | None) -> bool:

@@ -10,7 +10,9 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from agent_framework import (
+from bbx_runtime.clients import RemoteError
+from bbx_runtime.context import RunContext
+from bbx_runtime.pi import (
     AgentSession,
     ChatContext,
     ChatMiddleware,
@@ -20,9 +22,6 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
-
-from bbx_runtime.clients import RemoteError
-from bbx_runtime.context import RunContext
 
 IMAGE_MAX_BYTES = 10 * 1024 * 1024
 IMAGE_MAX_PENDING = 4
@@ -94,7 +93,7 @@ async def hydrate_image_messages(
     read_evidence: Callable[[str], Awaitable[bytes]],
     messages: Sequence[Message],
 ) -> None:
-    """Restore stored image references before MAF assembles a model request."""
+    """Restore stored image references before Pi assembles a model request."""
     records = session.state.get(IMAGE_RECORDS_KEY, {})
     hydrated: list[Message] = []
     try:
@@ -116,8 +115,6 @@ def vision_refusal(model: Any) -> str | None:
     """Return the refusal message when the model cannot receive native images."""
     if getattr(model, "supports_vision", None) is False:
         return "当前模型配置明确不支持看图，未读取图片。请改用支持视觉的模型。"
-    if getattr(model, "provider", None) == "bedrock":
-        return "当前 Bedrock 连接器会丢弃图片输入，未读取图片。请改用支持图片传递的连接方式。"
     if (
         getattr(model, "provider", None) == "deepseek"
         or urlsplit(getattr(model, "base_url", "") or "").hostname == "api.deepseek.com"
@@ -235,7 +232,9 @@ async def run_with_image_injection(
             finally:
                 finish_pending_images(messages, injection, sent=sent)
 
-        context.result = ResponseStream(updates(), finalizer=lambda _: inner.get_final_response())
+        context.result = ResponseStream(
+            updates(), finalizer=lambda _: inner.get_final_response(), retain_updates=False
+        )
     else:
         finish_pending_images(messages, injection, sent=True)
 
@@ -332,7 +331,7 @@ class ImageViewMiddleware(ChatMiddleware):
 
 
 def strip_image_history(session: AgentSession) -> None:
-    """Keep only image references in the durable MAF history snapshot."""
+    """Keep only image references in the durable conversation snapshot."""
     history = session.state.get("in_memory", {})
     records = session.state.get(IMAGE_RECORDS_KEY, {})
     for message in history.get("messages", []) if isinstance(history, dict) else []:

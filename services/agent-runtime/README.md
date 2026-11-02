@@ -10,6 +10,7 @@
 
 ```sh
 uv sync --locked
+make pi-install
 bbx-runtime run-agent --task <任务UUID> --type explore --seed
 bbx-runtime run-agent --task <任务UUID> --type explore --intent I1
 bbx-runtime run-agent --task <任务UUID> --type derive
@@ -44,7 +45,7 @@ docker compose --project-name blackboard-explorer up -d --wait
 
 ## 执行与同步
 
-`AgentRunner(settings, service, objects, manager).run_agent(task_id, agent_id, task_type, intent_id=None, mode=None, *, agent_token)` 运行一个已登记 Agent。它读取任务固定版本 profile、组装工具与模板，并创建显式 MAF session。单次模型 HTTP 请求超时不超过 120 秒，整个 run 的硬时限为任务时长加交接宽限及一分钟清扫余量；调度器仍按原探索预算进入 closing。正常、拒绝、运行错误都调用 finish；取消会完成 finish 与资源清理后再传播。测试可以注入 ScriptedChatClient 和 FakeEnvd HTTP 客户端。
+`AgentRunner(settings, service, objects, manager).run_agent(task_id, agent_id, task_type, intent_id=None, mode=None, *, agent_token)` 运行一个已登记 Agent。它读取任务固定版本 profile、组装工具与模板，并使用显式持久会话接入 PI 原生循环。单次模型 HTTP 请求超时不超过 120 秒，整个 run 的硬时限为任务时长加交接宽限及一分钟清扫余量；调度器仍按原探索预算进入 closing。正常、拒绝、运行错误都调用 finish；取消会完成 finish 与资源清理后再传播。测试可以注入 ScriptedChatClient 和 FakeEnvd HTTP 客户端。
 
 工具按 explore / derive / close 分别装配，只有 explore 有 MCP execute_command。post_fact 直接提交，Agent 自行判断重复；证据文件上限 50 MiB，由 envd 检查路径与权限，上传后替换为对象 URI。模型不能自报 `uri` / `auto`。携带真实 call_id 的证据会附加完整工具记录。read_evidence 返回带边界且转义的证据数据。
 
@@ -56,17 +57,17 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 
 ## 价格
 
-默认 profile 使用 2026-09-24 [DeepSeek 官方价格](https://api-docs.deepseek.com/quick_start/pricing/)的 USD 高峰单价，按每百万 token 计价：缓存命中 0.006、未命中 0.30、输出 1.20。推理 token 已含在输出中，不重复收费。这是固定版本的保守预算估算；错峰费率为一半，需在运行用 profile 中明确选定对应价格再核对账单。`off_peak` 是该价格快照的标记，不会动态切换时段。
+任务沿用固定的模型价格表与人民币账本，区分缓存命中、未命中和输出；推理 token 已包含在输出中，不重复收费。启用 DeepSeek 时段计划时，保存并使用每次调用的有效时段价。PI 提供 token 用量，平台通过原收据/outbox 幂等结算；PI 的美元估价不覆盖平台价格。缺少或不一致的用量保持未知，不能伪记为已知零费用。
 
 ## 模块接口
 
-- `models.make_client(model, api_key=…, explore_max_steps=…, conclude_grace_calls=…, max_duration_seconds=…)`：固定版本 MAF 的 DeepSeek Chat Completions 客户端，保留缓存 token 计数。`model_run_options` 传入 profile 的 `reasoning_effort`。
+- `models.make_client(model, api_key=…, explore_max_steps=…, conclude_grace_calls=…, max_duration_seconds=…)`：锁定版本的 PI 多厂商模型客户端，保留缓存 token 用量并转换为平台收据。`model_run_options` 传入 profile 的 `reasoning_effort`。
 - `models.load_runtime_profile(Path | Mapping)`：本地目录或黑板固定版本快照；快照包含提示词正文。
 - `clients.BlackboardClient(url, token)`：异步上下文管理器，封装任务、状态、事件、快照、对象、证据、事实/意图、Agent 生命周期与用量接口。`with_token(agent_token)` 共用连接池、绑定 Agent 身份；服务 token 不能代替 Agent 写入身份。
 - `clients.EnvdClient(url, token)`：健康、用户创建、文件 stat/read/stream、archive stream。
 - `clients.object_store(settings)`：共用 `bbx_objects.ObjectStore`。
 - `execenv.ExecEnvManager(settings)`：`provision(task, profile)`、`find(task)`、`create_user(handle, agent)`、`archive_to_store(handle)`、`destroy(task)`。归档返回 URI、字节数与 fallback；不隐式改变黑板状态。
-- `testing.ScriptedChatClient`：执行真实 MAF 工具循环的脚本模型，支持工具、文本、用量、条件跳转与输入记录。
+- `testing.ScriptedChatClient`：执行PI 原生工具循环的脚本模型，支持工具、文本、用量、条件跳转与输入记录。
 - `testing.FakeEnvd`：ASGI/MCP 替身，预设命令结果，临时目录文件，不执行 shell。
 
 ## 执行容器网络
@@ -85,7 +86,7 @@ make test-integration # 同时构建执行环境、代理与运行器镜像；�
 make test-live
 ```
 
-普通与集成测试排除 `live` 标记。MAF 固定为 core 1.19.0、openai 1.14.4；升级时重跑 `tests/verification`。默认 enqueue 注入不能跨工具轮次保留，运行器使用公开 Content.text/result 追加黑板增量，不挂 MessageInjectionMiddleware。详见 `docs/tasks/M2a-report.md` 和 `docs/tasks/M2b-report.md`。
+普通与集成测试排除 `live` 标记。PI 三个组件固定为 1.4.0，Node.js 最低 22.21（使用原生环境代理支持）。`make check` 同时执行 Node 原生组件检查、Ruff、Pyright 和脚本模型回归，不调用真实模型。升级时重跑协议、会话、执行围栏与 Docker 垂直检查。工具循环实际运行在 `pi-agent-core`，模型协议由 `pi-ai` 完成；Python 的 `pi/` 目录只保留持久格式、业务 hook 和进程边界适配。
 
 
 ## 真实闭环检查（会调用 DeepSeek）
@@ -110,7 +111,7 @@ make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--keep --timeout 1800
 
 ## 持久会话与干预
 
-探索运行使用 MAF 公共 `AgentSession.to_dict/from_dict` 和逐模型调用历史持久化；初始指令单独保存，工具执行中断的未配对调用明确标为结果未知，恢复时不重跑旧命令。模型调用前认领用户消息，以稳定消息 ID 注入；消息确认与 checkpoint 同事务。CAS、claim token 与租约防止覆盖或重复回复；不确定提交读回对账。
+探索运行保留平台 `AgentSession` 快照与逐模型调用持久化，兼容旧 MAF 历史并保存 PI 原生元信息；初始指令单独保存，工具执行中断的未配对调用明确标为结果未知，恢复时不重跑旧命令。模型调用前认领用户消息，以稳定消息 ID 注入；消息确认与 checkpoint 同事务。CAS、claim token 与租约防止覆盖或重复回复；不确定提交读回对账。
 
 ChatWorker 对不同 Agent 最多四路并行，同一 Agent 串行。已结束的 Agent 仅有 get/search/read_evidence，恢复原会话回答用户；没有原生会话时标为 legacy。复盘单次最长180秒、最多8轮工具迭代，用量保存于消息，不重开任务或改变验收。
 

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent, Content
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.review import build_review_tools
@@ -16,6 +15,7 @@ from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.telemetry import ToolObservationMiddleware
 from bbx_runtime.ctf.tool_results import json_tool_result
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, Content
 from bbx_runtime.session import CheckpointHistoryProvider, ToolResultCheckpointMiddleware
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import TURN, MemoryCtf
@@ -178,14 +178,11 @@ async def test_unknown_errors_keep_original_exception_and_are_not_echoed_to_mode
         ]
     )
     async with Agent(client=client, tools=tools) as agent:
-        await agent.run("read")
-    results = [
-        content.result
-        for message in client.received_messages[-1]
-        for content in message.contents
-        if content.type == "function_result"
-    ]
-    assert results == ["Error: Function failed."]
+        with pytest.raises(type(error)) as caught:
+            await agent.run("read")
+    assert caught.value is error
+    assert len(client.received_messages) == 1
+    assert "secret-sentinel" not in str(client.received_messages)
 
 
 @pytest.mark.parametrize("message", ["Invalid CTF board request", "Invalid after_version"])

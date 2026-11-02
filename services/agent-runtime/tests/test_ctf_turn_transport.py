@@ -663,7 +663,7 @@ async def test_authoritative_stop_retires_only_exact_old_settlement(wrong_identi
 async def test_cancelled_partial_stream_failed_checkpoint_retries_as_interrupted_only(monkeypatch):
     import asyncio
 
-    from agent_framework import ChatResponseUpdate, Content
+    from bbx_runtime.pi import ChatResponseUpdate, Content
     from bbx_runtime.testing.scripted_client import ScriptedChatClient
     from test_ctf_provider_boundary import DispatchService
     from test_ctf_runtime import TURN as scripted_turn

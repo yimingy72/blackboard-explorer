@@ -3,7 +3,6 @@
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from agent_framework import tool
 from bbx_contracts.ctf import (
     CTF_BOARD_RESULT_MAX_BYTES,
     CtfAssignmentInstruction,
@@ -19,6 +18,7 @@ from pydantic import Field
 
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
+from bbx_runtime.pi import tool
 
 
 def build_board_tools(

@@ -5,8 +5,6 @@ from typing import Any, cast
 
 import httpx2
 import pytest
-from agent_framework import Content, Message
-from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from bbx_runtime.model_errors import (
     ModelRequestValidationError,
     ModelStreamError,
@@ -14,6 +12,8 @@ from bbx_runtime.model_errors import (
     model_error_metadata,
 )
 from bbx_runtime.models import make_client
+from bbx_runtime.pi import Content, Message
+from bbx_runtime.pi.exceptions import ChatClientException, ChatClientInvalidRequestException
 from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
 
@@ -293,7 +293,7 @@ async def test_openai_sdk_retries_are_configured_without_application_loop(provid
             max_duration_seconds=10,
         ),
     )
-    assert client.client.max_retries == 4
+    assert client.max_retries == 4
     assert model_attempt_limit(provider) == 5
     await close_model_client(client)
 

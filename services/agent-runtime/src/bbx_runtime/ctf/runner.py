@@ -1,4 +1,4 @@
-"""Execute one member turn with a fixed native MAF session."""
+"""Execute one member turn with a fixed durable Pi conversation."""
 
 import asyncio
 import logging
@@ -11,14 +11,6 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from agent_framework import (
-    Agent,
-    BaseChatClient,
-    ChatContext,
-    ChatMiddleware,
-    MessageInjectionMiddleware,
-    ResponseStream,
-)
 from bbx_contracts.ctf import (
     CtfAgentProfile,
     execution_agent_id,
@@ -64,6 +56,14 @@ from bbx_runtime.models import (
     ctf_model_run_options,
     make_client,
     resolve_model_credentials,
+)
+from bbx_runtime.pi import (
+    Agent,
+    BaseChatClient,
+    ChatContext,
+    ChatMiddleware,
+    MessageInjectionMiddleware,
+    ResponseStream,
 )
 from bbx_runtime.session import ToolResultCheckpointMiddleware
 from bbx_runtime.settings import Settings
@@ -157,7 +157,7 @@ class ModelErrorMiddleware(ChatMiddleware):
                     raise
 
             context.result = ResponseStream(
-                updates(), finalizer=lambda _: inner.get_final_response()
+                updates(), finalizer=lambda _: inner.get_final_response(), retain_updates=False
             )
 
 

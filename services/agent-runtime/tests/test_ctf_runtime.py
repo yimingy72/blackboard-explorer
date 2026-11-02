@@ -9,13 +9,13 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from agent_framework import Agent, Content, Message, MessageInjectionMiddleware, tool
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import budget_exhausted
 from bbx_runtime.ctf.middleware import PENDING_KEY, MailboxMiddleware
 from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, Content, Message, MessageInjectionMiddleware, tool
 from bbx_runtime.session import CheckpointHistoryProvider
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
@@ -94,11 +94,10 @@ async def test_runner_records_failed_model_stream_without_tools_retries_or_inven
     from pathlib import Path
     from types import SimpleNamespace
 
-    from agent_framework import ChatResponseUpdate, Content
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.runner import CtfRunner
     from bbx_runtime.model_errors import ModelStreamError
-    from bbx_runtime.models import _require_complete_stream
+    from bbx_runtime.pi import ChatResponseUpdate, Content
     from bbx_runtime.testing.scripted_client import ScriptUsage
 
     profile = load_ctf_profile(Path("profiles/ctf"))
@@ -154,7 +153,17 @@ async def test_runner_records_failed_model_stream_without_tools_retries_or_inven
                     )
                 )
 
-            return _require_complete_stream(self._build_response_stream(updates()), responses=True)
+            stream = self._build_response_stream(updates())
+
+            def reject(_response):
+                raise ModelStreamError(
+                    "invalid_response" if terminal == "incomplete" else "unknown",
+                    event_type=f"response.{terminal}",
+                    incomplete_reason="max_output_tokens",
+                )
+
+            stream.with_result_hook(reject)
+            return stream
 
     class FakeEnvd:
         calls = []
@@ -755,10 +764,10 @@ async def test_model_error_observation_failure_preserves_original_exception():
     from pathlib import Path
     from types import SimpleNamespace
 
-    from agent_framework import ChatContext
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.runner import ModelErrorMiddleware
     from bbx_runtime.model_errors import ModelStreamError
+    from bbx_runtime.pi import ChatContext
 
     class UnavailableObservations:
         async def runtime(self, *_args, **_kwargs):
@@ -1100,9 +1109,9 @@ async def test_unconfirmed_checkpoint_blocks_goal_claimed_finalization():
 async def test_bounded_model_view_preserves_full_persistent_history():
     from pathlib import Path
 
-    from agent_framework import Content, Message
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.middleware import CtfHistoryProvider
+    from bbx_runtime.pi import Content, Message
 
     service = MemoryCtf()
     checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
@@ -1130,9 +1139,9 @@ async def test_bounded_model_view_preserves_full_persistent_history():
 async def test_bounded_model_view_can_resume_after_a_complete_tool_batch():
     from pathlib import Path
 
-    from agent_framework import Content, Message
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.middleware import CtfHistoryProvider
+    from bbx_runtime.pi import Content, Message
 
     service = MemoryCtf()
     checkpoint = await load_checkpoint(cast(CtfClient, service), "task", "member-1", TURN, "role")
@@ -1166,9 +1175,9 @@ async def test_bounded_model_view_can_resume_after_a_complete_tool_batch():
 async def test_context_limit_view_uses_real_persisted_tool_batches():
     from pathlib import Path
 
-    from agent_framework import Message, tool
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.middleware import CtfHistoryProvider, mailbox_message
+    from bbx_runtime.pi import Message, tool
 
     service = MemoryCtf()
     service.post("first", "original task")

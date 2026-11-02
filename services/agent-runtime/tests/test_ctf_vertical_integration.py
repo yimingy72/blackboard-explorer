@@ -13,7 +13,6 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agent_framework import ResponseStream
 from alembic import command
 from alembic.config import Config
 from bbx_blackboard.api import create_app
@@ -25,6 +24,7 @@ from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.execenv import ExecEnvHandle
 from bbx_runtime.execenv.manager import ArchiveResult
+from bbx_runtime.pi import ResponseStream
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall

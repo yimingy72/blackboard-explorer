@@ -1,4 +1,4 @@
-"""Persist bounded trace metadata and the exact public MAF text content."""
+"""Persist bounded trace metadata and the provider-returned Pi text content."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ import logging
 import secrets
 from typing import Any, Literal
 
-from agent_framework import ChatResponse
-
 from bbx_runtime.context import RunContext
+from bbx_runtime.pi import ChatResponse
 
 TraceKind = Literal["initial_context", "board_update", "model_output", "model_error"]
 logger = logging.getLogger(__name__)

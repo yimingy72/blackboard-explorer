@@ -6,19 +6,19 @@ from typing import cast
 
 import httpx
 import pytest
-from agent_framework import (
+from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
+from bbx_runtime.middleware import (
+    GraceGateMiddleware,
+    ToolArgumentFeedbackMiddleware,
+    ToolLogMiddleware,
+)
+from bbx_runtime.pi import (
     Agent,
     AgentSession,
     FunctionInvocationContext,
     MiddlewareFailure,
     MiddlewareTermination,
     tool,
-)
-from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
-from bbx_runtime.middleware import (
-    GraceGateMiddleware,
-    ToolArgumentFeedbackMiddleware,
-    ToolLogMiddleware,
 )
 from bbx_runtime.session import SessionCheckpoint
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall

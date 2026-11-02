@@ -11,13 +11,13 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agent_framework import BaseChatClient, ChatResponse, ResponseStream
 from bbx_blackboard.api import create_app
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, EnvdClient
 from bbx_runtime.context import CloseMode, TaskType
 from bbx_runtime.execenv import ExecEnvHandle
+from bbx_runtime.pi import BaseChatClient, ChatResponse, ResponseStream
 from bbx_runtime.runner import AgentRunner, RunResult
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import Settings

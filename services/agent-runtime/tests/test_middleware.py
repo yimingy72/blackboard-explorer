@@ -9,15 +9,6 @@ from uuid import uuid4
 
 import httpx2
 import pytest
-from agent_framework import (
-    Agent,
-    AgentSession,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    Message,
-    tool,
-)
 from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.models import Price, Usage
 from bbx_objects import ObjectStore
@@ -35,6 +26,15 @@ from bbx_runtime.middleware import (
     append_board_update,
 )
 from bbx_runtime.models import load_runtime_profile
+from bbx_runtime.pi import (
+    Agent,
+    AgentSession,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    tool,
+)
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,

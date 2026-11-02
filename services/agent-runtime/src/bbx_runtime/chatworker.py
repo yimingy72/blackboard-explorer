@@ -1,4 +1,4 @@
-"""Resume archived MAF sessions for strictly read-only user follow-ups."""
+"""Resume archived conversations for strictly read-only user follow-ups."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import logging
 from typing import Any, Literal, cast
 
 import httpx
-from agent_framework import Agent, AgentSession, BaseChatClient, Content, Message, tool
 from bbx_contracts.models import ModelConfig
 from bbx_objects import ObjectStore
 
@@ -26,6 +25,7 @@ from bbx_runtime.models import (
     model_run_options,
     resolve_model_credentials,
 )
+from bbx_runtime.pi import Agent, AgentSession, BaseChatClient, Content, Message, tool
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
     SessionCheckpoint,

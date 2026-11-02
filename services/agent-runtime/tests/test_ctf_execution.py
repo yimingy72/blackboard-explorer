@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from agent_framework import AgentSession
 from bbx_runtime.ctf.execution import CtfExecutionAdapter, UnknownCommandOutcome
+from bbx_runtime.pi import AgentSession
 
 
 class Env:
@@ -276,9 +276,9 @@ async def test_replacement_callback_runs_only_after_local_checkpoint_and_join():
 
 
 async def test_native_maf_tool_injects_occurrence_context_outside_model_schema():
-    from agent_framework import Agent
     from bbx_runtime.ctf.telemetry import ToolObservationMiddleware
     from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.pi import Agent
     from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
     seen = []
@@ -332,9 +332,9 @@ async def test_native_maf_tool_injects_occurrence_context_outside_model_schema()
 )
 async def test_native_unknown_command_aborts_before_model_can_repeat_effect(error):
     import httpx
-    from agent_framework import Agent
     from bbx_runtime.ctf.failures import CtfToolFailure
     from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.pi import Agent
     from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
     original = {
@@ -387,9 +387,9 @@ async def test_native_unknown_command_cancels_suspended_sibling_before_its_effec
     import asyncio
 
     import httpx
-    from agent_framework import Agent
     from bbx_runtime.ctf.failures import CtfToolFailure
     from bbx_runtime.ctf.tools import build_tools
+    from bbx_runtime.pi import Agent
     from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
     sibling_started, sibling_cancelled = asyncio.Event(), asyncio.Event()

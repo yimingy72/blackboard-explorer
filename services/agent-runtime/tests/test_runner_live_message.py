@@ -8,12 +8,12 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from agent_framework import AgentSession, Content, Message
 from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.models import Params
 from bbx_contracts.profile import load_profile
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient, RemoteError
+from bbx_runtime.pi import AgentSession, Content, Message
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall

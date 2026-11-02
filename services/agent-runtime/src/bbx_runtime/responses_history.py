@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
 
-from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
+from bbx_runtime.pi import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
 
 logger = logging.getLogger(__name__)
 _VISIBLE_TYPES = {"text", "data", "uri", "hosted_file"}
@@ -20,7 +20,7 @@ _SHELL_KEYS = {
 
 
 def _result_items(content: Content) -> list[Content]:
-    """Match MAF's current text result while retaining native rich result items."""
+    """Keep current text results alongside their original rich result items."""
     current = list(
         Content.from_function_result(content.call_id or "", result=content.result).items or []
     )
@@ -39,7 +39,7 @@ def _result_items(content: Content) -> list[Content]:
 def project_tool_observations(messages: Sequence[Message]) -> Sequence[Message]:
     """Replace whole replay-ineligible groups without changing the durable transcript.
 
-    MAF remains responsible for grouping and validating everything not projected.
+    Atomic group boundaries remain intact; Pi validates the outgoing transcript.
     Incomplete, ambiguous and hosted-tool groups deliberately retain its rejection.
     """
     if not any(
@@ -68,7 +68,7 @@ def project_tool_observations(messages: Sequence[Message]) -> Sequence[Message]:
             and (content.protected_data or content.additional_properties.get("encrypted_content"))
         }
         missing = [content for content in reasoning if content.id not in replayable_ids]
-        # MAF emits empty reasoning markers, and gateways can emit whitespace-only
+        # Legacy sessions contain empty reasoning markers, and gateways can emit whitespace-only
         # deltas. Complete tool evidence does not depend on visible reasoning text.
         if replayable_ids or not missing or any(not content.id for content in missing):
             continue
@@ -134,7 +134,7 @@ def project_tool_observations(messages: Sequence[Message]) -> Sequence[Message]:
                 )
                 observation = [Content.from_text(label + json.dumps(metadata, ensure_ascii=False))]
                 if content.type == "function_result":
-                    # Canonical MAF result items retain native images/files instead of base64 text.
+                    # Preserve rich images/files alongside the current text.
                     observation.extend(_result_items(content))
                 projected.append(
                     Message(

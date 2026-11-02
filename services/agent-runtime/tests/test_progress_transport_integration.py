@@ -11,12 +11,12 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agent_framework import AgentSession
 from bbx_blackboard.api import create_app
 from bbx_blackboard.progress import AGENT_ID, SOURCE_TYPES
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_blackboard.store import schema as s
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
+from bbx_runtime.pi import AgentSession
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.progress.worker import ProgressWorker
 from bbx_runtime.settings import Settings
@@ -562,7 +562,7 @@ async def test_unsent_request_failure_is_terminal_and_can_be_explicitly_resumed(
     if not cancel_after_reserve:
         assert not any(path.endswith("/settle") for _, path, _ in transport.operations)
     view = await board._json("GET", f"/tasks/{tid}/progress")
-    assert view["status"] == "paused", view
+    assert view["status"] == ("paused" if cancel_after_reserve else "budget_exhausted"), view
     assert all(Decimal(view["budget"][field]) == 0 for field in ("reserved", "unknown", "spent"))
     async with app.state.engine.connect() as conn:
         saved_job = (

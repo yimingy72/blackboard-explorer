@@ -12,15 +12,6 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from agent_framework import (
-    Agent,
-    AgentSession,
-    BaseChatClient,
-    Content,
-    FunctionTool,
-    MCPStreamableHTTPTool,
-    Message,
-)
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
@@ -43,6 +34,15 @@ from bbx_runtime.models import (
     resolve_model_credentials,
 )
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.pi import (
+    Agent,
+    AgentSession,
+    BaseChatClient,
+    Content,
+    FunctionTool,
+    MCPStreamableHTTPTool,
+    Message,
+)
 from bbx_runtime.receipts import parse_receipt
 from bbx_runtime.recovery import (
     MAX_AGENT_RECOVERIES,
@@ -651,7 +651,7 @@ class AgentRunner:
                                         ],
                                     ),
                                 ]
-                                # A new MAF run owns a fresh stream aggregator. Never
+                                # Each Pi run owns a fresh response stream. Never
                                 # retry inside a stream whose fragments have been yielded.
                                 continue
                             receipt = parse_receipt(response.text, task_type)

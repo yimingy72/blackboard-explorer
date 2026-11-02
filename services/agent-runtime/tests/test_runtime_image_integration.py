@@ -1,6 +1,7 @@
 """Boot the runtime image without models, verify its lock and SIGTERM shutdown."""
 
 import asyncio
+import os
 from uuid import uuid4
 
 import asyncpg
@@ -49,7 +50,9 @@ HTTPServer(('0.0.0.0', 8000), Handler).serve_forever()
 async def test_runtime_image_lock_and_graceful_shutdown():
     docker_client = docker.from_env()
     try:
-        docker_client.images.get("bbx-agent-runtime:latest")
+        docker_client.images.get(
+            os.environ.get("BBX_RUNTIME_TEST_IMAGE", "bbx-agent-runtime:latest")
+        )
     except ImageNotFound:
         pytest.skip("Build bbx-agent-runtime:latest with make image-agent-runtime")
     finally:
@@ -85,7 +88,9 @@ async def test_runtime_image_lock_and_graceful_shutdown():
 
                 def runtime(name):
                     container = (
-                        DockerContainer("bbx-agent-runtime:latest")
+                        DockerContainer(
+                            os.environ.get("BBX_RUNTIME_TEST_IMAGE", "bbx-agent-runtime:latest")
+                        )
                         .with_name(name)
                         .with_network(network)
                         .with_volume_mapping("/var/run/docker.sock", "/var/run/docker.sock", "rw")

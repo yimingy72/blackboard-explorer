@@ -9,7 +9,6 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
-from agent_framework import FunctionInvocationContext
 from bbx_contracts.ctf import CtfDrainProof, execution_agent_id
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -19,6 +18,7 @@ from bbx_runtime.clients.envd import EnvdClient
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.failures import CtfToolFailure
 from bbx_runtime.ctf.telemetry import observe
+from bbx_runtime.pi import FunctionInvocationContext
 from bbx_runtime.session import SessionCheckpoint
 
 

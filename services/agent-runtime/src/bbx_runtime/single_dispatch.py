@@ -4,11 +4,12 @@ from datetime import timedelta
 from typing import Any
 
 import httpx
-from agent_framework import Content, FunctionTool, MCPStreamableHTTPTool
+
+from bbx_runtime.pi import Content, FunctionTool, MCPStreamableHTTPTool
 
 
 class SingleDispatchExecutionTool(MCPStreamableHTTPTool):
-    """Keep MAF discovery and lifecycle while bypassing automatic command replay."""
+    """Reuse SDK discovery while keeping command dispatch separate from reconnects."""
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Content]:
         if tool_name != "execute_command":

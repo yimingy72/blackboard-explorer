@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from agent_framework import Agent, AgentSession, tool
 from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_objects import ObjectStore
 from bbx_runtime.clients import BlackboardClient
@@ -12,6 +11,7 @@ from bbx_runtime.context import RunContext
 from bbx_runtime.middleware import BoardSyncMiddleware
 from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.opening import OpeningContextProvider
+from bbx_runtime.pi import Agent, AgentSession, tool
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from usage_receipt_fixtures import heartbeat_ack

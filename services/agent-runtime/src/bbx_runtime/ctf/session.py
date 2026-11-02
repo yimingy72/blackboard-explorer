@@ -5,11 +5,11 @@ import logging
 from typing import Any, cast
 
 import httpx
-from agent_framework import AgentSession, Message
 
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.context import message_signature, serialized_message_signature
+from bbx_runtime.pi import AgentSession, Message
 from bbx_runtime.session import SessionCheckpoint, repair_unpaired_tool_calls
 
 logger = logging.getLogger(__name__)

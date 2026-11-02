@@ -1,13 +1,12 @@
-"""Explicit ordinary-tool refusals and MAF's public fail-closed bridge."""
+"""Explicit ordinary-tool refusals and the Pi tool failure boundary."""
 
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from agent_framework import Content, MiddlewareFailure
-
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.pi import Content, MiddlewareFailure
 
 ToolResult = str | Content
 
