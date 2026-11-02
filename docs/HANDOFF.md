@@ -7,6 +7,8 @@
 
 ## 0. 一页速览
 
+- **2026-11-02 当前开发**：工作树仍为 `/Users/yym/bbx-wt/platform-performance-audit`，分支为 `feature/pi-runtime-migration`。前序CTF性能、参数反馈、PI迁移和五项复审修复已按依赖分成9个提交；加上已有两项设计提交，待合并main共11个提交。当前2605普通、155前端、5原生检查及8项定向集成通过；候选 `bbx-pi-runtime:20261031` 的72个相关文件与源码一致，详见 [交付报告](tasks/PI-runtime-delivery-report.md)。main仍为 `55044a9`，主工作树干净、可快进合并；尚未合并推送，本地/公网服务尚未切换PI。
+
 - **项目定位**：**通用问题求解引擎**。黑板式多Agent是实现机制：给定目标、领域资料与文字验收条件，Agent通过共享Fact/Intent协作，Close裁定是否达成。代码诊断和mini-shop只是测试场景；通用Profile不预置任何单一评测的专属检查清单。
 - **仓库**：`/Users/yym/blackboard-explorer`（`main` 分支，已打标签 `m0`、`m1`、`m2`、`m3`、`m4`、`m5`）。
 - **设计正本**：`docs/design/` 下三份文档（桌面上的同名文件是指向它们的符号链接）。实现以它们为准。
@@ -74,9 +76,16 @@
   | Progress-readme / current-image-cleanup | ✅ README同步成果树、整理Agent、费用/权限/问答/配置与既有部署入口；本地清19个旧标签/约505.5MB缓存，公网清18个旧标签/缓存0B，当前应用及执行依赖保留；两端全部容器/卷和23张表摘要、MinIO清单保持，服务零重启（2026-10-19） |
   | Model-runtime-reliability | ✅ 模型目录/输入输出上限、Docker宿主机地址、Responses工具续传与整理Agent故障恢复已按已部署快照单独提交4bc9473并合并推送；前序验证与发布见对应报告（2026-10-28 Git发布） |
   | CTF-architecture-refinement | ✅ 第一批完整任务索引、逐题批量派工/题目引用、关键成果事务通知、渐进提示词和读回工具校验已提交9dec897并合并推送；2463普通、220 CTF数据库集成、155前端通过。本地ctf-architecture-20261028/迁移0020，23任务191会话及88639对象保留；CTF新配置v19仅供新任务，资源适配/角色策略/长作业仍为后续阶段（2026-10-28） |
+  | CTF-performance-followup | ✅ 精确记录共享、通知保护前缀退休、可选角色参数、显式异步命令及原Session收信链路已本地发布ctf-performance-20261028；2589普通、223 CTF数据库、155前端、6浏览器通过，Ubuntu/Kali各3容器/垂直检查通过。0020保持，23任务191会话及88640对象保留，CTF v20/task-settings v16；角色继承、异步默认未启用，源码未合并推送（2026-10-28） |
+  | CTF-command-input-feedback | ✅ 本地400d5309最后一次命令首次使用未创建cwd、命令内才mkdir；旧镜像复现参数拒绝→MCP ExceptionGroup→全队失败。现明确执行前参数拒绝返回可纠正结果，增加安全子异常类型；2601普通、155前端通过，Ubuntu/Kali各6实际容器/垂直检查通过。本地ctf-input-feedback-20261028，17任务94会话及36017对象保留，原任务未续跑，源码未合并推送（2026-10-28） |
+  | PI-runtime-migration | ✅ 源码及前序CTF改动已在任务分支分组提交；11-02重新验证2605普通、155前端、5原生及8项定向集成，候选72文件一致。初版430全量集成和10-31的15相关集成保留为历史记录；未部署、未续跑、未合并推送，见交付报告（2026-11-02） |
   | 历史E2效果样本 | 已归档3次default及1次single，4次均由主代理复核；1次中断、1次未开始，不能据此推断统计收益 |
 
-- **最新本地交付（2026-10-28）**：`9dec897` 已合并main并推送GitHub，本地运行 `ctf-architecture-20261028`、迁移0020，入口 `http://127.0.0.1:58000/`。CTF模板与工具新版本为ctf v19 / ctf-task-settings v15；旧任务快照、模型价格、资源及已有工具保留。22张业务表原字段、23任务、191会话与88639对象在迁移前后核验一致，随后只新增2个配置版本。本次未更新公网、未续跑任务，见[架构改造报告](tasks/CTF-architecture-refinement-report.md)。
+- **最新本地交付（2026-10-28，参数反馈修补）**：本地应用/runtime/执行镜像已切换 `ctf-input-feedback-20261028`，迁移保持0020、CTF配置仍v20。22张业务表、17任务、94会话及36017对象前后核验一致，旧失败400d5309、原预算和档案保持，未续跑、未更新公网或GitHub。见[参数反馈修复报告](tasks/CTF-command-input-feedback-report.md)。
+
+- **性能后续交付记录（2026-10-28）**：当时本地运行 `ctf-performance-20261028`，配套Ubuntu/Kali执行镜像已推广，迁移保持0020。入口 `http://127.0.0.1:58000/`，新配置ctf v20 / ctf-task-settings v16；旧任务、预算、原配置版本及存档已核验保留，角色参数继承、异步工具仍须显式开启。未续跑任务、未更新公网，性能后续源码在feature/ctf-performance-followup尚未合并推送，见[后续报告](tasks/CTF-performance-followup-report.md)。
+
+- **上一批本地交付（2026-10-28，信息闭环）**：`9dec897` 已合并main并推送GitHub，当时本地运行 `ctf-architecture-20261028`、迁移0020。CTF模板与工具新版本为ctf v19 / ctf-task-settings v15；旧任务快照、模型价格、资源及已有工具保留。22张业务表原字段、23任务、191会话与88639对象在迁移前后核验一致，随后只新增2个配置版本。见[架构改造报告](tasks/CTF-architecture-refinement-report.md)。
 
 - **成果树历史交付（2026-10-19）**：成果树与独立MAF成果整理Agent已合并main为 `5540815` 并推送GitHub，该次交付时两端运行 `progress-tree-20261019`、迁移0019。入口为本地 `http://127.0.0.1:58000/` 和公网 `http://101.201.116.63:58000/`；普通任务可切换成果树，旧任务显式启用，新任务明确展示额外整理额度。19/23任务、150/223会话与预算/配置/归档保留，详见[成果树报告](tasks/Blackboard-progress-tree-report.md)。后续README及镜像/构建缓存清理不重启服务，保护当前版本和执行依赖，详见[清理报告](tasks/Progress-readme-image-cleanup-report.md)；两端数据不自动双向同步。
 - **本地修复与迁移交付记录**：本地网络识别/失败清理 `f5fe10b`、服务器AppArmor兼容 `6894cac` 及部署记录 `cebb39d` 已合并main为 `d1dffd3` 并推送GitHub。合并版本2135普通/7项相关Docker集成通过，Ubuntu/Kali两模式sudo、Agent流量归属、HTTP/HTTPS和官方Wireshark 4.4.19原生解析实测通过。该检查点公网17任务/99会话/29Profile/5平台配置和21张表完整摘要保持，28,227对象/303,462,819字节与更新前一致，本地18任务保持。见[本地修复报告](tasks/Local-runtime-network-report.md)、[部署报告](tasks/Server-deployment-report.md)及第0.6节。
@@ -447,7 +456,9 @@ EVAL 任务在最后阶段被 Codex 的模型服务以"可能的网络安全风�
 
 ## 6.1 设计文档待同步
 
-2026-10-28 CTF信息闭环与逐题派工已先同步独立提案（设计提交0a5cf68）再实现发布：短索引、按题事务批量派工、nullable消息题目引用、关键记录通知、配置读回能力及旧数据兼容合同均已记录。三份通用黑板正本未混入CTF规则；后续统一以[CTF独立提案](proposals/CTF-team-mode-design.md)的2026-10-28节为准。可信资源状态适配、角色模型策略和异步长作业尚未实施，保留独立阶段，不计作本轮完成。
+2026-10-30 PI运行时迁移已先提交独立合同 `c421120`，同步三份正本、成果树与CTF提案入口；框架选择以[PI运行时迁移](design/PI运行时迁移.md)为准，历史MAF实现说明保留为旧版记录。初版完成完整离线/隔离集成验证；10-31五项复审修复后2605普通及15相关集成通过，现有PG事务、预算、工具权限和执行隔离保持。pi-durable/chord取舍见[迁移报告](tasks/PI-runtime-migration-report.md)，复审关闭见[修复报告](tasks/PI-runtime-re-review-fix-report.md)。11-02已完成源码分组提交及重新验证，见[交付报告](tasks/PI-runtime-delivery-report.md)；没有新增未同步设计待决，尚未合并main或发布。
+
+2026-10-28 CTF信息闭环与逐题派工已先同步独立提案（设计提交0a5cf68）再实现发布；后续精确共享、通知退休、角色参数及异步长命令同样先记合同9bdc6e6再实施，并已本地发布。三份通用黑板正本未混入CTF规则；后续统一以[CTF独立提案](proposals/CTF-team-mode-design.md)的2026-10-28各节为准。可信资源状态适配和稳定connector仍未实施，不计作本轮完成；性能后续源码尚未合并推送。
 
 Blackboard-progress-tree已按用户批准先行同步三份正本及[扩展合同](design/成果树与整理Agent.md)，设计提交0c0b463。整理角色独立于三种求解Worker，以Intent为线索全局归并Fact和过程，独立费用/租约，不影响Close、求解水位和预算。没有新增未同步设计项，见[报告](tasks/Blackboard-progress-tree-report.md)。
 
