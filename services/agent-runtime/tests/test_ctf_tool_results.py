@@ -26,6 +26,22 @@ async def invoke(item, **arguments):
     return result[0].text
 
 
+@pytest.mark.parametrize(
+    "status,message,code",
+    [
+        (422, "Valid record ID required", "invalid_arguments"),
+        (404, "Challenge record not found", "record_not_found"),
+    ],
+)
+async def test_exact_record_errors_are_recoverable_model_feedback(status, message, code):
+    async def reject():
+        raise RemoteError(status, message)
+
+    result = await json_tool_result(reject())
+    assert isinstance(result, Content) and result.text is not None
+    assert json.loads(result.text)["error"]["code"] == code
+
+
 async def test_native_maf_conflict_refresh_update_and_recover_saved_feedback():
     writes = []
 

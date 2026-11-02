@@ -1,21 +1,29 @@
 import LoadingState from '../components/LoadingState';
-import { Button, Checkbox, Collapse, Input, Select, Segmented, App, Form } from 'antd';
+import { Button, Checkbox, Collapse, Input, InputNumber, Select, Segmented, App, Form } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError, type WorkerTools } from '../api/client';
+import { api, ApiError, type CtfRoleRunOptions, type WorkerTools } from '../api/client';
+import { reasoningOptions } from '../components/reasoningOptions';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/ProfilesPage.module.css';
 type Role = 'lead' | 'teammate';
 type Draft = {
     prompt: string;
     tools: WorkerTools;
+    run_options: CtfRoleRunOptions;
 };
 type Settings = Awaited<ReturnType<typeof api.getCtfWorkerSettings>>;
 type Binding = NonNullable<Settings['profile']['platform_tools']>[number];
 const roles: Role[] = ['lead', 'teammate'];
-const common = ['list_members', 'send_message', 'execute_command', 'list_challenges', 'get_challenge', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate', 'read_turn_result', 'read_saved_tool_result', 'view_image'];
+const common = ['list_members', 'send_message', 'execute_command', 'start_command', 'cancel_command', 'read_command_result', 'list_challenges', 'get_challenge', 'get_record', 'create_challenge', 'update_challenge', 'list_records', 'append_record', 'register_artifact', 'request_help', 'record_candidate', 'read_turn_result', 'read_saved_tool_result', 'view_image'];
 const builtin = { lead: [...common, 'create_challenges', 'assign_challenges', 'create_teammate', 'stop_teammate', 'resume_teammate', 'remove_teammate', 'finish_task', 'set_verification_required', 'confirm_messages', 'list_deferred_messages'], teammate: common };
-const from = (value: Settings, role: Role): Draft => ({ prompt: value.profile.prompt_templates[role], tools: value.profile.worker_tools[role] });
+const from = (value: Settings, role: Role): Draft => ({
+    prompt: value.profile.prompt_templates[role], tools: value.profile.worker_tools[role],
+    run_options: {
+        reasoning_effort: value.profile.role_run_options?.[role]?.reasoning_effort ?? undefined,
+        max_output_tokens: value.profile.role_run_options?.[role]?.max_output_tokens ?? undefined,
+    },
+});
 export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     onDirtyChange: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
@@ -23,6 +31,7 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     const { modal } = App.useApp();
     const query = useQuery({ queryKey: ['ctf-worker-settings'], queryFn: api.getCtfWorkerSettings, refetchOnWindowFocus: false });
     const servers = useQuery({ queryKey: ['mcp-servers'], queryFn: api.listMcpServers });
+    const providers = useQuery({ queryKey: ['platform-providers'], queryFn: api.listProviders, enabled: Boolean(query.data?.profile.model) });
     const [snapshot, setSnapshot] = useState<Settings | null>(null);
     const [drafts, setDrafts] = useState<Record<Role, Draft> | null>(null);
     const [bindings, setBindings] = useState<Binding[]>([]);
@@ -86,7 +95,10 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
             const other = role==='lead'?'teammate':'lead';
             const uses = (tools:WorkerTools, item:Binding) => tools.mcp_servers?.some(server=>server.name===item.server_name&&server.version===item.server_version&&server.allowed_tools?.includes(item.tool_name));
             const submittedBindings=bindings.filter(item=>uses(drafts[role].tools,item)||uses(snapshot.profile.worker_tools[other],item));
-            const saved = await api.saveCtfWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools, submittedBindings);
+            const optionsChanged = JSON.stringify(drafts[role].run_options) !== JSON.stringify(from(snapshot, role).run_options);
+            const options = drafts[role].run_options;
+            const saved = await api.saveCtfWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools, submittedBindings,
+                optionsChanged ? (options.reasoning_effort != null || options.max_output_tokens != null ? options : null) : undefined);
             setSnapshot(saved);
             setBindings([...(saved.profile.platform_tools ?? []),...bindings.filter(item=>!submittedBindings.includes(item)&&uses(drafts[other].tools,item))]);
             setDrafts((current) => current ? { ...current, [role]: from(saved, role) } : null);
@@ -122,6 +134,9 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     if (!snapshot || !drafts)
         return <section aria-label="CTF 配置">{query.isError ? <p role="alert" className={controls.error}>CTF 配置读取失败。<Button className={controls.button} onClick={() => void query.refetch()} htmlType={"button"}>重试</Button></p> : <LoadingState label="正在读取 CTF 配置…" />}</section>;
     const current = drafts[role];
+    const baseModel = snapshot.profile.model;
+    const effortOptions = reasoningOptions(providers.data?.find(item => item.id === baseModel?.provider), baseModel?.model ?? '');
+    const updateOptions = (patch: CtfRoleRunOptions) => { setNotice(''); setDrafts({ ...drafts, [role]: { ...current, run_options: { ...current.run_options, ...patch } } }); };
     const updateTools = (tools: WorkerTools) => { setNotice('');setDrafts({ ...drafts, [role]: { ...current, tools } }); };
     const selected = current.tools.mcp_servers ?? [];
     const available = [...(servers.data ?? []), ...selected.filter((bound) => !servers.data?.some((item) => item.name === bound.name && item.version === bound.version)).map((bound) => ({ ...bound, label: bound.name, enabled: false }))];
@@ -130,7 +145,15 @@ export default function CtfSettings({ onDirtyChange, onBusyChange }: {
     {notice && <p className={styles.noticeBanner} role="status">{notice}</p>}
     <div className={styles.directWorker}><div className={styles.directActions}><Segmented size="small" aria-label="CTF 角色" value={role} disabled={saving} options={[{value:'lead',label:'Lead'},{value:'teammate',label:'队友'}]} onChange={value=>{setRole(value as Role);setError('');setNotice('');setInspection(null);setLoading('');sequence.current+=1;}} /><div className={styles.headerActions}><span className={`${controls.hint} ${styles.applyHint}`}>新任务生效</span><Button aria-label="保存 CTF 配置" aria-busy={saving} size="small" type="primary" loading={saving} disabled={saving||!changed(role)&&!bindingsDirty} onClick={()=>void save()}>保存 CTF 配置</Button></div></div>
         <Form component={false} disabled={saving}><div className={styles.workerContent}>
-
+          <div className={styles.roleRunOptions}>
+            <label className={controls.field}><span className={controls.label}>推理强度</span><Select aria-label={`${role === 'lead' ? 'Lead' : '队友'}推理强度`} size="small" value={current.run_options.reasoning_effort ?? 'inherit'} loading={providers.isLoading} disabled={saving || providers.isLoading}
+              options={[{value:'inherit',label:'继承模型'}, ...[...new Set([...effortOptions, ...(current.run_options.reasoning_effort ? [current.run_options.reasoning_effort] : [])])].map(value => ({value,label:value}))]}
+              onChange={value => updateOptions({reasoning_effort: value === 'inherit' ? undefined : value})} /></label>
+            <label className={controls.field}><span className={controls.label}>单次输出上限</span><InputNumber aria-label={`${role === 'lead' ? 'Lead' : '队友'}单次输出上限`} size="small" min={1} precision={0} controls={false} value={current.run_options.max_output_tokens ?? null} placeholder="继承模型" disabled={saving}
+              onChange={value => updateOptions({max_output_tokens: value ?? undefined})} style={{width:'100%'}} /></label>
+            <span className={controls.hint}>留空继承任务模型，含推理 token。</span>
+            {providers.isError && <Button size="small" onClick={()=>void providers.refetch()}>重试读取模型能力</Button>}
+          </div>
           <div className={`${styles.workerForm} ${styles.ctfWorkerForm}`}><section className={styles.promptColumn}><label className={controls.label} htmlFor={`ctf-prompt-${role}`}>{role === 'lead' ? 'Lead' : '队友'}完整系统提示词</label>
           <Input.TextArea id={`ctf-prompt-${role}`} className={controls.textarea} classNames={{textarea:styles.promptEditor}} styles={{textarea:{height:"42vh",minHeight:360}}} value={current.prompt} spellCheck={false} disabled={saving} onChange={(event) => setDrafts({ ...drafts, [role]: { ...current, prompt: event.target.value } })}/></section><aside className={styles.toolsColumn}>
           <fieldset className={styles.toolFieldset} disabled={saving}><legend>内置工具</legend><div className={styles.toolChecks}>{[...new Set([...builtin[role], ...current.tools.builtin])].map((name) => <label className={styles.checkRow} key={name}><Checkbox checked={current.tools.builtin.includes(name)} onChange={(event) => updateTools({ ...current.tools, builtin: event.target.checked ? [...current.tools.builtin, name] : current.tools.builtin.filter((item) => item !== name) })}/>{name}</label>)}</div></fieldset>

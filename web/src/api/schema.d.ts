@@ -2230,6 +2230,10 @@ export interface components {
             /** Privileged Allowlist */
             privileged_allowlist?: string[];
             prompt_templates: components["schemas"]["CtfPromptTemplates"];
+            /** Role Run Options */
+            role_run_options?: {
+                [key: string]: components["schemas"]["CtfRoleRunOptions"];
+            };
             /** Worker Tools */
             worker_tools: {
                 [key: string]: components["schemas"]["WorkerTools"];
@@ -2475,6 +2479,13 @@ export interface components {
              */
             request_id: string;
         };
+        /** CtfRoleRunOptions */
+        CtfRoleRunOptions: {
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Reasoning Effort */
+            reasoning_effort?: string | null;
+        };
         /** CtfSolution */
         CtfSolution: {
             /** Approach */
@@ -2568,6 +2579,7 @@ export interface components {
             platform_tools?: components["schemas"]["CtfPlatformToolBinding"][] | null;
             /** Prompt */
             prompt: string;
+            run_options?: components["schemas"]["CtfRoleRunOptions"] | null;
             tools: components["schemas"]["WorkerTools"];
         };
         /** DeliveryBody */

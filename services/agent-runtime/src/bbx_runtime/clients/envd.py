@@ -165,6 +165,6 @@ class EnvdClient:
         return (await self._response("GET", "/ctf/status", params=identity)).json()
 
     async def ctf_operation(self, operation: str, identity: dict[str, Any]) -> dict[str, Any]:
-        if operation not in {"register", "stop", "drain"}:
+        if operation not in {"register", "stop", "drain", "cancel-command"}:
             raise ValueError("Unknown CTF execution operation")
         return (await self._response("POST", f"/ctf/{operation}", json=identity)).json()

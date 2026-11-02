@@ -658,6 +658,19 @@
           "prompt_templates": {
             "$ref": "#/components/schemas/CtfPromptTemplates"
           },
+          "role_run_options": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CtfRoleRunOptions"
+            },
+            "propertyNames": {
+              "enum": [
+                "lead",
+                "teammate"
+              ]
+            },
+            "title": "Role Run Options",
+            "type": "object"
+          },
           "worker_tools": {
             "additionalProperties": {
               "$ref": "#/components/schemas/WorkerTools"
@@ -1326,6 +1339,37 @@
         "title": "CtfRecordAppendRequest",
         "type": "object"
       },
+      "CtfRoleRunOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          }
+        },
+        "title": "CtfRoleRunOptions",
+        "type": "object"
+      },
       "CtfSolution": {
         "additionalProperties": false,
         "properties": {
@@ -1648,6 +1692,16 @@
             "minLength": 1,
             "title": "Prompt",
             "type": "string"
+          },
+          "run_options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CtfRoleRunOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "tools": {
             "$ref": "#/components/schemas/WorkerTools"

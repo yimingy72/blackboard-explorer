@@ -45,7 +45,11 @@ def test_ctf_creation_requires_explicit_mode_without_acceptance() -> None:
 
 def test_role_profiles_are_independent_and_enforce_tool_permissions() -> None:
     profile = load_ctf_profile(PROFILE)
-    assert set(profile.worker_tools["teammate"].builtin) == CTF_COMMON_TOOLS
+    assert set(profile.worker_tools["teammate"].builtin) == CTF_COMMON_TOOLS - {
+        "start_command",
+        "cancel_command",
+        "read_command_result",
+    }
     assert "finish_task" in profile.worker_tools["lead"].builtin
     with pytest.raises(ValidationError):
         AgentProfile.model_validate(profile.model_dump())
@@ -186,7 +190,7 @@ def test_ctf_prompt_collaboration_keeps_shared_safety_contracts(role) -> None:
     ):
         assert requirement in rendered, f"{role} lost prompt contract: {requirement}"
     assert "list_records 先读" not in rendered
-    assert "get_record" not in rendered
+    assert "若开放get_record，直接读取该条共享记录" in rendered
 
 
 @pytest.mark.parametrize(

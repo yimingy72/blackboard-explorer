@@ -23,6 +23,14 @@ def _content(profile: AgentProfile | CtfAgentProfile) -> dict[str, Any]:
     if isinstance(profile, CtfAgentProfile):
         data.pop("mode")
         data["prompts"] = {"mode": "ctf", "platform_tools": data.pop("platform_tools", [])}
+        data.pop("role_run_options", None)
+        run_options = {
+            role: options.model_dump(mode="json", exclude_none=True)
+            for role, options in profile.role_run_options.items()
+            if options.model_dump(exclude_none=True)
+        }
+        if run_options:
+            data["prompts"]["role_run_options"] = run_options
         model = data.pop("model")
         data["models"] = {"lead": model, "teammate": model}
         data["params"] = data.pop("options")
@@ -35,6 +43,7 @@ def ctf_profile(row: dict[str, Any]) -> CtfAgentProfile:
     return CtfAgentProfile.model_validate(
         {
             "model": row["models"]["lead"],
+            "role_run_options": row["prompts"].get("role_run_options", {}),
             "platform_tools": row["prompts"].get("platform_tools", []),
             "options": row["params"],
             **{
@@ -57,7 +66,7 @@ def require_ctf_tool_capabilities(
     missing = ctf_tool_capability_issues(profile, roles)
     if missing:
         detail = "; ".join(f"{role}: {', '.join(tools)}" for role, tools in missing.items())
-        raise HTTPException(422, f"请在 CTF 配置启用必要的详情/全文读取工具：{detail}")
+        raise HTTPException(422, f"请在 CTF 配置启用必要的配套工具：{detail}")
 
 
 def _digest(content: dict[str, Any]) -> str:

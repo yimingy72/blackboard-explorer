@@ -799,7 +799,14 @@ def create_app(
             model = platform.public(selected)["config"]
             if body.reasoning_effort is not None:
                 model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
-            profile.model = ModelConfig.model_validate(model)
+            try:
+                profile = CtfAgentProfile.model_validate(
+                    {**profile.model_dump(mode="json"), "model": model}
+                )
+            except ValueError as error:
+                raise HTTPException(
+                    422, "Selected model is incompatible with the CTF role run options"
+                ) from error
             try:
                 profile.options = resolve_ctf_options(
                     profile,

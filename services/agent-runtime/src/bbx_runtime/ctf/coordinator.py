@@ -312,6 +312,17 @@ class CtfCoordinator:
                 return
             except RemoteError:
                 continue
+            reconcile_commands = getattr(self.runner, "reconcile_drained_commands", None)
+            if reconcile_commands is not None and checkpoint_failure is None:
+                turn = next(
+                    (
+                        item
+                        for item in state.get("turns", [])
+                        if item["id"] == member.get("current_turn_id")
+                    ),
+                    None,
+                )
+                await reconcile_commands(task_id, member, turn, envd)
             completed = await self.service.runtime(
                 task_id,
                 "complete_member_operation",
@@ -352,6 +363,19 @@ class CtfCoordinator:
             try:
                 if not await envd.drain(task_id):
                     raise UnknownCommandOutcome("CTF execution drain is unconfirmed")
+                reconcile_commands = getattr(self.runner, "reconcile_drained_commands", None)
+                if reconcile_commands is not None:
+                    state = await self.service.runtime_state(task_id)
+                    for member in state["members"]:
+                        turn = next(
+                            (
+                                item
+                                for item in state.get("turns", [])
+                                if item["id"] == member.get("current_turn_id")
+                            ),
+                            None,
+                        )
+                        await reconcile_commands(task_id, member, turn, envd)
             except DrainPending:
                 self.recovery_pending.add(task_id)
                 return
@@ -368,6 +392,9 @@ class CtfCoordinator:
         entries = getattr(self.runner, "pending_settlements", {})
         for key in [key for key in entries if key[0] == task_id]:
             del entries[key]
+        checkpoints = getattr(self.runner, "command_checkpoints", {})
+        for key in [key for key in checkpoints if key[0] == task_id]:
+            del checkpoints[key]
         attempts = getattr(self.runner, "settlement_retries", {})
         for key in [key for key in attempts if key[0] == task_id]:
             del attempts[key]
@@ -680,6 +707,19 @@ class CtfCoordinator:
             self.waiting(task_id, "drain_execution")
             if envd is not None and not await envd.drain(task_id):
                 return True
+            if not expired:
+                reconcile_commands = getattr(self.runner, "reconcile_drained_commands", None)
+                if reconcile_commands is not None:
+                    for member in state["members"]:
+                        turn = next(
+                            (
+                                item
+                                for item in state.get("turns", [])
+                                if item["id"] == member.get("current_turn_id")
+                            ),
+                            None,
+                        )
+                        await reconcile_commands(task_id, member, turn, envd)
             arguments: dict[str, Any] = {"drained": True}
             if expired:
                 arguments["checkpoint_failure"] = (

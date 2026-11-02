@@ -100,6 +100,39 @@
       "title": "CtfPromptTemplates",
       "type": "object"
     },
+    "CtfRoleRunOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Effort"
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Output Tokens"
+        }
+      },
+      "title": "CtfRoleRunOptions",
+      "type": "object"
+    },
     "ExecResources": {
       "additionalProperties": false,
       "properties": {
@@ -428,6 +461,19 @@
     },
     "model": {
       "$ref": "#/$defs/ModelConfig"
+    },
+    "role_run_options": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CtfRoleRunOptions"
+      },
+      "propertyNames": {
+        "enum": [
+          "lead",
+          "teammate"
+        ]
+      },
+      "title": "Role Run Options",
+      "type": "object"
     },
     "options": {
       "$ref": "#/$defs/CtfOptions"

@@ -158,8 +158,13 @@ async def test_new_turn_retires_completed_assignment_and_keeps_goal_constraints_
         "not_excluded",
     ],
 )
-async def test_current_uncertain_and_unfinished_inputs_stay_protected(change):
-    service, value, old, _ = await fixture()
+@pytest.mark.parametrize("notification", [None, "challenge_progress", "challenge_verification"])
+async def test_current_uncertain_and_unfinished_inputs_stay_protected(change, notification):
+    service, value, old, _ = await fixture(
+        sender="system" if notification else "agent",
+        kind="notification" if notification else "instruction",
+        notification=notification,
+    )
     durable = value.checkpoint.session.state
     if change == "same_turn":
         durable["ctf_context_recovery"]["turn_id"] = NEW_TURN["id"]
@@ -261,6 +266,11 @@ async def test_missing_delivery_proof_keeps_original_input():
         ("system", "instruction", "context_continuation", True),
         ("system", "instruction", "turn_recovery", True),
         ("system", "turn_finished", "assignment_result", True),
+        ("system", "notification", "challenge_progress", True),
+        ("system", "notification", "challenge_verification", True),
+        ("user", "notification", "challenge_progress", False),
+        ("agent", "notification", "challenge_verification", False),
+        ("system", "notification", "command_result", False),
         ("system", "notification", "turn_recovery", False),
         ("system", "assignment_result", "turn_finished", False),
         ("system", "turn_finished", "turn_finished", False),
@@ -289,8 +299,13 @@ async def test_proof_read_failure_is_diagnosed_and_fences_still_raise():
         await loaded(denied)
 
 
-async def test_native_provider_saves_retirement_before_first_dispatch():
-    service, value, old, _ = await fixture()
+@pytest.mark.parametrize("notification", [None, "challenge_progress", "challenge_verification"])
+async def test_native_provider_saves_retirement_before_first_dispatch(notification):
+    service, value, old, _ = await fixture(
+        sender="system" if notification else "agent",
+        kind="notification" if notification else "instruction",
+        notification=notification,
+    )
     fresh = str(uuid4())
     service.post(fresh, "New assignment")
     mailbox = MailboxMiddleware(cast(Any, service), value.checkpoint, NEW_TURN, 10)
@@ -341,3 +356,73 @@ async def test_delivery_proof_requests_are_bounded_without_losing_a_large_recove
     requests = [body for operation, body in service.calls if operation == "recovery_input_proofs"]
     assert [len(body["message_ids"]) for body in requests] == [100, 1]
     assert len(durable["ctf_recovery_input_retirements"]) == 101
+
+
+@pytest.mark.parametrize("purpose", ["challenge_progress", "challenge_verification"])
+async def test_completed_progress_notification_retires_once_and_preserves_raw_history(purpose):
+    service, value, old, seed = await fixture(
+        sender="system", kind="notification", notification=purpose
+    )
+    durable = value.checkpoint.session.state
+    before = [m.to_dict() for m in durable["in_memory"]["messages"]]
+    assert [m.to_dict() for m in await loaded(value)] == [seed.to_dict()]
+    assert [m.to_dict() for m in durable["in_memory"]["messages"]] == before
+    await value.checkpoint.save()
+    restored = await load_checkpoint(cast(Any, service), "task", "member-1", NEW_TURN, "role")
+    again = CtfHistoryProvider(cast(Any, service), restored, NEW_TURN, value.model, 1000)
+    assert [m.to_dict() for m in await loaded(again)] == [seed.to_dict()]
+    assert len(restored.session.state["ctf_recovery_input_retirements"]) == 1
+
+
+@pytest.mark.parametrize(
+    "case", ["known", "cross_turn", "unacked", "unknown", "missing", "wrong_id"]
+)
+async def test_command_notification_requires_acknowledged_origin_result(case):
+    service, value, _, seed = await fixture(
+        sender="system", kind="notification", notification="command_result"
+    )
+    origin = str(uuid4()) if case == "cross_turn" else OLD_TURN
+    if case == "cross_turn":
+        value.turn["generation"] = 3
+        service.proofs[0].update(turn_generation=2, claim_generation=2)
+    cid = str(uuid4())
+    service.proofs[0].update(command_id=cid, command_turn_id=origin, command_generation=1)
+    value.checkpoint.session.state["ctf_commands"] = (
+        {}
+        if case == "missing"
+        else {
+            f"{origin}:command": {
+                "mode": "async",
+                "turn_id": origin,
+                "command_id": "wrong" if case == "wrong_id" else cid,
+                "identity": {"generation": 1},
+                "state": "unknown" if case == "unknown" else "finished",
+                "terminal_status": "completed",
+                "result": "Saved output",
+                "delivery": "notification",
+                "completion_notified": case != "unacked",
+            },
+        }
+    )
+    view = await loaded(value)
+    if case in {"known", "cross_turn"}:
+        assert [m.to_dict() for m in view] == [seed.to_dict()]
+    else:
+        assert value._recovered_inputs()
+        assert not value.checkpoint.session.state.get("ctf_recovery_input_retirements")
+
+
+async def test_unacknowledged_command_result_keeps_other_turn_inputs_protected():
+    _, value, _, _ = await fixture(
+        sender="system", kind="notification", notification="challenge_progress"
+    )
+    value.checkpoint.session.state["ctf_commands"] = {
+        f"{OLD_TURN}:command": {
+            "mode": "async",
+            "state": "finished",
+            "delivery": "notification",
+            "completion_notified": False,
+        },
+    }
+    await loaded(value)
+    assert value._recovered_inputs()

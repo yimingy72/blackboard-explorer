@@ -124,6 +124,21 @@ async def test_drain_persists_matching_proof_before_backend_stop_can_complete():
     ]
 
 
+async def test_additive_status_capabilities_do_not_expand_the_drain_proof_contract():
+    class CapableEnv(Env):
+        async def ctf_operation(self, operation, identity):
+            return {
+                **await super().ctf_operation(operation, identity),
+                "capabilities": ["ctf_async_commands_v1"],
+            }
+
+    service = Service()
+    adapter = Adapter(cast(Any, service), cast(Any, CapableEnv()))
+    proof = await adapter.stop_member("task", service.member)
+    assert proof["drained"] is True and "capabilities" not in proof
+    assert service.operations[-1][1]["proof"] == proof
+
+
 async def test_full_command_output_registered_as_fenced_log_and_foreign_path_rejected():
     class OutputEnv(Env):
         async def stat(self, path):

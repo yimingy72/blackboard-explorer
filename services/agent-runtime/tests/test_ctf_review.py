@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import pytest
 from bbx_contracts.ctf import load_ctf_profile
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
@@ -15,7 +16,8 @@ from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, 
 from test_ctf_runtime import TURN, MemoryCtf
 
 
-async def test_review_removed_member_preserves_session_and_only_claims_review_mailbox():
+@pytest.mark.parametrize("read_tool", ["read_artifact", "read_command_result"])
+async def test_review_removed_member_preserves_session_and_only_claims_review_mailbox(read_tool):
     profile = load_ctf_profile(Path("profiles/ctf"))
 
     class ReviewService(MemoryCtf):
@@ -63,6 +65,9 @@ async def test_review_removed_member_preserves_session_and_only_claims_review_ma
             assert operation in {
                 "list_challenges",
                 "get_challenge",
+                "get_record",
+                "read_command_result",
+                "read_saved_tool_result",
                 "list_records",
                 "read_artifact",
             }
@@ -90,7 +95,14 @@ async def test_review_removed_member_preserves_session_and_only_claims_review_ma
     client = ScriptedChatClient(
         [
             ScriptStep(
-                calls=(ScriptToolCall("read_artifact", {"artifact_id": "artifact"}),),
+                calls=(
+                    ScriptToolCall(
+                        read_tool,
+                        {"artifact_id": "artifact"}
+                        if read_tool == "read_artifact"
+                        else {"command_id": "saved-command"},
+                    ),
+                ),
                 expect_contains="explain the saved result",
             ),
             ScriptStep(text="review answer", expect_contains="persisted artifact content"),
@@ -122,6 +134,9 @@ async def test_review_removed_member_preserves_session_and_only_claims_review_ma
     assert {t.name for t in client.received_options[0]["tools"]} == {
         "list_challenges",
         "get_challenge",
+        "get_record",
+        "read_command_result",
+        "read_saved_tool_result",
         "list_records",
         "read_artifact",
     }

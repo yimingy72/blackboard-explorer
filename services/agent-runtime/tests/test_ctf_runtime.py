@@ -372,6 +372,7 @@ def test_role_tool_permissions_and_explicit_fake_execution():
     board = {
         "list_challenges",
         "get_challenge",
+        "get_record",
         "create_challenge",
         "update_challenge",
         "list_records",

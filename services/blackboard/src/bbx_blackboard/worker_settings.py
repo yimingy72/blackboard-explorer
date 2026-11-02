@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from bbx_contracts.ctf import CtfPlatformToolBinding
+from bbx_contracts.ctf import CtfPlatformToolBinding, CtfRoleRunOptions
 from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import AgentProfile, ExecResources, ModelConfig, Params, WorkerTools
 from bbx_contracts.providers import reasoning_efforts
@@ -46,6 +46,7 @@ class WorkerUpdate(BaseModel):
 
 class CtfWorkerUpdate(WorkerUpdate):
     platform_tools: list[CtfPlatformToolBinding] | None = None
+    run_options: CtfRoleRunOptions | None = None
 
 
 class RuntimeUpdate(BaseModel):
@@ -210,12 +211,17 @@ async def update_ctf_worker(
     content = ctf_profile(row).model_dump(mode="json")
     content["prompt_templates"][role] = body.prompt
     content["worker_tools"][role] = body.tools.model_dump(mode="json")
+    if "run_options" in body.model_fields_set:
+        if body.run_options is None:
+            content["role_run_options"].pop(role, None)
+        else:
+            content["role_run_options"][role] = body.run_options.model_dump(mode="json")
     if body.platform_tools is not None:
         content["platform_tools"] = [item.model_dump(mode="json") for item in body.platform_tools]
     try:
         profile = CtfAgentProfile.model_validate(content)
     except ValueError as error:
-        raise HTTPException(422, "Invalid CTF prompt or role tools") from error
+        raise HTTPException(422, "Invalid CTF prompt, role tools or run options") from error
     require_ctf_tool_capabilities(profile, (role,))
     for tools in profile.worker_tools.values():
         for binding in tools.mcp_servers:

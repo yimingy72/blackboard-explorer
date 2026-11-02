@@ -70,3 +70,30 @@ async def test_native_maf_reads_truncated_result_instead_of_executing_it_again()
     assert len(calls) == 1
     assert calls[0][1] == {"call_id": "original-call", "offset": 0, "limit": 2000}
     assert "execute_command" not in json.dumps(calls)
+
+
+async def test_native_maf_follows_a_shared_record_reference_in_one_tool_call():
+    calls = []
+
+    async def request(task_id, token, operation, **body):
+        calls.append((operation, body))
+        assert operation == "get_record"
+        return {"id": "record-1", "body": "Exact shared finding"}
+
+    service = cast(CtfClient, SimpleNamespace(tool=request))
+    tools = build_tools(service, "task", {"token": "test"}, "teammate")
+    client = ScriptedChatClient(
+        [
+            ScriptStep(
+                calls=(
+                    ScriptToolCall(
+                        "get_record", {"challenge_id": "challenge-1", "record_id": "record-1"}
+                    ),
+                )
+            ),
+            ScriptStep(text="Evidence read", expect_contains="Exact shared finding"),
+        ]
+    )
+    async with Agent(client=client, tools=tools) as agent:
+        await agent.run("Read challenge-1 record-1 from the notification")
+    assert calls == [("get_record", {"challenge_id": "challenge-1", "record_id": "record-1"})]

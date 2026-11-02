@@ -5,6 +5,7 @@ import logging
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 from uuid import uuid4
@@ -22,8 +23,10 @@ from bbx_contracts.ctf import (
     CtfAgentProfile,
     execution_agent_id,
     render_ctf_prompt,
+    resolve_ctf_model,
     resolve_ctf_options,
 )
+from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
 
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
@@ -32,7 +35,7 @@ from bbx_runtime.ctf.artifacts import ArtifactRegistrar
 from bbx_runtime.ctf.budget import ctf_call_reservation
 from bbx_runtime.ctf.client import CtfClient, CtfControlTransportExhausted
 from bbx_runtime.ctf.context import fixed_prompt_tokens
-from bbx_runtime.ctf.execution import DrainPending
+from bbx_runtime.ctf.execution import CtfExecutionAdapter, DrainPending, UnknownCommandOutcome
 from bbx_runtime.ctf.failures import propagate_tool_failure
 from bbx_runtime.ctf.images import ImageInjectionMiddleware
 from bbx_runtime.ctf.middleware import (
@@ -82,6 +85,18 @@ class SettlementRetry:
     finish_uncertain: bool = False
     finish_confirmed: bool = False
     continuation_uncertain: bool = False
+
+
+class CommandProgressMiddleware(ChatMiddleware):
+    """Reconcile at the native chat boundary; the runner remains the Session writer."""
+
+    def __init__(self, adapter, task_id, member_id, turn, checkpoint):
+        self.adapter, self.task_id, self.member_id = adapter, task_id, member_id
+        self.turn, self.checkpoint = turn, checkpoint
+
+    async def process(self, context: ChatContext, call_next: Any) -> None:
+        await self.adapter.reconcile_jobs(self.task_id, self.member_id, self.turn, self.checkpoint)
+        await call_next()
 
 
 class ModelErrorMiddleware(ChatMiddleware):
@@ -165,6 +180,7 @@ class CtfRunner:
         self.pending_settlements: dict[tuple[str, str], tuple[Any, Any, str, str]] = {}
         self.pending_checkpoints: dict[tuple[str, str], tuple[Any, Any, Any, str]] = {}
         self.settlement_retries: dict[tuple[str, str], SettlementRetry] = {}
+        self.command_checkpoints: dict[tuple[str, str], Any] = {}
 
     async def run(self, task_id: str, member: dict[str, Any], turn: dict[str, Any]) -> None:
         platform = PlatformAdapter(
@@ -203,6 +219,7 @@ class CtfRunner:
             task["agent_profile"], task["agent_profile_version"]
         )
         profile = CtfAgentProfile.model_validate(document.get("profile", document))
+        effective_model = resolve_ctf_model(profile, member["role"])
         profile = profile.model_copy(
             update={
                 "options": resolve_ctf_options(profile, task.get("ctf_options")),
@@ -212,7 +229,7 @@ class CtfRunner:
             None
             if review
             else ctf_call_reservation(
-                profile.model, context_tokens=profile.options.context_threshold
+                effective_model, context_tokens=profile.options.context_threshold
             )
         )
         artifacts = (
@@ -236,7 +253,7 @@ class CtfRunner:
                 member_id=member["id"],
                 checkpoint_provider=lambda: checkpoint,
                 artifacts=artifacts,
-                model=profile.model,
+                model=effective_model,
             )
             allowed = set(profile.worker_tools[member["role"]].builtin)
             tools = [item for item in tools if item.name in allowed]
@@ -262,17 +279,30 @@ class CtfRunner:
         answer, reason = "", "completed"
         response = None
         checkpoint = None
+        elapsed = 0.0 if review else float(task.get("active_seconds") or 0)
+        if not review and task.get("active_since"):
+            elapsed += max(
+                0,
+                (
+                    datetime.now(UTC)
+                    - datetime.fromisoformat(str(task["active_since"]).replace("Z", "+00:00"))
+                ).total_seconds(),
+            )
+        deadline = monotonic() + max(0, task["budget"]["max_minutes"] * 60 - elapsed)
         try:
             if self.client_factory:
-                client = self.client_factory(member, profile)
+                client = self.client_factory(
+                    member,
+                    profile.model_copy(update={"model": effective_model, "role_run_options": {}}),
+                )
             else:
                 credentials = await resolve_model_credentials(
                     self.service.client,
-                    profile.model,
+                    effective_model,
                     self.settings.deepseek_api_key.get_secret_value(),
                 )
                 client = make_client(
-                    profile.model,
+                    effective_model,
                     credentials=credentials,
                     explore_max_steps=profile.options.max_steps,
                     conclude_grace_calls=0,
@@ -281,6 +311,8 @@ class CtfRunner:
             checkpoint = await load_checkpoint(
                 self.service, task_id, member["id"], turn, instructions
             )
+            if hasattr(envd, "reconcile_jobs"):
+                self.command_checkpoints[(task_id, member["id"])] = checkpoint
             if checkpoint.revision == 0:
                 await observe(
                     self.service,
@@ -305,6 +337,11 @@ class CtfRunner:
                 {
                     "session_id": checkpoint.session.session_id,
                     "session_revision": checkpoint.revision,
+                    "effective_run_options": {
+                        "reasoning_effort": effective_model.reasoning_effort,
+                        "max_output_tokens": effective_max_output_tokens(effective_model),
+                        "context_threshold": profile.options.context_threshold,
+                    },
                 },
                 f"{turn['id']}:context",
             )
@@ -326,7 +363,7 @@ class CtfRunner:
                 self.service,
                 checkpoint,
                 turn,
-                profile.model,
+                effective_model,
                 profile.options.context_threshold,
                 fixed_input_tokens=fixed_prompt_tokens(instructions, tools),
             )
@@ -356,11 +393,20 @@ class CtfRunner:
                     tools=tools,
                     context_providers=[history],
                     middleware=[
+                        *(
+                            [
+                                CommandProgressMiddleware(
+                                    envd, task_id, member["id"], turn, checkpoint
+                                )
+                            ]
+                            if hasattr(envd, "reconcile_jobs")
+                            else []
+                        ),
                         mailbox,
                         MessageInjectionMiddleware(),
                         ImageInjectionMiddleware(self.service, task_id, lambda: checkpoint),
                         ModelErrorMiddleware(
-                            self.service, task_id, member["id"], turn, profile.model
+                            self.service, task_id, member["id"], turn, effective_model
                         ),
                         ToolObservationMiddleware(self.service, task_id, member["id"], turn),
                         ToolResultCheckpointMiddleware(checkpoint),
@@ -368,16 +414,38 @@ class CtfRunner:
                     ],
                     require_per_service_call_history_persistence=True,
                 ) as agent:
-                    stream = agent.run(
-                        [],
-                        session=checkpoint.session,
-                        stream=True,
-                        options=ctf_model_run_options(profile.model),
-                    )
-                    async for update in stream:
-                        answer += update.text
-                    response = await stream.get_final_response()
-                    answer = response.text
+                    while True:
+                        remaining = deadline - monotonic()
+                        if remaining <= 0:
+                            raise TurnBoundary("budget_exhausted")
+                        configuration = getattr(client, "function_invocation_configuration", None)
+                        if isinstance(configuration, dict):
+                            configuration["max_duration_seconds"] = remaining
+                        response = None
+                        answer = ""
+                        stream = agent.run(
+                            [],
+                            session=checkpoint.session,
+                            stream=True,
+                            options=ctf_model_run_options(effective_model),
+                        )
+                        async for update in stream:
+                            answer += update.text
+                        response = await stream.get_final_response()
+                        answer = response.text
+                        await checkpoint.save()
+                        if (
+                            envd is None
+                            or not hasattr(envd, "reconcile_jobs")
+                            or not envd.pending_jobs(checkpoint, turn)
+                        ):
+                            break
+                        # A native final is provisional while a command is pending.
+                        # Only this coroutine touches the Session; polling never calls a model.
+                        response = None
+                        await self.wait_commands(
+                            task_id, member["id"], turn, checkpoint, envd, deadline
+                        )
             await checkpoint.save()
         except TurnBoundary as error:
             reason = str(error)
@@ -546,6 +614,46 @@ class CtfRunner:
                     )
         await self.settle(task_id, member, turn, reason, answer)
 
+    async def wait_commands(self, task_id, member_id, turn, checkpoint, adapter, deadline) -> None:
+        delay = 1.0
+        while True:
+            if monotonic() >= deadline:
+                raise TurnBoundary("budget_exhausted")
+            try:
+                await self.service.runtime(
+                    task_id,
+                    "authorize_member",
+                    agent_id=member_id,
+                    turn_id=turn["id"],
+                    generation=turn["generation"],
+                )
+            except RemoteError as error:
+                if error.code != "ctf_budget_wait":
+                    raise
+                # Other in-flight model reservations cannot cancel this admitted job.
+            await adapter.reconcile_jobs(task_id, member_id, turn, checkpoint)
+            if not adapter.pending_jobs(checkpoint, turn):
+                return
+            state = await self.service.runtime_state(task_id)
+            if member_id in state.get("ready_member_ids", []):
+                return
+            await asyncio.sleep(min(delay, max(0, deadline - monotonic())))
+            delay = 2.0
+
+    async def reconcile_drained_commands(self, task_id, member, turn, adapter) -> None:
+        """Read retained outcomes before fencing a joined writer; never restart commands."""
+        if not hasattr(adapter, "reconcile_jobs") or not turn:
+            return
+        key = (task_id, member["id"])
+        checkpoint = self.command_checkpoints.get(key)
+        if checkpoint is None:
+            checkpoint = await load_checkpoint(self.service, task_id, member["id"], turn, "")
+        try:
+            await adapter.reconcile_jobs(task_id, member["id"], turn, checkpoint, notify=False)
+        except UnknownCommandOutcome:
+            # An unknown boot cannot produce a new result. Preserve the old entry.
+            await checkpoint.save()
+
     async def retry_checkpoints(self, task_id: str, *, settle: bool = True) -> None:
         for key, (checkpoint, member, turn, answer) in list(self.pending_checkpoints.items()):
             if key[0] != task_id:
@@ -618,6 +726,8 @@ class CtfRunner:
                 reason = getattr(checkpoint, "pending_end_reason", None) or (
                     "completed" if answer else "interrupted"
                 )
+                if reason == "completed" and CtfExecutionAdapter.pending_jobs(checkpoint, turn):
+                    reason = "interrupted"
                 await self.settle(task_id, member, turn, reason, answer)
 
     async def retry_settlements(self, task_id: str) -> None:
@@ -717,6 +827,13 @@ class CtfRunner:
         self, task_id: str, member: dict[str, Any], turn: dict[str, Any], reason: str, answer: str
     ) -> bool:
         key = (task_id, member["id"])
+        checkpoint = self.command_checkpoints.get(key)
+        if (
+            reason == "completed"
+            and checkpoint is not None
+            and CtfExecutionAdapter.pending_jobs(checkpoint, turn)
+        ):
+            return False
         original = self.pending_settlements.get(key)
         if original is not None:
             if original[1]["id"] != turn["id"]:
@@ -770,6 +887,8 @@ class CtfRunner:
                                 await envd.stop_member(task_id, current)
                             except DrainPending:
                                 return False
+                        if reason != "completed":
+                            await self.reconcile_drained_commands(task_id, current, turn, envd)
             if not retry.finish_confirmed:
                 stage = "finish_turn"
                 try:
@@ -800,6 +919,8 @@ class CtfRunner:
                     elif error.status != 409:
                         raise
                     else:
+                        if error.code == "ctf_command_pending":
+                            return False
                         stage = "read_member"
                         current = next(
                             m
@@ -860,4 +981,5 @@ class CtfRunner:
             return False
         self.pending_settlements.pop(key, None)
         self.settlement_retries.pop(key, None)
+        self.command_checkpoints.pop(key, None)
         return True

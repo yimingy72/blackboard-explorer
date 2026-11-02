@@ -13,7 +13,9 @@ from uuid import UUID
 import yaml
 from pydantic import AfterValidator, Field, field_validator, model_validator
 
+from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
+from .providers import reasoning_efforts
 
 CtfRole = Literal["lead", "teammate"]
 CTF_BOARD_RESULT_MAX_BYTES = 16000
@@ -22,8 +24,12 @@ CTF_COMMON_TOOLS = frozenset(
         "list_members",
         "send_message",
         "execute_command",
+        "start_command",
+        "cancel_command",
+        "read_command_result",
         "list_challenges",
         "get_challenge",
+        "get_record",
         "create_challenge",
         "update_challenge",
         "list_records",
@@ -154,9 +160,15 @@ class CtfPlatformToolBinding(ContractModel):
         return self
 
 
+class CtfRoleRunOptions(ContractModel):
+    reasoning_effort: str | None = Field(default=None, min_length=1)
+    max_output_tokens: int | None = Field(default=None, strict=True, ge=1)
+
+
 class CtfAgentProfile(ContractModel):
     mode: Literal["ctf"] = "ctf"
     model: ModelConfig
+    role_run_options: dict[CtfRole, CtfRoleRunOptions] = Field(default_factory=dict)
     options: CtfOptions = Field(default_factory=CtfOptions)
     prompt_templates: CtfPromptTemplates
     worker_tools: dict[CtfRole, WorkerTools]
@@ -164,6 +176,17 @@ class CtfAgentProfile(ContractModel):
     exec_image: str = Field(min_length=1)
     exec_resources: ExecResources
     privileged_allowlist: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_role_run_options(self) -> CtfAgentProfile:
+        self.role_run_options = {
+            role: options
+            for role, options in self.role_run_options.items()
+            if options.model_dump(exclude_none=True)
+        }
+        for role in self.role_run_options:
+            resolve_ctf_model(self, role)
+        return self
 
     @model_validator(mode="after")
     def validate_tools(self) -> CtfAgentProfile:
@@ -206,6 +229,23 @@ class CtfAgentProfile(ContractModel):
         if set(bindings) - assigned:
             raise ValueError("Platform bindings must reference an assigned MCP tool/version")
         return self
+
+
+def resolve_ctf_model(profile: CtfAgentProfile, role: CtfRole) -> ModelConfig:
+    """Derive one validated role model without changing the frozen base snapshot."""
+    if role not in {"lead", "teammate"}:
+        raise ValueError("Unknown CTF role")
+    overrides = profile.role_run_options.get(role)
+    updates = overrides.model_dump(exclude_none=True) if overrides is not None else {}
+    effort = updates.get("reasoning_effort")
+    if effort is not None and effort not in reasoning_efforts(
+        profile.model.provider, profile.model.model
+    ):
+        raise ValueError(f"{role} reasoning_effort is unsupported by the selected model")
+    output = updates.get("max_output_tokens")
+    if output is not None and output > effective_max_output_tokens(profile.model):
+        raise ValueError(f"{role} max_output_tokens exceeds the base model output limit")
+    return ModelConfig.model_validate({**profile.model.model_dump(), **updates})
 
 
 def resolve_ctf_options(
@@ -687,10 +727,13 @@ def ctf_tool_capability_issues(
         if "list_challenges" in selected and "get_challenge" not in selected:
             missing.add("get_challenge")
         if (
-            selected & {"execute_command", "get_challenge", "list_records", "read_turn_result"}
+            selected
+            & {"execute_command", "get_challenge", "get_record", "list_records", "read_turn_result"}
             or tools.mcp_servers
         ) and "read_saved_tool_result" not in selected:
             missing.add("read_saved_tool_result")
+        if "start_command" in selected:
+            missing.update({"cancel_command", "read_command_result"} - selected)
         if missing:
             issues[role] = sorted(missing)
     return issues

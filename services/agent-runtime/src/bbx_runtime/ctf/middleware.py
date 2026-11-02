@@ -510,6 +510,12 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                     and source.get("notification_purpose")
                     in {"turn_recovery", "context_continuation"}
                 )
+                or (
+                    source.get("sender_id") == "system"
+                    and source.get("kind") == "notification"
+                    and source.get("notification_purpose")
+                    in {"challenge_progress", "challenge_verification", "command_result"}
+                )
             )
         )
 
@@ -564,13 +570,7 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 or source.get("id") != mid
                 or source.get("recipient_id") != self.checkpoint.agent_id
                 or source.get("purpose", "execution") != "execution"
-                or not (
-                    (source.get("sender_kind") == "agent" and source.get("kind") == "instruction")
-                    or (
-                        source.get("sender_kind") == "system"
-                        and source.get("kind") in {"instruction", "turn_finished"}
-                    )
-                )
+                or not self._one_shot_input(source)
             ):
                 continue
             try:
@@ -644,10 +644,24 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 or not 0 < revision <= self.checkpoint.revision
                 or any(
                     source.get(key) != proof.get(key)
-                    for key in ("sender_kind", "sender_id", "kind", "recipient_id")
+                    for key in (
+                        "sender_kind",
+                        "sender_id",
+                        "kind",
+                        "recipient_id",
+                        "notification_purpose",
+                    )
                 )
                 or any(
-                    key.startswith(f"{original_turn}:") and entry.get("state") != "finished"
+                    key.startswith(f"{original_turn}:")
+                    and (
+                        entry.get("state") != "finished"
+                        or (
+                            entry.get("mode") == "async"
+                            and entry.get("delivery") == "notification"
+                            and entry.get("completion_notified") is not True
+                        )
+                    )
                     for key, entry in commands.items()
                 )
                 or any(
@@ -660,6 +674,36 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 continue
             if not self._one_shot_input(proof):
                 continue
+            if proof.get("notification_purpose") == "command_result":
+                command_turn = proof.get("command_turn_id")
+                command_generation = proof.get("command_generation")
+                if (
+                    not isinstance(command_turn, str)
+                    or type(command_generation) is not int
+                    or not 0 < command_generation <= original_generation
+                ):
+                    continue
+                result_entries = [
+                    entry
+                    for key, entry in commands.items()
+                    if key.startswith(f"{command_turn}:")
+                    and entry.get("mode") == "async"
+                    and entry.get("command_id") == proof.get("command_id")
+                    and entry.get("turn_id") == command_turn
+                    and (entry.get("identity") or {}).get("generation") == command_generation
+                ]
+                if len(result_entries) != 1:
+                    continue
+                command = result_entries[0]
+                if (
+                    command.get("state") != "finished"
+                    or command.get("delivery") != "notification"
+                    or command.get("completion_notified") is not True
+                    or not isinstance(command.get("result"), str)
+                    or command.get("terminal_status")
+                    not in {"completed", "timed_out", "cancelled", "failed"}
+                ):
+                    continue
             retired[proof["id"]] = {
                 key: proof.get(key)
                 for key in (

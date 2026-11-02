@@ -57,6 +57,8 @@ _ARGUMENT_ERRORS = frozenset(
         "Invalid identifier",
         "Message IDs must be UUIDs",
         "Valid challenge ID required",
+        "Valid record ID required",
+        "Invalid command result page",
         "Challenge is required",
         "Invalid CTF board request",
         "Invalid verification request",
@@ -83,6 +85,21 @@ def recoverable_tool_error(error: RemoteError) -> Content | None:
                 "code": "challenge_not_found",
                 "message": "Use list_challenges to read this task's real challenge IDs, "
                 "then choose the relevant ID before calling this tool again.",
+            }
+        }
+    elif error.status == 404 and error.message == "Challenge record not found":
+        result = {
+            "error": {
+                "code": "record_not_found",
+                "message": "Use the challenge_id and record_id from the shared reference. "
+                "If the reference is incomplete, read this challenge's records; do not guess IDs.",
+            }
+        }
+    elif error.status == 404 and error.message == "Saved command result not found":
+        result = {
+            "error": {
+                "code": "command_unavailable",
+                "message": "Read a command_id from your saved start result or completion notice.",
             }
         }
     elif error.status == 409 and error.code == "revision_conflict":

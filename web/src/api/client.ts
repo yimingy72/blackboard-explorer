@@ -31,7 +31,10 @@ export type CtfPlatformToolBinding = {
   purpose: 'management' | 'connect' | 'submit' | 'status' | 'unknown';
   result_adapter: 'none' | 'fake_ctf_v1'; read_only: boolean;
 };
+export type CtfRoleRunOptions = { reasoning_effort?: string | null; max_output_tokens?: number | null };
 export type CtfWorkerSettings = { revision: number; profile: {
+  model?: ProfileInput['models']['explore'];
+  role_run_options?: Partial<Record<'lead' | 'teammate', CtfRoleRunOptions>>;
   prompt_templates: Record<'lead' | 'teammate', string>;
   worker_tools: Record<'lead' | 'teammate', WorkerTools>;
   platform_tools?: CtfPlatformToolBinding[];
@@ -225,8 +228,8 @@ export const api = {
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
   getWorkerSettings: () => request<WorkerSettings>('/settings/workers'),
   getCtfWorkerSettings: () => request<CtfWorkerSettings>('/settings/ctf/workers'),
-  saveCtfWorkerSettings: (role: 'lead' | 'teammate', expected_revision: number, prompt: string, tools: WorkerTools, platform_tools?: CtfPlatformToolBinding[]) =>
-    request<CtfWorkerSettings>(`/settings/ctf/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools, platform_tools }) }),
+  saveCtfWorkerSettings: (role: 'lead' | 'teammate', expected_revision: number, prompt: string, tools: WorkerTools, platform_tools?: CtfPlatformToolBinding[], run_options?: CtfRoleRunOptions | null) =>
+    request<CtfWorkerSettings>(`/settings/ctf/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools, platform_tools, run_options }) }),
   saveWorkerSettings: (role: WorkerRole, expected_revision: number, prompt: string, tools: WorkerTools) =>
     request<WorkerSettings>(`/settings/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools }) }),
   saveRuntimeSettings: (expected_revision: number, input: RuntimeInput) =>

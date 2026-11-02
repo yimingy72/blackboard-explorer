@@ -347,6 +347,7 @@ class CtfRegistration:
     stopping: bool = False
     commands: dict[str, tuple[str, asyncio.Task[dict[str, object]]]] = field(default_factory=dict)
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=dict)
+    async_commands: set[str] = field(default_factory=set)
 
 
 class CtfCommandRegistry:
@@ -415,7 +416,12 @@ class CtfCommandRegistry:
         return True
 
     def status(self, agent_id: str | None = None) -> dict[str, object]:
-        base: dict[str, object] = {"boot_id": self.boot_id, "task_id": self.task_id}
+        base: dict[str, object] = {
+            "boot_id": self.boot_id,
+            "task_id": self.task_id,
+        }
+        if agent_id is None:
+            base["capabilities"] = ["ctf_async_commands_v1"]
         if self.unknown:
             return {**base, "state": "unknown", "drained": False}
         if agent_id is None:
@@ -470,7 +476,7 @@ class CtfCommandRegistry:
             await asyncio.sleep(min(0.02, remaining))
         return self.status(str(body["agent_id"]))
 
-    async def execute(
+    def _command(
         self,
         agent_id: str,
         metadata: dict[str, object],
@@ -480,7 +486,9 @@ class CtfCommandRegistry:
         privileged: bool,
         settings: Settings,
         traffic: TrafficCapture | None = None,
-    ) -> dict[str, object]:
+        *,
+        background: bool = False,
+    ) -> tuple[str, asyncio.Task[dict[str, object]]] | dict[str, object]:
         body = {**metadata, "agent_id": agent_id}
         registration = self.registered(body)
         if registration.stopping:
@@ -495,8 +503,27 @@ class CtfCommandRegistry:
                 raise ValueError("Command ID reused with different arguments")
             if previous[0] != registration.generation:
                 raise ValueError("Command belongs to a previous generation; reconcile its outcome")
+            if background != (command_id in registration.async_commands):
+                raise ValueError("Command execution mode changed")
             task = previous[2]
         else:
+            running = [
+                identifier
+                for identifier, (_, active) in registration.commands.items()
+                if not active.done()
+                or (
+                    identifier in registration.async_commands
+                    and self._process_alive(registration.processes.get(identifier))
+                )
+            ]
+            if running and (
+                background or any(cid in registration.async_commands for cid in running)
+            ):
+                return {
+                    "state": "busy",
+                    "command_id": running[0],
+                    "message": "This member has an active command; wait for its result.",
+                }
             task = asyncio.create_task(
                 execute_command(
                     agent_id,
@@ -514,6 +541,115 @@ class CtfCommandRegistry:
             )
             registration.commands[command_id] = (digest, task)
             self.commands[(agent_id, command_id)] = (registration.generation, digest, task)
+            if background:
+                registration.async_commands.add(command_id)
             # Consume errors even when the original MCP client disconnects.
             task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-        return await asyncio.shield(task)
+        return command_id, task
+
+    @staticmethod
+    def _process_alive(process: asyncio.subprocess.Process | None) -> bool:
+        if process is None:
+            return False
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    async def execute(
+        self,
+        agent_id: str,
+        metadata: dict[str, object],
+        command: str,
+        cwd: str | None,
+        timeout_sec: int,
+        privileged: bool,
+        settings: Settings,
+        traffic: TrafficCapture | None = None,
+    ) -> dict[str, object]:
+        launched = self._command(
+            agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic
+        )
+        if isinstance(launched, dict):
+            return launched
+        return await asyncio.shield(launched[1])
+
+    def command_status(self, body: dict[str, object]) -> dict[str, object]:
+        registration = self.registered(body)
+        command_id = str(uuid.UUID(str(body.get("command_id", ""))))
+        previous = self.commands.get((str(body["agent_id"]), command_id))
+        result: dict[str, object] = {
+            **{
+                key: body[key]
+                for key in ("task_id", "member_id", "agent_id", "generation", "boot_id")
+            },
+            "command_id": command_id,
+        }
+        if previous is None:
+            return {**result, "state": "not_found"}
+        if previous[0] != registration.generation:
+            raise ValueError("Command belongs to a previous generation")
+        task = previous[2]
+        if not task.done():
+            return {**result, "state": "running"}
+        if self._process_alive(registration.processes.get(command_id)):
+            return {**result, "state": "running"}
+        if task.cancelled():
+            return {**result, "state": "cancelled", "result": {"status": "cancelled"}}
+        if task.exception() is not None:
+            return {
+                **result,
+                "state": "failed",
+                "result": {"error": "Command failed; side effects may have occurred."},
+            }
+        output = task.result()
+        return {
+            **result,
+            "state": "timed_out" if output.get("exit_code") == 124 else "completed",
+            "result": output,
+        }
+
+    async def start(
+        self,
+        agent_id: str,
+        metadata: dict[str, object],
+        command: str,
+        cwd: str | None,
+        timeout_sec: int,
+        privileged: bool,
+        settings: Settings,
+        traffic: TrafficCapture | None = None,
+    ) -> dict[str, object]:
+        launched = self._command(
+            agent_id,
+            metadata,
+            command,
+            cwd,
+            timeout_sec,
+            privileged,
+            settings,
+            traffic,
+            background=True,
+        )
+        if isinstance(launched, dict):
+            return launched
+        # Waiting on a task set never cancels the registered process on client disconnect.
+        await asyncio.wait({launched[1]}, timeout=1.0)
+        return self.command_status({**metadata, "agent_id": agent_id})
+
+    async def cancel_command(self, body: dict[str, object]) -> dict[str, object]:
+        registration = self.registered(body)
+        if str(body.get("command_id")) not in registration.async_commands:
+            raise ValueError("Only asynchronous commands can be individually cancelled")
+        status = self.command_status(body)
+        if status["state"] != "running":
+            return status
+        task = self.commands[(str(body["agent_id"]), str(body["command_id"]))][2]
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        process = registration.processes.get(str(body["command_id"]))
+        if self._process_alive(process):
+            assert process is not None
+            await finish_process_group(process)
+        return self.command_status(body)

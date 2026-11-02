@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.applications import Starlette
@@ -76,6 +76,32 @@ async def execute_command_tool(
     )
 
 
+async def start_command_tool(
+    command: str,
+    cwd: str | None = None,
+    timeout_sec: int = 120,
+    privileged: bool = False,
+    *,
+    ctx: Context,
+) -> dict[str, object]:
+    """Start a fenced CTF command and return after at most one second of execution."""
+    if settings.envd_mode != "ctf" or ctf_registry is None:
+        raise ValueError("Asynchronous commands require CTF mode")
+    request = ctx.request_context.request
+    agent_id = request.headers.get("X-Agent-Id", "") if request is not None else ""
+    meta = ctx.request_context.meta
+    metadata = meta.model_dump().get("ctf") if meta is not None else None
+    if not isinstance(metadata, dict):
+        raise ValueError("CTF command metadata required")
+    return await ctf_registry.start(
+        agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
+    )
+
+
+if settings.envd_mode == "ctf":
+    mcp.add_tool(start_command_tool, name="start_command")
+
+
 async def execute_control(request) -> Response:
     """Run one ordinary-task command outside the long-lived MCP response stream."""
     if settings.envd_mode == "ctf":
@@ -117,6 +143,10 @@ async def ctf_control(request) -> Response:
     try:
         if request.method == "GET":
             agent_id = request.query_params.get("agent_id")
+            if "command_id" in request.query_params:
+                identity: dict[str, Any] = dict(request.query_params)
+                identity["generation"] = int(identity.get("generation", "-1"))
+                return JSONResponse(ctf_registry.command_status(identity))
             result = ctf_registry.status(agent_id)
             if agent_id is not None and "generation" in request.query_params:
                 if result.get("generation") != int(request.query_params["generation"]):
@@ -131,6 +161,8 @@ async def ctf_control(request) -> Response:
                 await traffic_capture.prepare_agent(
                     body["agent_id"], body["member_id"], str(settings.envd_task_id)
                 )
+        elif request.url.path.endswith("/cancel-command"):
+            result = await ctf_registry.cancel_command(body)
         else:
             result = await ctf_registry.stop(body)
         return JSONResponse(result)
@@ -775,6 +807,7 @@ app = TokenAuth(
             Route("/ctf/register", ctf_control, methods=["POST"]),
             Route("/ctf/stop", ctf_control, methods=["POST"]),
             Route("/ctf/drain", ctf_control, methods=["POST"]),
+            Route("/ctf/cancel-command", ctf_control, methods=["POST"]),
             Route("/audit", audit),
             Route("/users", users, methods=["POST"]),
             Route("/files", files),

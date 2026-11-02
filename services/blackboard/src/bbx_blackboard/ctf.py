@@ -11,7 +11,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.billing import add_usage
-from bbx_contracts.ctf import CtfConclusion
+from bbx_contracts.ctf import CtfConclusion, execution_agent_id
 from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
@@ -1257,6 +1257,235 @@ class CtfService(
                     )
             return result
 
+    async def _saved_commands(self, conn, tid, agent_id):
+        saved = (
+            (
+                await conn.execute(
+                    select(
+                        s.agent_sessions.c.session["state"]["ctf_commands"].label("commands"),
+                        s.agent_sessions.c.revision,
+                    ).where(
+                        s.agent_sessions.c.task_id == tid,
+                        s.agent_sessions.c.agent_id == agent_id,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if saved is None:
+            return {}, 0
+        commands = saved["commands"]
+        require(commands is None or isinstance(commands, dict), "Invalid saved command ledger")
+        return commands or {}, saved["revision"]
+
+    @staticmethod
+    def _known_async_result(entry, tid, agent_id, turn_id, generation):
+        if not isinstance(entry, dict):
+            return False
+        identity = entry.get("identity")
+        return (
+            entry.get("mode") == "async"
+            and entry.get("turn_id") == str(turn_id)
+            and entry.get("state") == "finished"
+            and entry.get("terminal_status") in ("completed", "timed_out", "cancelled", "failed")
+            and isinstance(entry.get("result"), str)
+            and isinstance(entry.get("command_id"), str)
+            and bool(entry["command_id"])
+            and isinstance(identity, dict)
+            and identity.get("task_id") == str(tid)
+            and identity.get("member_id") == agent_id
+            and identity.get("agent_id") == execution_agent_id(agent_id)
+            and type(identity.get("generation")) is int
+            and identity["generation"] == generation
+            and generation > 0
+            and isinstance(identity.get("boot_id"), str)
+            and bool(identity["boot_id"])
+        )
+
+    @staticmethod
+    def _command_notice_id(tid, agent_id, turn_id, generation, command_id):
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                f"ctf-command-result:{tid}:{agent_id}:{turn_id}:{generation}:{command_id}",
+            )
+        )
+
+    async def read_command_result(
+        self,
+        tid,
+        agent_id,
+        turn_id,
+        generation,
+        command_id,
+        offset=0,
+        limit=2000,
+    ):
+        if (
+            not isinstance(command_id, str)
+            or not 1 <= len(command_id) <= 200
+            or type(offset) is not int
+            or offset < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 16000
+        ):
+            raise HTTPException(422, "Invalid command result page")
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            _, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            self._authorize_review(task, turn)
+            commands, _ = await self._saved_commands(conn, tid, agent_id)
+            entries = [
+                entry
+                for entry in commands.values()
+                if isinstance(entry, dict)
+                and entry.get("mode") == "async"
+                and entry.get("command_id") == command_id
+            ]
+            if len(entries) != 1:
+                raise HTTPException(404, "Saved command result not found")
+            entry = entries[0]
+            identity = entry.get("identity") or {}
+            if (
+                not isinstance(identity, dict)
+                or identity.get("task_id") != str(tid)
+                or identity.get("member_id") != agent_id
+                or identity.get("agent_id") != execution_agent_id(agent_id)
+            ):
+                raise HTTPException(404, "Saved command result not found")
+            if not self._known_async_result(
+                entry,
+                tid,
+                agent_id,
+                entry.get("turn_id"),
+                identity.get("generation"),
+            ):
+                return {
+                    "command_id": command_id,
+                    "state": "unknown",
+                    "message": "Saved outcome is unconfirmed; review does not resume execution.",
+                }
+            result = entry["result"]
+            end = min(len(result), offset + limit)
+            return {
+                "command_id": command_id,
+                "state": entry["terminal_status"],
+                "result": result[offset:end],
+                "next_offset": end if end < len(result) else None,
+            }
+
+    async def notify_command_result(self, tid, agent_id, turn_id, generation, command_id):
+        try:
+            command_id = str(UUID(str(command_id)))
+            turn_id = str(UUID(str(turn_id)))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(422, "Valid command and turn IDs are required") from exc
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or type(generation) is not int
+            or generation < 1
+        ):
+            raise HTTPException(422, "Valid command execution identity is required")
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            commands, revision = await self._saved_commands(conn, tid, agent_id)
+            entries = [
+                entry
+                for key, entry in commands.items()
+                if key.startswith(f"{turn_id}:")
+                and isinstance(entry, dict)
+                and entry.get("command_id") == command_id
+            ]
+            require(len(entries) == 1, "Command result is absent or ambiguous in confirmed Session")
+            entry = entries[0]
+            require(
+                self._known_async_result(entry, tid, agent_id, turn_id, generation),
+                "Command result is not a confirmed terminal result",
+            )
+            require(
+                entry.get("delivery") == "notification", "Command result was delivered by its tool"
+            )
+            message_id = self._command_notice_id(tid, agent_id, turn_id, generation, command_id)
+            body = json.dumps(
+                {
+                    "command_id": command_id,
+                    "terminal_status": entry["terminal_status"],
+                    "result_ref": {"tool": "read_command_result", "command_id": command_id},
+                }
+            )
+            existing = (
+                (
+                    await conn.execute(
+                        select(s.ctf_messages).where(
+                            s.ctf_messages.c.task_id == tid,
+                            s.ctf_messages.c.id == message_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing is not None:
+                require(
+                    all(
+                        existing[key] == value
+                        for key, value in {
+                            "sender_kind": "system",
+                            "sender_id": "system",
+                            "recipient_id": agent_id,
+                            "kind": "notification",
+                            "notification_purpose": "command_result",
+                            "purpose": "execution",
+                            "source_turn_id": None,
+                            "body": body,
+                        }.items()
+                    ),
+                    "Command notification identity conflict",
+                )
+                return {"id": message_id, "recipient_id": agent_id}
+            unavailable = {
+                "code": "ctf_command_notice_unavailable",
+                "message": "No prior notice exists; its original turn cannot receive a new one",
+            }
+            try:
+                member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                raise HTTPException(409, unavailable) from exc
+            require(turn["purpose"] == "execution", "Command result requires execution turn")
+            require(
+                revision > 0 and revision == turn["checkpoint_revision"],
+                "Command result requires a confirmed turn checkpoint",
+            )
+            binding = member.get("execution") or {}
+            require(
+                binding.get("boot_id") == entry["identity"]["boot_id"]
+                and binding.get("generation") == generation,
+                "Command execution binding changed",
+            )
+            if (
+                task["ctf_control"]["phase"] != "running"
+                or task["status"] != "running"
+                or member["run_state"] == "stopping"
+                or member.get("pending_operation")
+                or binding.get("drained") is True
+            ):
+                raise HTTPException(409, unavailable)
+            await self._message(
+                conn,
+                tid,
+                "system",
+                agent_id,
+                body,
+                message_id,
+                "notification",
+                notification_purpose="command_result",
+            )
+            return {"id": message_id, "recipient_id": agent_id}
+
     async def enqueue_continuation(self, tid, agent_id, turn_id, generation):
         """Queue one bounded continuation after an application context boundary."""
         async with self.repo.engine.begin() as conn:
@@ -1834,6 +2063,13 @@ class CtfService(
                             ["turn_recovery", "context_continuation"]
                         )
                     )
+                    | (
+                        (messages.sender_id == "system")
+                        & (messages.kind == "notification")
+                        & messages.notification_purpose.in_(
+                            ["challenge_progress", "challenge_verification", "command_result"]
+                        )
+                    )
                 )
             )
             query = (
@@ -1884,8 +2120,47 @@ class CtfService(
                 )
                 .order_by(messages.recipient_sequence)
             )
-            proofs = (await conn.execute(query)).mappings().all()
-            return {"proofs": [dict(proof) for proof in proofs]}
+            proofs = [dict(proof) for proof in (await conn.execute(query)).mappings()]
+            if any(proof["notification_purpose"] == "command_result" for proof in proofs):
+                commands, _ = await self._saved_commands(conn, tid, agent_id)
+                verified = []
+                for proof in proofs:
+                    if proof["notification_purpose"] == "command_result":
+                        matches = []
+                        for key, entry in commands.items():
+                            if not isinstance(entry, dict):
+                                continue
+                            origin = entry.get("turn_id")
+                            identity = entry.get("identity") or {}
+                            origin_generation = (
+                                identity.get("generation") if isinstance(identity, dict) else None
+                            )
+                            if (
+                                isinstance(origin, str)
+                                and key.startswith(f"{origin}:")
+                                and type(origin_generation) is int
+                                and 0 < origin_generation <= proof["turn_generation"]
+                                and self._known_async_result(
+                                    entry, tid, agent_id, origin, origin_generation
+                                )
+                                and entry.get("delivery") == "notification"
+                                and entry.get("completion_notified") is True
+                                and self._command_notice_id(
+                                    tid, agent_id, origin, origin_generation, entry["command_id"]
+                                )
+                                == proof["id"]
+                            ):
+                                matches.append(entry)
+                        if len(matches) != 1:
+                            continue
+                        proof.update(
+                            command_id=matches[0]["command_id"],
+                            command_turn_id=matches[0]["turn_id"],
+                            command_generation=matches[0]["identity"]["generation"],
+                        )
+                    verified.append(proof)
+                proofs = verified
+            return {"proofs": proofs}
 
     async def _settle_turn_reservations(self, conn, tid, turn_id):
         turn = await row(conn, s.ctf_turns, tid, str(turn_id))
@@ -2178,6 +2453,31 @@ class CtfService(
         if turn["status"] != "running":
             await self._retire_checkpoint_barrier(conn, tid, turn)
             return turn
+        if turn["purpose"] == "execution" and end_reason == "completed":
+            commands, _ = await self._saved_commands(conn, tid, member["id"])
+            if any(
+                key.startswith(f"{turn['id']}:")
+                and isinstance(entry, dict)
+                and entry.get("mode") == "async"
+                and (
+                    not self._known_async_result(
+                        entry, tid, member["id"], turn["id"], turn["generation"]
+                    )
+                    or entry.get("delivery") not in ("tool_result", "notification")
+                    or (
+                        entry.get("delivery") == "notification"
+                        and entry.get("completion_notified") is not True
+                    )
+                )
+                for key, entry in commands.items()
+            ):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "ctf_command_pending",
+                        "message": "Async command execution or result delivery is still pending",
+                    },
+                )
         await self._settle_turn_reservations(conn, tid, turn["id"])
         if turn["purpose"] == "review":
             result = await self._settle_review(conn, tid, member, turn, end_reason, answer)

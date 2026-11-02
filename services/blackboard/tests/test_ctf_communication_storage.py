@@ -389,6 +389,18 @@ def test_observation_index_targets_the_exact_lookup():
         },
         {"sender_kind": "system", "notification_purpose": "turn_recovery"},
         {"sender_kind": "system", "notification_purpose": "context_continuation"},
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "challenge_progress",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "challenge_verification",
+        },
     ],
 )
 async def test_recovery_proofs_only_return_bounded_metadata_from_completed_old_turn(
@@ -419,6 +431,23 @@ async def test_recovery_proofs_only_return_bounded_metadata_from_completed_old_t
         {"sender_kind": "system", "notification_purpose": "unknown"},
         {"sender_kind": "system", "kind": "turn_finished", "notification_purpose": None},
         {"kind": "message"},
+        {
+            "sender_kind": "user",
+            "kind": "notification",
+            "notification_purpose": "challenge_progress",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "foreign",
+            "kind": "notification",
+            "notification_purpose": "challenge_verification",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "command_result",
+        },
         {"purpose": "review"},
         {"status": "leased"},
         {"session_revision": 0},

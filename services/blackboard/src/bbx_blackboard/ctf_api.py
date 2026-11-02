@@ -108,6 +108,7 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "checkpoint",
         "checkpoint_failed",
         "record_observation",
+        "notify_command_result",
         "finish_turn",
         "enqueue_continuation",
         "recover",
@@ -133,6 +134,15 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
     if operation not in allowed:
         raise HTTPException(404, "Unknown CTF runtime operation")
     arguments = dict(body)
+    if operation == "notify_command_result":
+        if (
+            set(arguments) != {"agent_id", "turn_id", "generation", "command_id"}
+            or not isinstance(arguments.get("agent_id"), str)
+            or not arguments["agent_id"]
+            or type(arguments.get("generation")) is not int
+            or arguments["generation"] < 1
+        ):
+            raise HTTPException(422, "Valid command execution identity is required")
     if operation == "recovery_input_proofs":
         try:
             arguments = ctf_models.CtfRecoveryInputProofRequest.model_validate(body).model_dump(
@@ -221,8 +231,36 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
         identity.turn_id,
     )
     if context["purpose"] == "review":
-        if operation not in {"list_challenges", "get_challenge", "list_records", "read_artifact"}:
+        if operation not in {
+            "list_challenges",
+            "get_challenge",
+            "get_record",
+            "list_records",
+            "read_artifact",
+            "read_saved_tool_result",
+            "read_command_result",
+        }:
             raise HTTPException(403, "Tool is unavailable during review")
+        if operation == "read_command_result":
+            if "command_id" not in body or set(body) - {"command_id", "offset", "limit"}:
+                raise HTTPException(422, "Unexpected query arguments")
+            return await service(request).read_command_result(
+                task_id,
+                agent_id=identity.agent_id,
+                turn_id=identity.turn_id,
+                generation=identity.generation,
+                **body,
+            )
+        if operation == "read_saved_tool_result":
+            try:
+                arguments = ctf_models.CtfSavedToolResultReadRequest.model_validate(
+                    body
+                ).model_dump(mode="json")
+            except ValueError as error:
+                raise HTTPException(422, "Invalid readback page") from error
+            return await service(request).read_saved_tool_result(
+                task_id, actor=identity.agent_id, **arguments
+            )
         if operation == "read_artifact":
             if set(body) - {"artifact_id", "offset", "limit"}:
                 raise HTTPException(422, "Unexpected artifact arguments")
@@ -319,6 +357,7 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     if operation in {
         "list_challenges",
         "get_challenge",
+        "get_record",
         "create_challenge",
         "update_challenge",
         "claim_challenge",
@@ -436,6 +475,14 @@ async def board_tool(
             challenge_id = str(UUID(str(arguments.pop("challenge_id"))))
         except (KeyError, ValueError) as error:
             raise HTTPException(422, "Valid challenge ID required") from error
+    if operation == "get_record":
+        try:
+            record_id = str(UUID(str(arguments.pop("record_id"))))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(422, "Valid record ID required") from error
+        if arguments:
+            raise HTTPException(422, "Unexpected query arguments")
+        return await service(request).get_record(task_id, challenge_id, record_id)
     if operation in {"list_challenges", "get_challenge", "list_records"}:
         if operation == "get_challenge":
             if arguments:
