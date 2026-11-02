@@ -171,6 +171,15 @@
           "title": "Error Type",
           "type": "string"
         },
+        "leaf_error_types": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,99}$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Leaf Error Types",
+          "type": "array"
+        },
         "phase": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$",
           "title": "Phase",

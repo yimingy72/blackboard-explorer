@@ -254,6 +254,8 @@ def build_tools(
     ) -> str:
         """Execute in this member's fenced workspace; timeout uses the configured envd maximum.
 
+        cwd must already exist. To create a new directory, omit cwd or use an
+        existing directory for the creation command, then set cwd in a later call.
         Prefer short, coherent operations and inspect each result before starting the
         next independent step. Publish a useful result or blocker before continuing a
         long investigation. Do not use long sleeps or repeated shell polling to wait
@@ -296,6 +298,7 @@ def build_tools(
     ) -> str:
         """Start a fenced command; return a result or running/command_id after one second.
 
+        cwd must already exist; use a separate command from an existing cwd to create it.
         Only one asynchronous command may be pending for you. While it runs, continue
         useful coordination or finish your response to wait for its completion message.
         Do not poll, start another command or repeat an uncertain start. A temporary

@@ -16,6 +16,7 @@ import httpx
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError, is_control_transport_error
 from bbx_runtime.ctf.client import CtfClient, CtfControlTransportExhausted
 from bbx_runtime.ctf.execution import CtfExecutionAdapter, DrainPending, UnknownCommandOutcome
+from bbx_runtime.ctf.failures import grouped_failure_types
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.settings import Settings
 
@@ -61,7 +62,7 @@ def failure_diagnostic(
 ) -> dict[str, Any]:
     """Return bounded failure metadata without copying exception or request contents."""
     error_type = type(error).__name__
-    if not error_type.isidentifier():
+    if not error_type.isascii() or not error_type.isidentifier():
         error_type = "RuntimeError"
     correlation_id = str(uuid4())
     summary = "CTF 执行因内部错误停止；请使用失败追踪 ID 查询受控日志。"
@@ -118,6 +119,7 @@ def failure_diagnostic(
     }
     if type(generation) is int and generation >= 0:
         identity["generation"] = generation
+    leaf_types = grouped_failure_types(error)
     diagnostic = {
         "error_type": error_type[:100],
         "phase": stage[:64],
@@ -126,6 +128,7 @@ def failure_diagnostic(
         "summary": summary,
         **identity,
         **({"model_error": model_error} if model_error else {}),
+        **({"leaf_error_types": leaf_types} if leaf_types else {}),
     }
     # Keep the stack location for operators, but deliberately omit str(error), which may
     # contain credentials, tool arguments, model requests, or remote response bodies.
@@ -135,7 +138,7 @@ def failure_diagnostic(
     )
     logger.error(
         "CTF coordinator failure correlation_id=%s phase=%s error_type=%s "
-        "task_id=%s member_id=%s turn_id=%s generation=%s stack=%s",
+        "task_id=%s member_id=%s turn_id=%s generation=%s stack=%s leaf_error_types=%s",
         correlation_id,
         diagnostic["phase"],
         diagnostic["error_type"],
@@ -144,6 +147,7 @@ def failure_diagnostic(
         turn_id,
         generation,
         stack,
+        leaf_types,
     )
     return diagnostic
 

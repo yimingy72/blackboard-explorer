@@ -399,6 +399,9 @@ class CtfFailureDiagnostic(ContractModel):
     """Safe coordinator failure metadata; never contains request or tool payloads."""
 
     error_type: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")
+    leaf_error_types: list[Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")]] = (
+        Field(default_factory=list, max_length=8)
+    )
     phase: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
     occurred_at: datetime
     correlation_id: UUID

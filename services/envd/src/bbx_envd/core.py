@@ -31,6 +31,29 @@ COMMAND_LOG = AUDIT_DIR / "commands.jsonl"
 SUDO_LOG = AUDIT_DIR / "sudo.log"
 
 
+class CommandInputError(ValueError):
+    """A bounded parameter refusal raised before starting any command process."""
+
+    _MESSAGES = {
+        "invalid_cwd": "cwd must be an existing directory within /workspace. "
+        "Create a new directory from an existing cwd first, then retry.",
+        "invalid_timeout": "timeout_sec must be a positive integer within the execution limit.",
+        "invalid_command": "command cannot contain a NUL character. "
+        "Write binary data through a file or escaped script instead.",
+    }
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(self._MESSAGES[code])
+
+    def result(self) -> dict[str, object]:
+        return {
+            "state": "rejected",
+            "dispatched": False,
+            "error": {"code": self.code, "message": self._MESSAGES[self.code]},
+        }
+
+
 def valid_agent_id(value: str) -> bool:
     return AGENT_ID.fullmatch(value) is not None
 
@@ -202,11 +225,16 @@ async def execute_command(
     traffic: TrafficCapture | None = None,
 ) -> dict[str, object]:
     home = agent_home(agent_id)
-    if not 1 <= timeout_sec <= settings.command_timeout_max:
-        raise ValueError("invalid timeout_sec")
-    directory = workspace_path(cwd) if cwd is not None else home
+    if type(timeout_sec) is not int or not 1 <= timeout_sec <= settings.command_timeout_max:
+        raise CommandInputError("invalid_timeout")
+    if "\x00" in command:
+        raise CommandInputError("invalid_command")
+    try:
+        directory = workspace_path(cwd) if cwd is not None else home
+    except (ValueError, FileNotFoundError, NotADirectoryError):
+        raise CommandInputError("invalid_cwd") from None
     if not directory.is_dir():
-        raise ValueError("cwd is not a directory")
+        raise CommandInputError("invalid_cwd")
     started = time.monotonic()
     execution: dict[str, object] = {
         "command_id": command_id or str(uuid.uuid4()),
@@ -597,7 +625,10 @@ class CtfCommandRegistry:
             return {**result, "state": "running"}
         if task.cancelled():
             return {**result, "state": "cancelled", "result": {"status": "cancelled"}}
-        if task.exception() is not None:
+        error = task.exception()
+        if isinstance(error, CommandInputError):
+            return {**result, "state": "failed", "result": error.result()}
+        if error is not None:
             return {
                 **result,
                 "state": "failed",

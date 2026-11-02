@@ -24,6 +24,7 @@ from bbx_envd.core import (
     COMMAND_LOG,
     SUDO_LOG,
     WORKSPACE,
+    CommandInputError,
     CtfCommandRegistry,
     execute_command,
     prepare_audit_logs,
@@ -55,6 +56,8 @@ async def execute_command_tool(
 ) -> dict[str, object]:
     """Run a command in the current agent's workspace and network namespace.
 
+    cwd must already exist. Create a directory from an existing cwd first;
+    creating it inside the same command cannot satisfy this precondition.
     Localhost belongs to this Agent. BBX_AGENT_IP and BBX_TASK_GATEWAY identify its
     task network. Shared services should listen on 0.0.0.0; find other Agents at
     /workspace/shared/network.json. Files and installed tools remain shared.
@@ -68,12 +71,18 @@ async def execute_command_tool(
         metadata = meta.model_dump().get("ctf") if meta is not None else None
         if not isinstance(metadata, dict):
             raise ValueError("CTF command metadata required")
-        return await ctf_registry.execute(
-            agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
+        try:
+            return await ctf_registry.execute(
+                agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
+            )
+        except CommandInputError as error:
+            return error.result()
+    try:
+        return await execute_command(
+            agent_id, command, cwd, timeout_sec, privileged, settings, traffic=traffic_capture
         )
-    return await execute_command(
-        agent_id, command, cwd, timeout_sec, privileged, settings, traffic=traffic_capture
-    )
+    except CommandInputError as error:
+        return error.result()
 
 
 async def start_command_tool(
