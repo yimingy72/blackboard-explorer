@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.ctf_board import CtfBoardMixin
+from bbx_blackboard.ctf_failures import CtfFailureMixin
 from bbx_blackboard.ctf_lifecycle import CtfLifecycleMixin
 from bbx_blackboard.ctf_platform import CtfPlatformMixin
 from bbx_blackboard.ctf_readback import CtfReadbackMixin
@@ -188,7 +189,12 @@ def initial_input_parts(fields: dict[str, Any]) -> list[str]:
 
 
 class CtfService(
-    CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMixin, CtfReadbackMixin
+    CtfLifecycleMixin,
+    CtfReviewMixin,
+    CtfPlatformMixin,
+    CtfBoardMixin,
+    CtfReadbackMixin,
+    CtfFailureMixin,
 ):
     def __init__(self, engine: AsyncEngine, objects=None) -> None:
         self.objects = objects
@@ -452,6 +458,13 @@ class CtfService(
                 member["run_state"] != "stopping" and not member.get("pending_operation"),
                 "Member is stopping",
             )
+            if task["ctf_control"]["phase"] == "running" and task["ctf_control"].get(
+                "failure_hold"
+            ):
+                raise HTTPException(
+                    409,
+                    {"code": "ctf_admission_paused", "message": "Execution safety is unconfirmed"},
+                )
             cost = Decimal(str(reservation_cost))
             require(cost.is_finite() and cost >= 0, "Invalid budget reservation")
             reservations = _reservations(task)
@@ -1580,6 +1593,7 @@ class CtfService(
                 return None
             if (
                 task["ctf_control"]["phase"] != "running"
+                or task["ctf_control"].get("failure_hold")
                 or member["lifecycle"] != "active"
                 or member["run_state"] == "stopping"
                 or task["ctf_control"].get("replacement", {}).get("phase", "ready") != "ready"

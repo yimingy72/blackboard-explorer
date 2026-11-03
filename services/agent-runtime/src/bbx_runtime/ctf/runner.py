@@ -902,7 +902,19 @@ class CtfRunner:
                         answer=answer,
                     )
                     if isinstance(result, dict) and "status" in result:
-                        self._validate_finished(result, member, turn, reason, answer)
+                        if (
+                            result.get("end_reason") == "stopped"
+                            and reason != "stopped"
+                            and turn.get("purpose") == "execution"
+                        ):
+                            # A stop can commit while our drain RPC is in flight. Require
+                            # the same authoritative proof used for lost finish responses.
+                            if not await self._confirm_finish(
+                                task_id, member, turn, reason, answer
+                            ):
+                                raise _SettlementUnconfirmed("Stopped settlement is unconfirmed")
+                        else:
+                            self._validate_finished(result, member, turn, reason, answer)
                 except (httpx.TransportError, ConnectionError) as error:
                     if not is_control_transport_error(error):
                         raise

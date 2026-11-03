@@ -204,6 +204,7 @@ class CtfCoordinator:
         self.event_cursors: dict[str, int] = {}
         self.listeners: dict[str, asyncio.Task[None]] = {}
         self.health_checks: dict[str, tuple[str, float]] = {}
+        self.automatic_tasks: set[str] = set()
 
     def wake(self, task_id: str) -> None:
         if task_id in self.event_wakes:
@@ -244,6 +245,7 @@ class CtfCoordinator:
         self.event_wakes.pop(task_id, None)
         self.event_cursors.pop(task_id, None)
         self.health_checks.pop(task_id, None)
+        self.automatic_tasks.discard(task_id)
         clear = getattr(self.runner, "clear_platform_catalog", None)
         if clear is not None:
             clear(task_id)
@@ -447,6 +449,17 @@ class CtfCoordinator:
             if task["ctf_control"]["phase"] not in {"closing", "closed"}:
                 raise
 
+    async def pause_or_close_failure(self, task_id, failure, member_id=None, turn=None):
+        if task_id in self.automatic_tasks:
+            identity = (
+                {"agent_id": member_id, "turn_id": turn["id"], "generation": turn["generation"]}
+                if member_id is not None and member_id != "lead" and turn is not None
+                else {}
+            )
+            await self.service.runtime(task_id, "pause_for_failure", failure=failure, **identity)
+        else:
+            await self.request_close(task_id, "system_failure", failure=failure)
+
     async def tick(self, task_id: str) -> bool:
         async with self.tick_locks.setdefault(task_id, asyncio.Lock()):
             self.waiting(task_id, "runtime_state")
@@ -457,6 +470,8 @@ class CtfCoordinator:
 
     async def _tick(self, task_id: str) -> bool:
         state = await self.service.runtime_state(task_id)
+        if state["task"].get("ctf_options", {}).get("dispatch_mode") == "automatic":
+            self.automatic_tasks.add(task_id)
         if type(state.get("event_version")) is int:
             self.event_cursors.setdefault(task_id, state["event_version"])
         phase = state["task"]["ctf_control"]["phase"]
@@ -555,10 +570,9 @@ class CtfCoordinator:
                 if error is not None:
                     # An unconfirmed checkpoint must remain recoverable. Close admission
                     # before recovery settles it as interrupted, never as success.
-                    await self.request_close(
+                    await self.pause_or_close_failure(
                         task_id,
-                        "system_failure",
-                        failure=failure_diagnostic(
+                        failure_diagnostic(
                             "turn",
                             error,
                             task_id=task_id,
@@ -566,6 +580,8 @@ class CtfCoordinator:
                             turn_id=turn["id"],
                             generation=turn["generation"],
                         ),
+                        member_id=key[1],
+                        turn=turn,
                     )
                     del self.active[key]
                     self.renewals.pop(key, None)
@@ -612,6 +628,11 @@ class CtfCoordinator:
             self.waiting(task_id, "retry_checkpoints")
             await retry_checkpoints(task_id)
         if phase == "running":
+            if task_id in self.automatic_tasks:
+                held = await self.service.runtime(task_id, "reconcile_member_failures")
+                if held.get("held"):
+                    return True
+                state = await self.service.runtime_state(task_id)
             ready = set(state["ready_member_ids"])
             for member in state["members"]:
                 key = (task_id, member["id"])
@@ -759,6 +780,8 @@ class CtfCoordinator:
             try:
                 await self.adapter(task_id)
                 task = (await self.service.runtime_state(task_id))["task"]
+                if task.get("ctf_options", {}).get("dispatch_mode") == "automatic":
+                    self.automatic_tasks.add(task_id)
                 if task["ctf_control"]["phase"] in {"running", "closing", "closed"}:
                     return
                 if uncertain_start:
@@ -841,7 +864,7 @@ class CtfCoordinator:
             except (httpx.TransportError, RemoteError) as error:
                 if not is_control_transport_error(error):
                     failure = failure_diagnostic("control_protocol", error, task_id=task_id)
-                    await self.request_close(task_id, "system_failure", failure=failure)
+                    await self.pause_or_close_failure(task_id, failure)
                     delay = self.poll_seconds
                 else:
                     failures += 1
@@ -853,14 +876,14 @@ class CtfCoordinator:
                     )
                     if failures >= 3:
                         failure = failure_diagnostic("control_transport", error, task_id=task_id)
-                        await self.request_close(task_id, "system_failure", failure=failure)
+                        await self.pause_or_close_failure(task_id, failure)
                         raise
                     delay = max(self.poll_seconds, min(2 ** (failures - 1), 4))
             except Exception as error:
                 failure = failure_diagnostic("tick", error, task_id=task_id)
                 # If persistence is unavailable, retain authoritative running/closing
                 # state for recovery rather than manufacture a terminal result.
-                await self.request_close(task_id, "system_failure", failure=failure)
+                await self.pause_or_close_failure(task_id, failure)
                 delay = self.poll_seconds
             try:
                 if failures:

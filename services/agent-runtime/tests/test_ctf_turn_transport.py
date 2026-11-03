@@ -660,6 +660,65 @@ async def test_authoritative_stop_retires_only_exact_old_settlement(wrong_identi
     assert (await service.state("task"))["turns"][1]["status"] == "running"
 
 
+@pytest.mark.parametrize("proven", [True, False])
+async def test_stop_committed_during_drain_rechecks_authority_on_success_response(proven):
+    calls = []
+
+    class Service:
+        stopped = False
+
+        async def runtime_state(self, _):
+            return {
+                "members": [
+                    {
+                        **MEMBER,
+                        "generation": 8 if self.stopped else 7,
+                        "current_turn_id": None if self.stopped else TURN["id"],
+                        "lifecycle": "stopped" if self.stopped and proven else "active",
+                    }
+                ]
+            }
+
+        async def state(self, tid):
+            return {
+                **await self.runtime_state(tid),
+                "task": {"ctf_control": {"phase": "running"}},
+                "turns": [
+                    {
+                        **TURN,
+                        "purpose": "execution",
+                        "status": "finished",
+                        "end_reason": "stopped",
+                        "final_answer": "",
+                    }
+                ],
+            }
+
+        async def runtime(self, tid, operation, **_):
+            assert operation == "finish_turn"
+            calls.append(operation)
+            return (await self.state(tid))["turns"][0]
+
+    service = Service()
+
+    class StopEnvd:
+        async def stop_member(self, *_):
+            calls.append("drain")
+            service.stopped = True
+            return {"drained": True}
+
+    runner = CtfRunner(cast(Any, service), cast(Any, None), envd=StopEnvd())
+    execution_turn = {**TURN, "purpose": "execution"}
+    if proven:
+        assert await runner.settle("task", MEMBER, execution_turn, "completed", "saved answer")
+        assert not runner.pending_settlements
+    else:
+        with pytest.raises(RuntimeError, match="read-back does not match"):
+            await runner.settle("task", MEMBER, execution_turn, "completed", "saved answer")
+        assert runner.pending_settlements[("task", MEMBER["id"])][3] == "saved answer"
+    assert calls == ["drain", "finish_turn"]
+
+
 async def test_cancelled_partial_stream_failed_checkpoint_retries_as_interrupted_only(monkeypatch):
     import asyncio
 

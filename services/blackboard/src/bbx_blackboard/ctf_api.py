@@ -119,6 +119,8 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "bill_usage",
         "reconcile_usage_outbox",
         "reconcile_budget",
+        "pause_for_failure",
+        "reconcile_member_failures",
         "idle_watchdog",
         "request_finish",
         "record_execution",
@@ -134,6 +136,27 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
     if operation not in allowed:
         raise HTTPException(404, "Unknown CTF runtime operation")
     arguments = dict(body)
+    if operation == "reconcile_member_failures" and arguments:
+        raise HTTPException(422, "Unexpected failure reconciliation arguments")
+    if operation == "pause_for_failure":
+        if set(arguments) - {"failure", "agent_id", "turn_id", "generation"}:
+            raise HTTPException(422, "Unexpected failure arguments")
+        identity = {"agent_id", "turn_id", "generation"} & set(arguments)
+        if identity and identity != {"agent_id", "turn_id", "generation"}:
+            raise HTTPException(422, "Failure requires a complete writer identity")
+        if identity and (
+            not isinstance(arguments["agent_id"], str)
+            or not arguments["agent_id"]
+            or type(arguments["generation"]) is not int
+            or arguments["generation"] < 1
+        ):
+            raise HTTPException(422, "Valid failure writer identity required")
+        try:
+            arguments["failure"] = ctf_models.CtfFailureDiagnostic.model_validate(
+                arguments.get("failure")
+            ).model_dump(mode="json")
+        except ValueError as error:
+            raise HTTPException(422, "Valid failure diagnostic required") from error
     if operation == "notify_command_result":
         if (
             set(arguments) != {"agent_id", "turn_id", "generation", "command_id"}

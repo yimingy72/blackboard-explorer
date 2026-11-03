@@ -261,6 +261,7 @@ class CtfLifecycleMixin:
                 "context_blocked_members",
                 "turn_retries",
                 "turn_retry_delays",
+                "failure_hold",
             ):
                 control.pop(key, None)
             control.update(phase="provisioning", epoch=control.get("epoch", 0) + 1)
