@@ -49,6 +49,29 @@
           "minimum": 1,
           "title": "Context Threshold",
           "type": "integer"
+        },
+        "dispatch_mode": {
+          "default": "manual",
+          "enum": [
+            "manual",
+            "automatic"
+          ],
+          "title": "Dispatch Mode",
+          "type": "string"
+        },
+        "first_plan_max_calls": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "First Plan Max Calls",
+          "type": "integer"
+        },
+        "first_plan_timeout_seconds": {
+          "default": 60,
+          "maximum": 300,
+          "minimum": 10,
+          "title": "First Plan Timeout Seconds",
+          "type": "integer"
         }
       },
       "title": "CtfOptions",
@@ -153,6 +176,23 @@
       ],
       "default": null,
       "title": "Input File Ids"
+    },
+    "public_input_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Input Ids"
     },
     "model_id": {
       "anyOf": [

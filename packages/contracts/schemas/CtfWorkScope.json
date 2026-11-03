@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "objective": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Objective",
+      "type": "string"
+    },
+    "boundary": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Boundary",
+      "type": "string"
+    },
+    "input_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Input Refs",
+      "type": "array"
+    },
+    "resource_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "title": "Resource Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "objective",
+    "boundary"
+  ],
+  "title": "CtfWorkScope",
+  "type": "object"
+}

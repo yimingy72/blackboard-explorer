@@ -568,6 +568,7 @@ class CtfService(
         profile_version=1,
         input_group_id=None,
         input_file_ids=None,
+        public_input_ids=None,
         input_owner=None,
         create_request_hash=None,
     ):
@@ -576,7 +577,7 @@ class CtfService(
         spec = CtfTaskSpec.model_validate(spec)
         data = spec.model_dump(mode="json")
         tid = input_group_id or uuid4()
-        fields = dict(
+        fields: dict[str, Any] = dict(
             name=data.get("name"),
             goal=data["goal"],
             initial_attachments=[],
@@ -625,6 +626,10 @@ class CtfService(
                     assert self.objects is not None
                     require(await self.objects.exists(item["uri"]), "Input object missing")
                 fields["initial_attachments"] = files
+                if public_input_ids is not None:
+                    public_ids = {str(file_id) for file_id in public_input_ids}
+                    require(public_ids <= {item["id"] for item in files}, "Public input missing")
+                    fields["ctf_control"]["public_input_ids"] = sorted(public_ids)
                 await conn.execute(
                     update(s.task_input_groups)
                     .where(s.task_input_groups.c.id == tid)

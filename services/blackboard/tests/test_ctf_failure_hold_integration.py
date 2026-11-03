@@ -4,9 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from bbx_blackboard.store import schema as s
 from fastapi import HTTPException
-from sqlalchemy import update
 from test_ctf_integration import ctf as ctf_fixture
 from test_ctf_integration import ctf_url as ctf_url_fixture
 
@@ -21,25 +19,11 @@ async def running_member(ctf):
             "mode": "ctf",
             "goal": "Offline failure isolation",
             "budget": {"max_cost": "10", "max_minutes": 10},
-            "ctf_options": {"max_teammates": 2},
+            "ctf_options": {"max_teammates": 2, "dispatch_mode": "automatic"},
         }
     )
     await ctf.provision(tid)
     await ctf.start(tid)
-    # The following contract step exposes this field on task creation.
-    async with ctf.repo.engine.begin() as conn:
-        await conn.execute(
-            update(s.tasks)
-            .where(s.tasks.c.id == tid)
-            .values(
-                ctf_options={
-                    "max_teammates": 2,
-                    "max_steps": 60,
-                    "context_threshold": 128000,
-                    "dispatch_mode": "automatic",
-                }
-            )
-        )
     member = await ctf.create_member(tid, "user", "Isolated", str(uuid4()))
     await ctf.post_message(
         tid, "user", member["id"], "Read synthetic input", str(uuid4()), "instruction"

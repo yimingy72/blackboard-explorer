@@ -820,6 +820,7 @@ def create_app(
                 exclude={
                     "input_group_id",
                     "input_file_ids",
+                    "public_input_ids",
                     "model_id",
                     "model_version",
                     "profile_version",
@@ -835,6 +836,11 @@ def create_app(
                     {
                         "input_group_id": body.input_group_id,
                         "input_file_ids": body.input_file_ids,
+                        **(
+                            {"public_input_ids": body.public_input_ids}
+                            if body.public_input_ids is not None
+                            else {}
+                        ),
                         "input_owner": owner_key(identity),
                         "create_request_hash": digest,
                     }

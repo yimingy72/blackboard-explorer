@@ -32,6 +32,10 @@
         "ctf.conclusion.requested",
         "ctf.conclusion.finalized",
         "ctf.coordination.reminded",
+        "ctf.plan.updated",
+        "ctf.dispatch.assigned",
+        "ctf.work.discovered",
+        "ctf.work.notice",
         "ctf.cursor"
       ],
       "title": "Type",

@@ -639,7 +639,7 @@
             "$ref": "#/components/schemas/ModelConfig-Output"
           },
           "options": {
-            "$ref": "#/components/schemas/CtfOptions"
+            "$ref": "#/components/schemas/CtfOptions-Output"
           },
           "platform_tools": {
             "items": {
@@ -1000,6 +1000,10 @@
               "ctf.conclusion.requested",
               "ctf.conclusion.finalized",
               "ctf.coordination.reminded",
+              "ctf.plan.updated",
+              "ctf.dispatch.assigned",
+              "ctf.work.discovered",
+              "ctf.work.notice",
               "ctf.cursor"
             ],
             "title": "Type",
@@ -1157,13 +1161,36 @@
         "title": "CtfMemberOperationRequest",
         "type": "object"
       },
-      "CtfOptions": {
+      "CtfOptions-Input": {
         "additionalProperties": false,
         "properties": {
           "context_threshold": {
             "default": 128000,
             "minimum": 1.0,
             "title": "Context Threshold",
+            "type": "integer"
+          },
+          "dispatch_mode": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "automatic"
+            ],
+            "title": "Dispatch Mode",
+            "type": "string"
+          },
+          "first_plan_max_calls": {
+            "default": 3,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "First Plan Max Calls",
+            "type": "integer"
+          },
+          "first_plan_timeout_seconds": {
+            "default": 60,
+            "maximum": 300.0,
+            "minimum": 10.0,
+            "title": "First Plan Timeout Seconds",
             "type": "integer"
           },
           "max_steps": {
@@ -1180,6 +1207,10 @@
           }
         },
         "title": "CtfOptions",
+        "type": "object"
+      },
+      "CtfOptions-Output": {
+        "additionalProperties": true,
         "type": "object"
       },
       "CtfPlatformToolBinding": {
@@ -1506,7 +1537,7 @@
             "title": "Completion Requirements"
           },
           "ctf_options": {
-            "$ref": "#/components/schemas/CtfOptions"
+            "$ref": "#/components/schemas/CtfOptions-Input"
           },
           "domain_context": {
             "anyOf": [
@@ -1612,6 +1643,22 @@
               }
             ],
             "title": "Profile Version"
+          },
+          "public_input_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Input Ids"
           },
           "reasoning_effort": {
             "anyOf": [

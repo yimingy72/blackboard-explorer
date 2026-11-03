@@ -634,6 +634,29 @@
           "minimum": 1,
           "title": "Context Threshold",
           "type": "integer"
+        },
+        "dispatch_mode": {
+          "default": "manual",
+          "enum": [
+            "manual",
+            "automatic"
+          ],
+          "title": "Dispatch Mode",
+          "type": "string"
+        },
+        "first_plan_max_calls": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "First Plan Max Calls",
+          "type": "integer"
+        },
+        "first_plan_timeout_seconds": {
+          "default": 60,
+          "maximum": 300,
+          "minimum": 10,
+          "title": "First Plan Timeout Seconds",
+          "type": "integer"
         }
       },
       "title": "CtfOptions",
