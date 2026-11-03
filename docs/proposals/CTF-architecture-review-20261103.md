@@ -15,7 +15,7 @@
 建议先做三件事：
 
 1. 一名成员同时只负责一道未终态题；当前 turn 只领取这道题的执行消息。
-2. 未被归类的单成员异常不再把整场打成 `system_failure`；自动调度启用后，仍有未分配题目时，空闲看门狗不得把整场收成 partial。
+2. 未被归类的单成员异常不再把整场打成 `system_failure`；停止流程与正常结算抢写结束原因时，也不要因此收整场。自动调度启用后，仍有未分配题目时，空闲看门狗不得把整场收成 partial。关闭阶段若执行注册表已无法证明，走现有换容器，不能在 `closing` 里空转。
 3. 仅在显式 `automatic` 配置里，用现有分配事务给空闲且已 drain 的成员补一道题。求解名额单独封顶，默认对齐现有容器，不把 20 当目标。
 
 ## 1. 证据怎么分级
@@ -37,7 +37,7 @@
 
 `scheduling_event` 只订阅消息、成员、turn、结论、控制和执行事件（`coordinator.py` 31–42 行）。题目更新本身不唤醒调度器；今天能唤醒，是因为分配同时写了消息。
 
-题目的 owner 由 Lead 或用户调用 `update_challenge(action=assign)` / `assign_challenges` 写入。分配与派信在同一事务里，带 CAS 和幂等 `request_id`（`services/blackboard/src/bbx_blackboard/ctf_board.py` 624–734 行）。这只保证「这一次写入」原子，不保证一名成员只持有一道题，也不保证独立平台题各占一行。`external_id` 可空。
+题目的 owner 有两个写入者。Lead 或用户调用 `update_challenge(action=assign)` / `assign_challenges`。成员自己可以 `update_challenge(action=claim)`，但只能认领无主且 `pending` 的题（`services/blackboard/src/bbx_blackboard/ctf_board.py` 617–631 行）。单条 `assign` 若带 instructions，派信与 owner 写入在同一事务里，带 CAS 和幂等 `request_id`（同文件 624–734 行）。不带 instructions 就只改 owner，不发消息，成员不会被唤醒。`assign_challenges` 不是一批一个事务：`_challenge_batch` 逐项调用 `update_challenge`，前面的项提交之后，后面的项仍可失败（295–353 行）。这些写入都不检查该成员是否已经拥有另一道未终态题，也不要求独立平台题各占一行。`external_id` 可空。
 
 `create_member` 统计所有未 `removed` 的队友，含 `stopped`（`ctf.py` 1091–1094 行）。`CtfOptions` 只有 `max_teammates`（默认 4）、`max_steps`、`context_threshold`（`packages/contracts/src/bbx_contracts/ctf.py` 79–82 行）。名册上限不是模型并发，也不是命令并发。
 
@@ -48,6 +48,10 @@ Lead 模板已经要求：可独立验收的目标单独建账，有可执行目
 ### 2.2 一轮怎么开始，执行何时清理
 
 `claim_turn` 在成员没有当前 turn 时，把 generation 加一，并只把最早一条排队消息记入 `assignment_message_ids`——而且仅当它的 `kind` 是 `instruction`（`ctf.py` 1372–1428 行）。随后 `claim_messages` 将该收件人所有 `queued`/`leased`、同一 purpose 的消息全部租给这个 turn（`ctf.py` 1450–1508 行）。检查点再把租到的每条 instruction 追加进 `assignment_message_ids`（`ctf.py` 1747–1756 行）。因此这个集合是回执，不是唯一工作范围。
+
+`dispatch_message_condition` 只影响谁进入 `ready_member_ids`，以及 `claim_turn` 能不能看见某条消息（`ctf.py` 81–96 行）。回合已经在跑时，`claim_messages` 不再套这道门（1450–1476 行）。只在开回合时做题目过滤，挡不住同一次 turn 后面的模型步把其他消息租进来。
+
+结算时仍处于 `leased`、还没写进 Session 的 instruction，会被算进给 Lead 的结果通知，随后又改回 `queued`（2186–2274、2316–2343 行）。checkpoint 已经把它们标成 `delivered` 的正常结束不会走到这里。流在 checkpoint 之前停下时，Lead 会先收到结果通知，同一条指令还会再开一回合。
 
 回合协程的顺序是：
 
@@ -72,7 +76,7 @@ envd 的 `CtfCommandRegistry.stop` 取消该 generation 的命令任务，并最
 
 ### 2.4 容量实际卡在哪里
 
-每场 CTF 一个执行容器。镜像资源来自 profile：默认 2 CPU、4 GiB、profile 内 `pids: 256`（`profiles/ctf/profile.yaml` 27–30 行）。runtime 创建容器时用 `max(profile.pids, exec_min_pids)`，`exec_min_pids` 默认 1024（`services/agent-runtime/src/bbx_runtime/execenv/manager.py` 257–259 行，`settings.py` 27–32 行）。默认部署下进程数上限是 1024，先紧的是 2 个 CPU 和 4 GiB。容器内命令没有单独的任务级并发闸门；同步命令占着该成员的这一轮工具调用。本仓库的 CTF 工具列表里没有异步长命令工具。
+每场 CTF 一个执行容器。镜像资源来自 profile：默认 2 CPU、4 GiB、profile 内 `pids: 256`（`profiles/ctf/profile.yaml` 27–30 行）。runtime 创建容器时用 `max(profile.pids, exec_min_pids)`，`exec_min_pids` 默认 1024（`services/agent-runtime/src/bbx_runtime/execenv/manager.py` 257–259 行，`settings.py` 27–32 行）。默认部署下进程数上限是 1024，先紧的是 2 个 CPU 和 4 GiB。容器内命令没有单独的任务级并发闸门；同步命令占着该成员的这一轮工具调用。本仓库的 CTF 工具列表里没有异步长命令工具。runtime 调 envd 的 HTTP 超时是 650 秒（`execution.py` 370–372 行），envd 允许的命令超时默认到 1200 秒。模型若请求更长的 `timeout_sec`，客户端会先断开，命令仍留在容器里；之后只有同一个 `command_id` 能再查询，不能换参数重放。
 
 runtime 同时跑的任务数默认 2（`settings.py` 32 行）。两场 CTF 会在同一个 Python 进程里各跑自己的 coordinator，并各占一个容器。
 
@@ -87,7 +91,7 @@ runtime 同时跑的任务数默认 2（`settings.py` 32 行）。两场 CTF 会
 20 路同时预留 ≈ ¥68.03
 ```
 
-全新 ¥100 预算在无人已花费时大约能同时放下 29 次这样的预留，20 路在开场放得下；账上再花掉约 ¥32 之后就放不下 20 路。输出回退占了预留的大头。平台若给模型快照写了更小的 `max_output_tokens`，这个数会变。预留为 `None` 只发生在输入上限无法确定时；默认合同能确定，所以默认路径会预留。
+全新 ¥100 预算在无人已花费时大约能同时放下 29 次这样的预留，20 路在开场放得下；账上再花掉约 ¥32 之后就放不下 20 路。输出回退占了预留的大头。`services/blackboard/tests/test_ctf_budget_admission.py` 把 `3.401728` 写死成一次准入样例，与这份默认合同一致；它不是从某次平台快照算出来的。平台模型会在创建任务时替换画像里的模型。快照若没有 `context_window` 且没有 `max_input_tokens`，预留函数返回 `None`，并行调用不再占额度。写了更小的 `max_output_tokens` 时，金额也会变。契约里的 `CTF_BUDGET_RESERVE_RATIO = 0.20` 和 `ctf_spend_limit`（`packages/contracts/src/bbx_contracts/ctf.py` 52–58 行）没有调用方，准入比对的是完整 `max_cost`。一个回合同时只能有一条未结预留（`ctf.py` 469–472 行）。协调器判断要不要因预算收场时，只加已花费和未知预留，不加仍挂在活回合上的预留（`coordinator.py` 151–166 行）。
 
 预算等待不发出模型请求，但 `prepare` 已经完成：等待中的成员占着已登记的 generation、已加载的 Session 和一条活 turn。它不占「模型许可」，因为 CTF 现在没有这张许可。
 
@@ -200,6 +204,8 @@ runtime 同时跑的任务数默认 2（`settings.py` 32 行）。两场 CTF 会
 
 这比调度器是否 1 秒内派工更直接影响「能不能继续解题」。隔离时要留下该成员的检查点；执行副作用不明时只停该 generation，不重放命令。其他成员的 turn 继续。
 
+还有一条会把整场打成 `system_failure` 的窄路径。`finish_turn` 发现回合已经结束就原样返回（`ctf.py` 2481–2483 行）。停止流程若已把同一回合结算成 `stopped`，runner 的 `_validate_finished` 仍要求 `end_reason` 等于自己手里的 `completed`（`runner.py` 706–714 行）。对不上就抛错，协调器收整场。停止标志若在 `settle` 进入 `stop_member` 之前就可见，`settle` 会直接返回，这条是安全的（`runner.py` 752–753 行）。危险窗口在 drain 已经开始之后。
+
 ### 5.2 空闲看门狗会在仍有题目时把整场收成 partial
 
 看门狗的触发条件是「没有可执行消息」，不是「没有未完成的题」。全队一空闲，未完成题目只导致几次提醒，然后 partial 关闭。自动补位若和看门狗并行，启动后的空窗会把「还没来得及派的无主题」收掉。启用自动模式时，只要还有无主的未终态题，看门狗就不得进入 partial。已有 owner、只是成员停住的题，仍可以提醒 Lead，这是现有语义。
@@ -218,12 +224,19 @@ runtime 同时跑的任务数默认 2（`settings.py` 32 行）。两场 CTF 会
 
 ### 5.5 新调度器自己的一致性风险
 
-当前 Lead 单写者没有这些环。实现补位时必须同时满足：
+实现补位时必须同时满足：
 
 1. 不在持有任务行锁的事务里调用会新开事务并再次 `lock` 的公开方法。
 2. 不在该事务里等待 envd。drain 保持在锁外，和今天的 `settle` 一样。
-3. 补位与 Lead 的 `assign` 使用同一 owner CAS。自动模式下 Lead 的手工派工也走「一人一题、旧执行已结束」的检查，避免第二条写入路径。
-4. 范围过滤和补位同一批交付。只加槽位、不改 `claim_messages`，会把旧消息放进新 turn。
+3. 补位与 Lead 的 `assign`、成员的 `claim` 使用同一 owner 检查。自动模式下这三条写入都要满足「一人一题、旧执行已结束」。
+4. 范围过滤做在 `claim_messages`，并且和补位同一批交付。只在 `claim_turn` 过滤，同回合的下一步仍会把其他消息租进来。
+5. 成员 `claim` 和 Lead `assign` 都走一人一题。漏掉 `claim`，自动补位之外仍有第二条占题路径。
+
+### 5.6 关闭阶段不再换容器，进程退出也不 drain
+
+`_tick` 一看到 `phase==closing` 就进入 `_close_tick`，后面的健康检查和 `replace_execution` 不会跑（`coordinator.py` 435–436 行，健康检查在 441 行之后）。registry 为 `unknown` 时 `drain()` 直接返回 false（`execution.py` 242–248 行）。关闭超时也不绕过这次 drain。于是关闭完不成，销毁容器又要等任务终态。这不是派工环，但整场会停在 `closing`。
+
+runtime 的 `close` 和 `detach` 只取消本地回合并关掉 HTTP 客户端，不调用 envd drain（`coordinator.py` 949–1003 行）。回合协程在具备 `stop_member` 时收到 `CancelledError`，自己也不 drain（`runner.py` 424–439 行）。命令留在容器里，直到该任务仍是 `running` 时的 `recover`，或容器被销毁。邮箱租约没有按 `lease_until` 退回 `queued` 的清扫；只有回合结算、移除或续跑会清租约。
 
 ## 6. 建议的架构
 
@@ -257,7 +270,7 @@ runtime 同时跑的任务数默认 2（`settings.py` 32 行）。两场 CTF 会
 
 ```text
 无主 pending
-    │ 补位或 Lead 派工（同一 CAS）
+    │ 补位、Lead 派工或成员 claim（同一人一题检查）
     ▼
 in_progress（唯一 owner，一名成员至多一道）
     ├─ request_help → blocked（owner 保留，成员槽仍被这道题占用）
@@ -282,6 +295,8 @@ in_progress（唯一 owner，一名成员至多一道）
   提交
 现有 claim_turn 在提交后的唤醒里启动该成员
 ```
+
+只改 owner、不写 instruction 的 `assign` 今天不会把成员放进 `ready_member_ids`。补位必须带上那条 instruction。成员 `claim` 在 automatic 下也要服从一人一题；否则成员可以绕过补位自己再占一道。
 
 人选：已经空闲且满足第 6.3 节的成员。没有这样的成员、求解槽未满、名册未满时，才创建一名队友。求解槽是新的可选上限，默认取 profile 的 `max_teammates` 与一个保守常数中的较小者；在命令闸门落地前，保守常数取 4，与今天的默认名册一致，不取 20。同题优先交还给 `previous_owner` 仅在该成员空闲且已 drain 时发生；`release` 需要开始记录 `previous_owner_id`。没有空闲的原成员就交给其他空闲成员。
 
@@ -335,15 +350,16 @@ Lead 摘要由代码生成，只含计数和 ID：无主题数、进行中、blo
 
 ### P1 不变量，不自动铺人
 
-改动：一人一道未终态题；`claim_messages` 按当前题过滤；`release` / 派工在旧 generation 未 drain 时拒绝新 owner；`settle` 在身份已变时仍 drain 旧 generation；单成员未分类异常不收整场；为失败成员保存可区分的诊断类型。
+改动：一人一道未终态题，`assign` 和成员 `claim` 都检查；`claim_messages` 按当前题过滤；`release` / 派工在旧 generation 未 drain 时拒绝新 owner；`settle` 在身份已变时仍 drain 旧 generation；单成员未分类异常不收整场，停止与正常结算的 `end_reason` 不一致也不收整场；`closing` 在 registry 无法证明时走现有换容器；为失败成员保存可区分的诊断类型。
 
 验收：
 
-- 已有 owner 的成员再被派第二道未终态题时，第二次 CAS 失败，第一题 owner 不变。
+- 已有 owner 的成员再被 `assign` 或自己 `claim` 第二道未终态题时，第二次失败，第一题 owner 不变。
 - 邮箱里同时有 A、B 两题的 instruction 时，正在做 A 的 turn 不会租到 B 的 instruction。
 - 正常结束的 turn 在 `finish_turn` 之前对**本** generation 得到 drain 证明；下一轮 `prepare` 看到的是已 drain 的上一代，而不是由它第一次去杀进程。
 - 身份被停止流程改写后，旧 generation 仍有 drain 尝试，而不是只依赖下一轮 `prepare`。
-- 一名成员抛出未归类异常后，另一名成员的 turn 仍可 `claim` 并完成；共享容器 boot 不明时整场仍停止。
+- 一名成员抛出未归类异常后，另一名成员的 turn 仍可开始并完成。共享容器 boot 在任务仍为 `running` 时不明，整场仍停止并换容器。任务已经 `closing` 且 registry 为 `unknown` 时，也要换容器或留下可结束的失败，不能一直返回 drain 未完成。
+- 停止流程把回合结算成 `stopped` 之后，runner 再读到的 `finish_turn` 结果不得因为 `end_reason` 不同而把整场打成 `system_failure`。
 - `manual` 旧测试、旧消息 `challenge_id` 为空、看门狗 partial 路径保持。
 
 ### P2 显式自动补位
@@ -381,12 +397,12 @@ Lead 摘要由代码生成，只含计数和 ID：无主题数、进行中、blo
 
 ## 8. 事实与假设
 
-已核对：邮箱调度、一人可多题、`claim_messages` 全量租借、`settle` 先 drain、envd 拒绝未 drain 的新 generation、看门狗条件、`system_failure` 的整场范围、默认 2 CPU / 4 GiB、pids 地板 1024、`max_running_tasks` 默认 2、CTF 不走 `ModelRecoveryGate`、无 Pi 目录、无异步长命令工具、预留公式与 `fake_ctf_v1` 的范围。
+已核对：邮箱调度、一人可多题、成员可 `claim` 无主题、`assign_challenges` 逐项提交、`claim_messages` 全量租借且不再套延迟门、`settle` 先 drain、envd 拒绝未 drain 的新 generation、`closing` 不再换容器、`close`/`detach` 不 drain、看门狗条件、`system_failure` 的整场范围、默认 2 CPU / 4 GiB、pids 地板 1024、`max_running_tasks` 默认 2、CTF 不走 `ModelRecoveryGate`、无 Pi 目录、无异步长命令工具、0.20 预留比例没有调用方、预留公式与 `fake_ctf_v1` 的范围。
 
-由默认合同推算、未跑任务：一次在途调用约 ¥3.401728，20 路约 ¥68.03。换价格或写上 `max_output_tokens` 后作废。
+由默认合同推算、未跑任务：一次在途调用约 ¥3.401728，20 路约 ¥68.03。准入测试把这个数写成样例。换价格、写上 `max_output_tokens`，或平台快照失去输入上限后作废。
 
 待实测：N 个同时加载的 Session 使 runtime RSS 增加多少；2 CPU 容器在几路 `execute_command` 时饱和；供应商在几路并发时返回 429；自动补位相对「只改提示词」是否提高得分。在这些数出来之前，求解槽保持小，20 只作为名册配置的合法取值，不作为默认并发。
 
 ## 9. 和现有设计文档的关系
 
-本文件是复核结论，不是新的设计正本。`docs/design/` 未改。若进入 P1，先把「一人一题、按题过滤领取、drain 仍在回合结算、单成员故障隔离」写进 `docs/proposals/CTF-team-mode-design.md` 并单独提交，再改代码。圆桌草案里的 dispatch 列、`settle_dispatch` 和 `set_team_plan` 不进入那次设计修订，除非 P2 之后的测量说明第 6 节的不变量不够用。
+本文件是复核结论，不是新的设计正本。`docs/design/` 未改。若进入 P1，先把「一人一题（含成员 claim）、按题过滤领取、drain 仍在回合结算、单成员故障隔离、closing 无法证明时换容器」写进 `docs/proposals/CTF-team-mode-design.md` 并单独提交，再改代码。圆桌草案里的 dispatch 列、`settle_dispatch` 和 `set_team_plan` 不进入那次设计修订，除非 P2 之后的测量说明第 6 节的不变量不够用。
