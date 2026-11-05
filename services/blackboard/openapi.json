@@ -422,6 +422,284 @@
         "title": "CatalogProvider",
         "type": "object"
       },
+      "ChallengeFactRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "derived_from": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Derived From",
+            "type": "array"
+          },
+          "disputes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disputes",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "expected_revision": {
+            "description": "题目元信息 revision；知识追加不递增此值",
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FactKind"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "resolves": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolves"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntentResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "satisfies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 0,
+            "title": "Satisfies",
+            "type": "array"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "statement",
+          "evidence",
+          "request_id",
+          "expected_revision"
+        ],
+        "title": "ChallengeFactRequest",
+        "type": "object"
+      },
+      "ChallengeIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "based_on": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Based On",
+            "type": "array"
+          },
+          "expected": {
+            "minLength": 1,
+            "title": "Expected",
+            "type": "string"
+          },
+          "expected_revision": {
+            "description": "题目元信息 revision；知识追加不递增此值",
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "statement": {
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "statement",
+          "based_on",
+          "expected",
+          "method"
+        ],
+        "title": "ChallengeIntentRequest",
+        "type": "object"
+      },
+      "ChallengeKnowledge": {
+        "additionalProperties": false,
+        "properties": {
+          "board_version": {
+            "description": "Task 持久事件游标，不是知识 CAS 版本",
+            "minimum": 0.0,
+            "title": "Board Version",
+            "type": "integer"
+          },
+          "challenge_id": {
+            "format": "uuid",
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "challenge_revision": {
+            "minimum": 1.0,
+            "title": "Challenge Revision",
+            "type": "integer"
+          },
+          "facts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Fact"
+            },
+            "title": "Facts",
+            "type": "object"
+          },
+          "intents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Intent"
+            },
+            "title": "Intents",
+            "type": "object"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "challenge_id",
+          "challenge_revision",
+          "board_version",
+          "facts",
+          "intents"
+        ],
+        "title": "ChallengeKnowledge",
+        "type": "object"
+      },
+      "ChallengeKnowledgeObject": {
+        "additionalProperties": false,
+        "properties": {
+          "object": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Fact"
+              },
+              {
+                "$ref": "#/components/schemas/Intent"
+              }
+            ],
+            "title": "Object"
+          },
+          "related": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Fact"
+                },
+                {
+                  "$ref": "#/components/schemas/Intent"
+                }
+              ]
+            },
+            "title": "Related",
+            "type": "object"
+          }
+        },
+        "required": [
+          "object",
+          "related"
+        ],
+        "title": "ChallengeKnowledgeObject",
+        "type": "object"
+      },
+      "ChallengeKnowledgeWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "board_version": {
+            "description": "本次写入最后一个 Task 事件游标",
+            "minimum": 1.0,
+            "title": "Board Version",
+            "type": "integer"
+          },
+          "challenge_revision": {
+            "description": "本次写入核对的题目元信息 revision",
+            "minimum": 1.0,
+            "title": "Challenge Revision",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Fact"
+              },
+              {
+                "$ref": "#/components/schemas/Intent"
+              }
+            ],
+            "title": "Object"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "challenge_revision",
+          "board_version",
+          "events"
+        ],
+        "title": "ChallengeKnowledgeWrite",
+        "type": "object"
+      },
       "ClaimBody": {
         "properties": {
           "mode": {
@@ -2134,6 +2412,175 @@
         "title": "ExecResources",
         "type": "object"
       },
+      "Fact": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "description": "提交者",
+            "minLength": 1,
+            "title": "Author",
+            "type": "string"
+          },
+          "challenge_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "题目范围；普通与历史记录为空",
+            "title": "Challenge Id"
+          },
+          "derived_from": {
+            "description": "推断所依据的事实",
+            "items": {
+              "type": "string"
+            },
+            "title": "Derived From",
+            "type": "array"
+          },
+          "disputes": {
+            "description": "本事实反驳的事实",
+            "items": {
+              "type": "string"
+            },
+            "title": "Disputes",
+            "type": "array"
+          },
+          "evidence": {
+            "description": "持久化证据",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "description": "事实编号",
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FactKind",
+            "description": "直接观察、推断或结构"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "tool_backed",
+                  "self_reported"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "依据工具调用计算的证据来源",
+            "title": "Provenance"
+          },
+          "relied_by": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "其他作者依赖此事实的次数",
+            "title": "Relied By"
+          },
+          "resolves": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本事实关闭的意图",
+            "title": "Resolves"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntentResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "意图结论"
+          },
+          "satisfies": {
+            "description": "声称满足的验收条件",
+            "items": {
+              "type": "string"
+            },
+            "title": "Satisfies",
+            "type": "array"
+          },
+          "statement": {
+            "description": "可复核的事实陈述",
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "读时计算的争议状态"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "写入事件版本",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "statement",
+          "evidence",
+          "author"
+        ],
+        "title": "Fact",
+        "type": "object"
+      },
       "FactKind": {
         "enum": [
           "observation",
@@ -2141,6 +2588,14 @@
           "structure"
         ],
         "title": "FactKind",
+        "type": "string"
+      },
+      "FactStatus": {
+        "enum": [
+          "proposed",
+          "disputed"
+        ],
+        "title": "FactStatus",
         "type": "string"
       },
       "FailBody": {
@@ -2543,6 +2998,225 @@
         "title": "InputGroupView",
         "type": "object"
       },
+      "Intent": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "default": 0,
+            "description": "未关闭释放次数",
+            "minimum": 0.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "author": {
+            "description": "提出者",
+            "minLength": 1,
+            "title": "Author",
+            "type": "string"
+          },
+          "based_on": {
+            "description": "至少一条依据事实",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Based On",
+            "type": "array"
+          },
+          "challenge_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "题目范围；普通与历史记录为空",
+            "title": "Challenge Id"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "认领时间",
+            "title": "Claimed At"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "关闭者",
+            "title": "Closed By"
+          },
+          "expected": {
+            "description": "成立时预期观察",
+            "minLength": 1,
+            "title": "Expected",
+            "type": "string"
+          },
+          "holder": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "持有者",
+            "title": "Holder"
+          },
+          "id": {
+            "description": "意图编号",
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "description": "可交接的调查方法",
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "notes": {
+            "description": "交接说明",
+            "items": {
+              "$ref": "#/components/schemas/IntentNote"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "relates_to": {
+            "description": "普通任务关联的验收条件",
+            "items": {
+              "type": "string"
+            },
+            "title": "Relates To",
+            "type": "array"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntentResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "关闭结论"
+          },
+          "result_facts": {
+            "description": "结论事实",
+            "items": {
+              "type": "string"
+            },
+            "title": "Result Facts",
+            "type": "array"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "换方法重试的意图",
+            "title": "Retry Of"
+          },
+          "statement": {
+            "description": "要调查的方向",
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IntentStatus",
+            "default": "open",
+            "description": "认领状态"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "写入事件版本",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "based_on",
+          "expected",
+          "method",
+          "author"
+        ],
+        "title": "Intent",
+        "type": "object"
+      },
+      "IntentNote": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "description": "交接时间",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "description": "交接者",
+            "minLength": 1,
+            "title": "By",
+            "type": "string"
+          },
+          "text": {
+            "description": "交接说明",
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "at",
+          "text"
+        ],
+        "title": "IntentNote",
+        "type": "object"
+      },
       "IntentResult": {
         "enum": [
           "confirmed",
@@ -2551,6 +3225,77 @@
         ],
         "title": "IntentResult",
         "type": "string"
+      },
+      "IntentStatus": {
+        "enum": [
+          "open",
+          "claimed",
+          "closed"
+        ],
+        "title": "IntentStatus",
+        "type": "string"
+      },
+      "KnowledgeAssignment": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "minLength": 1,
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "title": "Epoch",
+            "type": "integer"
+          },
+          "generation": {
+            "minimum": 0.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id"
+          },
+          "scope_revision": {
+            "minimum": 1.0,
+            "title": "Scope Revision",
+            "type": "integer"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "generation",
+          "turn_id",
+          "epoch",
+          "scope_revision"
+        ],
+        "title": "KnowledgeAssignment",
+        "type": "object"
       },
       "LoginBody": {
         "properties": {
@@ -4981,6 +5726,7 @@
         "type": "object"
       },
       "SearchHit": {
+        "additionalProperties": false,
         "properties": {
           "id": {
             "title": "Id",
@@ -11558,6 +12304,403 @@
         "summary": "Verification Required",
         "tags": [
           "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}": {
+      "get": {
+        "operationId": "board_api_tasks__task_id__ctf_knowledge__challenge_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeKnowledge"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Board",
+        "tags": [
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/facts": {
+      "post": {
+        "operationId": "post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChallengeFactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeKnowledgeWrite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Fact",
+        "tags": [
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/intents": {
+      "post": {
+        "operationId": "post_intent_api_tasks__task_id__ctf_knowledge__challenge_id__intents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChallengeIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeKnowledgeWrite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Intent",
+        "tags": [
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/objects/{object_id}": {
+      "get": {
+        "operationId": "get_object_api_tasks__task_id__ctf_knowledge__challenge_id__objects__object_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "object_id",
+            "required": true,
+            "schema": {
+              "title": "Object Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Depth",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeKnowledgeObject"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Object",
+        "tags": [
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/search": {
+      "get": {
+        "operationId": "search_api_tasks__task_id__ctf_knowledge__challenge_id__search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchHit"
+                  },
+                  "title": "Response Search Api Tasks  Task Id  Ctf Knowledge  Challenge Id  Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search",
+        "tags": [
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/snapshot": {
+      "get": {
+        "operationId": "snapshot_api_tasks__task_id__ctf_knowledge__challenge_id__snapshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_lines",
+            "required": false,
+            "schema": {
+              "default": 150,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Max Lines",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Snapshot",
+        "tags": [
+          "challenge-knowledge"
         ]
       }
     },

@@ -13,7 +13,7 @@ export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'
 export type TaskPage = Omit<components['schemas']['TaskPage'], 'items'> & { items: TaskView[] };
 export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
 export type CtfTaskCreateInput = Omit<components['schemas']['CtfTaskCreate'], 'ctf_options'> & {
-  ctf_options?: Partial<components['schemas']['CtfOptions']>;
+  ctf_options?: Partial<components['schemas']['CtfOptions-Input']>;
 };
 export type TaskCreateInput = BlackboardTaskCreateInput | CtfTaskCreateInput;
 export type InitialAttachment = { id: string; filename: string; path: string; uri: string; size: number; sha256: string };

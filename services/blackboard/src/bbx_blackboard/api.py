@@ -23,6 +23,7 @@ from bbx_contracts.models import (
     ModelConfig,
     PostFactRequest,
     PostIntentRequest,
+    SearchHit,
     SubmitCloseRequest,
     TaskSpec,
     TaskStatus,
@@ -50,6 +51,7 @@ from bbx_blackboard.auth import (
     require_user_or_service,
 )
 from bbx_blackboard.billing import router as billing_router
+from bbx_blackboard.challenge_board_api import router as challenge_board_router
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.ctf import CtfService
 from bbx_blackboard.ctf_api import public_member
@@ -289,12 +291,6 @@ class AgentTraceBody(BaseModel):
     step: int = Field(ge=0)
     uri: str = Field(min_length=1)
     summary: str = Field(max_length=240)
-
-
-class SearchHit(BaseModel):
-    id: str
-    type: Literal["fact", "intent"]
-    statement: str
 
 
 class ProfileName(BaseModel):
@@ -654,11 +650,16 @@ def create_app(
                     if identity.kind == "agent":
                         if identity.generation is None:
                             raise HTTPException(403, "CTF token required")
-                        if request.method == "GET":
+                        knowledge_route = suffix.startswith("/ctf/knowledge/")
+                        if request.method == "GET" and not knowledge_route:
                             await request.app.state.ctf_service.authorize_reader(
                                 tid, identity.agent_id, identity.generation
                             )
-                        elif not suffix.startswith("/ctf/tools/"):
+                        elif (
+                            request.method != "GET"
+                            and not knowledge_route
+                            and not suffix.startswith("/ctf/tools/")
+                        ):
                             await request.app.state.ctf_service.authorize_member(
                                 tid,
                                 identity.agent_id,
@@ -1573,7 +1574,7 @@ def create_app(
                 rows = (
                     await conn.execute(
                         select(table.c.id, table.c.version, *(table.c[field] for field in fields))
-                        .where(table.c.task_id == task_id)
+                        .where(table.c.task_id == task_id, table.c.challenge_id.is_(None))
                         .order_by(table.c.version)
                     )
                 ).mappings()
@@ -1947,6 +1948,7 @@ def create_app(
         return _profile_document(row)
 
     app.include_router(ctf_router)
+    app.include_router(challenge_board_router)
     app.include_router(platform_router)
     app.include_router(settings_router)
     app.include_router(progress_router)

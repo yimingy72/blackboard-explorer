@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from bbx_contracts.billing import add_usage
+from bbx_contracts.challenge_board import CHALLENGE_KNOWLEDGE_EVENTS
 from bbx_contracts.storage import storage_safe
 from sqlalchemy import delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -285,6 +286,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         fields = {
             k: p.get(k)
             for k in (
+                "challenge_id",
+                "assignment_ref",
                 "kind",
                 "statement",
                 "evidence",
@@ -305,6 +308,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         fields = {
             k: p.get(k)
             for k in (
+                "challenge_id",
+                "assignment_ref",
                 "statement",
                 "based_on",
                 "expected",
@@ -630,7 +635,13 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
 
 async def board_has_content(conn: AsyncConnection, tid: UUID) -> bool:
     for table in (s.facts, s.intents):
-        if (await conn.execute(select(table.c.id).where(table.c.task_id == tid).limit(1))).first():
+        if (
+            await conn.execute(
+                select(table.c.id)
+                .where(table.c.task_id == tid, table.c.challenge_id.is_(None))
+                .limit(1)
+            )
+        ).first():
             return True
     return False
 
@@ -673,8 +684,23 @@ class Repository:
         )
         return {record["id"]: dict(record) for record in records.mappings()}
 
+    async def historical_challenges(self, conn: AsyncConnection, tid: UUID, aid: str) -> set[str]:
+        identifiers = await conn.execute(
+            select(s.events.c.payload["result"]["id"].astext).where(
+                s.events.c.task_id == tid,
+                s.events.c.type.in_(("ctf.challenge.created", "ctf.challenge.updated")),
+                s.events.c.payload["result"]["owner_id"].astext == aid,
+            )
+        )
+        return {identifier for identifier in identifiers.scalars() if identifier is not None}
+
     async def load(
-        self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
+        self,
+        conn: AsyncConnection,
+        tid: UUID,
+        *,
+        include_tool_calls: bool = True,
+        challenge_id: str | None = None,
     ) -> BoardState:
         task = await row(conn, s.tasks, tid)
         latest_version = select(func.max(s.events.c.version)).where(s.events.c.task_id == tid)
@@ -707,11 +733,12 @@ class Repository:
             task["closing_reason"] = event_state["closing"].get("reason")
 
         async def mapped(table):
+            scope = [table.c.challenge_id == challenge_id] if "challenge_id" in table.c else []
             rows = (
                 (
                     await conn.execute(
                         select(table)
-                        .where(table.c.task_id == tid)
+                        .where(table.c.task_id == tid, *scope)
                         .order_by(table.c.version if "version" in table.c else table.c.id)
                     )
                 )
@@ -763,8 +790,19 @@ class Repository:
                 ).mappings()
             ]
             if task["mode"] == "ctf":
+                for table in (s.facts, s.intents):
+                    await conn.execute(
+                        delete(table).where(
+                            table.c.task_id == tid, table.c.challenge_id.is_not(None)
+                        )
+                    )
                 for evt in log:
-                    await apply_ctf_view(conn, evt)
+                    if evt["type"] in CHALLENGE_KNOWLEDGE_EVENTS and evt["payload"].get(
+                        "challenge_id"
+                    ):
+                        await apply(conn, evt)
+                    else:
+                        await apply_ctf_view(conn, evt)
                 return
             for table in (
                 s.facts,

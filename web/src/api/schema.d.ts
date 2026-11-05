@@ -1107,6 +1107,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Board */
+        get: operations["board_api_tasks__task_id__ctf_knowledge__challenge_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Fact */
+        post: operations["post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/intents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Intent */
+        post: operations["post_intent_api_tasks__task_id__ctf_knowledge__challenge_id__intents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/objects/{object_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Object */
+        get: operations["get_object_api_tasks__task_id__ctf_knowledge__challenge_id__objects__object_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search */
+        get: operations["search_api_tasks__task_id__ctf_knowledge__challenge_id__search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Snapshot */
+        get: operations["snapshot_api_tasks__task_id__ctf_knowledge__challenge_id__snapshot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/members/{member_id}/{operation}": {
         parameters: {
             query?: never;
@@ -2147,6 +2249,112 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ChallengeFactRequest */
+        ChallengeFactRequest: {
+            /** Derived From */
+            derived_from?: string[];
+            /** Disputes */
+            disputes?: string[];
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision；知识追加不递增此值
+             */
+            expected_revision: number;
+            kind: components["schemas"]["FactKind"];
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Resolves */
+            resolves?: string | null;
+            result?: components["schemas"]["IntentResult"] | null;
+            /** Satisfies */
+            satisfies?: string[];
+            /** Statement */
+            statement: string;
+        };
+        /** ChallengeIntentRequest */
+        ChallengeIntentRequest: {
+            /** Based On */
+            based_on: string[];
+            /** Expected */
+            expected: string;
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision；知识追加不递增此值
+             */
+            expected_revision: number;
+            /** Method */
+            method: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Retry Of */
+            retry_of?: string | null;
+            /** Statement */
+            statement: string;
+        };
+        /** ChallengeKnowledge */
+        ChallengeKnowledge: {
+            /**
+             * Board Version
+             * @description Task 持久事件游标，不是知识 CAS 版本
+             */
+            board_version: number;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /** Challenge Revision */
+            challenge_revision: number;
+            /** Facts */
+            facts: {
+                [key: string]: components["schemas"]["Fact"];
+            };
+            /** Intents */
+            intents: {
+                [key: string]: components["schemas"]["Intent"];
+            };
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** ChallengeKnowledgeObject */
+        ChallengeKnowledgeObject: {
+            /** Object */
+            object: components["schemas"]["Fact"] | components["schemas"]["Intent"];
+            /** Related */
+            related: {
+                [key: string]: components["schemas"]["Fact"] | components["schemas"]["Intent"];
+            };
+        };
+        /** ChallengeKnowledgeWrite */
+        ChallengeKnowledgeWrite: {
+            /**
+             * Board Version
+             * @description 本次写入最后一个 Task 事件游标
+             */
+            board_version: number;
+            /**
+             * Challenge Revision
+             * @description 本次写入核对的题目元信息 revision
+             */
+            challenge_revision: number;
+            /** Events */
+            events: components["schemas"]["Event"][];
+            /** Id */
+            id: string;
+            /** Object */
+            object: components["schemas"]["Fact"] | components["schemas"]["Intent"];
+        };
         /** ClaimBody */
         ClaimBody: {
             /**
@@ -2224,7 +2432,7 @@ export interface components {
              */
             mode: "ctf";
             model: components["schemas"]["ModelConfig-Output"];
-            options?: components["schemas"]["CtfOptions"];
+            options?: components["schemas"]["CtfOptions-Output"];
             /** Platform Tools */
             platform_tools?: components["schemas"]["CtfPlatformToolBinding"][];
             /** Privileged Allowlist */
@@ -2337,7 +2545,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
             /** Version */
             version: number;
         };
@@ -2395,12 +2603,28 @@ export interface components {
             request_id: string;
         };
         /** CtfOptions */
-        CtfOptions: {
+        "CtfOptions-Input": {
             /**
              * Context Threshold
              * @default 128000
              */
             context_threshold: number;
+            /**
+             * Dispatch Mode
+             * @default manual
+             * @enum {string}
+             */
+            dispatch_mode: "manual" | "automatic";
+            /**
+             * First Plan Max Calls
+             * @default 3
+             */
+            first_plan_max_calls: number;
+            /**
+             * First Plan Timeout Seconds
+             * @default 60
+             */
+            first_plan_timeout_seconds: number;
             /**
              * Max Steps
              * @default 60
@@ -2411,6 +2635,9 @@ export interface components {
              * @default 4
              */
             max_teammates: number;
+        };
+        "CtfOptions-Output": {
+            [key: string]: unknown;
         };
         /**
          * CtfPlatformToolBinding
@@ -2530,7 +2757,7 @@ export interface components {
             budget: components["schemas"]["CtfBudget"];
             /** Completion Requirements */
             completion_requirements?: string | null;
-            ctf_options?: components["schemas"]["CtfOptions"];
+            ctf_options?: components["schemas"]["CtfOptions-Input"];
             /** Domain Context */
             domain_context?: string | null;
             /** Egress Allowlist */
@@ -2554,6 +2781,8 @@ export interface components {
             name?: string | null;
             /** Profile Version */
             profile_version?: number | null;
+            /** Public Input Ids */
+            public_input_ids?: string[] | null;
             /** Reasoning Effort */
             reasoning_effort?: string | null;
         };
@@ -2737,11 +2966,86 @@ export interface components {
              */
             pids: number;
         };
+        /** Fact */
+        Fact: {
+            assignment_ref?: components["schemas"]["KnowledgeAssignment"] | null;
+            /**
+             * Author
+             * @description 提交者
+             */
+            author: string;
+            /**
+             * Challenge Id
+             * @description 题目范围；普通与历史记录为空
+             */
+            challenge_id?: string | null;
+            /**
+             * Derived From
+             * @description 推断所依据的事实
+             */
+            derived_from?: string[];
+            /**
+             * Disputes
+             * @description 本事实反驳的事实
+             */
+            disputes?: string[];
+            /**
+             * Evidence
+             * @description 持久化证据
+             */
+            evidence: components["schemas"]["Evidence"][];
+            /**
+             * Id
+             * @description 事实编号
+             */
+            id: string;
+            /** @description 直接观察、推断或结构 */
+            kind: components["schemas"]["FactKind"];
+            /**
+             * Provenance
+             * @description 依据工具调用计算的证据来源
+             */
+            provenance?: ("tool_backed" | "self_reported") | null;
+            /**
+             * Relied By
+             * @description 其他作者依赖此事实的次数
+             */
+            relied_by?: number | null;
+            /**
+             * Resolves
+             * @description 本事实关闭的意图
+             */
+            resolves?: string | null;
+            /** @description 意图结论 */
+            result?: components["schemas"]["IntentResult"] | null;
+            /**
+             * Satisfies
+             * @description 声称满足的验收条件
+             */
+            satisfies?: string[];
+            /**
+             * Statement
+             * @description 可复核的事实陈述
+             */
+            statement: string;
+            /** @description 读时计算的争议状态 */
+            status?: components["schemas"]["FactStatus"] | null;
+            /**
+             * Version
+             * @description 写入事件版本
+             */
+            version?: number | null;
+        };
         /**
          * FactKind
          * @enum {string}
          */
         FactKind: "observation" | "inference" | "structure";
+        /**
+         * FactStatus
+         * @enum {string}
+         */
+        FactStatus: "proposed" | "disputed";
         /** FailBody */
         FailBody: {
             /**
@@ -2870,11 +3174,147 @@ export interface components {
              */
             id: string;
         };
+        /** Intent */
+        Intent: {
+            assignment_ref?: components["schemas"]["KnowledgeAssignment"] | null;
+            /**
+             * Attempts
+             * @description 未关闭释放次数
+             * @default 0
+             */
+            attempts: number;
+            /**
+             * Author
+             * @description 提出者
+             */
+            author: string;
+            /**
+             * Based On
+             * @description 至少一条依据事实
+             */
+            based_on: string[];
+            /**
+             * Challenge Id
+             * @description 题目范围；普通与历史记录为空
+             */
+            challenge_id?: string | null;
+            /**
+             * Claimed At
+             * @description 认领时间
+             */
+            claimed_at?: string | null;
+            /**
+             * Closed By
+             * @description 关闭者
+             */
+            closed_by?: string | null;
+            /**
+             * Expected
+             * @description 成立时预期观察
+             */
+            expected: string;
+            /**
+             * Holder
+             * @description 持有者
+             */
+            holder?: string | null;
+            /**
+             * Id
+             * @description 意图编号
+             */
+            id: string;
+            /**
+             * Method
+             * @description 可交接的调查方法
+             */
+            method: string;
+            /**
+             * Notes
+             * @description 交接说明
+             */
+            notes?: components["schemas"]["IntentNote"][];
+            /**
+             * Relates To
+             * @description 普通任务关联的验收条件
+             */
+            relates_to?: string[];
+            /** @description 关闭结论 */
+            result?: components["schemas"]["IntentResult"] | null;
+            /**
+             * Result Facts
+             * @description 结论事实
+             */
+            result_facts?: string[];
+            /**
+             * Retry Of
+             * @description 换方法重试的意图
+             */
+            retry_of?: string | null;
+            /**
+             * Statement
+             * @description 要调查的方向
+             */
+            statement: string;
+            /**
+             * @description 认领状态
+             * @default open
+             */
+            status: components["schemas"]["IntentStatus"];
+            /**
+             * Version
+             * @description 写入事件版本
+             */
+            version?: number | null;
+        };
+        /** IntentNote */
+        IntentNote: {
+            /**
+             * At
+             * Format: date-time
+             * @description 交接时间
+             */
+            at: string;
+            /**
+             * By
+             * @description 交接者
+             */
+            by: string;
+            /**
+             * Text
+             * @description 交接说明
+             */
+            text: string;
+        };
         /**
          * IntentResult
          * @enum {string}
          */
         IntentResult: "confirmed" | "rejected" | "inconclusive";
+        /**
+         * IntentStatus
+         * @enum {string}
+         */
+        IntentStatus: "open" | "claimed" | "closed";
+        /** KnowledgeAssignment */
+        KnowledgeAssignment: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id?: string | null;
+            /** Epoch */
+            epoch: number;
+            /** Generation */
+            generation: number;
+            /** Owner Id */
+            owner_id?: string | null;
+            /** Scope Revision */
+            scope_revision: number;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
         /** LoginBody */
         LoginBody: {
             /** Password */
@@ -7424,6 +7864,214 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    board_api_tasks__task_id__ctf_knowledge__challenge_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChallengeFactRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeWrite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_intent_api_tasks__task_id__ctf_knowledge__challenge_id__intents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChallengeIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeWrite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_object_api_tasks__task_id__ctf_knowledge__challenge_id__objects__object_id__get: {
+        parameters: {
+            query?: {
+                depth?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+                object_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_api_tasks__task_id__ctf_knowledge__challenge_id__search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                k?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_api_tasks__task_id__ctf_knowledge__challenge_id__snapshot_get: {
+        parameters: {
+            query?: {
+                max_lines?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
             /** @description Validation Error */

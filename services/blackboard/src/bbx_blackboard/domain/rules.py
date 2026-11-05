@@ -193,6 +193,122 @@ def _release(
     return events
 
 
+def fact_events(
+    state: BoardState,
+    actor: str,
+    data: dict[str, Any],
+    *,
+    resolvable_intents: set[str],
+) -> list[dict[str, Any]]:
+    """Validate content after the caller establishes execution and resolution authority."""
+    task = state.task
+    evidence = data.get("evidence", [])
+    if not evidence:
+        fail("evidence_required", "事实必须附证据，请添加已持久化的 evidence。")
+    if data["kind"] == "inference" and not data.get("derived_from"):
+        fail("derived_from_required", "推断事实必须引用依据事实，请填写 derived_from。")
+    for key in ("derived_from", "disputes"):
+        _require_refs(data.get(key, []), state.facts, "事实")
+    acceptance = {x["id"]: x for x in task["acceptance"]}
+    _require_refs(data.get("satisfies", []), acceptance, "验收项")
+    iid = data.get("resolves")
+    if bool(iid) != bool(data.get("result")):
+        fail("result_required", "resolves 与 result 必须同时填写，请补齐或都移除。")
+    if iid and (iid not in state.intents or iid not in resolvable_intents):
+        fail("not_holder", f"只有意图 {iid} 的持有者能用事实关闭它，请先认领。")
+    fid = _id(state, "F")
+    payload = {
+        **data,
+        "id": fid,
+        "author": actor,
+        "provenance": "tool_backed"
+        if any(
+            e.get("call_id") in state.tool_calls
+            and state.tool_calls[e["call_id"]]["agent_id"] == actor
+            for e in evidence
+            if e.get("call_id")
+        )
+        else "self_reported",
+    }
+    before = dispute_fields(state.facts)
+    after = dispute_fields({**state.facts, fid: payload})
+    events = [event("fact.posted", actor, payload, fid)]
+    if iid:
+        events.append(
+            event(
+                "intent.closed",
+                actor,
+                {"intent_id": iid, "result": data["result"], "by": fid, "reason": None},
+                iid,
+            )
+        )
+    reverted: set[str] = set()
+    for target in state.facts:
+        if before[target]["status"] != after[target]["status"]:
+            depth = int(after[fid]["depth"])
+            notified = (
+                [state.facts[target]["author"]]
+                if depth <= int(task["params"].get("dispute_notify_depth", 2))
+                else None
+            )
+            kind = "fact.disputed" if after[target]["status"] == "disputed" else "fact.undisputed"
+            events.append(
+                event(
+                    kind,
+                    "system",
+                    {"fact_id": target, "by": fid, "depth": depth},
+                    target,
+                    notified,
+                )
+            )
+            if kind == "fact.disputed":
+                for aid, item in task["acceptance_state"].items():
+                    if (
+                        aid not in reverted
+                        and item["status"] == "met"
+                        and target in item["evidence_facts"]
+                    ):
+                        reverted.add(aid)
+                        events.append(
+                            event(
+                                "acceptance.reverted",
+                                "system",
+                                {"id": aid, "fact_id": target},
+                                aid,
+                            )
+                        )
+    return events
+
+
+def intent_events(state: BoardState, actor: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate content; the caller establishes ordinary or Assignment authority."""
+    task = state.task
+    if data.get("claim") and any(item["holder"] == actor for item in state.intents.values()):
+        fail("already_holding", f"Agent {actor} 已持有一条意图，请先关闭或释放它。")
+    for key in ("statement", "expected", "method"):
+        if not str(data.get(key, "")).strip():
+            fail("intent_incomplete", f"意图缺少 {key}，请补全调查方向、预期与方法。")
+    if not data.get("based_on") or (not data.get("challenge_id") and not data.get("relates_to")):
+        fail("intent_incomplete", "意图必须有 based_on 和 relates_to，请补全事实依据与验收关联。")
+    _require_refs(data["based_on"], state.facts, "事实")
+    _require_refs(data["relates_to"], {x["id"]: x for x in task["acceptance"]}, "验收项")
+    retry = data.get("retry_of")
+    if retry:
+        previous = state.intents.get(retry)
+        if (
+            not previous
+            or previous["result"] != "inconclusive"
+            or previous["method"] == data["method"]
+        ):
+            fail(
+                "invalid_retry",
+                "retry_of 必须指向已关闭为 inconclusive 且方法不同的意图，请更换方法。",
+            )
+    iid = _id(state, "I")
+    payload = {**data, "id": iid, "author": actor, "claim": bool(data.get("claim"))}
+    return [event("intent.posted", actor, payload, iid)]
+
+
 def decide(
     state: BoardState, command: str, actor: str, data: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -248,112 +364,22 @@ def decide(
         return [event(f"task.{status}", actor, {"status": status, "reason": data.get("reason")})]
     if command == "post_fact":
         _active_agent(state, actor)
-        evidence = data.get("evidence", [])
-        if not evidence:
-            fail("evidence_required", "事实必须附证据，请添加已持久化的 evidence。")
-        if data["kind"] == "inference" and not data.get("derived_from"):
-            fail("derived_from_required", "推断事实必须引用依据事实，请填写 derived_from。")
-        for key in ("derived_from", "disputes"):
-            _require_refs(data.get(key, []), state.facts, "事实")
-        acceptance = {x["id"]: x for x in task["acceptance"]}
-        _require_refs(data.get("satisfies", []), acceptance, "验收项")
+        if data.get("challenge_id") is not None:
+            fail("scope_mismatch", "题内知识必须使用有效分配授权的写入入口。")
         iid = data.get("resolves")
-        if bool(iid) != bool(data.get("result")):
-            fail("result_required", "resolves 与 result 必须同时填写，请补齐或都移除。")
-        if iid and (iid not in state.intents or state.intents[iid]["holder"] != actor):
-            fail("not_holder", f"只有意图 {iid} 的持有者能用事实关闭它，请先认领。")
-        fid = _id(state, "F")
-        payload = {
-            **data,
-            "id": fid,
-            "author": actor,
-            "provenance": "tool_backed"
-            if any(
-                e.get("call_id") in state.tool_calls
-                and state.tool_calls[e["call_id"]]["agent_id"] == actor
-                for e in evidence
-                if e.get("call_id")
-            )
-            else "self_reported",
-        }
-        before = dispute_fields(state.facts)
-        after = dispute_fields({**state.facts, fid: payload})
-        events = [event("fact.posted", actor, payload, fid)]
-        if iid:
-            events.append(
-                event(
-                    "intent.closed",
-                    actor,
-                    {"intent_id": iid, "result": data["result"], "by": fid, "reason": None},
-                    iid,
-                )
-            )
-        reverted: set[str] = set()
-        for target in state.facts:
-            if before[target]["status"] != after[target]["status"]:
-                depth = int(after[fid]["depth"])
-                notified = (
-                    [state.facts[target]["author"]]
-                    if depth <= int(task["params"].get("dispute_notify_depth", 2))
-                    else None
-                )
-                kind = (
-                    "fact.disputed" if after[target]["status"] == "disputed" else "fact.undisputed"
-                )
-                events.append(
-                    event(
-                        kind,
-                        "system",
-                        {"fact_id": target, "by": fid, "depth": depth},
-                        target,
-                        notified,
-                    )
-                )
-                if kind == "fact.disputed":
-                    for aid, item in task["acceptance_state"].items():
-                        if (
-                            aid not in reverted
-                            and item["status"] == "met"
-                            and target in item["evidence_facts"]
-                        ):
-                            reverted.add(aid)
-                            events.append(
-                                event(
-                                    "acceptance.reverted",
-                                    "system",
-                                    {"id": aid, "fact_id": target},
-                                    aid,
-                                )
-                            )
-        return events
+        return fact_events(
+            state,
+            actor,
+            data,
+            resolvable_intents={iid}
+            if iid and state.intents.get(iid, {}).get("holder") == actor
+            else set(),
+        )
     if command == "post_intent":
         _active_agent(state, actor)
-        if data.get("claim") and any(item["holder"] == actor for item in state.intents.values()):
-            fail("already_holding", f"Agent {actor} 已持有一条意图，请先关闭或释放它。")
-        for key in ("statement", "expected", "method"):
-            if not str(data.get(key, "")).strip():
-                fail("intent_incomplete", f"意图缺少 {key}，请补全调查方向、预期与方法。")
-        if not data.get("based_on") or not data.get("relates_to"):
-            fail(
-                "intent_incomplete", "意图必须有 based_on 和 relates_to，请补全事实依据与验收关联。"
-            )
-        _require_refs(data["based_on"], state.facts, "事实")
-        _require_refs(data["relates_to"], {x["id"]: x for x in task["acceptance"]}, "验收项")
-        retry = data.get("retry_of")
-        if retry:
-            previous = state.intents.get(retry)
-            if (
-                not previous
-                or previous["result"] != "inconclusive"
-                or previous["method"] == data["method"]
-            ):
-                fail(
-                    "invalid_retry",
-                    "retry_of 必须指向已关闭为 inconclusive 且方法不同的意图，请更换方法。",
-                )
-        iid = _id(state, "I")
-        payload = {**data, "id": iid, "author": actor, "claim": bool(data.get("claim"))}
-        return [event("intent.posted", actor, payload, iid)]
+        if data.get("challenge_id") is not None:
+            fail("scope_mismatch", "题内知识必须使用有效分配授权的写入入口。")
+        return intent_events(state, actor, data)
     if command in {"claim", "claim_for"}:
         return _claim(state, data["intent_id"], data.get("agent_id", actor), actor)
     if command == "release":

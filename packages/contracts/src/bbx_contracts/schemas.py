@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from . import ctf, heartbeat, models, progress, traffic
+from . import challenge_board, ctf, heartbeat, models, progress, traffic
 
 
 def export_schemas(output_dir: Path) -> list[Path]:
@@ -13,6 +13,7 @@ def export_schemas(output_dir: Path) -> list[Path]:
     paths = []
     for name, obj in {
         **vars(models),
+        **vars(challenge_board),
         **vars(ctf),
         **vars(heartbeat),
         **vars(traffic),

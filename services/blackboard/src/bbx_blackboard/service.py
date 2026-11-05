@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price
+from bbx_contracts.challenge_board import CHALLENGE_KNOWLEDGE_EVENTS
 from bbx_contracts.heartbeat import HeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
@@ -28,6 +29,7 @@ from sqlalchemy import case, func, insert, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from bbx_blackboard.challenge_board import knowledge_event_scope
 from bbx_blackboard.domain import (
     RuleViolation,
     calculate_cost,
@@ -953,7 +955,17 @@ class BoardService:
                 dict(x) for x in (await conn.execute(stmt.order_by(s.events.c.version))).mappings()
             ]
             if for_agent is not None and task_mode == "ctf":
-                result = [ctf_agent_event(item, for_agent) for item in result]
+                knowledge_scope = set()
+                if any(
+                    item["type"] in CHALLENGE_KNOWLEDGE_EVENTS
+                    and item["payload"].get("challenge_id")
+                    for item in result
+                ):
+                    knowledge_scope = await knowledge_event_scope(self.repo, conn, tid, for_agent)
+                result = [
+                    ctf_agent_event(item, for_agent, knowledge_scope=knowledge_scope)
+                    for item in result
+                ]
             return result
 
     async def get_object(self, tid: UUID, oid: str, depth: int = 1) -> dict[str, Any]:
@@ -980,10 +992,23 @@ class BoardService:
         await self.repo.replay(tid)
 
 
-def ctf_agent_event(item: dict[str, Any], agent_id: str) -> dict[str, Any]:
+def ctf_agent_event(
+    item: dict[str, Any], agent_id: str, *, knowledge_scope: set[str] | None = None
+) -> dict[str, Any]:
     """Retain cursors while hiding other members' messages and private turn data."""
     kind = item["type"]
     payload = item["payload"]
+    if kind in CHALLENGE_KNOWLEDGE_EVENTS and payload.get("challenge_id"):
+        if payload["challenge_id"] in (knowledge_scope or set()):
+            return item
+        return {
+            **item,
+            "type": "ctf.cursor",
+            "actor": "system",
+            "object_id": None,
+            "payload": {},
+            "addressed_to": None,
+        }
     public = {"ctf.started", "ctf.conclusion.requested", "ctf.conclusion.finalized"}
     if kind in public:
         return item

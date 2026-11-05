@@ -15,6 +15,12 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SearchHit(ContractModel):
+    id: str
+    type: Literal["fact", "intent"]
+    statement: str
+
+
 class FactKind(StrEnum):
     OBSERVATION = "observation"
     INFERENCE = "inference"
@@ -153,8 +159,20 @@ class Evidence(ContractModel):
     auto: bool = Field(default=False, description="是否由系统自动附加")
 
 
+class KnowledgeAssignment(ContractModel):
+    agent_id: str = Field(min_length=1)
+    generation: int = Field(ge=0)
+    turn_id: UUID
+    epoch: int = Field(ge=0)
+    owner_id: str | None = None
+    scope_revision: int = Field(ge=1)
+    assignment_id: UUID | None = None
+
+
 class Fact(ContractModel):
     id: str = Field(min_length=1, description="事实编号")
+    challenge_id: UUID | None = Field(default=None, description="题目范围；普通与历史记录为空")
+    assignment_ref: KnowledgeAssignment | None = None
     kind: FactKind = Field(description="直接观察、推断或结构")
     statement: str = Field(min_length=1, description="可复核的事实陈述")
     evidence: list[Evidence] = Field(min_length=1, description="持久化证据")
@@ -173,6 +191,8 @@ class Fact(ContractModel):
 
     @model_validator(mode="after")
     def check_local_consistency(self) -> Fact:
+        if (self.challenge_id is None) != (self.assignment_ref is None):
+            raise ValueError("challenge_id and assignment_ref must be supplied together")
         if self.kind == FactKind.INFERENCE and not self.derived_from:
             raise ValueError("inference requires derived_from")
         if self.resolves is not None and self.result is None:
@@ -190,11 +210,13 @@ class IntentNote(ContractModel):
 
 class Intent(ContractModel):
     id: str = Field(min_length=1, description="意图编号")
+    challenge_id: UUID | None = Field(default=None, description="题目范围；普通与历史记录为空")
+    assignment_ref: KnowledgeAssignment | None = None
     statement: str = Field(min_length=1, description="要调查的方向")
     based_on: list[str] = Field(min_length=1, description="至少一条依据事实")
     expected: str = Field(min_length=1, description="成立时预期观察")
     method: str = Field(min_length=1, description="可交接的调查方法")
-    relates_to: list[str] = Field(min_length=1, description="相关验收条件")
+    relates_to: list[str] = Field(default_factory=list, description="普通任务关联的验收条件")
     retry_of: str | None = Field(default=None, min_length=1, description="换方法重试的意图")
     status: IntentStatus = Field(default=IntentStatus.OPEN, description="认领状态")
     holder: str | None = Field(default=None, min_length=1, description="持有者")
@@ -206,6 +228,16 @@ class Intent(ContractModel):
     attempts: int = Field(default=0, ge=0, description="未关闭释放次数")
     author: str = Field(min_length=1, description="提出者")
     version: int | None = Field(default=None, ge=0, description="写入事件版本")
+
+    @model_validator(mode="after")
+    def check_scope(self) -> Intent:
+        if (self.challenge_id is None) != (self.assignment_ref is None):
+            raise ValueError("challenge_id and assignment_ref must be supplied together")
+        if self.challenge_id is None and not self.relates_to:
+            raise ValueError("ordinary intents require relates_to")
+        if self.challenge_id is not None and (self.holder is not None or self.status == "claimed"):
+            raise ValueError("challenge intents do not have an independent holder")
+        return self
 
 
 class AcceptanceItem(ContractModel):

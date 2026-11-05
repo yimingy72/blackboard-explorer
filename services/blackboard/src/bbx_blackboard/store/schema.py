@@ -145,6 +145,8 @@ Index(
 
 facts = scoped(
     "facts",
+    col("challenge_id", Text),
+    col("assignment_ref", JSONB(none_as_null=True)),
     col("kind", Text, nullable=False),
     col("statement", Text, nullable=False),
     col("evidence", JSONB, nullable=False),
@@ -160,6 +162,8 @@ facts = scoped(
 
 intents = scoped(
     "intents",
+    col("challenge_id", Text),
+    col("assignment_ref", JSONB(none_as_null=True)),
     col("statement", Text, nullable=False),
     col("based_on", ARRAY(Text), nullable=False),
     col("expected", Text, nullable=False),
@@ -177,6 +181,9 @@ intents = scoped(
     col("author", Text, nullable=False),
     col("version", BigInteger, nullable=False),
 )
+
+Index("ix_fact_challenge", facts.c.task_id, facts.c.challenge_id, facts.c.version)
+Index("ix_intent_challenge", intents.c.task_id, intents.c.challenge_id, intents.c.version)
 
 agent_runs = scoped(
     "agent_runs",
