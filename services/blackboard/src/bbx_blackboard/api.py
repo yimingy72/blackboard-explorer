@@ -575,11 +575,15 @@ def create_app(
         await app.state.dispatcher.start()
         cleanup = asyncio.create_task(app.state.input_groups.run_cleanup())
         native_fees = asyncio.create_task(app.state.runner_gateway.native.run())
-        await app.state.native_cache.initialize()
+        native_mcp_routes = asyncio.create_task(app.state.runner_gateway.routes.run())
         try:
+            await app.state.native_cache.initialize()
             async with app.state.business_mcp.run():
                 yield
         finally:
+            native_mcp_routes.cancel()
+            with suppress(asyncio.CancelledError):
+                await native_mcp_routes
             native_fees.cancel()
             with suppress(asyncio.CancelledError):
                 await native_fees
@@ -1352,6 +1356,7 @@ def create_app(
         require_service(request)
         gateway = request.app.state.runner_gateway
         if gateway is not None:
+            await gateway.routes.retire(task_id)
             await gateway.native.retire(task_id)
         result = await _conversations(request).purge(task_id, request.app.state.objects)
         await request.app.state.workspace_cache.invalidate_task(task_id)

@@ -55,6 +55,7 @@ async def prepare(
     concurrent=2,
     tools=None,
     native=True,
+    credentials_status=200,
 ):
     if ctf.objects is None:
         ctf.objects = Objects()
@@ -151,7 +152,7 @@ async def prepare(
         headers=SERVICE,
         json={"expected_epoch": 1},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == credentials_status, response.text
     scope = {
         "tid": tid,
         "owner": owner,

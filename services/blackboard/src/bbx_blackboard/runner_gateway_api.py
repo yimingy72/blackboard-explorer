@@ -75,6 +75,13 @@ async def credentials(
     return await service(request).credentials(task_id, binding_id, await request.body())
 
 
+@private_router.get("/mcp-route")
+async def mcp_route_status(request: Request, response: Response, task_id: UUID):
+    require_service(request)
+    response.headers["Cache-Control"] = "no-store"
+    return await service(request).routes.view(task_id)
+
+
 @private_router.post("/native-budget/prepare", response_model=NativeBudgetBinding)
 async def prepare_budget(
     request: Request, response: Response, task_id: UUID, body: NativeBudgetPrepare

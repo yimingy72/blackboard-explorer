@@ -1466,6 +1466,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/mcp-route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mcp Route Status */
+        get: operations["mcp_route_status_api_tasks__task_id__ctf_runtime_runner_gateway_mcp_route_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/dispatch": {
         parameters: {
             query?: never;
@@ -10378,6 +10395,37 @@ export interface operations {
                 "application/json": components["schemas"]["GatewayCredentialsRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mcp_route_status_api_tasks__task_id__ctf_runtime_runner_gateway_mcp_route_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

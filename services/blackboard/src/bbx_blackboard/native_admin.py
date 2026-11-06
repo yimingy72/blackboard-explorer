@@ -15,6 +15,7 @@ from bbx_blackboard.settings import Settings
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 5
 KEYS_PATH = "/api/config/resources/llm.apiKey"
+ROUTES_PATH = "/api/config/resources/traffic.route"
 
 
 def unavailable() -> HTTPException:
@@ -98,8 +99,8 @@ class NativeAdmin:
         except (httpx.HTTPError, ValueError, UnicodeError, TimeoutError) as error:
             raise unavailable() from error
 
-    async def resources(self) -> list[dict]:
-        value = await self.request("GET", KEYS_PATH)
+    async def resources(self, path=KEYS_PATH) -> list[dict]:
+        value = await self.request("GET", path)
         if not isinstance(value, dict) or not isinstance(value.get("resources"), list):
             raise unavailable()
         if not all(
@@ -110,6 +111,16 @@ class NativeAdmin:
         ):
             raise unavailable()
         return value["resources"]
+
+    async def put_route(self, value: dict) -> None:
+        await self.request("PUT", ROUTES_PATH, body={"resources": [{"value": value}]})
+
+    async def delete_route(self, resource_id: str) -> None:
+        if not resource_id or len(resource_id) > 512:
+            raise unavailable()
+        await self.request(
+            "DELETE", ROUTES_PATH + "/" + quote(resource_id, safe=""), missing_ok=True
+        )
 
     async def create_key(self, value: dict) -> dict:
         # This collection PUT creates a fresh native UUID. The caller owns uncertain-ACK readback.

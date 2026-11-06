@@ -645,6 +645,29 @@ Index(
     unique=True,
 )
 
+native_task_mcp_routes = Table(
+    "native_task_mcp_routes",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("resource_id", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("value", JSONB, nullable=False),
+    col("desired", Text, nullable=False),
+    col("publication_state", Text, nullable=False),
+    col("revision", Integer, nullable=False),
+    col("operation_id", Text),
+    col("next_check_at", DateTime(timezone=True), nullable=False),
+    col("last_error", Text),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ux_native_mcp_route",
+    native_task_mcp_routes.c.accounting_source_id,
+    native_task_mcp_routes.c.resource_id,
+    unique=True,
+)
+
 native_request_costs = Table(
     "native_request_costs",
     metadata,

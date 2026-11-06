@@ -842,6 +842,20 @@ class Conversations:
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
             if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
+                native_route = (
+                    await conn.execute(
+                        select(s.native_task_mcp_routes.c.publication_state).where(
+                            s.native_task_mcp_routes.c.task_id == tid
+                        )
+                    )
+                ).scalar_one_or_none()
+                if native_route is not None and native_route != "retired":
+                    raise HTTPException(409, "Native MCP route retirement is not confirmed")
+                if native_route is not None and (
+                    task["status"] not in {"stopped", "failed", "finished"}
+                    or not task["cleanup_ready"]
+                ):
+                    raise HTTPException(409, "Original Runner cleanup is not confirmed")
                 native_key = (
                     await conn.execute(
                         select(s.native_task_budgets.c.publication_state).where(
@@ -905,6 +919,7 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.native_task_mcp_routes,
                 s.native_request_costs,
                 s.native_task_budgets,
                 s.runner_calls,

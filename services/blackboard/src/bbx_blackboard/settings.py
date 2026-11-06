@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     native_gateway_catalog_revision: str = ""
     runner_mcp_signing_key: SecretStr = SecretStr("")
     runner_mcp_backend_token: SecretStr = SecretStr("")
+    native_mcp_gateway_url: str = ""
+    native_mcp_backend_url: str = ""
+    native_mcp_jwks_file: str = ""
+    native_mcp_backend_token_file: str = ""
 
     @property
     def database_url(self) -> URL:

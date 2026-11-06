@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid5
 
+from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import insert, select, update
@@ -148,6 +149,7 @@ class CtfLifecycleMixin:
         )
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            check(business_contract(task) != BOARD_CONTRACT, "V1 Runner task resume is not enabled")
             previous = (
                 (
                     await conn.execute(

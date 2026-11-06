@@ -37,8 +37,25 @@ def configured_mcp_settings(settings):
     )
 
 
+class ScriptedMCPRoutes:
+    """Isolate pre-existing ledger tests from the separately verified native publisher."""
+
+    async def prepare(self, conn, tid):
+        pass
+
+    async def reconcile(self, tid):
+        return 1
+
+    async def require_ready(self, conn, tid, verified_revision):
+        assert verified_revision == 1
+        return f"http://scripted-mcp.invalid/api/tasks/{tid}/mcp"
+
+    async def retire(self, tid):
+        pass
+
+
 @asynccontextmanager
-async def native_business_gateway(directory, app, base, tids):
+async def native_business_gateway(directory, app, base, tids, *, dynamic=False, on_ready=None):
     from bbx_blackboard.native_mcp import business_mcp_route
 
     directory.mkdir()
@@ -60,13 +77,20 @@ async def native_business_gateway(directory, app, base, tids):
             for tid in tids
         ],
     }
+    if dynamic:
+        config["config"].update(
+            {
+                "storage": {"mode": "hybrid"},
+                "database": {"url": "sqlite:///probe/routes.db?mode=rwc"},
+            }
+        )
     (directory / "config.json").write_text(json.dumps(config))
     container = (
         DockerContainer(IMAGE)
         .with_name("bbx-p3d-business-mcp-" + uuid4().hex[:8])
         .with_exposed_ports(3000, 15000)
         .with_kwargs(extra_hosts={"host.docker.internal": "host-gateway"})
-        .with_volume_mapping(str(directory), "/probe", "ro")
+        .with_volume_mapping(str(directory), "/probe", "rw" if dynamic else "ro")
         .with_command("-f /probe/config.json")
     )
     try:
@@ -82,6 +106,8 @@ async def native_business_gateway(directory, app, base, tids):
                     except httpx.HTTPError:
                         pass
                     await asyncio.sleep(0.1)
+        if on_ready is not None:
+            await on_ready(url, admin)
         try:
             yield url
         except BaseException:

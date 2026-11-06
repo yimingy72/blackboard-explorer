@@ -90,6 +90,9 @@ class RunnerGateway:
         from bbx_blackboard.native_fees import NativeFees
 
         self.native = NativeFees(self)
+        from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
+
+        self.routes = NativeMCPRoutes(self)
 
     async def _scope(self, conn, tid, identity, *, sdk=None, journal=None, metadata=False):
         owner = await self.control._identity(
@@ -122,8 +125,21 @@ class RunnerGateway:
             if body.expected_epoch != owner["epoch"]:
                 raise HTTPException(409, "Runner owner changed")
             binding = await self.control._binding(conn, tid, bid, owner, live=True)
+            await self.routes.prepare(conn, tid)
+        verified_revision = await self.routes.reconcile(tid)
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            await self.control._task(conn, tid, live=True)
+            owner = await self.control._current_owner(conn, tid)
+            if body.expected_epoch != owner["epoch"]:
+                raise HTTPException(409, "Runner owner changed")
+            binding = await self.control._binding(conn, tid, bid, owner, live=True)
+            mcp_gateway_url = await self.routes.require_ready(conn, tid, verified_revision)
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
-            return issue_gateway_credentials(self.settings, owner, bid, member["role"])
+            return {
+                **issue_gateway_credentials(self.settings, owner, bid, member["role"]),
+                "mcp_gateway_url": mcp_gateway_url,
+            }
 
     async def _call(self, conn, tid, key):
         return (
