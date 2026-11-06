@@ -645,6 +645,34 @@ Index(
     unique=True,
 )
 
+task_runner_resources = Table(
+    "task_runner_resources",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("operation_id", Text, nullable=False, unique=True),
+    col("request_id", Text, nullable=False),
+    col("request_digest", Text, nullable=False),
+    col("request", JSONB, nullable=False),
+    col("config", JSONB),
+    col("controller_id", Text),
+    col("controller_backend_pid", Integer),
+    col("controller_backend_start", DateTime(timezone=True)),
+    col("controller_generation", BigInteger, nullable=False),
+    col("revision", BigInteger, nullable=False),
+    col("namespace", Text, nullable=False),
+    col("state", Text, nullable=False),
+    col("desired", Text, nullable=False),
+    col("hard_deadline", DateTime(timezone=True), nullable=False),
+    col("sandbox_create_claimed", Boolean, nullable=False),
+    col("tenant_key_hash", Text, nullable=False, unique=True),
+    col("tenant_key_ciphertext", Text, nullable=False),
+    col("observation", JSONB, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("last_error", Text),
+    col("next_check_at", DateTime(timezone=True), nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+
 native_task_mcp_routes = Table(
     "native_task_mcp_routes",
     metadata,

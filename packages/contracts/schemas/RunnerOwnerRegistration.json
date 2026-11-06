@@ -20,6 +20,19 @@
       "minimum": 0,
       "title": "Expected Epoch",
       "type": "integer"
+    },
+    "hard_deadline": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hard Deadline"
     }
   },
   "required": [

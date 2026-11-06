@@ -41,7 +41,7 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 
 
 async def body_bytes(request: Request, maximum: int) -> bytes:
@@ -109,7 +109,7 @@ class ModelStreamResponse(StreamingResponse):
 class RunnerModelProxy:
     def __init__(
         self,
-        settings: Settings,
+        settings: Settings | NativeRunnerSettings,
         service: BlackboardClient,
         *,
         http: httpx.AsyncClient | None = None,

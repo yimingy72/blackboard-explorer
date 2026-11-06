@@ -1,5 +1,6 @@
 """Agent runtime environment configuration."""
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
@@ -46,3 +47,19 @@ class SchedulerSettings(Settings):
     postgres_user: str = "blackboard"
     postgres_password: SecretStr
     postgres_db: str = "blackboard"
+
+
+class NativeRunnerSettings(ControlSettings):
+    postgres_host: str = "postgres"
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_user: str = "blackboard"
+    postgres_password: SecretStr
+    postgres_db: str = "blackboard"
+    runner_resource_config_file: Path
+    runner_blackboard_url: str
+    runner_model_proxy_url: str
+    runner_gateway_url: str
+    runner_proxy_host: str = "0.0.0.0"
+    runner_proxy_port: int = Field(default=8081, ge=1, le=65535)
+    runner_proxy_max_inflight: int = Field(default=8, ge=1, le=128)
+    max_running_tasks: int = Field(default=2, ge=1, le=20)

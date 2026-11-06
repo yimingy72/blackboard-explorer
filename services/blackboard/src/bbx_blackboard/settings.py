@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     native_mcp_backend_url: str = ""
     native_mcp_jwks_file: str = ""
     native_mcp_backend_token_file: str = ""
+    sandbox_tenant_resolver_token: SecretStr = SecretStr("")
 
     @property
     def database_url(self) -> URL:

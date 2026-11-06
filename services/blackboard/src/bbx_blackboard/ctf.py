@@ -2882,16 +2882,54 @@ class CtfService(
             await self._actor(conn, tid, actor, generation, turn_id)
             require(actor in {"lead", "user", "system", "service"}, "Only Lead can finish")
             control = task["ctf_control"]
-            if task_contract(task) != BOARD_LEGACY and task["status"] in {
-                "created",
-                "provisioning",
-            }:
+            native_preparing = False
+            native_resources = None
+            if task_contract(task) != BOARD_LEGACY:
+                native_resources = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if native_resources is not None:
+                    if native_resources["desired"] != "stopped":
+                        await conn.execute(
+                            update(s.task_runner_resources)
+                            .where(s.task_runner_resources.c.task_id == tid)
+                            .values(
+                                desired="stopped", revision=s.task_runner_resources.c.revision + 1
+                            )
+                        )
+                    control = {**control, "native_stop_requested": True}
+                    native_preparing = task["status"] in {"created", "provisioning"} and bool(
+                        native_resources["data"].get("lead_turn_id")
+                    )
+            if (
+                task_contract(task) != BOARD_LEGACY
+                and task["status"]
+                in {
+                    "created",
+                    "provisioning",
+                }
+                and not native_preparing
+            ):
                 require(
                     actor in {"user", "system", "service"},
                     "Only task control can stop an unstarted Task",
                 )
                 require(
-                    conclusion.get("end_reason") == "user_stop",
+                    conclusion.get("end_reason") == "user_stop"
+                    or (
+                        actor in {"system", "service"}
+                        and conclusion.get("end_reason") == "budget_exhausted"
+                        and native_resources is not None
+                        and native_resources["hard_deadline"] <= now()
+                    ),
                     "Unstarted Task only accepts explicit cancellation",
                 )
                 active = await conn.execute(
@@ -2911,7 +2949,7 @@ class CtfService(
                     s.tasks,
                     tid,
                     {
-                        "status": "stopped",
+                        "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
                         "ctf_control": {
                             **control,
                             "phase": "closed",
@@ -2926,9 +2964,16 @@ class CtfService(
                     tid,
                     "conclusion.finalized",
                     actor,
-                    {"conclusion": stored, "status": "stopped"},
+                    {
+                        "conclusion": stored,
+                        "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
+                    },
                 )
-                return {"operation_id": str(request_id), "phase": "closed", "status": "stopped"}
+                return {
+                    "operation_id": str(request_id),
+                    "phase": "closed",
+                    "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
+                }
             if control["phase"] in {"closing", "closed"}:
                 if task_contract(task) != BOARD_LEGACY:
                     return {
@@ -2943,7 +2988,10 @@ class CtfService(
                     "Closing already requested",
                 )
                 return {"operation_id": str(request_id), "phase": control["phase"]}
-            require(control["phase"] == "running", "Task is not running")
+            require(
+                control["phase"] == "running" or native_preparing,
+                "Task is not running",
+            )
             require(
                 not conclusion.get("verification_refs"),
                 "Verification requires a trusted platform adapter",

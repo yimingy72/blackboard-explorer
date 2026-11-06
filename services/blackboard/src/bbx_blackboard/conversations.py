@@ -842,6 +842,30 @@ class Conversations:
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
             if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
+                native_resources = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if native_resources is not None:
+                    never_claimed = (
+                        native_resources["config"] is None
+                        and native_resources["controller_id"] is None
+                        and native_resources["sandbox_create_claimed"] is False
+                        and not native_resources["observation"]
+                    )
+                    if not never_claimed:
+                        raise HTTPException(
+                            409,
+                            "Native namespace and retained volumes still require "
+                            "ownership retirement",
+                        )
                 native_route = (
                     await conn.execute(
                         select(s.native_task_mcp_routes.c.publication_state).where(
@@ -919,6 +943,7 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.task_runner_resources,
                 s.native_task_mcp_routes,
                 s.native_request_costs,
                 s.native_task_budgets,

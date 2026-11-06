@@ -61,6 +61,7 @@ class NativeMCPRoutes:
     def stopping(task):
         return (
             task["deleting"]
+            or task["ctf_control"].get("native_stop_requested")
             or task["status"] in {"finished", "failed", "stopped", "closing"}
             or task["ctf_control"].get("phase") in {"closing", "finished", "failed", "stopped"}
         )

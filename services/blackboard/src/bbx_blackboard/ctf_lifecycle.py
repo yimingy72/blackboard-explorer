@@ -116,6 +116,18 @@ class CtfLifecycleMixin:
     async def record_cleanup(self, tid):
         async with self.repo.engine.begin() as conn:
             task = await self._terminal(conn, tid)
+            if business_contract(task) == BOARD_CONTRACT:
+                native_resources = (
+                    await conn.execute(
+                        select(s.task_runner_resources.c.state).where(
+                            s.task_runner_resources.c.task_id == tid
+                        )
+                    )
+                ).scalar_one_or_none()
+                check(
+                    native_resources is None or native_resources == "stopped",
+                    "Original native Task resource exit is not confirmed",
+                )
             check(bool(task["workspace_uri"]), "Archive must be registered before cleanup")
             check(await self.objects.exists(task["workspace_uri"]), "Archive missing")
             control = dict(task["ctf_control"])

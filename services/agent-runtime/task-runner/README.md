@@ -96,3 +96,34 @@ Runtime 删除 provider 凭据读取、provider/SSE/usage 解析、严格 routef
 响应 `__call__`、生成器和 Runtime.close 共用最终收尾；response.start 失败或生成器未启动也保留 active owner，关闭FD并有界记录传输观察。只关闭本地连接不证明 native/provider 已停或费用为0。
 
 MCP 保留官方低层客户端、journal/admit、受信 host 保存结果与确认/不重派 gate。P3d 通过上述显式映射接入 Virtual MCP 命名空间；issuer/角色、target allowlist 和实际领域事务由后端组合验证，Node 本地 fixture 不能证明这些边界，V1 start 仍未开放。详见 [P3c 薄入口报告](../../../docs/tasks/P3c-Runtime-Proxy-20261106-report.md)和[费用阈值方案](../../../docs/tasks/P3c-Agentgateway费用阈值调整-20261106.md)。
+
+## 受信 Kubernetes 启动入口（P3f）
+
+新内部入口 `POST /api/tasks/<Task UUID>/ctf/runtime/runner-bootstrap` 仅接受平台 service 身份，
+请求携稳定 request_id、明确原生 model_alias 与带来源/时点的 FrozenExchangeRate；公共 V1 start 不因此解锁。
+平台保存唯一资源意图后，由同包的显式 `bbx-runtime serve-runner-control` 模式驱动官方 Sandbox 与 Runner。
+该模式不启动 legacy Python Agent/旧 Pi/Docker manager，也不要求它们的环境 Secrets。
+
+native 模式仍使用现有全局 RuntimeLock；同数据库的旧 serve 未安全停下时它会拒绝启动。
+每个控制进程在持锁连接内只分配一次单调 fence，所有 BB 资源动作还核实际 ExclusiveLock、PG PID/backend_start。
+模式未运行或拿不到锁时，请求保持 queued，不能把“已登记”显示为真实启动。
+
+受信宿主运行需要兼容 Kubernetes 版本的 kubectl、私有 kubeconfig、固定集群 UID 与只读资源配置 JSON；
+不要修改全局 context。当前 Runtime Dockerfile 默认仍服务 legacy 模式，容器采用新模式时须明确提供该系统依赖。
+配置使用 `RUNNER_RESOURCE_CONFIG_FILE`、`RUNNER_BLACKBOARD_URL`、`RUNNER_MODEL_PROXY_URL`、
+既有 `RUNNER_GATEWAY_URL` 与 Control/Postgres 连接；资源文件携 image@digest、环境 revision、Server origin、
+CA 路径与固定控制出口。Node public URLs 经受信 TLS 反代，proxy 内部 HTTP listener不取消 Node URL 安全检查。
+native 模式可把 resource config.ca_file 合入默认 TLS 验证，不要求关闭验证或依赖 harness 专用客户端。
+
+Node `bootstrap.mjs` 先等整卷 Secret 的固定文件，读一次 schema/Task/Downward PodUID 后将同一配置冻结到 tmpfs，
+再进入原 main；此之前不开 journal。最初 CA 必须随 waiting Pod 的 Secret 预置，因为 Node 在进程启动读取
+NODE_EXTRA_CA_CERTS。凭据后续从同 Secret 原 UID/resourceVersion 更新，不能使用 subPath。
+Runner 只有 Task 范围 control/model/mcp，不持 provider、共享预算 key、Sandbox tenant/execd key、service 或 Kubernetes凭据。
+
+正常运行每 20 秒核同 UID/意图并续原 owner 与挂载；到期 owner 不被自动复活，Task deadline不延长。
+预算 hold 下只刷新 control；旧 model/mcp 原样保留且不刷新，不派 prepare/input 或 Session许可。
+Task 停止后旧能力也不能重新授权模型/工具，有限关闭控制与原结果接口仍保持各自边界。
+
+退出必须来自原 PodUID/containerID 的正终止观察；kill ACK、TTL、404、route撤销与 RWO 均不作为退出证明。
+已退出待域 finalize 会跨重启继续补偿；未知保留原身份、key与PVC，不释放席位。
+本片保 Namespace、journal/workspace PVC，最终 Task purge还需要受信资源回收/持久归属移交，不能丢唯一 UID账。

@@ -63,6 +63,8 @@ from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key
 from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.native import NativeAnalysisCache
 from bbx_blackboard.native_api import router as native_router
+from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap
+from bbx_blackboard.native_runner_bootstrap import router as native_runner_bootstrap_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile, require_ctf_tool_capabilities
@@ -559,6 +561,7 @@ def create_app(
         app.state.ctf_service = CtfService(app.state.engine, app.state.objects)
         app.state.runner_control = RunnerControl(app.state.engine)
         app.state.runner_gateway = RunnerGateway(app.state.engine, settings)
+        app.state.native_runner_bootstrap = NativeRunnerBootstrap(app.state.runner_gateway)
         app.state.conversations = Conversations(app.state.engine)
         app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
@@ -612,6 +615,11 @@ def create_app(
     app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
     app.state.runner_control = RunnerControl(engine) if engine is not None else None
     app.state.runner_gateway = RunnerGateway(engine, settings) if engine is not None else None
+    app.state.native_runner_bootstrap = (
+        NativeRunnerBootstrap(app.state.runner_gateway)
+        if app.state.runner_gateway is not None
+        else None
+    )
     app.state.business_mcp = BusinessMCP(app)
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.input_groups = (
@@ -2038,6 +2046,7 @@ def create_app(
         row = await _profiles(request).create(name, body, identity.name)
         return _profile_document(row)
 
+    app.include_router(native_runner_bootstrap_router)
     app.include_router(ctf_router)
     app.include_router(challenge_board_router)
     app.include_router(runner_control_router)

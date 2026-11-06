@@ -86,6 +86,7 @@ class RunnerControl:
             raise HTTPException(409, "Frozen challenge-board-v1 task required")
         if live and (
             task["deleting"]
+            or task["ctf_control"].get("native_stop_requested")
             or (task["ctf_control"].get("native_budget_hold") and not allow_held)
             or task["status"] in TERMINAL
             or task["ctf_control"]["phase"]
@@ -295,6 +296,8 @@ class RunnerControl:
             if task["active_since"]:
                 remaining -= max(0, (instant - task["active_since"]).total_seconds())
             deadline = instant + timedelta(seconds=max(0, remaining))
+            if body.hard_deadline is not None:
+                deadline = min(deadline, body.hard_deadline)
             if previous:
                 deadline = min(deadline, previous["hard_deadline"])
             if deadline <= instant:
@@ -776,8 +779,16 @@ class RunnerControl:
         while True:
             async with self.repo.engine.begin() as conn:
                 await self.repo.lock(conn, tid)
-                task = await self._task(conn, tid, live=True, allow_held=True)
-                held = bool(task["ctf_control"].get("native_budget_hold"))
+                task = await self._task(conn, tid)
+                closing = (
+                    task["deleting"]
+                    or task["ctf_control"].get("native_stop_requested")
+                    or task["status"] in TERMINAL
+                    or task["ctf_control"]["phase"] in {"closing", "closed"}
+                )
+                if not closing:
+                    task = await self._task(conn, tid, live=True, allow_held=True)
+                held = closing or bool(task["ctf_control"].get("native_budget_hold"))
                 owner = await self._identity(conn, tid, identity)
                 self._owner_live(owner)
                 recheck_at = min(owner["expires_at"], owner["hard_deadline"])

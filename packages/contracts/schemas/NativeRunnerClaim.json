@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "controller_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Controller Id",
+      "type": "string"
+    },
+    "controller_fence": {
+      "minimum": 1,
+      "title": "Controller Fence",
+      "type": "integer"
+    },
+    "controller_pid": {
+      "minimum": 1,
+      "title": "Controller Pid",
+      "type": "integer"
+    },
+    "controller_started_at": {
+      "format": "date-time",
+      "title": "Controller Started At",
+      "type": "string"
+    },
+    "resource_config": {
+      "additionalProperties": true,
+      "maxProperties": 32,
+      "title": "Resource Config",
+      "type": "object"
+    }
+  },
+  "required": [
+    "controller_id",
+    "controller_fence",
+    "controller_pid",
+    "controller_started_at",
+    "resource_config"
+  ],
+  "title": "NativeRunnerClaim",
+  "type": "object"
+}

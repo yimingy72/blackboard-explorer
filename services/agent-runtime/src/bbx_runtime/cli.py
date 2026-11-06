@@ -20,6 +20,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="bbx-runtime")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("serve", help="运行任务调度与监管服务")
+    commands.add_parser("serve-runner-control", help="运行受信的原生 Task Runner 控制模式")
     run = commands.add_parser("run-agent", help="运行一个 Agent（调用真实模型）")
     run.add_argument("--task", type=UUID, required=True)
     run.add_argument("--type", choices=["explore", "derive", "close"], required=True)
@@ -131,6 +132,12 @@ def main() -> None:
             from bbx_runtime.server import serve
 
             asyncio.run(serve(SchedulerSettings()))  # type: ignore[call-arg]
+            code = 0
+        elif args.command == "serve-runner-control":
+            from bbx_runtime.native_runner import serve_native
+            from bbx_runtime.settings import NativeRunnerSettings
+
+            asyncio.run(serve_native(NativeRunnerSettings()))  # type: ignore[call-arg]
             code = 0
         else:
             settings = Settings() if args.command == "run-agent" else ControlSettings()  # type: ignore[call-arg]

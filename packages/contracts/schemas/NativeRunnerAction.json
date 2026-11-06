@@ -1,0 +1,72 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "format": "uuid",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "controller_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Controller Id",
+      "type": "string"
+    },
+    "controller_generation": {
+      "minimum": 1,
+      "title": "Controller Generation",
+      "type": "integer"
+    },
+    "action": {
+      "enum": [
+        "sandbox_create",
+        "observation",
+        "material",
+        "activate",
+        "renew",
+        "stop",
+        "cleanup",
+        "error"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "observation": {
+      "additionalProperties": true,
+      "maxProperties": 16,
+      "title": "Observation",
+      "type": "object"
+    },
+    "proof": {
+      "additionalProperties": true,
+      "maxProperties": 8,
+      "title": "Proof",
+      "type": "object"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "enum": [
+            "native_exit_unconfirmed",
+            "native_resource_unknown",
+            "native_control_unavailable",
+            "native_bootstrap_unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    }
+  },
+  "required": [
+    "operation_id",
+    "controller_id",
+    "controller_generation",
+    "action"
+  ],
+  "title": "NativeRunnerAction",
+  "type": "object"
+}

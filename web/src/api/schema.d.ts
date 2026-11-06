@@ -89,6 +89,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/native-runner/bootstraps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending Bootstraps */
+        get: operations["pending_bootstraps_api_native_runner_bootstraps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/opensandbox/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sandbox Tenant */
+        get: operations["sandbox_tenant_api_opensandbox_tenants_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/import-environment-key": {
         parameters: {
             query?: never;
@@ -1443,6 +1477,58 @@ export interface paths {
         get: operations["runtime_state_api_tasks__task_id__ctf_runtime_state_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bootstrap Status */
+        get: operations["bootstrap_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_get"];
+        put?: never;
+        /** Request Bootstrap */
+        post: operations["request_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bootstrap Action */
+        post: operations["bootstrap_action_api_tasks__task_id__ctf_runtime_runner_bootstrap_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Bootstrap */
+        post: operations["claim_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_claim_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4980,6 +5066,62 @@ export interface components {
             protocol: "bbx.task-runner.v1";
             sdk_model: components["schemas"]["EffectiveRunnerModel"];
         };
+        /** NativeRunnerAction */
+        NativeRunnerAction: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error";
+            /** Controller Generation */
+            controller_generation: number;
+            /** Controller Id */
+            controller_id: string;
+            /** Error Code */
+            error_code?: ("native_exit_unconfirmed" | "native_resource_unknown" | "native_control_unavailable" | "native_bootstrap_unavailable") | null;
+            /** Observation */
+            observation?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Proof */
+            proof?: {
+                [key: string]: unknown;
+            };
+        };
+        /** NativeRunnerClaim */
+        NativeRunnerClaim: {
+            /** Controller Fence */
+            controller_fence: number;
+            /** Controller Id */
+            controller_id: string;
+            /** Controller Pid */
+            controller_pid: number;
+            /**
+             * Controller Started At
+             * Format: date-time
+             */
+            controller_started_at: string;
+            /** Resource Config */
+            resource_config: {
+                [key: string]: unknown;
+            };
+        };
+        /** NativeRunnerLaunch */
+        NativeRunnerLaunch: {
+            exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /** Model Alias */
+            model_alias: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
         /** NativeTransportObservation */
         NativeTransportObservation: {
             /** Attempt Id */
@@ -5891,6 +6033,8 @@ export interface components {
         RunnerOwnerRegistration: {
             /** Expected Epoch */
             expected_epoch: number;
+            /** Hard Deadline */
+            hard_deadline?: string | null;
             /** Pod Uid */
             pod_uid: string;
             /**
@@ -7159,6 +7303,57 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+        };
+    };
+    pending_bootstraps_api_native_runner_bootstraps_get: {
+        parameters: {
+            query?: {
+                after?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sandbox_tenant_api_opensandbox_tenants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -10367,6 +10562,142 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerLaunch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_action_api_tasks__task_id__ctf_runtime_runner_bootstrap_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerClaim"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field
 
 from .models import ContractModel
 from .runner import Digest, EffectiveRunnerModel, RunnerId
@@ -13,6 +13,7 @@ class RunnerOwnerRegistration(ContractModel):
     runner_id: RunnerId
     pod_uid: RunnerId
     expected_epoch: int = Field(ge=0)
+    hard_deadline: AwareDatetime | None = None
 
 
 class RunnerOwnerUpdate(ContractModel):

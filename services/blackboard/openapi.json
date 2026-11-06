@@ -5968,6 +5968,143 @@
         "title": "NativeModelSelection",
         "type": "object"
       },
+      "NativeRunnerAction": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "sandbox_create",
+              "observation",
+              "material",
+              "activate",
+              "renew",
+              "stop",
+              "cleanup",
+              "error"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "controller_generation": {
+            "minimum": 1.0,
+            "title": "Controller Generation",
+            "type": "integer"
+          },
+          "controller_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Controller Id",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "native_exit_unconfirmed",
+                  "native_resource_unknown",
+                  "native_control_unavailable",
+                  "native_bootstrap_unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "observation": {
+            "additionalProperties": true,
+            "maxProperties": 16,
+            "title": "Observation",
+            "type": "object"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "proof": {
+            "additionalProperties": true,
+            "maxProperties": 8,
+            "title": "Proof",
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation_id",
+          "controller_id",
+          "controller_generation",
+          "action"
+        ],
+        "title": "NativeRunnerAction",
+        "type": "object"
+      },
+      "NativeRunnerClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "controller_fence": {
+            "minimum": 1.0,
+            "title": "Controller Fence",
+            "type": "integer"
+          },
+          "controller_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Controller Id",
+            "type": "string"
+          },
+          "controller_pid": {
+            "minimum": 1.0,
+            "title": "Controller Pid",
+            "type": "integer"
+          },
+          "controller_started_at": {
+            "format": "date-time",
+            "title": "Controller Started At",
+            "type": "string"
+          },
+          "resource_config": {
+            "additionalProperties": true,
+            "maxProperties": 32,
+            "title": "Resource Config",
+            "type": "object"
+          }
+        },
+        "required": [
+          "controller_id",
+          "controller_fence",
+          "controller_pid",
+          "controller_started_at",
+          "resource_config"
+        ],
+        "title": "NativeRunnerClaim",
+        "type": "object"
+      },
+      "NativeRunnerLaunch": {
+        "additionalProperties": false,
+        "properties": {
+          "exchange_rate": {
+            "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+          },
+          "model_alias": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Model Alias",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "model_alias",
+          "exchange_rate"
+        ],
+        "title": "NativeRunnerLaunch",
+        "type": "object"
+      },
       "NativeTransportObservation": {
         "additionalProperties": false,
         "properties": {
@@ -8124,6 +8261,18 @@
             "minimum": 0.0,
             "title": "Expected Epoch",
             "type": "integer"
+          },
+          "hard_deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Deadline"
           },
           "pod_uid": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -11297,6 +11446,73 @@
         "summary": "Logout",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/native-runner/bootstraps": {
+      "get": {
+        "operationId": "pending_bootstraps_api_native_runner_bootstraps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pending Bootstraps",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/opensandbox/tenants": {
+      "get": {
+        "operationId": "sandbox_tenant_api_opensandbox_tenants_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sandbox Tenant",
+        "tags": [
+          "native-runner-bootstrap"
         ]
       }
     },
@@ -16530,6 +16746,198 @@
         "summary": "Runtime State",
         "tags": [
           "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap": {
+      "get": {
+        "operationId": "bootstrap_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bootstrap Status",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      },
+      "post": {
+        "operationId": "request_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRunnerLaunch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Bootstrap",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/actions": {
+      "post": {
+        "operationId": "bootstrap_action_api_tasks__task_id__ctf_runtime_runner_bootstrap_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRunnerAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bootstrap Action",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/claim": {
+      "post": {
+        "operationId": "claim_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRunnerClaim"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Bootstrap",
+        "tags": [
+          "native-runner-bootstrap"
         ]
       }
     },

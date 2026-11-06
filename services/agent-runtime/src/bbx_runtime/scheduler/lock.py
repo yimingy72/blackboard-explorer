@@ -1,22 +1,30 @@
 """A dedicated PostgreSQL session guards the single runtime instance."""
 
 import asyncio
+from datetime import datetime
 
 import asyncpg
+from bbx_contracts.runner_bootstrap import RUNTIME_FENCE_SEQUENCE, RUNTIME_LOCK_KEY
 
-from bbx_runtime.settings import SchedulerSettings
+from bbx_runtime.settings import NativeRunnerSettings, SchedulerSettings
 
-LOCK_KEY = 0x42425852554E
+LOCK_KEY = RUNTIME_LOCK_KEY
 PING_SECONDS = 2.0
 PING_TIMEOUT = 2.0
 
 
 class RuntimeLock:
-    def __init__(self, settings: SchedulerSettings) -> None:
+    def __init__(
+        self, settings: SchedulerSettings | NativeRunnerSettings, *, fenced: bool = False
+    ) -> None:
         self.settings = settings
         self.connection: asyncpg.Connection | None = None
         self.lost = asyncio.Event()
         self.monitor: asyncio.Task[None] | None = None
+        self.fenced = fenced
+        self.fence: int | None = None
+        self.backend_pid: int | None = None
+        self.backend_started_at: datetime | None = None
 
     async def __aenter__(self) -> "RuntimeLock":
         cfg = self.settings
@@ -34,6 +42,14 @@ class RuntimeLock:
             acquired = await connection.fetchval("SELECT pg_try_advisory_lock($1)", LOCK_KEY)
             if not acquired:
                 raise RuntimeError("Another agent-runtime already holds the instance lock")
+            if self.fenced:
+                self.fence = int(
+                    await connection.fetchval(f"SELECT nextval('{RUNTIME_FENCE_SEQUENCE}')")
+                )
+                self.backend_pid = connection.get_server_pid()
+                self.backend_started_at = await connection.fetchval(
+                    "SELECT backend_start FROM pg_stat_activity WHERE pid=pg_backend_pid()"
+                )
             connection.add_termination_listener(self._terminated)
             self.monitor = asyncio.create_task(self._monitor(), name="runtime-lock-monitor")
         except BaseException:
