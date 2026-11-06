@@ -131,8 +131,38 @@ static void start_execd(void) {
     fail("exec official daemon");
 }
 
+static void start_kubernetes_bootstrap(void) {
+    const char *token = getenv("EXECD_ACCESS_TOKEN");
+    const char *sandbox_id = getenv("OPENSANDBOX_ID");
+    const char *init = getenv("EXECD_INIT");
+    if (getuid() != 0 || geteuid() != 0 || !token || !*token || strpbrk(token, "\r\n") ||
+        strspn(token, " \t") == strlen(token) || !sandbox_id || !identifier(sandbox_id) ||
+        !init || strcmp(init, "1")) {
+        errno = EPERM;
+        fail("invalid trusted Kubernetes bootstrap identity");
+    }
+    char *environment[12] = {0};
+    int count = 0;
+    add_environment(environment, &count, "EXECD_ACCESS_TOKEN", token);
+    add_environment(environment, &count, "OPENSANDBOX_ID", sandbox_id);
+    add_environment(environment, &count, "EXECD_INIT", "1");
+    add_environment(environment, &count, "EXECD", "/opt/opensandbox/execd");
+    add_environment(environment, &count, "EXECD_ENVS", "/var/lib/bbx/control/execd.env");
+    add_environment(environment, &count, "EXECD_BOOTSTRAP_PRE_SCRIPT", "/opt/bbx/control/kubernetes-setup.sh");
+    add_environment(environment, &count, "PATH", "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+    add_environment(environment, &count, "HOME", "/root");
+    const char *lifecycle = getenv("OPENSANDBOX_LIFECYCLE");
+    if (lifecycle && *lifecycle) add_environment(environment, &count, "OPENSANDBOX_LIFECYCLE", lifecycle);
+    if (clearenv()) fail("clear Kubernetes bootstrap environment");
+    close_extra_fds();
+    char *args[] = {"/opt/opensandbox/bootstrap.sh", "/usr/bin/tail", "-f", "/dev/null", NULL};
+    execve(args[0], args, environment);
+    fail("exec official Kubernetes bootstrap");
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--execd")) start_execd();
+    if (argc == 2 && !strcmp(argv[1], "--kubernetes-bootstrap")) start_kubernetes_bootstrap();
     /* Static linkage prevents loader variables from acting before clearenv. */
     if (clearenv()) fail("clear control environment");
     if (geteuid() != 0 || getuid() != 0 || argc != 10 ||

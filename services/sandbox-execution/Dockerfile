@@ -10,6 +10,7 @@ FROM ${TOOL_IMAGE}
 USER root
 COPY --from=official /execd /opt/bbx/control/execd
 COPY --from=launcher-build /tmp/launcher /opt/bbx/control/launcher
+COPY --chmod=0555 launcher/kubernetes-setup.sh /opt/bbx/control/kubernetes-setup.sh
 COPY src/bbx_sandbox_execution /opt/bbx/control/python/bbx_sandbox_execution
 RUN groupadd --gid 10000 bbx-solver \
     && useradd --uid 10000 --gid 10000 --no-create-home --home-dir /workspace --shell /bin/bash bbx-solver \

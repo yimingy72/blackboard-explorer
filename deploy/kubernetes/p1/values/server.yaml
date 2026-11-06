@@ -1,0 +1,44 @@
+fullnameOverride: bbx-archv2-server
+namespaceOverride: bbx-archv2-system
+server:
+  image:
+    repository: opensandbox/server
+    tag: release-1.2.0@sha256:25bebdcf1cf7724eb923faecbdbbf82d4038c6ab35c736151574726d14006f30
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 768Mi}
+  gateway:
+    enabled: true
+    gatewayRouteMode: header
+    secureAccess:
+      existingSecret: bbx-archv2-signing
+  volumeMounts:
+    - {name: bbx-template, mountPath: /etc/opensandbox/bbx-template.yaml, subPath: template.yaml, readOnly: true}
+  volumes:
+    - name: bbx-template
+      configMap: {name: bbx-archv2-template}
+configToml: |
+  [server]
+  host = "0.0.0.0"
+  port = 80
+  api_key = ""
+  [log]
+  level = "WARNING"
+  [runtime]
+  type = "kubernetes"
+  execd_image = "opensandbox/execd:release-1.2.0@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c"
+  execd_run_as_init = true
+  [kubernetes]
+  namespace = "bbx-archv2-task-a"
+  workload_provider = "batchsandbox"
+  batchsandbox_template_file = "/etc/opensandbox/bbx-template.yaml"
+  image_pull_policy = "IfNotPresent"
+  [kubernetes.execd_init_resources]
+  requests = {cpu = "10m", memory = "32Mi"}
+  limits = {cpu = "200m", memory = "128Mi"}
+  [tenants]
+  provider = "http"
+  endpoint = "http://bbx-archv2-tenant.bbx-archv2-system.svc:8080/tenant"
+  max_stale_seconds = 0
+  timeout_seconds = 2

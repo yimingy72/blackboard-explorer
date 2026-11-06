@@ -2,6 +2,8 @@
 
 这是独立、尚未接入生产路由的接缝包。执行、状态、后台输出、中断和低身份文件访问使用官方 `opensandbox==1.2.0`，不修改旧 envd，也不新建执行引擎、MCP 生命周期服务或平台状态机。
 
+后续 [Kubernetes 局部接缝](../../deploy/kubernetes/p1/README.md) 使用专门的静态 `--kubernetes-bootstrap`，保留官方注入的 bootstrap/execd、Sandbox ID 与 init 模式，执行前清理控制环境；不能将独立 Docker 的 `--execd` 直接当 Kubernetes 入口。只有受信装配可调用；同 Namespace SecretRef 提供执行 Token，Agent 无入口选择权。完整生产装配仍须通过剩余 G1/G2。
+
 ## 固定依赖与镜像
 
 - Python 3.12/3.13；独立 `pyproject.toml`、`uv.lock`、`.venv`，不修改根 workspace。SDK 公开发布 wheel SHA-256：`15a0f3c3245018afa43b75fb14e892a64c2c8807276a0fdaf2a1a469f5e214ea`，其余依赖由独立锁记录。

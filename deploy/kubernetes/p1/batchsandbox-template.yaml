@@ -1,0 +1,44 @@
+apiVersion: sandbox.opensandbox.io/v1alpha1
+kind: BatchSandbox
+metadata:
+  name: bbx-archv2-template
+spec:
+  replicas: 1
+  shardPatches:
+    - spec:
+        terminationGracePeriodSeconds: 5
+        securityContext:
+          sysctls:
+            - {name: net.ipv4.ip_forward, value: "1"}
+        containers:
+          - name: sandbox
+            command: [/opt/bbx/control/launcher, --kubernetes-bootstrap]
+            env:
+              - name: EXECD_ACCESS_TOKEN
+                value: ""
+                valueFrom:
+                  secretKeyRef: {name: bbx-archv2-execd, key: token}
+            securityContext:
+              runAsUser: 0
+              privileged: false
+              seccompProfile: {type: Unconfined}
+              appArmorProfile: {type: Unconfined}
+              capabilities:
+                drop: [ALL]
+                add: [SYS_ADMIN, NET_ADMIN, NET_RAW, SETUID, SETGID, SETPCAP, KILL, CHOWN, DAC_OVERRIDE, FOWNER]
+            volumeMounts:
+              - {name: opensandbox-bin, mountPath: /opt/opensandbox, readOnly: true}
+          - name: bbx-archv2-target
+            image: bbx-archv2-sandbox-k8s:20261106
+            imagePullPolicy: Never
+            command: [/usr/bin/python3, -I, -m, http.server, "18081", --bind, 0.0.0.0, --directory, /workspace]
+            securityContext:
+              runAsUser: 10000
+              runAsGroup: 10000
+              allowPrivilegeEscalation: false
+              capabilities: {drop: [ALL]}
+            resources:
+              requests: {cpu: 10m, memory: 32Mi}
+              limits: {cpu: 100m, memory: 96Mi}
+            volumeMounts:
+              - {name: bbx-workspace, mountPath: /workspace, readOnly: true}
