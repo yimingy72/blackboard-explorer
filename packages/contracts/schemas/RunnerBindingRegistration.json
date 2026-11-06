@@ -1,0 +1,199 @@
+{
+  "$defs": {
+    "EffectiveRunnerModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "api": {
+          "const": "openai-completions",
+          "title": "Api",
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "enum": [
+              "text",
+              "image"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Input",
+          "type": "array"
+        },
+        "reasoning": {
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "thinking_level": {
+          "enum": [
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "title": "Thinking Level",
+          "type": "string"
+        },
+        "thinking_level_map": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinking Level Map"
+        },
+        "thinking_budgets": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinking Budgets"
+        },
+        "context_window": {
+          "minimum": 1024,
+          "title": "Context Window",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "minimum": 1,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "api",
+        "input",
+        "reasoning",
+        "thinking_level",
+        "context_window",
+        "max_output_tokens"
+      ],
+      "title": "EffectiveRunnerModel",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_epoch": {
+      "minimum": 1,
+      "title": "Expected Epoch",
+      "type": "integer"
+    },
+    "agent_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Challenge Id"
+    },
+    "model": {
+      "$ref": "#/$defs/EffectiveRunnerModel"
+    },
+    "model_credential_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Model Credential Ref",
+      "type": "string"
+    },
+    "mcp_credential_ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Mcp Credential Ref",
+      "type": "string"
+    },
+    "allowed_tools": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Allowed Tools",
+      "type": "array"
+    },
+    "instructions": {
+      "maxLength": 131072,
+      "title": "Instructions",
+      "type": "string"
+    },
+    "profile_revision": {
+      "minimum": 1,
+      "title": "Profile Revision",
+      "type": "integer"
+    },
+    "prompt_revision": {
+      "minimum": 1,
+      "title": "Prompt Revision",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_epoch",
+    "agent_id",
+    "model",
+    "model_credential_ref",
+    "mcp_credential_ref",
+    "instructions",
+    "profile_revision",
+    "prompt_revision"
+  ],
+  "title": "RunnerBindingRegistration",
+  "type": "object"
+}

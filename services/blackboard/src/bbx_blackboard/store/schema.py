@@ -496,3 +496,104 @@ Index(
     unique=True,
     postgresql_where=(progress_jobs.c.status == "queued") & (progress_jobs.c.kind == "refresh"),
 )
+
+# Runner epochs are historical authority; only one row may own a task now.
+runner_owners = Table(
+    "runner_owners",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("epoch", BigInteger, primary_key=True),
+    col("current", Boolean, nullable=False),
+    col("runner_id", Text, nullable=False),
+    col("pod_uid", Text, nullable=False),
+    col("token_version", Text, nullable=False),
+    col("expires_at", DateTime(timezone=True), nullable=False),
+    col("hard_deadline", DateTime(timezone=True), nullable=False),
+    col("revoked", Boolean, nullable=False),
+    col("registration_id", Text, nullable=False),
+    col("registration_digest", Text, nullable=False),
+    col("next_seq", BigInteger, nullable=False),
+)
+Index(
+    "ux_runner_current_owner",
+    runner_owners.c.task_id,
+    unique=True,
+    postgresql_where=runner_owners.c.current.is_(True),
+)
+Index(
+    "ux_runner_registration", runner_owners.c.task_id, runner_owners.c.registration_id, unique=True
+)
+
+runner_bindings = scoped(
+    "runner_bindings",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("registration_id", Text, nullable=False),
+    col("registration_digest", Text, nullable=False),
+    col("binding", JSONB, nullable=False),
+    col("business", JSONB, nullable=False),
+    col("prepare_request_id", Text, nullable=False),
+    col("payload_json", Text, nullable=False),
+    col("payload_digest", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("sdk_session_id", Text),
+    col("cursor", JSONB),
+    col("permit_expires_at", DateTime(timezone=True)),
+    col("permit_revision", BigInteger, nullable=False),
+    col("prompt_revision", BigInteger, nullable=False),
+    col("instructions", Text, nullable=False),
+)
+Index(
+    "ux_runner_binding_registration",
+    runner_bindings.c.task_id,
+    runner_bindings.c.registration_id,
+    unique=True,
+)
+
+runner_commands = scoped(
+    "runner_commands",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("request_id", Text, nullable=False),
+    col("command_seq", BigInteger, nullable=False),
+    col("payload_json", Text, nullable=False),
+    col("payload_digest", Text, nullable=False),
+    col("kind", Text, nullable=False),
+    col("binding_id", Text),
+    col("input_id", Text),
+    col("message_proof", JSONB),
+    col("native_proof", JSONB),
+    col("status", Text, nullable=False),
+    col("origin_epoch", BigInteger, nullable=False),
+)
+Index(
+    "ux_runner_command_request",
+    runner_commands.c.task_id,
+    runner_commands.c.owner_epoch,
+    runner_commands.c.request_id,
+    unique=True,
+)
+Index(
+    "ux_runner_command_seq",
+    runner_commands.c.task_id,
+    runner_commands.c.owner_epoch,
+    runner_commands.c.command_seq,
+    unique=True,
+)
+
+runner_receipts = scoped(
+    "runner_receipts",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("kind", Text, nullable=False),
+    col("request_id", Text, nullable=False),
+    col("binding_id", Text),
+    col("body_text", Text, nullable=False),
+    col("body_digest", Text, nullable=False),
+    col("response", JSONB, nullable=False),
+    col("late", Boolean, nullable=False),
+)
+Index(
+    "ix_runner_receipt_request",
+    runner_receipts.c.task_id,
+    runner_receipts.c.owner_epoch,
+    runner_receipts.c.kind,
+    runner_receipts.c.request_id,
+)

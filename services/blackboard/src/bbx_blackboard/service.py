@@ -951,6 +951,11 @@ class BoardService:
                             "tool_call.recorded",
                         )
                     ) & (s.events.c.actor != for_agent)
+                    if versioned:
+                        other_private &= ~(
+                            (s.events.c.type == "ctf.message.delivered")
+                            & func.coalesce(s.events.c.addressed_to.any(for_agent), False)
+                        )
                     payload = case(
                         (unrelated_message | other_private, literal({}, type_=JSONB)),
                         else_=s.events.c.payload,
@@ -1081,6 +1086,19 @@ def ctf_agent_event(
                 key: value
                 for key, value in payload.items()
                 if not key.startswith("claim_") and key != "lease_until"
+            },
+        }
+    if (
+        versioned
+        and kind == "ctf.message.delivered"
+        and agent_id in (item.get("addressed_to") or [])
+    ):
+        return {
+            **item,
+            "payload": {
+                key: payload[key]
+                for key in ("id", "binding_id", "native_entry_id", "native_seq")
+                if key in payload
             },
         }
     if (

@@ -938,6 +938,168 @@
         "title": "CloseBody",
         "type": "object"
       },
+      "CommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Id"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stale_fence",
+                  "request_conflict",
+                  "binding_unavailable",
+                  "boundary_frozen",
+                  "unsupported_model"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "input_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "journal_confirmed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal Confirmed"
+          },
+          "payload_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "pending_confirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "sdk_idle": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Idle"
+          },
+          "sdk_session_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Session Id"
+          },
+          "status": {
+            "enum": [
+              "prepared",
+              "accepted",
+              "applied",
+              "aborted",
+              "closed",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "supported_business_contracts": {
+            "items": {
+              "const": "challenge-board-v1",
+              "type": "string"
+            },
+            "title": "Supported Business Contracts",
+            "type": "array"
+          },
+          "unresolved_attempts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolved Attempts",
+            "type": "array"
+          },
+          "unresolved_invocations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolved Invocations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "protocol",
+          "request_id",
+          "payload_digest",
+          "fence",
+          "status"
+        ],
+        "title": "CommandReceipt",
+        "type": "object"
+      },
       "CompleteBody": {
         "properties": {
           "claim_token": {
@@ -2315,6 +2477,118 @@
           }
         },
         "title": "DisplayFilterRequest",
+        "type": "object"
+      },
+      "EffectiveRunnerModel": {
+        "additionalProperties": false,
+        "properties": {
+          "api": {
+            "const": "openai-completions",
+            "title": "Api",
+            "type": "string"
+          },
+          "context_window": {
+            "minimum": 1024.0,
+            "title": "Context Window",
+            "type": "integer"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "input": {
+            "items": {
+              "enum": [
+                "text",
+                "image"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Input",
+            "type": "array"
+          },
+          "max_output_tokens": {
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "reasoning": {
+            "title": "Reasoning",
+            "type": "boolean"
+          },
+          "thinking_budgets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Budgets"
+          },
+          "thinking_level": {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Thinking Level",
+            "type": "string"
+          },
+          "thinking_level_map": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "propertyNames": {
+                  "enum": [
+                    "off",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Level Map"
+          }
+        },
+        "required": [
+          "id",
+          "api",
+          "input",
+          "reasoning",
+          "thinking_level",
+          "context_window",
+          "max_output_tokens"
+        ],
+        "title": "EffectiveRunnerModel",
         "type": "object"
       },
       "Event": {
@@ -3765,6 +4039,32 @@
         "title": "InitialAttachment",
         "type": "object"
       },
+      "InputApplication": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "input_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Input Id",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_id",
+          "entry_id",
+          "seq"
+        ],
+        "title": "InputApplication",
+        "type": "object"
+      },
       "InputGroupView": {
         "properties": {
           "expires_at": {
@@ -4029,6 +4329,191 @@
         ],
         "title": "IntentStatus",
         "type": "string"
+      },
+      "JournalConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "applied_inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputApplication"
+            },
+            "title": "Applied Inputs",
+            "type": "array"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/RunnerBinding"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "request_id",
+          "fence",
+          "binding",
+          "sdk_session_id",
+          "previous",
+          "cursor",
+          "applied_inputs"
+        ],
+        "title": "JournalConfirmation",
+        "type": "object"
+      },
+      "JournalCursor": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Anchor Hash",
+            "type": "string"
+          },
+          "anchor_offset": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Anchor Offset",
+            "type": "integer"
+          },
+          "anchor_size": {
+            "maximum": 2097152.0,
+            "minimum": 0.0,
+            "title": "Anchor Size",
+            "type": "integer"
+          },
+          "hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Hash",
+            "type": "string"
+          },
+          "leaf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Id"
+          },
+          "offset": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "offset",
+          "seq",
+          "hash",
+          "anchor_offset",
+          "anchor_size",
+          "anchor_hash"
+        ],
+        "title": "JournalCursor",
+        "type": "object"
+      },
+      "JournalReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "request_id",
+          "binding_id",
+          "sdk_session_id",
+          "cursor"
+        ],
+        "title": "JournalReceipt",
+        "type": "object"
+      },
+      "JournalState": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "binding_id",
+          "sdk_session_id",
+          "cursor"
+        ],
+        "title": "JournalState",
+        "type": "object"
       },
       "KnowledgeAssignment": {
         "additionalProperties": false,
@@ -4750,6 +5235,44 @@
           "close"
         ],
         "title": "ModelSet",
+        "type": "object"
+      },
+      "OperationAck": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "receipt_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Receipt Digest",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "request_id",
+          "status",
+          "receipt_digest"
+        ],
+        "title": "OperationAck",
         "type": "object"
       },
       "Params-Input": {
@@ -6404,6 +6927,43 @@
         "title": "PromptTemplates",
         "type": "object"
       },
+      "PublishedPrompt": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "instructions": {
+            "maxLength": 131072,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "prompt_revision": {
+            "minimum": 1.0,
+            "title": "Prompt Revision",
+            "type": "integer"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "fence",
+          "binding_id",
+          "prompt_revision",
+          "instructions"
+        ],
+        "title": "PublishedPrompt",
+        "type": "object"
+      },
       "ReceiptHeartbeatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6482,6 +7042,366 @@
           "additional_minutes"
         ],
         "title": "ResumeBody",
+        "type": "object"
+      },
+      "RunnerBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "assignment_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Ref"
+          },
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "business_contract": {
+            "const": "challenge-board-v1",
+            "title": "Business Contract",
+            "type": "string"
+          },
+          "generation": {
+            "description": "Platform binding/assignment identity version, not legacy CtfMember claim_turn generation",
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "journal_generation": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Journal Generation",
+            "type": "string"
+          },
+          "platform_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Platform Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_contract",
+          "binding_id",
+          "platform_session_id",
+          "agent_id",
+          "generation",
+          "journal_generation",
+          "assignment_ref"
+        ],
+        "title": "RunnerBinding",
+        "type": "object"
+      },
+      "RunnerBindingRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "allowed_tools": {
+            "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "challenge_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Challenge Id"
+          },
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          },
+          "instructions": {
+            "maxLength": 131072,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "mcp_credential_ref": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Mcp Credential Ref",
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/EffectiveRunnerModel"
+          },
+          "model_credential_ref": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Model Credential Ref",
+            "type": "string"
+          },
+          "profile_revision": {
+            "minimum": 1.0,
+            "title": "Profile Revision",
+            "type": "integer"
+          },
+          "prompt_revision": {
+            "minimum": 1.0,
+            "title": "Prompt Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_epoch",
+          "agent_id",
+          "model",
+          "model_credential_ref",
+          "mcp_credential_ref",
+          "instructions",
+          "profile_revision",
+          "prompt_revision"
+        ],
+        "title": "RunnerBindingRegistration",
+        "type": "object"
+      },
+      "RunnerCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Command Seq",
+            "type": "integer"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "payload_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "payload_json": {
+            "maxLength": 2097152,
+            "minLength": 1,
+            "title": "Payload Json",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "request_id",
+          "command_seq",
+          "fence",
+          "payload_digest",
+          "payload_json"
+        ],
+        "title": "RunnerCommand",
+        "type": "object"
+      },
+      "RunnerCommandSubmission": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          },
+          "payload_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "payload_json": {
+            "maxLength": 2097152,
+            "minLength": 1,
+            "title": "Payload Json",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_epoch",
+          "payload_json",
+          "payload_digest"
+        ],
+        "title": "RunnerCommandSubmission",
+        "type": "object"
+      },
+      "RunnerFence": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Epoch",
+            "type": "integer"
+          },
+          "pod_uid": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Pod Uid",
+            "type": "string"
+          },
+          "runner_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Runner Id",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "runner_id",
+          "pod_uid",
+          "epoch"
+        ],
+        "title": "RunnerFence",
+        "type": "object"
+      },
+      "RunnerOwnerRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "minimum": 0.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          },
+          "pod_uid": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Pod Uid",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "runner_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Runner Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "runner_id",
+          "pod_uid",
+          "expected_epoch"
+        ],
+        "title": "RunnerOwnerRegistration",
+        "type": "object"
+      },
+      "RunnerOwnerUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_epoch"
+        ],
+        "title": "RunnerOwnerUpdate",
+        "type": "object"
+      },
+      "RunnerPoll": {
+        "additionalProperties": false,
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/RunnerCommand"
+            },
+            "maxItems": 100,
+            "title": "Commands",
+            "type": "array"
+          },
+          "lease_renewals": {
+            "items": {
+              "$ref": "#/components/schemas/SessionLeaseReceipt"
+            },
+            "maxItems": 100,
+            "title": "Lease Renewals",
+            "type": "array"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "commands"
+        ],
+        "title": "RunnerPoll",
+        "type": "object"
+      },
+      "RunnerPromptPublication": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "instructions": {
+            "maxLength": 131072,
+            "title": "Instructions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_epoch",
+          "expected_revision",
+          "instructions"
+        ],
+        "title": "RunnerPromptPublication",
         "type": "object"
       },
       "RuntimeUpdate": {
@@ -6621,6 +7541,116 @@
           "expected_revision"
         ],
         "title": "SessionBody",
+        "type": "object"
+      },
+      "SessionLeaseReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/RunnerBinding"
+          },
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "lease_expires_at": {
+            "minimum": 1.0,
+            "title": "Lease Expires At",
+            "type": "integer"
+          },
+          "lease_revision": {
+            "minimum": 1.0,
+            "title": "Lease Revision",
+            "type": "integer"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Session Id"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "request_id",
+          "fence",
+          "binding_id",
+          "binding",
+          "lease_expires_at",
+          "lease_revision"
+        ],
+        "title": "SessionLeaseReceipt",
+        "type": "object"
+      },
+      "SessionLeaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/RunnerBinding"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "payload_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "request_id",
+          "payload_digest",
+          "fence",
+          "binding"
+        ],
+        "title": "SessionLeaseRequest",
         "type": "object"
       },
       "StatusBody": {
@@ -14460,6 +15490,381 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
+      "post": {
+        "operationId": "register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerBindingRegistration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Binding",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/attach": {
+      "post": {
+        "operationId": "attach_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__attach_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerOwnerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attach",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/prompt": {
+      "put": {
+        "operationId": "publish_prompt_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__prompt_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerPromptPublication"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Prompt",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/commands": {
+      "post": {
+        "operationId": "enqueue_api_tasks__task_id__ctf_runtime_runner_management_commands_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerCommandSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners": {
+      "post": {
+        "operationId": "register_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerOwnerRegistration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Owner",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/renew": {
+      "post": {
+        "operationId": "renew_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_renew_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerOwnerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Renew Owner",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/revoke": {
+      "post": {
+        "operationId": "revoke_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerOwnerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Owner",
+        "tags": [
+          "runner-management"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/ctf/runtime/{operation}": {
       "post": {
         "operationId": "runtime_api_tasks__task_id__ctf_runtime__operation__post",
@@ -15319,6 +16724,403 @@
         "summary": "Resume Task",
         "tags": [
           "tasks"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/acquire": {
+      "post": {
+        "operationId": "acquire_api_tasks__task_id__runner_control_bindings__binding_id__acquire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionLeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionLeaseReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acquire",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal": {
+      "get": {
+        "operationId": "journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Journal",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal/confirm": {
+      "post": {
+        "operationId": "confirm_journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalConfirmation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Journal",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/prompt": {
+      "get": {
+        "operationId": "prompt_api_tasks__task_id__runner_control_bindings__binding_id__prompt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "known_revision",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Known Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedPrompt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prompt",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/commands": {
+      "get": {
+        "operationId": "poll_api_tasks__task_id__runner_control_commands_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "runner_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Runner Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pod_uid",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Pod Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epoch",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Epoch",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "wait_seconds",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 15,
+              "minimum": 0,
+              "title": "Wait Seconds",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerPoll"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/commands/{request_id}/receipts": {
+      "post": {
+        "operationId": "acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandReceipt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acknowledge",
+        "tags": [
+          "runner-control"
         ]
       }
     },

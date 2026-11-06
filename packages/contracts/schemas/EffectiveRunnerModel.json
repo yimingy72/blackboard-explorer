@@ -1,0 +1,114 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "api": {
+      "const": "openai-completions",
+      "title": "Api",
+      "type": "string"
+    },
+    "input": {
+      "items": {
+        "enum": [
+          "text",
+          "image"
+        ],
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Input",
+      "type": "array"
+    },
+    "reasoning": {
+      "title": "Reasoning",
+      "type": "boolean"
+    },
+    "thinking_level": {
+      "enum": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "title": "Thinking Level",
+      "type": "string"
+    },
+    "thinking_level_map": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "propertyNames": {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thinking Level Map"
+    },
+    "thinking_budgets": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thinking Budgets"
+    },
+    "context_window": {
+      "minimum": 1024,
+      "title": "Context Window",
+      "type": "integer"
+    },
+    "max_output_tokens": {
+      "minimum": 1,
+      "title": "Max Output Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "api",
+    "input",
+    "reasoning",
+    "thinking_level",
+    "context_window",
+    "max_output_tokens"
+  ],
+  "title": "EffectiveRunnerModel",
+  "type": "object"
+}

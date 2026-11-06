@@ -66,6 +66,9 @@ from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile, require_ctf_tool_capabilities
 from bbx_blackboard.progress import router as progress_router
+from bbx_blackboard.runner_control import RunnerControl
+from bbx_blackboard.runner_control_api import management as runner_management_router
+from bbx_blackboard.runner_control_api import router as runner_control_router
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
@@ -549,6 +552,7 @@ def create_app(
             )
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
         app.state.ctf_service = CtfService(app.state.engine, app.state.objects)
+        app.state.runner_control = RunnerControl(app.state.engine)
         app.state.conversations = Conversations(app.state.engine)
         app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
@@ -590,6 +594,7 @@ def create_app(
         BoardService(engine, objects) if engine is not None and objects is not None else None
     )
     app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
+    app.state.runner_control = RunnerControl(engine) if engine is not None else None
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.input_groups = (
         InputGroups(engine, objects) if engine is not None and objects is not None else None
@@ -626,6 +631,9 @@ def create_app(
                         )
             except HTTPException:
                 pass
+        if re.fullmatch(r"/api/tasks/[0-9a-fA-F-]{36}/runner-control(?:/.*)?", request.url.path):
+            # This fixed router uses an independent audience and never constructs a Principal.
+            return None
         if request.app.state.engine is None and request.app.state.ctf_service is None:
             return None
         match = re.match(r"^/api/tasks/([0-9a-fA-F-]{36})(/.*)?$", request.url.path)
@@ -2006,6 +2014,8 @@ def create_app(
 
     app.include_router(ctf_router)
     app.include_router(challenge_board_router)
+    app.include_router(runner_control_router)
+    app.include_router(runner_management_router)
     app.include_router(platform_router)
     app.include_router(settings_router)
     app.include_router(progress_router)

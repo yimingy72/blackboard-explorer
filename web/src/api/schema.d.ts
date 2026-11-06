@@ -1449,6 +1449,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Binding */
+        post: operations["register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach */
+        post: operations["attach_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__attach_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Publish Prompt */
+        put: operations["publish_prompt_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__prompt_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue */
+        post: operations["enqueue_api_tasks__task_id__ctf_runtime_runner_management_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Owner */
+        post: operations["register_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Owner */
+        post: operations["renew_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Owner */
+        post: operations["revoke_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/{operation}": {
         parameters: {
             query?: never;
@@ -1681,6 +1800,108 @@ export interface paths {
         put?: never;
         /** Resume Task */
         post: operations["resume_task_api_tasks__task_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/acquire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acquire */
+        post: operations["acquire_api_tasks__task_id__runner_control_bindings__binding_id__acquire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Journal */
+        get: operations["journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Journal */
+        post: operations["confirm_journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prompt */
+        get: operations["prompt_api_tasks__task_id__runner_control_bindings__binding_id__prompt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll */
+        get: operations["poll_api_tasks__task_id__runner_control_commands_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/commands/{request_id}/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge */
+        post: operations["acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2651,6 +2872,44 @@ export interface components {
             /** Verdicts */
             verdicts: components["schemas"]["VerdictItem"][];
         };
+        /** CommandReceipt */
+        CommandReceipt: {
+            /** Binding Id */
+            binding_id?: string | null;
+            cursor?: components["schemas"]["JournalCursor"] | null;
+            /** Error Code */
+            error_code?: ("stale_fence" | "request_conflict" | "binding_unavailable" | "boundary_frozen" | "unsupported_model") | null;
+            fence: components["schemas"]["RunnerFence"];
+            /** Input Id */
+            input_id?: string | null;
+            /** Journal Confirmed */
+            journal_confirmed?: boolean | null;
+            /** Payload Digest */
+            payload_digest: string;
+            pending_confirmation?: components["schemas"]["JournalConfirmation"] | null;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Idle */
+            sdk_idle?: boolean | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "accepted" | "applied" | "aborted" | "closed" | "rejected";
+            /** Supported Business Contracts */
+            supported_business_contracts?: "challenge-board-v1"[];
+            /** Unresolved Attempts */
+            unresolved_attempts?: string[];
+            /** Unresolved Invocations */
+            unresolved_invocations?: string[];
+        };
         /** CompleteBody */
         CompleteBody: {
             /**
@@ -3124,6 +3383,37 @@ export interface components {
              * @default
              */
             display_filter: string;
+        };
+        /** EffectiveRunnerModel */
+        EffectiveRunnerModel: {
+            /**
+             * Api
+             * @constant
+             */
+            api: "openai-completions";
+            /** Context Window */
+            context_window: number;
+            /** Id */
+            id: string;
+            /** Input */
+            input: ("text" | "image")[];
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** Reasoning */
+            reasoning: boolean;
+            /** Thinking Budgets */
+            thinking_budgets?: {
+                [key: string]: number;
+            } | null;
+            /**
+             * Thinking Level
+             * @enum {string}
+             */
+            thinking_level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** Thinking Level Map */
+            thinking_level_map?: {
+                [key: string]: string | null;
+            } | null;
         };
         /** Event */
         Event: {
@@ -3686,6 +3976,15 @@ export interface components {
             /** Uri */
             uri: string;
         };
+        /** InputApplication */
+        InputApplication: {
+            /** Entry Id */
+            entry_id: string;
+            /** Input Id */
+            input_id: string;
+            /** Seq */
+            seq: number;
+        };
         /** InputGroupView */
         InputGroupView: {
             /**
@@ -3822,6 +4121,74 @@ export interface components {
          * @enum {string}
          */
         IntentStatus: "open" | "claimed" | "closed";
+        /** JournalConfirmation */
+        JournalConfirmation: {
+            /** Applied Inputs */
+            applied_inputs: components["schemas"]["InputApplication"][];
+            binding: components["schemas"]["RunnerBinding"];
+            cursor: components["schemas"]["JournalCursor"];
+            fence: components["schemas"]["RunnerFence"];
+            previous: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** JournalCursor */
+        JournalCursor: {
+            /** Anchor Hash */
+            anchor_hash: string;
+            /** Anchor Offset */
+            anchor_offset: number;
+            /** Anchor Size */
+            anchor_size: number;
+            /** Hash */
+            hash: string;
+            /** Leaf Id */
+            leaf_id?: string | null;
+            /** Offset */
+            offset: number;
+            /** Seq */
+            seq: number;
+        };
+        /** JournalReceipt */
+        JournalReceipt: {
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** JournalState */
+        JournalState: {
+            /** Binding Id */
+            binding_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
         /** KnowledgeAssignment */
         KnowledgeAssignment: {
             /** Agent Id */
@@ -4103,6 +4470,25 @@ export interface components {
             close: components["schemas"]["ModelConfig-Output"];
             derive: components["schemas"]["ModelConfig-Output"];
             explore: components["schemas"]["ModelConfig-Output"];
+        };
+        /** OperationAck */
+        OperationAck: {
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Receipt Digest */
+            receipt_digest: string;
+            /** Request Id */
+            request_id: string;
+            /** Status */
+            status: string;
         };
         /** Params */
         "Params-Input": {
@@ -4819,6 +5205,21 @@ export interface components {
              */
             explore: string;
         };
+        /** PublishedPrompt */
+        PublishedPrompt: {
+            /** Binding Id */
+            binding_id: string;
+            fence: components["schemas"]["RunnerFence"];
+            /** Instructions */
+            instructions: string;
+            /** Prompt Revision */
+            prompt_revision: number;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
         /** ReceiptHeartbeatRequest */
         ReceiptHeartbeatRequest: {
             receipt: components["schemas"]["HeartbeatRequest"];
@@ -4849,6 +5250,135 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
+        };
+        /** RunnerBinding */
+        RunnerBinding: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Ref */
+            assignment_ref: string | null;
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Business Contract
+             * @constant
+             */
+            business_contract: "challenge-board-v1";
+            /**
+             * Generation
+             * @description Platform binding/assignment identity version, not legacy CtfMember claim_turn generation
+             */
+            generation: number;
+            /** Journal Generation */
+            journal_generation: string;
+            /** Platform Session Id */
+            platform_session_id: string;
+        };
+        /** RunnerBindingRegistration */
+        RunnerBindingRegistration: {
+            /** Agent Id */
+            agent_id: string;
+            /** Allowed Tools */
+            allowed_tools?: string[];
+            /** Challenge Id */
+            challenge_id?: string | null;
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Instructions */
+            instructions: string;
+            /** Mcp Credential Ref */
+            mcp_credential_ref: string;
+            model: components["schemas"]["EffectiveRunnerModel"];
+            /** Model Credential Ref */
+            model_credential_ref: string;
+            /** Profile Revision */
+            profile_revision: number;
+            /** Prompt Revision */
+            prompt_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** RunnerCommand */
+        RunnerCommand: {
+            /** Command Seq */
+            command_seq: number;
+            fence: components["schemas"]["RunnerFence"];
+            /** Payload Digest */
+            payload_digest: string;
+            /** Payload Json */
+            payload_json: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+        };
+        /** RunnerCommandSubmission */
+        RunnerCommandSubmission: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Payload Digest */
+            payload_digest: string;
+            /** Payload Json */
+            payload_json: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /** RunnerFence */
+        RunnerFence: {
+            /** Epoch */
+            epoch: number;
+            /** Pod Uid */
+            pod_uid: string;
+            /** Runner Id */
+            runner_id: string;
+            /** Task Id */
+            task_id: string;
+        };
+        /** RunnerOwnerRegistration */
+        RunnerOwnerRegistration: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Pod Uid */
+            pod_uid: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Runner Id */
+            runner_id: string;
+        };
+        /** RunnerOwnerUpdate */
+        RunnerOwnerUpdate: {
+            /** Expected Epoch */
+            expected_epoch: number;
+        };
+        /** RunnerPoll */
+        RunnerPoll: {
+            /** Commands */
+            commands: components["schemas"]["RunnerCommand"][];
+            /** Lease Renewals */
+            lease_renewals?: components["schemas"]["SessionLeaseReceipt"][];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** RunnerPromptPublication */
+        RunnerPromptPublication: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Instructions */
+            instructions: string;
         };
         /** RuntimeUpdate */
         RuntimeUpdate: {
@@ -4895,6 +5425,46 @@ export interface components {
             session: {
                 [key: string]: unknown;
             };
+        };
+        /** SessionLeaseReceipt */
+        SessionLeaseReceipt: {
+            binding: components["schemas"]["RunnerBinding"];
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            cursor?: components["schemas"]["JournalCursor"] | null;
+            fence: components["schemas"]["RunnerFence"];
+            /** Lease Expires At */
+            lease_expires_at: number;
+            /** Lease Revision */
+            lease_revision: number;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+        };
+        /** SessionLeaseRequest */
+        SessionLeaseRequest: {
+            binding: components["schemas"]["RunnerBinding"];
+            fence: components["schemas"]["RunnerFence"];
+            /** Payload Digest */
+            payload_digest: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
         };
         /** StatusBody */
         StatusBody: {
@@ -9173,6 +9743,253 @@ export interface operations {
             };
         };
     };
+    register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerBindingRegistration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__attach_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_prompt_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__prompt_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerPromptPublication"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_api_tasks__task_id__ctf_runtime_runner_management_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerCommandSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerRegistration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_renew_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     runtime_api_tasks__task_id__ctf_runtime__operation__post: {
         parameters: {
             query?: never;
@@ -9659,6 +10476,217 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acquire_api_tasks__task_id__runner_control_bindings__binding_id__acquire_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionLeaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionLeaseReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JournalConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prompt_api_tasks__task_id__runner_control_bindings__binding_id__prompt_get: {
+        parameters: {
+            query?: {
+                known_revision?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedPrompt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_api_tasks__task_id__runner_control_commands_get: {
+        parameters: {
+            query?: {
+                after_seq?: number;
+                runner_id?: string;
+                pod_uid?: string;
+                epoch?: number;
+                wait_seconds?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerPoll"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandReceipt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAck"];
                 };
             };
             /** @description Validation Error */

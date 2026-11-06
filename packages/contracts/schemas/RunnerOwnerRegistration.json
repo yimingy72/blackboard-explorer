@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "runner_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Runner Id",
+      "type": "string"
+    },
+    "pod_uid": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Pod Uid",
+      "type": "string"
+    },
+    "expected_epoch": {
+      "minimum": 0,
+      "title": "Expected Epoch",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "runner_id",
+    "pod_uid",
+    "expected_epoch"
+  ],
+  "title": "RunnerOwnerRegistration",
+  "type": "object"
+}
