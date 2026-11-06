@@ -85,9 +85,20 @@ class SessionSpec(ContractModel):
     model_credential_ref: RunnerId
     mcp_credential_ref: RunnerId
     allowed_tools: list[RunnerId] = Field(max_length=128)
+    mcp_tool_aliases: dict[RunnerId, RunnerId] = Field(max_length=128)
     instructions: str = Field(max_length=131072)
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def exact_tool_aliases(self):
+        if len(set(self.allowed_tools)) != len(self.allowed_tools):
+            raise ValueError("Declared tools must be distinct")
+        if set(self.mcp_tool_aliases) != set(self.allowed_tools) or len(
+            set(self.mcp_tool_aliases.values())
+        ) != len(self.mcp_tool_aliases):
+            raise ValueError("MCP aliases must map every declared tool to a distinct wire name")
+        return self
 
 
 class PreparePayload(ContractModel):

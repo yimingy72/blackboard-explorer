@@ -1,6 +1,7 @@
 """One stateless, capability-bound MCP adapter over the existing business transactions."""
 
 import asyncio
+import hmac
 import json
 from contextvars import ContextVar
 from decimal import Decimal
@@ -103,6 +104,14 @@ class BusinessMCP:
     async def __call__(self, scope, receive, send):
         request = Request({**scope, "app": self.application}, receive)
         try:
+            expected = self.application.state.settings.runner_mcp_backend_token.get_secret_value()
+            if not expected:
+                raise HTTPException(503, "Business MCP backend identity is unavailable")
+            supplied = request.headers.getlist("x-bbx-gateway-backend")
+            if len(supplied) != 1 or not hmac.compare_digest(
+                supplied[0].encode(), expected.encode()
+            ):
+                raise HTTPException(401, "Business MCP gateway identity required")
             tid = UUID(scope["path_params"]["task_id"])
             identity = require_gateway_identity(request, tid, "mcp")
             gateway = self.application.state.runner_gateway

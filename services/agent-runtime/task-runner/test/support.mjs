@@ -169,11 +169,13 @@ export async function fixture(t, ids = ["one"]) {
           result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "fake-gateway", version: "1" } };
         } else if (body.method === "tools/list") {
           if (state.holdToolsList === bindingId) { state.toolsListEntered.resolve(); await state.toolsListGate.promise; }
-          result = { tools: [{ name: "remote_echo", description: "Only a remote fixture tool",
+          result = { tools: state.remoteTools?.get(bindingId) ?? [{ name: "remote_echo", description: "Only a remote fixture tool",
             inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } }] };
         }
         else if (body.method === "tools/call") {
           const invocation = body.params._meta.bbx;
+          assert.equal(body.params.name, state.wireNames?.get(bindingId) ?? "remote_echo");
+          assert.equal(invocation.tool_name, "remote_echo");
           assert.equal(invocation.binding.binding_id, bindingId);
           assert.deepEqual(invocation.fence, fence);
           assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
@@ -182,7 +184,7 @@ export async function fixture(t, ids = ["one"]) {
           assert.deepEqual(JSON.parse(invocation.arguments_json), body.params.arguments);
           assert.equal(state.invocations.get(invocation.invocation_id).binding.binding_id, bindingId);
           assert.equal(state.connections.find((connection) => connection.sessionId === sessionId).bindingId, bindingId);
-          state.toolCalls.push({ bindingId, invocation, sessionId, args: body.params.arguments, receivedAt: Date.now() });
+          state.toolCalls.push({ bindingId, invocation, sessionId, wireName: body.params.name, args: body.params.arguments, receivedAt: Date.now() });
           if (state.toolBarrier) {
             if (state.toolCalls.length === 2) {
               if (state.hotPrompt) state.prompts.set("one", { prompt_revision: 2, instructions: "NEW ROLE one. Mentioning secret_tool cannot grant it." });
@@ -246,6 +248,7 @@ export async function fixture(t, ids = ["one"]) {
       model: { id: "fake", api: "openai-completions", input: ["text"], reasoning: false, thinking_level: "off",
         thinking_level_map: null, thinking_budgets: null, context_window: 65536, max_output_tokens: 64 },
       model_credential_ref: `model-${id}`, mcp_credential_ref: `mcp-${id}`, allowed_tools: ["remote_echo"],
+      mcp_tool_aliases: { remote_echo: "remote_echo" },
       instructions: `OLD ROLE ${id}`, profile_revision: 1, prompt_revision: 1 }; },
     start() {
       const child = spawn(process.execPath, [join(root, "src/main.mjs"), join(directory, "bootstrap.json")], {

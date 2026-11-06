@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -17,6 +17,7 @@ from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.runner_proxy import RunnerModelProxy
 from bbx_runtime.settings import Settings as RuntimeSettings
 from fastapi import HTTPException
+from mcp_gateway_support import native_business_gateway
 from native_gateway_support import native_gateway
 from runner_control_support import live_http, node_runner
 from runner_gateway_support import (
@@ -153,7 +154,14 @@ async def test_native_key_recovery_real_runner_fees_fx_threshold_and_no_retry(
             app, http, scope, native, lose_ack=True, expected_usd="0.008000000"
         )
         tid, bid = scope["tid"], scope["binding"]["binding_id"]
-        async with app.state.business_mcp.run(), live_http(app, "/unused") as (base, _):
+        async with (
+            app.state.business_mcp.run(),
+            live_http(app, "/unused") as (base, _),
+            AsyncExitStack() as mcp_stack,
+        ):
+            mcp_url = await mcp_stack.enter_async_context(
+                native_business_gateway(tmp_path / "business", app, base, [tid])
+            )
             service = BlackboardClient(base, "service-test")
             proxy = RunnerModelProxy(
                 RuntimeSettings.model_construct(
@@ -165,7 +173,7 @@ async def test_native_key_recovery_real_runner_fees_fx_threshold_and_no_retry(
                 async with live_http(proxy.app, "/unused") as (proxy_url, _):
                     data = await node_data(ctf, tid, scope["owner"], base)
                     data["model_proxy_url"] = proxy_url
-                    data["mcp_gateway_url"] = base + f"/api/tasks/{tid}/business-mcp/"
+                    data["mcp_gateway_url"] = mcp_url + f"/api/tasks/{tid}/mcp"
                     data["gateway_credentials"] = {
                         bid: {
                             "model": scope["credentials"]["model"],

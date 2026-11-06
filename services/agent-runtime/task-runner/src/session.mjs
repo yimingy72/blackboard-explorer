@@ -75,6 +75,14 @@ export class RunnerSession {
   }
   async initialize() {
     this.assertLease();
+    const aliases = this.spec.mcp_tool_aliases;
+    if (!aliases || new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length
+        || Object.keys(aliases).length !== this.spec.allowed_tools.length
+        || this.spec.allowed_tools.some((name) => !Object.hasOwn(aliases, name))
+        || new Set(Object.values(aliases)).size !== this.spec.allowed_tools.length) {
+      throw new Error("MCP aliases must map every declared tool to a distinct wire name");
+    }
+    this.toolNames = new Map(Object.entries(aliases));
     if (Boolean(this.lease.cursor) !== Boolean(this.lease.sdk_session_id)) throw new Error("The session lease is incomplete");
     const model = this.spec.model;
     if (!model.input.includes("text") || new Set(model.input).size !== model.input.length
@@ -121,8 +129,9 @@ export class RunnerSession {
     await this.mcp.connect(this.transport);
     const available = await this.mcp.listTools();
     const tools = this.spec.allowed_tools.map((name) => {
-      const remote = available.find((tool) => tool.name === name);
-      if (!remote || ["bash", "read", "write", "edit"].includes(name)) throw new Error("An approved remote tool is unavailable or conflicts with a local tool");
+      const matches = available.filter((tool) => tool.name === this.toolNames.get(name));
+      if (matches.length !== 1 || ["bash", "read", "write", "edit"].includes(name)) throw new Error("An approved remote tool is unavailable, ambiguous or conflicts with a local tool");
+      const [remote] = matches;
       return { name, label: remote.title ?? name, description: remote.description ?? name, parameters: remote.inputSchema,
         execute: (callId, args, signal) => this.callTool(name, callId, args, signal) };
     });
@@ -225,6 +234,7 @@ export class RunnerSession {
   }
   async callTool(name, callId, args, signal) {
     this.assertActive();
+    if (!this.toolNames.has(name)) throw new Error("The tool is not declared in this session");
     const entry = this.session.sessionManager.getBranch().findLast((entry) => entry.type === "message"
       && entry.message.role === "assistant" && Array.isArray(entry.message.content)
       && entry.message.content.some((part) => part.type === "toolCall" && part.id === callId && part.name === name));
@@ -250,7 +260,7 @@ export class RunnerSession {
         if (!Number.isSafeInteger(permit.authorized_wait_until_ms) || remaining <= 0) throw new Error("The admitted tool wait deadline is unavailable or expired");
         this.unresolvedInvocations.add(invocationId);
         try {
-          await this.mcp.request("tools/call", { name, arguments: JSON.parse(argumentsJson),
+          await this.mcp.request("tools/call", { name: this.toolNames.get(name), arguments: JSON.parse(argumentsJson),
             _meta: { bbx: { ...invocation, permit_ref: invocationId } } }, { signal, timeoutMs: Math.min(2147483647, remaining) });
         } catch { /* A lost transport reply can still have a durable host result. */ }
         const saved = await this.platform.completeTool(this, invocation, signal);
@@ -297,6 +307,7 @@ export class RunnerSession {
         unresolved_attempts: [...this.unresolvedAttempts], unresolved_invocations: [...this.unresolvedInvocations] };
       this.session = this.mcp = this.transport = this.journal = this.spec = this.onApplied = undefined;
       this.promptText = undefined;
+      this.toolNames?.clear();
       this.jobs.clear(); this.invocations.clear(); this.pendingInputs.clear();
       if (cleanup.some((result) => result.status === "rejected")) {
         throw Object.assign(new Error("Local session cleanup failed"), { closeSummary: summary });

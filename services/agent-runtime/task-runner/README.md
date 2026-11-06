@@ -2,7 +2,7 @@
 
 本目录是生产 Node 入口，Pi SDK 是唯一 Agent 循环。控制直接连接 Blackboard 持久命令入口，模型连接 Runtime 准入代理，工具只连接 agentgateway 后的 MCP。没有本机 bash/read/write/edit、stdio MCP、动态扩展、个人配置或通用执行接口。
 
-P3b 已接持久控制、输入和 journal 权威；P3c 正接 Runtime 模型代理与可信业务 MCP。本目录的独立测试和代理边界测试已通过，真实 PostgreSQL/Node 组合由 P3c 组合候选验证。V1 start 保护仍保留，Kubernetes、真实 Sandbox MCP 与完整公平调度另批，当前不宣称生产单题全链路已开放。
+P3b 已接持久控制、输入和 journal 权威；P3c 已接 Runtime 模型代理与可信业务 MCP，P3d 增加原生 Virtual MCP 的受信工具名映射。本目录的独立测试和代理边界测试已通过，真实 PostgreSQL/Node/native 组合统一由后端组合候选验证。V1 start 保护仍保留，Kubernetes、真实 Sandbox MCP 与完整公平调度另批，当前不宣称生产单题全链路已开放。
 
 ```sh
 cd services/agent-runtime/task-runner
@@ -53,6 +53,8 @@ input 沿现有平台上限为 20,000 个字符，并在接收前检查原文有
 
 SessionSpec 携带可信有效 model 快照：当前仅 OpenAI-completions、text/image 模态、reasoning、thinking_level 与 thinking_level_map。公开 SDK 使用所选值，若 SDK 不能原样满足或传入本路线不支持的显式 thinking_budgets，则拒绝 prepare。SDK cost 固定为计数展示中性值，SDK outcome/usage 只作观察，不能作为原生 USD 费用或平台换算 CNY 账本。
 
+SessionSpec 必须显式携带 `mcp_tool_aliases`，将 `allowed_tools` 的每个 canonical 名映射到唯一确切 wire 名，空工具列表对应 `{}`。该映射由可信发布端生成，与原 prepare 文本一起冻结在 specDigest 中；缺字段、漏项、多项或重复 wire 都拒绝。固定 agentgateway 1.7 `prefixMode: always`、target `business` 使用 `business_<canonical>`，以实际部署配置生成映射，不从远端名称拆前缀猜测。直连测试必须显式提供同名映射。目录中每个获准 wire 名必须恰出现一次；其它 target 的同尾名称或未声明工具不会被注册，也不会被当作回退。Pi 暴露的工具、原生 assistant/toolCall 身份、invocation 摘要、准入及 `_meta.bbx.tool_name` 始终使用 canonical 名；仅目录匹配和 MCP `tools/call.name` 使用映射后的 wire 名。
+
 角色提示词每次主模型边界都按 binding 条件读取最新已发布版本，丢通知仍可发现更新；新版本写入原生 system 消息/版本标记并确认后才发送本次请求。只替换 bbx_role 指令，不改模型、工具、Skills 或环境，不重放工具；模型准入记录固定 profile_revision 和动态 prompt_revision。Pi 自身压缩模板保持其用途，仍经过同一模型/日志准入。
 
 模型前、工具前都确认 journal；错误和 unknown 共用会话冻结闩锁。工具 invocation 从 Task/binding、SDK session、持久 assistant entry、原 tool_call_id 和工具名派生，经平台准入后放进 MCP 的独立 `_meta`，不依赖全局 current。工具准入/结果查询使用独立 aud=mcp 凭据。可信 host 自己执行并先保存结果，Node 的 POST result 只携 invocation 确认，不能上传一个 MCP 对象创建完成证据；Pi 只使用该响应的持久 `result_json/result_digest`。tools/call 回包丢失时也只查询原 invocation 的保存结果，不重发 MCP；仍未决才冻结。模型和工具隐式重试、预热均关闭。
@@ -77,7 +79,7 @@ lease_expires_at 是短期会话运行许可，不是 Task deadline 或全局 Ru
 
 ## 本批必要验证
 
-`npm test` 只有四个必要场景：恢复前缀/坏尾完整性、普通增量与丢卷拒绝；Python↔Node JSON 文本摘要互验；独立进程 prepare ACK 丢失重启、原平台最大输入、确认及 abort/close；两个真实会话并发身份隔离，同时验证 prompt 热更、非默认 high reasoning、短许可续期/过期拒绝复活、受信工具等待和逐 binding 资源释放。双会话场景在测试进程直接使用生产 TaskRunner 类，便于核 SDK/MCP/FD 和进行中的 prepare 已释放；独立进程场景仍启动真实生产入口。全部模型、MCP 与平台回执使用本地随机端口假服务，不依赖真实模型、靶场或 Docker；摘要互验需要开发工作区已安装的 uv/Python 依赖。
+`npm test` 覆盖恢复前缀/坏尾完整性、普通增量与丢卷拒绝；Python↔Node JSON 文本摘要互验；独立进程 prepare ACK 丢失重启、原平台最大输入、确认及 abort/close；两个真实会话经显式 alias 并发身份隔离，同时验证 prompt 热更、非默认 high reasoning、短许可续期/过期拒绝复活、受信工具等待和逐 binding 资源释放；缺失/歧义/未声明映射及 foreign 同尾目录拒绝。双会话场景在测试进程直接使用生产 TaskRunner 类，便于核 SDK/MCP/FD 和进行中的 prepare 已释放；独立进程场景仍启动真实生产入口。全部模型、MCP 与平台回执使用本地随机端口假服务，不依赖真实模型、靶场或 Docker；摘要互验需要开发工作区已安装的 uv/Python 依赖。
 
 P1 的模型边界已改为引用本目录生产实现；其全读 hash、FileReceiptStore 仍只保留在 P1 测试 fixture。完整阶段说明见 [P3a 报告](../../../docs/tasks/P3a-SDK-Runner-20261106-report.md)。
 
@@ -93,4 +95,4 @@ Runtime 删除 provider 凭据读取、provider/SSE/usage 解析、严格 routef
 
 响应 `__call__`、生成器和 Runtime.close 共用最终收尾；response.start 失败或生成器未启动也保留 active owner，关闭FD并有界记录传输观察。只关闭本地连接不证明 native/provider 已停或费用为0。
 
-MCP 保留官方低层客户端、journal/admit、受信 host 保存结果与确认/不重派 gate。原生 Virtual MCP能力已做隔离probe，但产品 issuer/角色与命名空间→backend原名的唯一冻结映射仍是下一切片门槛，当前不宣称全产品MCP已统一或V1 start已开放。详见 [P3c 薄入口报告](../../../docs/tasks/P3c-Runtime-Proxy-20261106-report.md)和[费用阈值方案](../../../docs/tasks/P3c-Agentgateway费用阈值调整-20261106.md)。
+MCP 保留官方低层客户端、journal/admit、受信 host 保存结果与确认/不重派 gate。P3d 通过上述显式映射接入 Virtual MCP 命名空间；issuer/角色、target allowlist 和实际领域事务由后端组合验证，Node 本地 fixture 不能证明这些边界，V1 start 仍未开放。详见 [P3c 薄入口报告](../../../docs/tasks/P3c-Runtime-Proxy-20261106-report.md)和[费用阈值方案](../../../docs/tasks/P3c-Agentgateway费用阈值调整-20261106.md)。

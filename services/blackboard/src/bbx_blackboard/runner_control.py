@@ -454,6 +454,7 @@ class RunnerControl:
                     **body.model_dump(
                         exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
                     ),
+                    "mcp_tool_aliases": {name: "business_" + name for name in body.allowed_tools},
                 }
             )
             payload = runner_json_text({"kind": "prepare", "spec": spec.model_dump(mode="json")})

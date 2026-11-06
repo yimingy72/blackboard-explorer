@@ -1316,6 +1316,17 @@
           "title": "Allowed Tools",
           "type": "array"
         },
+        "mcp_tool_aliases": {
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            }
+          },
+          "title": "Mcp Tool Aliases",
+          "type": "object"
+        },
         "instructions": {
           "maxLength": 131072,
           "title": "Instructions",
@@ -1338,6 +1349,7 @@
         "model_credential_ref",
         "mcp_credential_ref",
         "allowed_tools",
+        "mcp_tool_aliases",
         "instructions",
         "profile_revision",
         "prompt_revision"

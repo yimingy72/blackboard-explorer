@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     native_gateway_data_url: str = ""
     native_gateway_admin_token: SecretStr = SecretStr("")
     native_gateway_catalog_revision: str = ""
+    runner_mcp_signing_key: SecretStr = SecretStr("")
+    runner_mcp_backend_token: SecretStr = SecretStr("")
 
     @property
     def database_url(self) -> URL:

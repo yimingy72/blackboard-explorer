@@ -25,7 +25,11 @@ from sqlalchemy import func, insert, select, update
 
 from bbx_blackboard.auth import Principal
 from bbx_blackboard.ctf import CtfService
-from bbx_blackboard.gateway_auth import RuntimeBusinessContext, issue_gateway_credentials
+from bbx_blackboard.gateway_auth import (
+    RuntimeBusinessContext,
+    issue_gateway_credentials,
+    validate_gateway_role,
+)
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import RunnerControl, fence, row
 from bbx_blackboard.store import schema as s
@@ -94,6 +98,7 @@ class RunnerGateway:
         binding = await self.control._binding(
             conn, tid, identity.binding_id, owner, live=True, permit=not metadata
         )
+        await validate_gateway_role(conn, tid, identity, binding)
         if identity.expires_at <= datetime.now(UTC).timestamp():
             raise HTTPException(401, "Gateway capability expired")
         task = await self.control._task(conn, tid, live=True)
@@ -116,8 +121,9 @@ class RunnerGateway:
             owner = await self.control._current_owner(conn, tid)
             if body.expected_epoch != owner["epoch"]:
                 raise HTTPException(409, "Runner owner changed")
-            await self.control._binding(conn, tid, bid, owner, live=True)
-            return issue_gateway_credentials(self.settings, owner, bid)
+            binding = await self.control._binding(conn, tid, bid, owner, live=True)
+            member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+            return issue_gateway_credentials(self.settings, owner, bid, member["role"])
 
     async def _call(self, conn, tid, key):
         return (

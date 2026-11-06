@@ -7,6 +7,38 @@ import { HttpPlatform, MountedCredentials } from "../src/platform.mjs";
 import { TaskRunner } from "../src/runner.mjs";
 import { deferred, fixture, waitFor } from "./support.mjs";
 
+test("trusted MCP aliases reject missing declarations, ambiguous catalogs and foreign name lookalikes", async (t) => {
+  const ids = ["missing", "keys", "duplicate", "allowed", "ambiguous", "foreign", "raw"];
+  const h = await fixture(t, ids);
+  const credentials = new MountedCredentials(h.config.credential_file, "task");
+  const runner = new TaskRunner(h.config, new HttpPlatform(h.config, credentials), credentials);
+  t.after(() => runner.stop());
+  const remote = { name: "business_remote_echo", inputSchema: { type: "object", properties: {} } };
+  h.state.remoteTools = new Map([
+    ["ambiguous", [remote, remote]], ["foreign", [{ ...remote, name: "foreign_remote_echo" }]],
+    ["raw", [{ ...remote, name: "remote_echo" }]],
+  ]);
+  for (const id of ids) {
+    const spec = h.spec(id);
+    spec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
+    if (id === "missing") delete spec.mcp_tool_aliases;
+    if (id === "keys") spec.mcp_tool_aliases = { undeclared: "business_remote_echo" };
+    if (id === "duplicate") {
+      spec.allowed_tools.push("other");
+      spec.mcp_tool_aliases.other = "business_remote_echo";
+    }
+    if (id === "allowed") spec.allowed_tools.push("remote_echo");
+    const command = h.command({ kind: "prepare", spec });
+    if (id === "missing") assert.throws(() => decodeCommand(command), /Invalid RunnerPayload/);
+    else await assert.rejects(runner.handle(decodeCommand(command)), /aliases|unavailable, ambiguous/);
+  }
+  assert.equal(runner.sessions.size, 0);
+  assert.equal(h.state.modelCalls.length, 0);
+  assert.equal(h.state.toolCalls.length, 0);
+  assert.equal(h.state.connections.length, 3, "invalid maps fail before contacting MCP");
+  h.assertClean();
+});
+
 test("prepare ACK loss reopens the same native journal; input is applied only after confirmation and poll can abort", { timeout: 30000 }, async (t) => {
   const h = await fixture(t);
   h.state.dropPrepare = true;
@@ -69,12 +101,18 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   h.state.hotPrompt = true;
   h.state.manualToolBarrier = true;
   h.state.dropToolReplyFor = "two";
+  const remote = { name: "business_remote_echo", inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] } };
+  h.state.remoteTools = new Map(["one", "two"].map((id) => [id, [remote,
+    { ...remote, name: "foreign_remote_echo" }, { ...remote, name: "business_undeclared" }]]));
+  h.state.wireNames = new Map(["one", "two"].map((id) => [id, "business_remote_echo"]));
   await h.configure({ mcp_metadata_timeout_ms: 500 });
   h.state.toolBarrier = deferred();
   const firstSpec = h.spec("one");
+  firstSpec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
   firstSpec.model = { ...firstSpec.model, input: ["text", "image"], reasoning: true, thinking_level: "high",
     thinking_level_map: { off: "none", high: "high" } };
   const secondSpec = h.spec("two");
+  secondSpec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
   secondSpec.model = { ...secondSpec.model, reasoning: true, thinking_level: "high",
     thinking_level_map: { off: "none", high: "high" } };
   h.command({ kind: "prepare", spec: firstSpec }, "prepare-one");
@@ -105,6 +143,14 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.notEqual(left.invocation.sdk_session_id, right.invocation.sdk_session_id);
   assert.notEqual(left.sessionId, right.sessionId);
   assert.notEqual(left.bindingId, right.bindingId);
+  assert.equal(left.wireName, "business_remote_echo");
+  assert.equal(left.invocation.tool_name, "remote_echo");
+  assert.equal(left.invocation.invocation_id, digest(jsonText(["task", left.bindingId,
+    left.invocation.sdk_session_id, left.invocation.assistant_entry_id, left.invocation.tool_call_id, "remote_echo"])));
+  for (const name of ["business_remote_echo", "foreign_remote_echo", "business_undeclared"]) {
+    await assert.rejects(activeOne.callTool(name, left.invocation.tool_call_id, left.args), /not declared/);
+  }
+  assert.equal(h.state.toolCalls.length, 2);
   const firstCalls = h.state.modelCalls.filter((call) => call.bindingId === "one");
   assert.deepEqual(firstCalls.map((call) => call.promptRevision), [1, 2]);
   assert.ok(JSON.stringify(firstCalls[0].body.messages).includes("OLD ROLE one"));

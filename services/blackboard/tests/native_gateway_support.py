@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
   use_tool=value.get('tools') and not any(m.get('role')=='tool' for m in value['messages'])
   delta={'role':'assistant','content':'synthetic'}
   if use_tool:
-   function={'name':value['tools'][0]['function']['name'],'arguments':'{}'}
+   function={'name':value['tools'][0]['function']['name'],'arguments':os.environ.get('TOOL_ARGUMENTS','{}')}
    delta={'role':'assistant','tool_calls':[{'index':0,'id':'native-tool-call',
           'type':'function','function':function}]}
   event([{'index':0,'delta':delta,'finish_reason':None}])
@@ -50,7 +50,7 @@ ThreadingHTTPServer(('0.0.0.0',8000),Handler).serve_forever()
 
 
 @asynccontextmanager
-async def native_gateway(directory):
+async def native_gateway(directory, *, tool_arguments=None):
     provider_key = "synthetic-provider-" + uuid4().hex
     directory.mkdir()
     config = {
@@ -113,6 +113,7 @@ async def native_gateway(directory):
         .with_exposed_ports(8000)
         .with_volume_mapping(str(directory), "/probe", "ro")
         .with_env("PROVIDER_KEY", provider_key)
+        .with_env("TOOL_ARGUMENTS", json.dumps(tool_arguments or {}))
         .with_command("python /probe/provider.py")
     )
     container = (
