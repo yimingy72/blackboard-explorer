@@ -1,0 +1,156 @@
+import { randomUUID } from "node:crypto";
+
+const frozenSessions = new WeakSet();
+export function freezeSession(session) { frozenSessions.add(session); }
+export function assertSessionOpen(session) {
+  if (!session || frozenSessions.has(session)) throw new Error("The session admission boundary is frozen");
+}
+
+const zeroUsage = () => ({
+  input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+});
+
+function failedMessage(model, aborted) {
+  return {
+    role: "assistant", content: [], api: model.api, provider: model.provider,
+    model: model.id, usage: zeroUsage(), stopReason: aborted ? "aborted" : "error",
+    errorMessage: "BBX journal or model boundary refused the request", timestamp: Date.now(),
+  };
+}
+
+function pushFailure(stream, model, signal) {
+  const message = failedMessage(model, signal?.aborted);
+  stream.push({ type: "error", reason: message.stopReason, error: message });
+  stream.end(message);
+}
+
+/** Install only on host-owned sessions. Provider credentials never cross this boundary. */
+export function installModelBoundary(session, {
+  gatewayUrl, credential, binding, confirm, admit, settle, createStream, prepareContext = async (context) => context,
+  assertActive = () => {}, fetch: transport = fetch,
+}) {
+  const base = new URL(gatewayUrl.endsWith("/") ? gatewayUrl : `${gatewayUrl}/`);
+  if (!(base.protocol === "https:" || (base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)))
+      || base.username || base.password || base.search || base.hash) throw new Error("A restricted gateway URL is required");
+  if (typeof credential !== "function" || typeof createStream !== "function" || !binding.taskId || !binding.agentId) throw new Error("A gateway identity and native stream factory are required");
+  const original = session.agent.streamFunction;
+  const selected = session.model;
+  if (!selected || selected.api !== "openai-completions") throw new Error("The Runner requires its approved gateway model");
+  const beforeToolCall = session.agent.beforeToolCall;
+  session.agent.beforeToolCall = async (context) => {
+    if (frozenSessions.has(session)) return { block: true, terminate: true, reason: "The session admission boundary is frozen" };
+    const result = await beforeToolCall?.(context);
+    return frozenSessions.has(session) ? { block: true, terminate: true, reason: "The session admission boundary is frozen" } : result;
+  };
+  session.settingsManager.setCacheWarmingMode("off");
+  session.settingsManager.applyOverrides({ retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } });
+
+  session.agent.streamFunction = async (model, context, options = {}) => {
+    const stream = createStream();
+    const callId = randomUUID();
+    let attempt;
+    let usageObserved = false;
+    let settlementStarted = false;
+    const finish = async (message) => {
+      if (!attempt?.admitted || settlementStarted) return;
+      settlementStarted = true;
+      // A local error, HTTP error or abort is not proof that upstream stopped or billed zero.
+      const completed = !["error", "aborted"].includes(message.stopReason);
+      await settle({
+        ...attempt, binding, callId,
+        outcome: completed && usageObserved ? "completed" : attempt.sent ? "unknown" : "not_sent",
+        modelOutcome: completed ? "completed" : message.stopReason,
+        usage: completed && usageObserved ? message.usage : null,
+      });
+    };
+    try {
+      assertSessionOpen(session);
+      assertActive();
+      if (options.signal?.aborted || model.provider !== selected.provider
+          || model.id !== selected.id || model.api !== selected.api
+          || new URL(model.baseUrl).href.replace(/\/$/, "") !== base.href.replace(/\/$/, "")) {
+        throw new Error("The requested model is outside the gateway binding");
+      }
+      const preparedContext = await prepareContext(context, options);
+      const journal = await confirm(options.signal);
+      assertSessionOpen(session);
+      assertActive();
+      if (options.signal?.aborted) throw new Error("The request was aborted");
+      const fetchOnce = async (input, init = {}) => {
+        assertSessionOpen(session);
+        assertActive();
+        const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+        if (attempt || url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
+          throw new Error("Implicit retry or a gateway escape was refused");
+        }
+        attempt = { attemptId: randomUUID(), sent: false, admitted: false, httpStatus: null };
+        const request = {
+          binding, callId, attemptId: attempt.attemptId, journal, model: selected.id,
+          purpose: options.sessionId === session.sessionId ? "turn" : "summary", body: JSON.parse(init.body),
+        };
+        const ticket = await admit(request);
+        if (ticket?.callId !== callId || ticket?.attemptId !== attempt.attemptId) throw new Error("Admission identity did not match");
+        attempt.admitted = true;
+        assertSessionOpen(session);
+        assertActive();
+        if (init.signal?.aborted || options.signal?.aborted) throw new Error("The request was aborted");
+        const headers = new Headers({ "content-type": "application/json", accept: "text/event-stream" });
+        const token = await credential();
+        assertSessionOpen(session);
+        assertActive();
+        if (init.signal?.aborted || options.signal?.aborted) throw new Error("The request was aborted");
+        headers.set("authorization", `Bearer ${token}`);
+        headers.set("x-bbx-task-id", binding.taskId);
+        headers.set("x-bbx-agent-id", binding.agentId);
+        for (const [key, value] of Object.entries({ "binding-id": binding.bindingId, "runtime-epoch": binding.epoch, "runner-id": binding.runnerId, "pod-uid": binding.podUid, "sdk-session-id": session.sessionId })) {
+          if (value !== undefined) headers.set(`x-bbx-${key}`, String(value));
+        }
+        headers.set("x-bbx-call-id", callId);
+        headers.set("x-bbx-attempt-id", attempt.attemptId);
+        headers.set("x-bbx-journal-hash", journal.hash);
+        attempt.sent = true;
+        const response = await transport(url, { ...init, headers, redirect: "error" });
+        attempt.httpStatus = response.status;
+        return response;
+      };
+      // A replacement StreamFn does not inherit Pi's private ModelRuntime auth marker.
+      // Drop pre-resolved summary auth and pin the final transport instead of importing it.
+      const source = await original({ ...selected, baseUrl: gatewayUrl }, preparedContext, {
+        ...options, apiKey: undefined, headers: undefined, env: {}, maxRetries: 0,
+        transport: "sse", fetch: fetchOnce, maxTokens: Math.min(options.maxTokens ?? selected.maxTokens, selected.maxTokens),
+        onProviderStreamEvent: async (data, requestModel) => {
+          const usage = data?.usage ?? data?.choices?.find((choice) => choice.usage)?.usage;
+          if (usage && [usage.prompt_tokens, usage.completion_tokens].every((count) => Number.isInteger(count) && count >= 0)) usageObserved = true;
+          await options.onProviderStreamEvent?.(data, requestModel);
+        },
+      });
+      void (async () => {
+        try {
+          let terminal = false;
+          for await (const event of source) {
+            if (event.type === "done" || event.type === "error") {
+              const message = event.type === "done" ? event.message : event.error;
+              await finish(message);
+              terminal = true;
+            }
+            stream.push(event);
+          }
+          const message = await source.result();
+          if (!terminal) await finish(message);
+          stream.end(message);
+        } catch {
+          frozenSessions.add(session);
+          try { await finish(failedMessage(selected, options.signal?.aborted)); } catch { /* The reservation remains unresolved. */ }
+          pushFailure(stream, selected, options.signal);
+        }
+      })();
+    } catch {
+      frozenSessions.add(session);
+      try { await finish(failedMessage(selected, options.signal?.aborted)); }
+      catch { frozenSessions.add(session); }
+      pushFailure(stream, selected, options.signal);
+    }
+    return stream;
+  };
+}

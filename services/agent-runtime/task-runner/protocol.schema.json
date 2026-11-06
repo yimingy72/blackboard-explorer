@@ -1,0 +1,1678 @@
+{
+  "$defs": {
+    "AbortPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "abort",
+          "title": "Kind",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "binding_id"
+      ],
+      "title": "AbortPayload",
+      "type": "object"
+    },
+    "ClosePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "close",
+          "title": "Kind",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "binding_id"
+      ],
+      "title": "ClosePayload",
+      "type": "object"
+    },
+    "CommandReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "payload_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Payload Digest",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "status": {
+          "enum": [
+            "prepared",
+            "accepted",
+            "applied",
+            "aborted",
+            "closed",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "binding_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Binding Id"
+        },
+        "sdk_session_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdk Session Id"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Id"
+        },
+        "unresolved_attempts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Attempts",
+          "type": "array"
+        },
+        "unresolved_invocations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Invocations",
+          "type": "array"
+        },
+        "sdk_idle": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdk Idle"
+        },
+        "journal_confirmed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journal Confirmed"
+        },
+        "pending_confirmation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalConfirmation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "supported_business_contracts": {
+          "items": {
+            "const": "challenge-board-v1",
+            "type": "string"
+          },
+          "title": "Supported Business Contracts",
+          "type": "array"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "stale_fence",
+                "request_conflict",
+                "binding_unavailable",
+                "boundary_frozen",
+                "unsupported_model"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        }
+      },
+      "required": [
+        "protocol",
+        "request_id",
+        "payload_digest",
+        "fence",
+        "status"
+      ],
+      "title": "CommandReceipt",
+      "type": "object"
+    },
+    "EffectiveRunnerModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "api": {
+          "const": "openai-completions",
+          "title": "Api",
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "enum": [
+              "text",
+              "image"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Input",
+          "type": "array"
+        },
+        "reasoning": {
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "thinking_level": {
+          "enum": [
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "title": "Thinking Level",
+          "type": "string"
+        },
+        "thinking_level_map": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinking Level Map"
+        },
+        "thinking_budgets": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinking Budgets"
+        },
+        "context_window": {
+          "minimum": 1024,
+          "title": "Context Window",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "minimum": 1,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "api",
+        "input",
+        "reasoning",
+        "thinking_level",
+        "context_window",
+        "max_output_tokens"
+      ],
+      "title": "EffectiveRunnerModel",
+      "type": "object"
+    },
+    "InputApplication": {
+      "additionalProperties": false,
+      "properties": {
+        "input_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Input Id",
+          "type": "string"
+        },
+        "entry_id": {
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_id",
+        "entry_id",
+        "seq"
+      ],
+      "title": "InputApplication",
+      "type": "object"
+    },
+    "InputPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "input",
+          "title": "Kind",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "input_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Input Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "mode": {
+          "default": "follow_up",
+          "enum": [
+            "steer",
+            "follow_up"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "binding_id",
+        "input_id",
+        "content"
+      ],
+      "title": "InputPayload",
+      "type": "object"
+    },
+    "JournalConfirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "previous": {
+          "$ref": "#/$defs/JournalCursor"
+        },
+        "cursor": {
+          "$ref": "#/$defs/JournalCursor"
+        },
+        "applied_inputs": {
+          "items": {
+            "$ref": "#/$defs/InputApplication"
+          },
+          "title": "Applied Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "protocol",
+        "request_id",
+        "fence",
+        "binding",
+        "sdk_session_id",
+        "previous",
+        "cursor",
+        "applied_inputs"
+      ],
+      "title": "JournalConfirmation",
+      "type": "object"
+    },
+    "JournalCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "leaf_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Leaf Id"
+        },
+        "anchor_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Anchor Offset",
+          "type": "integer"
+        },
+        "anchor_size": {
+          "maximum": 2097152,
+          "minimum": 0,
+          "title": "Anchor Size",
+          "type": "integer"
+        },
+        "anchor_hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Anchor Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offset",
+        "seq",
+        "hash",
+        "anchor_offset",
+        "anchor_size",
+        "anchor_hash"
+      ],
+      "title": "JournalCursor",
+      "type": "object"
+    },
+    "JournalReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "request_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "cursor": {
+          "$ref": "#/$defs/JournalCursor"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "request_id",
+        "binding_id",
+        "sdk_session_id",
+        "cursor"
+      ],
+      "title": "JournalReceipt",
+      "type": "object"
+    },
+    "JournalState": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "cursor": {
+          "$ref": "#/$defs/JournalCursor"
+        }
+      },
+      "required": [
+        "protocol",
+        "binding_id",
+        "sdk_session_id",
+        "cursor"
+      ],
+      "title": "JournalState",
+      "type": "object"
+    },
+    "ModelAdmissionReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "call_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "call_id",
+        "attempt_id",
+        "request_digest"
+      ],
+      "title": "ModelAdmissionReceipt",
+      "type": "object"
+    },
+    "ModelAttemptRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "call_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "journal": {
+          "$ref": "#/$defs/JournalCursor"
+        },
+        "purpose": {
+          "enum": [
+            "turn",
+            "summary"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "profile_revision": {
+          "minimum": 1,
+          "title": "Profile Revision",
+          "type": "integer"
+        },
+        "prompt_revision": {
+          "minimum": 1,
+          "title": "Prompt Revision",
+          "type": "integer"
+        },
+        "model_snapshot": {
+          "$ref": "#/$defs/EffectiveRunnerModel"
+        },
+        "body": {
+          "additionalProperties": true,
+          "title": "Body",
+          "type": "object"
+        }
+      },
+      "required": [
+        "protocol",
+        "fence",
+        "binding",
+        "sdk_session_id",
+        "call_id",
+        "attempt_id",
+        "journal",
+        "purpose",
+        "profile_revision",
+        "prompt_revision",
+        "model_snapshot",
+        "body"
+      ],
+      "title": "ModelAttemptRequest",
+      "type": "object"
+    },
+    "ModelOutcomeReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "attempt_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "attempt_id",
+        "request_digest"
+      ],
+      "title": "ModelOutcomeReceipt",
+      "type": "object"
+    },
+    "ModelOutcomeSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "call_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "attempt_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "unknown",
+            "not_sent"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "model_outcome": {
+          "enum": [
+            "completed",
+            "error",
+            "aborted"
+          ],
+          "title": "Model Outcome",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Usage"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Http Status"
+        }
+      },
+      "required": [
+        "protocol",
+        "fence",
+        "binding_id",
+        "sdk_session_id",
+        "call_id",
+        "attempt_id",
+        "outcome",
+        "model_outcome",
+        "usage",
+        "http_status"
+      ],
+      "title": "ModelOutcomeSubmission",
+      "type": "object"
+    },
+    "OperationAck": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "receipt_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Receipt Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "request_id",
+        "status",
+        "receipt_digest"
+      ],
+      "title": "OperationAck",
+      "type": "object"
+    },
+    "PreparePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "prepare",
+          "title": "Kind",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/SessionSpec"
+        }
+      },
+      "required": [
+        "kind",
+        "spec"
+      ],
+      "title": "PreparePayload",
+      "type": "object"
+    },
+    "PublishedPrompt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "prompt_revision": {
+          "minimum": 1,
+          "title": "Prompt Revision",
+          "type": "integer"
+        },
+        "instructions": {
+          "maxLength": 131072,
+          "title": "Instructions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "fence",
+        "binding_id",
+        "prompt_revision",
+        "instructions"
+      ],
+      "title": "PublishedPrompt",
+      "type": "object"
+    },
+    "RunnerBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "business_contract": {
+          "const": "challenge-board-v1",
+          "title": "Business Contract",
+          "type": "string"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "platform_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Platform Session Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "generation": {
+          "description": "Platform binding/assignment identity version, not legacy CtfMember claim_turn generation",
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "journal_generation": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Journal Generation",
+          "type": "string"
+        },
+        "assignment_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assignment Ref"
+        }
+      },
+      "required": [
+        "business_contract",
+        "binding_id",
+        "platform_session_id",
+        "agent_id",
+        "generation",
+        "journal_generation",
+        "assignment_ref"
+      ],
+      "title": "RunnerBinding",
+      "type": "object"
+    },
+    "RunnerBootstrap": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "control_url": {
+          "title": "Control Url",
+          "type": "string"
+        },
+        "model_proxy_url": {
+          "title": "Model Proxy Url",
+          "type": "string"
+        },
+        "mcp_gateway_url": {
+          "title": "Mcp Gateway Url",
+          "type": "string"
+        },
+        "control_credential_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Control Credential Ref",
+          "type": "string"
+        },
+        "credential_file": {
+          "title": "Credential File",
+          "type": "string"
+        },
+        "journal_root": {
+          "title": "Journal Root",
+          "type": "string"
+        },
+        "mcp_metadata_timeout_ms": {
+          "default": 15000,
+          "maximum": 30000,
+          "minimum": 50,
+          "title": "Mcp Metadata Timeout Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocol",
+        "fence",
+        "control_url",
+        "model_proxy_url",
+        "mcp_gateway_url",
+        "control_credential_ref",
+        "credential_file",
+        "journal_root"
+      ],
+      "title": "RunnerBootstrap",
+      "type": "object"
+    },
+    "RunnerCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "command_seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Command Seq",
+          "type": "integer"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "payload_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Payload Digest",
+          "type": "string"
+        },
+        "payload_json": {
+          "maxLength": 2097152,
+          "minLength": 1,
+          "title": "Payload Json",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "request_id",
+        "command_seq",
+        "fence",
+        "payload_digest",
+        "payload_json"
+      ],
+      "title": "RunnerCommand",
+      "type": "object"
+    },
+    "RunnerFence": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "runner_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Runner Id",
+          "type": "string"
+        },
+        "pod_uid": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Pod Uid",
+          "type": "string"
+        },
+        "epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "runner_id",
+        "pod_uid",
+        "epoch"
+      ],
+      "title": "RunnerFence",
+      "type": "object"
+    },
+    "RunnerPayload": {
+      "discriminator": {
+        "mapping": {
+          "abort": "#/$defs/AbortPayload",
+          "close": "#/$defs/ClosePayload",
+          "input": "#/$defs/InputPayload",
+          "prepare": "#/$defs/PreparePayload",
+          "shutdown": "#/$defs/ShutdownPayload"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PreparePayload"
+        },
+        {
+          "$ref": "#/$defs/InputPayload"
+        },
+        {
+          "$ref": "#/$defs/AbortPayload"
+        },
+        {
+          "$ref": "#/$defs/ClosePayload"
+        },
+        {
+          "$ref": "#/$defs/ShutdownPayload"
+        }
+      ],
+      "title": "RunnerPayload"
+    },
+    "RunnerPoll": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "commands": {
+          "items": {
+            "$ref": "#/$defs/RunnerCommand"
+          },
+          "maxItems": 100,
+          "title": "Commands",
+          "type": "array"
+        },
+        "lease_renewals": {
+          "items": {
+            "$ref": "#/$defs/SessionLeaseReceipt"
+          },
+          "maxItems": 100,
+          "title": "Lease Renewals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "protocol",
+        "commands"
+      ],
+      "title": "RunnerPoll",
+      "type": "object"
+    },
+    "SessionLeaseReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        },
+        "lease_expires_at": {
+          "minimum": 1,
+          "title": "Lease Expires At",
+          "type": "integer"
+        },
+        "lease_revision": {
+          "minimum": 1,
+          "title": "Lease Revision",
+          "type": "integer"
+        },
+        "sdk_session_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdk Session Id"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "request_id",
+        "fence",
+        "binding_id",
+        "binding",
+        "lease_expires_at",
+        "lease_revision"
+      ],
+      "title": "SessionLeaseReceipt",
+      "type": "object"
+    },
+    "SessionLeaseRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "payload_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Payload Digest",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        }
+      },
+      "required": [
+        "protocol",
+        "request_id",
+        "payload_digest",
+        "fence",
+        "binding"
+      ],
+      "title": "SessionLeaseRequest",
+      "type": "object"
+    },
+    "SessionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        },
+        "model": {
+          "$ref": "#/$defs/EffectiveRunnerModel"
+        },
+        "model_credential_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Model Credential Ref",
+          "type": "string"
+        },
+        "mcp_credential_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Mcp Credential Ref",
+          "type": "string"
+        },
+        "allowed_tools": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Allowed Tools",
+          "type": "array"
+        },
+        "instructions": {
+          "maxLength": 131072,
+          "title": "Instructions",
+          "type": "string"
+        },
+        "profile_revision": {
+          "minimum": 1,
+          "title": "Profile Revision",
+          "type": "integer"
+        },
+        "prompt_revision": {
+          "minimum": 1,
+          "title": "Prompt Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "binding",
+        "model",
+        "model_credential_ref",
+        "mcp_credential_ref",
+        "allowed_tools",
+        "instructions",
+        "profile_revision",
+        "prompt_revision"
+      ],
+      "title": "SessionSpec",
+      "type": "object"
+    },
+    "ShutdownPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "shutdown",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ShutdownPayload",
+      "type": "object"
+    },
+    "ToolInvocation": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "binding": {
+          "$ref": "#/$defs/RunnerBinding"
+        },
+        "sdk_session_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Sdk Session Id",
+          "type": "string"
+        },
+        "invocation_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "minLength": 1,
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "assistant_entry_id": {
+          "minLength": 1,
+          "title": "Assistant Entry Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "arguments_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Arguments Digest",
+          "type": "string"
+        },
+        "arguments_json": {
+          "title": "Arguments Json",
+          "type": "string"
+        },
+        "journal": {
+          "$ref": "#/$defs/JournalCursor"
+        }
+      },
+      "required": [
+        "protocol",
+        "fence",
+        "binding",
+        "sdk_session_id",
+        "invocation_id",
+        "tool_call_id",
+        "assistant_entry_id",
+        "tool_name",
+        "arguments_digest",
+        "arguments_json",
+        "journal"
+      ],
+      "title": "ToolInvocation",
+      "type": "object"
+    },
+    "ToolPermit": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "invocation_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "admitted",
+            "completed",
+            "unknown"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "arguments_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Arguments Digest",
+          "type": "string"
+        },
+        "result_digest": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Digest"
+        },
+        "result_json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Json"
+        },
+        "authorized_wait_until_ms": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authorized Wait Until Ms"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "invocation_id",
+        "disposition",
+        "arguments_digest"
+      ],
+      "title": "ToolPermit",
+      "type": "object"
+    },
+    "ToolResultReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "confirmed": {
+          "const": true,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "invocation_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "result_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Result Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "confirmed",
+        "invocation_id",
+        "result_digest"
+      ],
+      "title": "ToolResultReceipt",
+      "type": "object"
+    },
+    "ToolResultSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "invocation": {
+          "$ref": "#/$defs/ToolInvocation"
+        },
+        "result_json": {
+          "title": "Result Json",
+          "type": "string"
+        },
+        "result_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Result Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "invocation",
+        "result_json",
+        "result_digest"
+      ],
+      "title": "ToolResultSubmission",
+      "type": "object"
+    },
+    "ToolUnknownSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "invocation": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "protocol",
+        "invocation"
+      ],
+      "title": "ToolUnknownSubmission",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "bootstrap": {
+      "$ref": "#/$defs/RunnerBootstrap"
+    },
+    "poll": {
+      "$ref": "#/$defs/RunnerPoll"
+    },
+    "command": {
+      "$ref": "#/$defs/RunnerCommand"
+    },
+    "payload": {
+      "$ref": "#/$defs/RunnerPayload"
+    },
+    "receipt": {
+      "$ref": "#/$defs/CommandReceipt"
+    },
+    "confirmation": {
+      "$ref": "#/$defs/JournalConfirmation"
+    },
+    "journal_receipt": {
+      "$ref": "#/$defs/JournalReceipt"
+    },
+    "journal_state": {
+      "$ref": "#/$defs/JournalState"
+    },
+    "lease_request": {
+      "$ref": "#/$defs/SessionLeaseRequest"
+    },
+    "lease_receipt": {
+      "$ref": "#/$defs/SessionLeaseReceipt"
+    },
+    "tool_invocation": {
+      "$ref": "#/$defs/ToolInvocation"
+    },
+    "tool_permit": {
+      "$ref": "#/$defs/ToolPermit"
+    },
+    "tool_result_receipt": {
+      "$ref": "#/$defs/ToolResultReceipt"
+    },
+    "tool_result_submission": {
+      "$ref": "#/$defs/ToolResultSubmission"
+    },
+    "tool_unknown_submission": {
+      "$ref": "#/$defs/ToolUnknownSubmission"
+    },
+    "model_attempt_request": {
+      "$ref": "#/$defs/ModelAttemptRequest"
+    },
+    "published_prompt": {
+      "$ref": "#/$defs/PublishedPrompt"
+    },
+    "model_admission_receipt": {
+      "$ref": "#/$defs/ModelAdmissionReceipt"
+    },
+    "model_outcome_submission": {
+      "$ref": "#/$defs/ModelOutcomeSubmission"
+    },
+    "model_outcome_receipt": {
+      "$ref": "#/$defs/ModelOutcomeReceipt"
+    },
+    "operation_ack": {
+      "$ref": "#/$defs/OperationAck"
+    }
+  },
+  "required": [
+    "bootstrap",
+    "poll",
+    "command",
+    "payload",
+    "receipt",
+    "confirmation",
+    "journal_receipt",
+    "journal_state",
+    "lease_request",
+    "lease_receipt",
+    "tool_invocation",
+    "tool_permit",
+    "tool_result_receipt",
+    "tool_result_submission",
+    "tool_unknown_submission",
+    "model_attempt_request",
+    "published_prompt",
+    "model_admission_receipt",
+    "model_outcome_submission",
+    "model_outcome_receipt",
+    "operation_ack"
+  ],
+  "title": "RunnerSchemaBundle",
+  "type": "object"
+}
