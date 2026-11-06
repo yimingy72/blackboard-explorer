@@ -1,0 +1,173 @@
+{
+  "$defs": {
+    "FlagResult": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "duplicate",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "correct_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correct Count"
+        },
+        "total_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Count"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "external_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Ref"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "FlagResult",
+      "type": "object"
+    },
+    "FlagSource": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Server Name",
+          "type": "string"
+        },
+        "server_version": {
+          "minimum": 1,
+          "title": "Server Version",
+          "type": "integer"
+        },
+        "tool_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "server_version",
+        "tool_name"
+      ],
+      "title": "FlagSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "format": "uuid",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "submission_id": {
+      "format": "uuid",
+      "title": "Submission Id",
+      "type": "string"
+    },
+    "candidate_id": {
+      "format": "uuid",
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "platform_call_id": {
+      "title": "Platform Call Id",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/FlagSource"
+    },
+    "target_ref": {
+      "additionalProperties": true,
+      "title": "Target Ref",
+      "type": "object"
+    },
+    "request_digest": {
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "verification_round": {
+      "title": "Verification Round",
+      "type": "string"
+    },
+    "upstream_response_uri": {
+      "title": "Upstream Response Uri",
+      "type": "string"
+    },
+    "upstream_response_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Upstream Response Sha256",
+      "type": "string"
+    },
+    "result": {
+      "$ref": "#/$defs/FlagResult"
+    }
+  },
+  "required": [
+    "operation_id",
+    "submission_id",
+    "candidate_id",
+    "platform_call_id",
+    "source",
+    "target_ref",
+    "request_digest",
+    "verification_round",
+    "upstream_response_uri",
+    "upstream_response_sha256",
+    "result"
+  ],
+  "title": "FlagReceipt",
+  "type": "object"
+}

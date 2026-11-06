@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract
 from bbx_contracts.ctf import CtfFailureDiagnostic
 from sqlalchemy import insert, select
 
@@ -41,6 +42,8 @@ class CtfReviewMixin:
     async def claim_review_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            if business_contract(task) != BOARD_LEGACY:
+                return None
             member = await row(conn, s.ctf_members, tid, agent_id)
             if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
                 return None

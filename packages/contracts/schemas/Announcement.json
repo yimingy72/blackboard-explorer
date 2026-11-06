@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "body": {
+      "title": "Body",
+      "type": "string"
+    },
+    "author_id": {
+      "title": "Author Id",
+      "type": "string"
+    },
+    "environment_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Environment Revision"
+    },
+    "supersedes": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supersedes"
+    },
+    "published_at": {
+      "format": "date-time",
+      "title": "Published At",
+      "type": "string"
+    },
+    "created_version": {
+      "title": "Created Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "task_id",
+    "revision",
+    "body",
+    "author_id",
+    "published_at",
+    "created_version"
+  ],
+  "title": "Announcement",
+  "type": "object"
+}

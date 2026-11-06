@@ -23,6 +23,7 @@ REFERENCE_FIELDS = {
     "uri",
     "result_uri",
     "response_uri",
+    "upstream_response_uri",
     "report_uri",
     "workspace_uri",
     "resume_workspace_uri",

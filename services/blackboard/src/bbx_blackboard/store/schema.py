@@ -392,6 +392,61 @@ ctf_challenges = scoped(
 ctf_records = scoped(
     "ctf_records", col("data", JSONB, nullable=False), col("version", BigInteger, nullable=False)
 )
+
+board_announcements = scoped(
+    "board_announcements",
+    col("revision", Integer, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_board_announcement_revision",
+    board_announcements.c.task_id,
+    board_announcements.c.revision,
+    unique=True,
+)
+
+flag_candidates = scoped(
+    "flag_candidates",
+    col("challenge_id", Text, nullable=False),
+    col("verification_round", Text, nullable=False),
+    col("value_digest", Text, nullable=False),
+    col("value_ciphertext", Text, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_flag_candidate_value",
+    flag_candidates.c.task_id,
+    flag_candidates.c.challenge_id,
+    flag_candidates.c.verification_round,
+    flag_candidates.c.value_digest,
+    unique=True,
+)
+
+flag_submissions = scoped(
+    "flag_submissions",
+    col("challenge_id", Text, nullable=False),
+    col("candidate_id", Text, nullable=False),
+    col("verification_round", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("platform_call_id", Text),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_flag_submission_candidate",
+    flag_submissions.c.task_id,
+    flag_submissions.c.candidate_id,
+    unique=True,
+)
+Index(
+    "ux_flag_submission_call",
+    flag_submissions.c.task_id,
+    flag_submissions.c.platform_call_id,
+    unique=True,
+    postgresql_where=flag_submissions.c.platform_call_id.is_not(None),
+)
 Index(
     "ix_ctf_record_challenge_version",
     ctf_records.c.task_id,

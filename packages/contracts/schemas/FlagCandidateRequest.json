@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "description": "题目元信息 revision，不是 Flag 状态版本",
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "value": {
+      "format": "password",
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Value",
+      "type": "string",
+      "writeOnly": true
+    },
+    "evidence_refs": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "fact_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Fact Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "value"
+  ],
+  "title": "FlagCandidateRequest",
+  "type": "object"
+}

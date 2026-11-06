@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "FlagSource": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Server Name",
+          "type": "string"
+        },
+        "server_version": {
+          "minimum": 1,
+          "title": "Server Version",
+          "type": "integer"
+        },
+        "tool_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "server_version",
+        "tool_name"
+      ],
+      "title": "FlagSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "platform_call_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Platform Call Id",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/FlagSource"
+    },
+    "request_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "response_text": {
+      "maxLength": 65536,
+      "title": "Response Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "platform_call_id",
+    "source",
+    "request_digest",
+    "response_text"
+  ],
+  "title": "FlagCaptureRequest",
+  "type": "object"
+}

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 
+from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract
 from bbx_contracts.ctf import CtfAgentProfile
 from bbx_contracts.models import Params
 
@@ -76,6 +77,8 @@ class TaskSupervisor:
     async def _ctf_envd(self, tid: str) -> EnvdClient:
         state = await self.service.state(tid)
         task = state["task"]
+        if business_contract(task) != BOARD_LEGACY:
+            raise RuntimeError("Versioned Task requires its registered Runner")
         if task.get("mode") != "ctf":
             raise RuntimeError("CTF execution requires a CTF task")
         handle = await self.manager.find(tid)
@@ -200,6 +203,8 @@ class TaskSupervisor:
 
     async def recover(self) -> None:
         for listed in await self.service.list_tasks():
+            if listed.get("mode") == "ctf" and business_contract(listed) != BOARD_LEGACY:
+                continue
             if self.stopping.is_set():
                 return
             tid = str(listed["id"])
@@ -490,6 +495,8 @@ class TaskSupervisor:
                 del self.cleanups[tid]
         for task in tasks:
             tid = str(task["id"])
+            if task.get("mode") == "ctf" and business_contract(task) != BOARD_LEGACY:
+                continue
             if task.get("mode", "blackboard") == "ctf":
                 if task["status"] == "running" and tid not in self.ctf_tasks:
                     # A coordinator can exit while its durable task still owns capacity.
@@ -557,6 +564,8 @@ class TaskSupervisor:
             (t for t in tasks if t["status"] == "provisioning"), key=lambda t: str(t["created_at"])
         )
         for task in queue:
+            if task.get("mode") == "ctf" and business_contract(task) != BOARD_LEGACY:
+                continue
             if self.stopping.is_set():
                 break
             tid = str(task["id"])

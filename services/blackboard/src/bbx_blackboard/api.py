@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import anyio
+from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract
 from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate, resolve_ctf_options
 from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
 from bbx_contracts.models import (
@@ -115,6 +116,7 @@ class TaskCreated(BaseModel):
 
 
 class TaskView(BaseModel):
+    business_contract: str | None = None
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
     cost_currency: str | None = None
@@ -641,16 +643,62 @@ def create_app(
                 task = await _task(request, tid)
                 mode = task.get("mode", "blackboard")
                 request.state.task_mode = mode
+                request.state.business_contract = business_contract(task)
                 suffix = (match[2] or "") if match else "/evidence"
                 if identity.kind == "agent" and identity.mode != mode:
                     raise HTTPException(409, "mode_mismatch")
                 if mode != "ctf" and suffix.startswith("/ctf/"):
                     raise HTTPException(409, "mode_mismatch")
                 if mode == "ctf":
+                    versioned = business_contract(task) != BOARD_LEGACY
+                    if (
+                        versioned
+                        and identity.kind == "agent"
+                        and not suffix.startswith("/ctf/knowledge/")
+                        and suffix not in {"/events", "/stream", "/evidence"}
+                    ):
+                        raise HTTPException(
+                            403, "Versioned Agent must use its published business tools"
+                        )
+                    if (
+                        versioned
+                        and suffix.startswith("/ctf/")
+                        and not suffix.startswith("/ctf/knowledge/")
+                    ):
+                        if identity.kind == "agent" or (
+                            request.method != "GET" and not suffix.startswith("/ctf/runtime/")
+                        ):
+                            raise HTTPException(
+                                403, "Legacy business entry is unavailable for this Task contract"
+                            )
                     if identity.kind == "agent":
                         if identity.generation is None:
                             raise HTTPException(403, "CTF token required")
                         knowledge_route = suffix.startswith("/ctf/knowledge/")
+                        if versioned and request.method == "GET" and not knowledge_route:
+                            from bbx_blackboard.task_board import TaskBoardService
+
+                            board_engine = request.app.state.engine
+                            if board_engine is None:
+                                raise HTTPException(503, "Board storage is unavailable")
+                            async with board_engine.connect() as conn:
+                                _, board_member = await TaskBoardService(
+                                    request.app.state.ctf_service
+                                )._task_access(conn, tid, identity)
+                            if board_member is None:
+                                raise HTTPException(403, "Agent board identity required")
+                            uri = request.query_params.get("uri", "")
+                            if (
+                                suffix == "/evidence"
+                                and uri.startswith("inputs/")
+                                and board_member["role"] != "lead"
+                            ):
+                                public = set(task["ctf_control"].get("public_input_ids", []))
+                                if not any(
+                                    item["uri"] == uri and item["id"] in public
+                                    for item in task.get("initial_attachments", [])
+                                ):
+                                    raise HTTPException(403, "Input is not shared with this Agent")
                         if request.method == "GET" and not knowledge_route:
                             await request.app.state.ctf_service.authorize_reader(
                                 tid, identity.agent_id, identity.generation
@@ -1043,6 +1091,9 @@ def create_app(
                     runs=runs.get(task["id"], []),
                     members=members.get(task["id"], []),
                     ctf_options=task.get("ctf_options"),
+                    business_contract=business_contract(task)
+                    if task.get("mode") == "ctf"
+                    else None,
                     ctf_phase=(task.get("ctf_control") or {}).get("phase"),
                     ctf_conclusion=task.get("ctf_conclusion"),
                 )
@@ -1223,13 +1274,19 @@ def create_app(
         if task.get("mode") == "ctf":
             from uuid import uuid4
 
-            await request.app.state.ctf_service.request_finish(
+            if business_contract(task) != BOARD_LEGACY and task["status"] in {
+                "finished",
+                "failed",
+                "stopped",
+            }:
+                return StatusResult(status=task["status"])
+            stopped = await request.app.state.ctf_service.request_finish(
                 task_id,
                 actor="user",
                 request_id=uuid4(),
                 conclusion={"end_reason": "user_stop", "summary": "Stopped by user"},
             )
-            return StatusResult(status="closing")
+            return StatusResult(status=(stopped or {}).get("status", "closing"))
         status = task["status"]
         events: list[dict[str, Any]] = []
         if status in {"created", "provisioning"}:

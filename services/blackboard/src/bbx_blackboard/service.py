@@ -11,7 +11,12 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price
-from bbx_contracts.challenge_board import CHALLENGE_KNOWLEDGE_EVENTS
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_EVENTS,
+    CHALLENGE_KNOWLEDGE_EVENTS,
+    business_contract,
+)
 from bbx_contracts.heartbeat import HeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
@@ -919,10 +924,19 @@ class BoardService:
         async with self.repo.engine.connect() as conn:
             stmt = select(s.events).where(s.events.c.task_id == tid, s.events.c.version > since)
             task_mode = None
+            versioned = False
             if for_agent is not None:
-                task_mode = (
-                    await conn.execute(select(s.tasks.c.mode).where(s.tasks.c.id == tid))
-                ).scalar_one()
+                task = (
+                    (
+                        await conn.execute(
+                            select(s.tasks.c.mode, s.tasks.c.ctf_control).where(s.tasks.c.id == tid)
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                task_mode = task["mode"]
+                versioned = business_contract(task) == BOARD_CONTRACT
                 if task_mode == "ctf":
                     unrelated_message = (s.events.c.type == "ctf.message.posted") & ~or_(
                         s.events.c.payload["sender_id"].astext == for_agent,
@@ -957,13 +971,22 @@ class BoardService:
             if for_agent is not None and task_mode == "ctf":
                 knowledge_scope = set()
                 if any(
-                    item["type"] in CHALLENGE_KNOWLEDGE_EVENTS
-                    and item["payload"].get("challenge_id")
+                    (
+                        item["type"] in CHALLENGE_KNOWLEDGE_EVENTS | BOARD_EVENTS
+                        and item["payload"].get("challenge_id")
+                    )
+                    or (
+                        versioned
+                        and item["type"]
+                        in {"ctf.challenge.created", "ctf.challenge.updated", "ctf.record.appended"}
+                    )
                     for item in result
                 ):
                     knowledge_scope = await knowledge_event_scope(self.repo, conn, tid, for_agent)
                 result = [
-                    ctf_agent_event(item, for_agent, knowledge_scope=knowledge_scope)
+                    ctf_agent_event(
+                        item, for_agent, knowledge_scope=knowledge_scope, versioned=versioned
+                    )
                     for item in result
                 ]
             return result
@@ -993,14 +1016,32 @@ class BoardService:
 
 
 def ctf_agent_event(
-    item: dict[str, Any], agent_id: str, *, knowledge_scope: set[str] | None = None
+    item: dict[str, Any],
+    agent_id: str,
+    *,
+    knowledge_scope: set[str] | None = None,
+    versioned: bool = False,
 ) -> dict[str, Any]:
     """Retain cursors while hiding other members' messages and private turn data."""
     kind = item["type"]
     payload = item["payload"]
-    if kind in CHALLENGE_KNOWLEDGE_EVENTS and payload.get("challenge_id"):
-        if payload["challenge_id"] in (knowledge_scope or set()):
-            return item
+    challenge_id = payload.get("challenge_id")
+    scoped = kind in CHALLENGE_KNOWLEDGE_EVENTS | BOARD_EVENTS and bool(challenge_id)
+    if versioned and kind in {
+        "ctf.challenge.created",
+        "ctf.challenge.updated",
+        "ctf.record.appended",
+    }:
+        result = payload.get("result") or {}
+        challenge_id = result.get("challenge_id" if kind == "ctf.record.appended" else "id")
+        scoped = True
+    unscoped_board = (
+        versioned
+        and kind in BOARD_EVENTS
+        and not challenge_id
+        and kind != "board.announcement.published"
+    )
+    if (scoped and challenge_id not in (knowledge_scope or set())) or unscoped_board:
         return {
             **item,
             "type": "ctf.cursor",
@@ -1009,6 +1050,8 @@ def ctf_agent_event(
             "payload": {},
             "addressed_to": None,
         }
+    if kind in BOARD_EVENTS or (kind in CHALLENGE_KNOWLEDGE_EVENTS and challenge_id):
+        return item
     public = {"ctf.started", "ctf.conclusion.requested", "ctf.conclusion.finalized"}
     if kind in public:
         return item

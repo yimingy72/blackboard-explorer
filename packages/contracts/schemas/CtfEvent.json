@@ -25,6 +25,7 @@
         "ctf.verification.updated",
         "ctf.target.updated",
         "ctf.platform.dispatched",
+        "ctf.platform.result_captured",
         "ctf.message.posted",
         "ctf.message.delivered",
         "ctf.turn.started",

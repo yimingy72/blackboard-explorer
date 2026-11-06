@@ -103,6 +103,14 @@ class EndReason(StrEnum):
 
 
 class EventType(StrEnum):
+    BOARD_ANNOUNCEMENT = "board.announcement.published"
+    BOARD_FLAG_CANDIDATE = "board.flag.candidate"
+    BOARD_FLAG_SUBMISSION = "board.flag.submission"
+    BOARD_FLAG_DISPATCHED = "board.flag.dispatched"
+    BOARD_FLAG_UNKNOWN = "board.flag.unknown"
+    BOARD_FLAG_CANCELLED = "board.flag.cancelled"
+    BOARD_FLAG_RECEIPT = "board.flag.receipt"
+    BOARD_REQUEST_LINKED = "board.request.linked"
     PROGRESS_SETTINGS = "progress.settings.updated"
     PROGRESS_MESSAGE = "progress.message.posted"
     PROGRESS_MESSAGE_REPLIED = "progress.message.replied"

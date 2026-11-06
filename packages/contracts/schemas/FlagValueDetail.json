@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "candidate_id": {
+      "format": "uuid",
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "value": {
+      "description": "敏感值；仅后端明确授权的详情可返回",
+      "title": "Value",
+      "type": "string"
+    }
+  },
+  "required": [
+    "candidate_id",
+    "value"
+  ],
+  "title": "FlagValueDetail",
+  "type": "object"
+}

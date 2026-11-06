@@ -9,9 +9,10 @@ from typing import Any
 from uuid import UUID
 
 from bbx_contracts.challenge_board import (
-    CHALLENGE_KNOWLEDGE_EVENTS,
+    BOARD_CONTRACT,
     ChallengeFactRequest,
     ChallengeIntentRequest,
+    business_contract,
 )
 from bbx_contracts.models import Fact, Intent, KnowledgeAssignment
 from fastapi import HTTPException
@@ -28,6 +29,7 @@ from bbx_blackboard.store.repository import row
 def current_assignment(task, challenge, member):
     if (
         member["role"] == "lead"
+        or business_contract(task) == BOARD_CONTRACT
         or (task.get("ctf_options") or {}).get("dispatch_mode", "manual") != "automatic"
     ):
         return None
@@ -115,6 +117,45 @@ class ChallengeBoardService:
         ):
             raise HTTPException(403, "Task-bound CTF agent identity required")
         return identity.agent_id
+
+    async def _task_access(self, conn, tid, identity, *, write=False, lead=False):
+        task = await row(conn, s.tasks, tid)
+        if task["mode"] != "ctf" or business_contract(task) != BOARD_CONTRACT:
+            raise HTTPException(409, "Published challenge-board-v1 task required")
+        if task["deleting"]:
+            raise HTTPException(409, "Task is deleting")
+        if identity.kind in {"user", "service"} and not write:
+            return task, None
+        aid = self._agent(identity, tid)
+        member = (
+            (
+                await conn.execute(
+                    select(s.ctf_members).where(
+                        s.ctf_members.c.task_id == tid, s.ctf_members.c.id == aid
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if member is None or member["role"] not in {"lead", "teammate"}:
+            raise HTTPException(403, "Unknown member; helper ChildRun binding is not ready")
+        if member["generation"] != identity.generation:
+            raise HTTPException(403, "Stale board identity")
+        if lead and member["role"] != "lead":
+            raise HTTPException(403, "Only Lead may perform this operation")
+        if write:
+            if task["status"] != "running" or identity.turn_id is None:
+                raise HTTPException(409, "Task execution is not running")
+            await self.ctf._board_write(conn, tid, aid, identity.generation, identity.turn_id)
+        elif task["status"] in TERMINAL:
+            if identity.turn_id is None:
+                raise HTTPException(403, "Fenced review required")
+            _, turn = await self.ctf._fence(conn, tid, aid, identity.generation, identity.turn_id)
+            self.ctf._authorize_review(task, turn)
+        elif member["lifecycle"] != "active":
+            raise HTTPException(403, "Inactive board identity")
+        return task, dict(member)
 
     async def _authority(self, conn, tid, cid, identity, *, write=False):
         task = await row(conn, s.tasks, tid)
@@ -241,7 +282,6 @@ class ChallengeBoardService:
                     select(s.events)
                     .where(
                         s.events.c.task_id == tid,
-                        s.events.c.type.in_(CHALLENGE_KNOWLEDGE_EVENTS),
                         s.events.c.payload["request_id"].astext == request_id,
                         s.events.c.payload["request_actor"].astext == aid,
                     )

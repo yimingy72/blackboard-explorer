@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "conclusion": {
+      "additionalProperties": true,
+      "title": "Conclusion",
+      "type": "object"
+    }
+  },
+  "required": [
+    "request_id",
+    "conclusion"
+  ],
+  "title": "BoardFinishRequest",
+  "type": "object"
+}

@@ -301,7 +301,7 @@ class CtfPlatformToolBinding(ContractModel):
     server_version: int = Field(ge=1)
     tool_name: str = Field(min_length=1)
     purpose: Literal["management", "connect", "submit", "status", "unknown"] = "unknown"
-    result_adapter: Literal["none", "fake_ctf_v1"] = "none"
+    result_adapter: Literal["none", "fake_ctf_v1", "flag_receipt_v1"] = "none"
     read_only: bool = False
 
     @model_validator(mode="after")
@@ -641,6 +641,7 @@ class CtfEvent(ContractModel):
         "ctf.verification.updated",
         "ctf.target.updated",
         "ctf.platform.dispatched",
+        "ctf.platform.result_captured",
         "ctf.message.posted",
         "ctf.message.delivered",
         "ctf.turn.started",

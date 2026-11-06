@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "FlagSource": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Server Name",
+          "type": "string"
+        },
+        "server_version": {
+          "minimum": 1,
+          "title": "Server Version",
+          "type": "integer"
+        },
+        "tool_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "server_version",
+        "tool_name"
+      ],
+      "title": "FlagSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "candidate_id": {
+      "format": "uuid",
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/FlagSource"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "candidate_id",
+    "source"
+  ],
+  "title": "FlagSubmissionRequest",
+  "type": "object"
+}

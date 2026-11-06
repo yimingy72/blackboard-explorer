@@ -11,6 +11,14 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.billing import add_usage
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_LEGACY,
+    business_manifest,
+)
+from bbx_contracts.challenge_board import (
+    business_contract as task_contract,
+)
 from bbx_contracts.ctf import CtfConclusion, execution_agent_id
 from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
@@ -571,10 +579,14 @@ class CtfService(
         public_input_ids=None,
         input_owner=None,
         create_request_hash=None,
+        business_contract=BOARD_LEGACY,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
 
         spec = CtfTaskSpec.model_validate(spec)
+        require(
+            business_contract in {BOARD_LEGACY, BOARD_CONTRACT}, "Unsupported business contract"
+        )
         data = spec.model_dump(mode="json")
         tid = input_group_id or uuid4()
         fields: dict[str, Any] = dict(
@@ -599,6 +611,10 @@ class CtfService(
                 "completion_requirements": data.get("completion_requirements"),
             },
         )
+        if business_contract == BOARD_CONTRACT:
+            fields["ctf_control"].update(
+                business_contract=BOARD_CONTRACT, business_tools=business_manifest()
+            )
         async with self.repo.engine.begin() as conn:
             if input_group_id is not None:
                 group = await InputGroups.row(conn, input_group_id, lock=True)
@@ -613,6 +629,10 @@ class CtfService(
                     require(
                         existing["mode"] == "ctf" and not existing["deleting"],
                         "Input task unavailable",
+                    )
+                    require(
+                        task_contract(existing) == business_contract,
+                        "Task business contract conflict",
                     )
                     return tid
                 check_mutable(group, input_owner or "")
@@ -688,6 +708,10 @@ class CtfService(
     async def start(self, tid):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY,
+                "Registered v1 Runner binding/readiness/lease is required",
+            )
             require(task["status"] in {"created", "provisioning", "running"}, "Task cannot start")
             if task["status"] != "running":
                 await patch(
@@ -709,6 +733,9 @@ class CtfService(
         """Persist a provisioning failure instead of retrying it forever."""
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY, "Legacy startup cannot fail a versioned Task"
+            )
             if task["status"] in {"finished", "failed", "stopped"}:
                 return task
             require(task["status"] in {"created", "provisioning"}, "Task already started")
@@ -1593,6 +1620,8 @@ class CtfService(
     async def claim_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            if task_contract(task) != BOARD_LEGACY:
+                return None
             member = await row(conn, s.ctf_members, tid, agent_id)
             if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
                 return None
@@ -2841,7 +2870,62 @@ class CtfService(
             await self._actor(conn, tid, actor, generation, turn_id)
             require(actor in {"lead", "user", "system", "service"}, "Only Lead can finish")
             control = task["ctf_control"]
+            if task_contract(task) != BOARD_LEGACY and task["status"] in {
+                "created",
+                "provisioning",
+            }:
+                require(
+                    actor in {"user", "system", "service"},
+                    "Only task control can stop an unstarted Task",
+                )
+                require(
+                    conclusion.get("end_reason") == "user_stop",
+                    "Unstarted Task only accepts explicit cancellation",
+                )
+                active = await conn.execute(
+                    select(s.ctf_turns.c.id)
+                    .where(s.ctf_turns.c.task_id == tid, s.ctf_turns.c.status == "running")
+                    .limit(1)
+                )
+                require(active.first() is None, "Unstarted Task has an active Runner")
+                stored = {
+                    **CtfConclusion.model_validate(conclusion).model_dump(mode="json"),
+                    "requested_by": actor,
+                    "run_number": task["run_number"],
+                    "requested_at": now().isoformat(),
+                }
+                await patch(
+                    conn,
+                    s.tasks,
+                    tid,
+                    {
+                        "status": "stopped",
+                        "ctf_control": {
+                            **control,
+                            "phase": "closed",
+                            "epoch": control["epoch"] + 1,
+                        },
+                        "ctf_conclusion": stored,
+                        "finished_at": now(),
+                    },
+                )
+                await self._emit(
+                    conn,
+                    tid,
+                    "conclusion.finalized",
+                    actor,
+                    {"conclusion": stored, "status": "stopped"},
+                )
+                return {"operation_id": str(request_id), "phase": "closed", "status": "stopped"}
             if control["phase"] in {"closing", "closed"}:
+                if task_contract(task) != BOARD_LEGACY:
+                    return {
+                        "operation_id": control.get("closing_request_id", str(request_id)),
+                        "phase": control["phase"],
+                        "status": task["status"]
+                        if task["status"] in {"finished", "failed", "stopped"}
+                        else "closing",
+                    }
                 require(
                     control.get("closing_request_id") == str(request_id),
                     "Closing already requested",
@@ -3043,6 +3127,9 @@ class CtfService(
         """Fence abandoned writers only after the coordinator has confirmed drain."""
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY, "Legacy recovery cannot fence a versioned Task"
+            )
             interrupted = []
             members = (
                 (await conn.execute(select(s.ctf_members).where(s.ctf_members.c.task_id == tid)))

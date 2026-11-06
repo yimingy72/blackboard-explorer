@@ -1107,6 +1107,144 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/knowledge/announcements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Announcements */
+        get: operations["announcements_api_tasks__task_id__ctf_knowledge_announcements_get"];
+        put?: never;
+        /** Publish Announcement */
+        post: operations["publish_announcement_api_tasks__task_id__ctf_knowledge_announcements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Challenges */
+        get: operations["challenges_api_tasks__task_id__ctf_knowledge_challenges_get"];
+        put?: never;
+        /** Create Challenge */
+        post: operations["create_challenge_api_tasks__task_id__ctf_knowledge_challenges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/platform-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Capture Platform Result */
+        post: operations["capture_platform_result_api_tasks__task_id__ctf_knowledge_platform_results_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch */
+        post: operations["dispatch_api_tasks__task_id__ctf_knowledge_submissions__submission_id__dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receipt */
+        post: operations["receipt_api_tasks__task_id__ctf_knowledge_submissions__submission_id__receipt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/unknown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unknown */
+        post: operations["unknown_api_tasks__task_id__ctf_knowledge_submissions__submission_id__unknown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tools */
+        get: operations["tools_api_tasks__task_id__ctf_knowledge_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool */
+        post: operations["tool_api_tasks__task_id__ctf_knowledge_tools__operation__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}": {
         parameters: {
             query?: never;
@@ -1135,6 +1273,74 @@ export interface paths {
         put?: never;
         /** Post Fact */
         post: operations["post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Flag Board */
+        get: operations["flag_board_api_tasks__task_id__ctf_knowledge__challenge_id__flags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Flag */
+        post: operations["record_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates/{candidate_id}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Flag Value */
+        get: operations["flag_value_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates__candidate_id__value_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Flag */
+        post: operations["submit_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_submissions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2201,6 +2407,51 @@ export interface components {
             /** Uri */
             uri: string;
         };
+        /** Announcement */
+        Announcement: {
+            /** Author Id */
+            author_id: string;
+            /** Body */
+            body: string;
+            /** Created Version */
+            created_version: number;
+            /** Environment Revision */
+            environment_revision?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Revision */
+            revision: number;
+            /** Supersedes */
+            supersedes?: string | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** AnnouncementRequest */
+        AnnouncementRequest: {
+            /** Body */
+            body: string;
+            /**
+             * Expected Revision
+             * @description 上一公告版本；第一版为 0
+             */
+            expected_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
         /** ArchiveBody */
         ArchiveBody: {
             /**
@@ -2212,6 +2463,27 @@ export interface components {
             size: number;
             /** Uri */
             uri: string;
+        };
+        /** BoardChallengeRequest */
+        BoardChallengeRequest: {
+            /** Connection */
+            connection?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** External Id */
+            external_id?: string | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Requirements */
+            requirements?: string | null;
+            /** Title */
+            title: string;
         };
         /** Budget */
         Budget: {
@@ -2545,7 +2817,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
             /** Version */
             version: number;
         };
@@ -2660,7 +2932,7 @@ export interface components {
              * @default none
              * @enum {string}
              */
-            result_adapter: "none" | "fake_ctf_v1";
+            result_adapter: "none" | "fake_ctf_v1" | "flag_receipt_v1";
             /** Server Name */
             server_name: string;
             /** Server Version */
@@ -2901,7 +3173,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "progress.settings.updated" | "progress.message.posted" | "progress.message.replied" | "progress.turn.completed" | "progress.usage.settled" | "progress.tree.updated" | "progress.turn.failed" | "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
+        EventType: "board.announcement.published" | "board.flag.candidate" | "board.flag.submission" | "board.flag.dispatched" | "board.flag.unknown" | "board.flag.cancelled" | "board.flag.receipt" | "board.request.linked" | "progress.settings.updated" | "progress.message.posted" | "progress.message.replied" | "progress.turn.completed" | "progress.usage.settled" | "progress.tree.updated" | "progress.turn.failed" | "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
         /** Evidence */
         Evidence: {
             /**
@@ -3072,6 +3344,261 @@ export interface components {
             receipt: {
                 [key: string]: unknown;
             };
+        };
+        /** FlagBoard */
+        FlagBoard: {
+            /** Candidates */
+            candidates: components["schemas"]["FlagCandidate"][];
+            progress: components["schemas"]["FlagProgress"];
+            /** Submissions */
+            submissions: components["schemas"]["FlagSubmission"][];
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagCandidate */
+        FlagCandidate: {
+            assignment_ref: components["schemas"]["KnowledgeAssignment"];
+            /** Author Id */
+            author_id: string;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Version */
+            created_version: number;
+            /** Evidence Refs */
+            evidence_refs?: {
+                [key: string]: unknown;
+            }[];
+            /** Fact Refs */
+            fact_refs?: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Value Digest */
+            value_digest: string;
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagCandidateRequest */
+        FlagCandidateRequest: {
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision，不是 Flag 状态版本
+             */
+            expected_revision: number;
+            /** Fact Refs */
+            fact_refs?: string[];
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
+        };
+        /** FlagCaptureRequest */
+        FlagCaptureRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /** Request Digest */
+            request_digest: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Response Text */
+            response_text: string;
+            source: components["schemas"]["FlagSource"];
+        };
+        /** FlagDispatchRequest */
+        FlagDispatchRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** FlagProgress */
+        FlagProgress: {
+            /** Correct Count */
+            correct_count?: number | null;
+            /** Score */
+            score?: string | null;
+            /** Total Count */
+            total_count?: number | null;
+        };
+        /** FlagReceiptRequest */
+        FlagReceiptRequest: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Response Sha256 */
+            response_sha256: string;
+            /** Response Uri */
+            response_uri: string;
+        };
+        /** FlagResult */
+        FlagResult: {
+            /** Correct Count */
+            correct_count?: number | null;
+            /** External Ref */
+            external_ref?: string | null;
+            /** Score */
+            score?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "rejected" | "duplicate" | "unknown";
+            /** Total Count */
+            total_count?: number | null;
+        };
+        /** FlagSource */
+        FlagSource: {
+            /** Server Name */
+            server_name: string;
+            /** Server Version */
+            server_version: number;
+            /** Tool Name */
+            tool_name: string;
+        };
+        /** FlagSubmission */
+        FlagSubmission: {
+            assignment_ref: components["schemas"]["KnowledgeAssignment"];
+            /** Author Id */
+            author_id: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Version */
+            created_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Late
+             * @default false
+             */
+            late: boolean;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Platform Call Id */
+            platform_call_id?: string | null;
+            /**
+             * Progress Applied
+             * @default false
+             */
+            progress_applied: boolean;
+            /** Request Digest */
+            request_digest: string;
+            /** Response Sha256 */
+            response_sha256?: string | null;
+            /** Response Uri */
+            response_uri?: string | null;
+            result?: components["schemas"]["FlagResult"] | null;
+            source: components["schemas"]["FlagSource"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "dispatched" | "accepted" | "rejected" | "duplicate" | "unknown" | "cancelled";
+            /** Target Ref */
+            target_ref: {
+                [key: string]: unknown;
+            };
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Updated Version */
+            updated_version: number;
+            /** Upstream Response Sha256 */
+            upstream_response_sha256?: string | null;
+            /** Upstream Response Uri */
+            upstream_response_uri?: string | null;
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagSubmissionRequest */
+        FlagSubmissionRequest: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            source: components["schemas"]["FlagSource"];
+        };
+        /** FlagUnknownRequest */
+        FlagUnknownRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** FlagValueDetail */
+        FlagValueDetail: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Value
+             * @description 敏感值；仅后端明确授权的详情可返回
+             */
+            value: string;
         };
         /** GraceBody */
         GraceBody: {
@@ -4502,6 +5029,8 @@ export interface components {
             budget?: {
                 [key: string]: unknown;
             };
+            /** Business Contract */
+            business_contract?: string | null;
             /**
              * Cleanup Ready
              * @default false
@@ -7877,6 +8406,356 @@ export interface operations {
             };
         };
     };
+    announcements_api_tasks__task_id__ctf_knowledge_announcements_get: {
+        parameters: {
+            query?: {
+                after_revision?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Announcement"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_announcement_api_tasks__task_id__ctf_knowledge_announcements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Announcement"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    challenges_api_tasks__task_id__ctf_knowledge_challenges_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_challenge_api_tasks__task_id__ctf_knowledge_challenges_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BoardChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_platform_result_api_tasks__task_id__ctf_knowledge_platform_results_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_api_tasks__task_id__ctf_knowledge_submissions__submission_id__dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagDispatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receipt_api_tasks__task_id__ctf_knowledge_submissions__submission_id__receipt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagReceiptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unknown_api_tasks__task_id__ctf_knowledge_submissions__submission_id__unknown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagUnknownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tools_api_tasks__task_id__ctf_knowledge_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_api_tasks__task_id__ctf_knowledge_tools__operation__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                operation: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     board_api_tasks__task_id__ctf_knowledge__challenge_id__get: {
         parameters: {
             query?: never;
@@ -7932,6 +8811,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChallengeKnowledgeWrite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    flag_board_api_tasks__task_id__ctf_knowledge__challenge_id__flags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagBoard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagCandidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagCandidate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    flag_value_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates__candidate_id__value_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagValueDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagSubmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
                 };
             };
             /** @description Validation Error */

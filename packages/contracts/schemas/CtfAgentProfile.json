@@ -83,7 +83,8 @@
           "default": "none",
           "enum": [
             "none",
-            "fake_ctf_v1"
+            "fake_ctf_v1",
+            "flag_receipt_v1"
           ],
           "title": "Result Adapter",
           "type": "string"

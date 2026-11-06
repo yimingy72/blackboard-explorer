@@ -125,6 +125,15 @@ class Conversations:
                         "last_judgment_version": state.task["last_judgment_version"],
                     },
                     "events": [dict(row) for row in events],
+                    "challenge_board": {
+                        table.name: [
+                            dict(item)
+                            for item in (
+                                await conn.execute(select(table).where(table.c.task_id == tid))
+                            ).mappings()
+                        ]
+                        for table in (s.board_announcements, s.flag_candidates, s.flag_submissions)
+                    },
                     "sessions": [dict(row) for row in sessions],
                     "messages": [dict(row) for row in messages],
                     "task_runs": [dict(row) for row in task_runs],
@@ -822,6 +831,9 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.flag_submissions,
+                s.flag_candidates,
+                s.board_announcements,
                 s.progress_jobs,
                 s.task_progress,
                 s.ctf_records,

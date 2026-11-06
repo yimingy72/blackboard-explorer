@@ -7,7 +7,12 @@ from typing import Any
 from uuid import UUID
 
 from bbx_contracts.billing import add_usage
-from bbx_contracts.challenge_board import CHALLENGE_KNOWLEDGE_EVENTS
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_EVENTS,
+    CHALLENGE_KNOWLEDGE_EVENTS,
+    business_contract,
+)
 from bbx_contracts.storage import storage_safe
 from sqlalchemy import delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -130,6 +135,10 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         pass
     elif kind in {"ctf.conclusion.requested", "ctf.conclusion.finalized"}:
         await patch(conn, s.tasks, tid, {"ctf_conclusion": p["conclusion"]})
+        if business_contract(await row(conn, s.tasks, tid)) == BOARD_CONTRACT:
+            from bbx_blackboard.board_events import cancel_prepared
+
+            await cancel_prepared(conn, tid, evt["version"])
     elif kind == "ctf.member.created":
         await patch(
             conn,
@@ -155,6 +164,7 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         )
     elif kind in {
         "ctf.platform.dispatched",
+        "ctf.platform.result_captured",
         "ctf.member.state_changed",
         "ctf.member.removed",
         "ctf.started",
@@ -173,6 +183,11 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     """Project one durable event into folded tables."""
     tid, kind, p, version = evt["task_id"], evt["type"], evt["payload"], evt["version"]
     stamp = evt["created_at"]
+    if kind in BOARD_EVENTS:
+        from bbx_blackboard.board_events import apply_board_event
+
+        await apply_board_event(conn, evt)
+        return
     if kind.startswith("progress."):
         return
     if kind.startswith("ctf."):
@@ -797,7 +812,11 @@ class Repository:
                         )
                     )
                 for evt in log:
-                    if evt["type"] in CHALLENGE_KNOWLEDGE_EVENTS and evt["payload"].get(
+                    if evt["type"] in BOARD_EVENTS:
+                        from bbx_blackboard.board_events import apply_board_event
+
+                        await apply_board_event(conn, evt)
+                    elif evt["type"] in CHALLENGE_KNOWLEDGE_EVENTS and evt["payload"].get(
                         "challenge_id"
                     ):
                         await apply(conn, evt)

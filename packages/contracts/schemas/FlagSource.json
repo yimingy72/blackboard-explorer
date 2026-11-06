@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "server_name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Server Name",
+      "type": "string"
+    },
+    "server_version": {
+      "minimum": 1,
+      "title": "Server Version",
+      "type": "integer"
+    },
+    "tool_name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "server_name",
+    "server_version",
+    "tool_name"
+  ],
+  "title": "FlagSource",
+  "type": "object"
+}

@@ -4,6 +4,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from bbx_contracts import ctf as ctf_models
+from bbx_contracts.challenge_board import BOARD_LEGACY
 from bbx_contracts.ctf import CtfDrainProof, CtfMemberOperationRequest
 from bbx_contracts.tool_errors import validation_issues
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -94,6 +95,16 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
 @router.post("/runtime/{operation}")
 async def runtime(request: Request, task_id: UUID, operation: str, body: dict[str, Any]) -> Any:
     require_service(request)
+    if operation == "start" and body:
+        raise HTTPException(422, "Legacy start does not accept Runner capability assertions")
+    if getattr(request.state, "business_contract", BOARD_LEGACY) != BOARD_LEGACY and operation in {
+        "reconcile_dispatch",
+        "idle_watchdog",
+        "authorize_platform_call",
+        "begin_platform_call",
+        "record_platform_result",
+    }:
+        raise HTTPException(409, "Legacy business operation is unavailable for this Task contract")
     allowed = {
         "start",
         "fail_start",

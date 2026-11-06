@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "description": "上一公告版本；第一版为 0",
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "body": {
+      "maxLength": 16000,
+      "minLength": 1,
+      "title": "Body",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "body"
+  ],
+  "title": "AnnouncementRequest",
+  "type": "object"
+}

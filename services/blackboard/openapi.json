@@ -305,6 +305,106 @@
         "title": "AgentTraceBody",
         "type": "object"
       },
+      "Announcement": {
+        "additionalProperties": false,
+        "properties": {
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_version": {
+            "title": "Created Version",
+            "type": "integer"
+          },
+          "environment_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment Revision"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "revision",
+          "body",
+          "author_id",
+          "published_at",
+          "created_version"
+        ],
+        "title": "Announcement",
+        "type": "object"
+      },
+      "AnnouncementRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "expected_revision": {
+            "description": "上一公告版本；第一版为 0",
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "body"
+        ],
+        "title": "AnnouncementRequest",
+        "type": "object"
+      },
       "ArchiveBody": {
         "properties": {
           "fallback": {
@@ -332,6 +432,66 @@
           "fallback"
         ],
         "title": "ArchiveBody",
+        "type": "object"
+      },
+      "BoardChallengeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requirements": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirements"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "title"
+        ],
+        "title": "BoardChallengeRequest",
         "type": "object"
       },
       "Budget": {
@@ -1271,6 +1431,7 @@
               "ctf.verification.updated",
               "ctf.target.updated",
               "ctf.platform.dispatched",
+              "ctf.platform.result_captured",
               "ctf.message.posted",
               "ctf.message.delivered",
               "ctf.turn.started",
@@ -1516,7 +1677,8 @@
             "default": "none",
             "enum": [
               "none",
-              "fake_ctf_v1"
+              "fake_ctf_v1",
+              "flag_receipt_v1"
             ],
             "title": "Result Adapter",
             "type": "string"
@@ -2232,6 +2394,14 @@
       },
       "EventType": {
         "enum": [
+          "board.announcement.published",
+          "board.flag.candidate",
+          "board.flag.submission",
+          "board.flag.dispatched",
+          "board.flag.unknown",
+          "board.flag.cancelled",
+          "board.flag.receipt",
+          "board.request.linked",
           "progress.settings.updated",
           "progress.message.posted",
           "progress.message.replied",
@@ -2685,6 +2855,631 @@
           "end_reason"
         ],
         "title": "FinishBody",
+        "type": "object"
+      },
+      "FlagBoard": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/FlagCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/FlagProgress"
+          },
+          "submissions": {
+            "items": {
+              "$ref": "#/components/schemas/FlagSubmission"
+            },
+            "title": "Submissions",
+            "type": "array"
+          },
+          "verification_round": {
+            "title": "Verification Round",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verification_round",
+          "candidates",
+          "submissions",
+          "progress"
+        ],
+        "title": "FlagBoard",
+        "type": "object"
+      },
+      "FlagCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_ref": {
+            "$ref": "#/components/schemas/KnowledgeAssignment"
+          },
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "challenge_id": {
+            "format": "uuid",
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_version": {
+            "title": "Created Version",
+            "type": "integer"
+          },
+          "evidence_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "fact_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fact Refs",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "value_digest": {
+            "title": "Value Digest",
+            "type": "string"
+          },
+          "verification_round": {
+            "title": "Verification Round",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "challenge_id",
+          "verification_round",
+          "value_digest",
+          "author_id",
+          "assignment_ref",
+          "created_at",
+          "created_version"
+        ],
+        "title": "FlagCandidate",
+        "type": "object"
+      },
+      "FlagCandidateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_refs": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expected_revision": {
+            "description": "题目元信息 revision，不是 Flag 状态版本",
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "fact_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Fact Refs",
+            "type": "array"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "value": {
+            "format": "password",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "value"
+        ],
+        "title": "FlagCandidateRequest",
+        "type": "object"
+      },
+      "FlagCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "platform_call_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Platform Call Id",
+            "type": "string"
+          },
+          "request_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Request Digest",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "response_text": {
+            "maxLength": 65536,
+            "title": "Response Text",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/FlagSource"
+          }
+        },
+        "required": [
+          "request_id",
+          "platform_call_id",
+          "source",
+          "request_digest",
+          "response_text"
+        ],
+        "title": "FlagCaptureRequest",
+        "type": "object"
+      },
+      "FlagDispatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "platform_call_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Platform Call Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "platform_call_id"
+        ],
+        "title": "FlagDispatchRequest",
+        "type": "object"
+      },
+      "FlagProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "correct_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Count"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "total_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Count"
+          }
+        },
+        "title": "FlagProgress",
+        "type": "object"
+      },
+      "FlagReceiptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "response_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Response Sha256",
+            "type": "string"
+          },
+          "response_uri": {
+            "minLength": 1,
+            "title": "Response Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "response_uri",
+          "response_sha256"
+        ],
+        "title": "FlagReceiptRequest",
+        "type": "object"
+      },
+      "FlagResult": {
+        "additionalProperties": false,
+        "properties": {
+          "correct_count": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Count"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "rejected",
+              "duplicate",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_count": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Count"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "FlagResult",
+        "type": "object"
+      },
+      "FlagSource": {
+        "additionalProperties": false,
+        "properties": {
+          "server_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Server Name",
+            "type": "string"
+          },
+          "server_version": {
+            "minimum": 1.0,
+            "title": "Server Version",
+            "type": "integer"
+          },
+          "tool_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_name",
+          "server_version",
+          "tool_name"
+        ],
+        "title": "FlagSource",
+        "type": "object"
+      },
+      "FlagSubmission": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_ref": {
+            "$ref": "#/components/schemas/KnowledgeAssignment"
+          },
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "challenge_id": {
+            "format": "uuid",
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_version": {
+            "title": "Created Version",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "late": {
+            "default": false,
+            "title": "Late",
+            "type": "boolean"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "platform_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Call Id"
+          },
+          "progress_applied": {
+            "default": false,
+            "title": "Progress Applied",
+            "type": "boolean"
+          },
+          "request_digest": {
+            "title": "Request Digest",
+            "type": "string"
+          },
+          "response_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Sha256"
+          },
+          "response_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Uri"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlagResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/FlagSource"
+          },
+          "status": {
+            "enum": [
+              "prepared",
+              "dispatched",
+              "accepted",
+              "rejected",
+              "duplicate",
+              "unknown",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_ref": {
+            "additionalProperties": true,
+            "title": "Target Ref",
+            "type": "object"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "updated_version": {
+            "title": "Updated Version",
+            "type": "integer"
+          },
+          "upstream_response_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Response Sha256"
+          },
+          "upstream_response_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Response Uri"
+          },
+          "verification_round": {
+            "title": "Verification Round",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "operation_id",
+          "task_id",
+          "challenge_id",
+          "candidate_id",
+          "verification_round",
+          "source",
+          "target_ref",
+          "request_digest",
+          "author_id",
+          "assignment_ref",
+          "status",
+          "created_at",
+          "created_version",
+          "updated_version"
+        ],
+        "title": "FlagSubmission",
+        "type": "object"
+      },
+      "FlagSubmissionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/FlagSource"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_revision",
+          "candidate_id",
+          "source"
+        ],
+        "title": "FlagSubmissionRequest",
+        "type": "object"
+      },
+      "FlagUnknownRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "platform_call_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Platform Call Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "platform_call_id"
+        ],
+        "title": "FlagUnknownRequest",
+        "type": "object"
+      },
+      "FlagValueDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "value": {
+            "description": "敏感值；仅后端明确授权的详情可返回",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "value"
+        ],
+        "title": "FlagValueDetail",
         "type": "object"
       },
       "GraceBody": {
@@ -6171,6 +6966,17 @@
             "additionalProperties": true,
             "title": "Budget",
             "type": "object"
+          },
+          "business_contract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Contract"
           },
           "cleanup_ready": {
             "default": false,
@@ -12307,6 +13113,581 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/ctf/knowledge/announcements": {
+      "get": {
+        "operationId": "announcements_api_tasks__task_id__ctf_knowledge_announcements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_revision",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Announcement"
+                  },
+                  "title": "Response Announcements Api Tasks  Task Id  Ctf Knowledge Announcements Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Announcements",
+        "tags": [
+          "challenge-board"
+        ]
+      },
+      "post": {
+        "operationId": "publish_announcement_api_tasks__task_id__ctf_knowledge_announcements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnouncementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Announcement"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Announcement",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/challenges": {
+      "get": {
+        "operationId": "challenges_api_tasks__task_id__ctf_knowledge_challenges_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Challenges",
+        "tags": [
+          "challenge-board"
+        ]
+      },
+      "post": {
+        "operationId": "create_challenge_api_tasks__task_id__ctf_knowledge_challenges_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Challenge",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/platform-results": {
+      "post": {
+        "operationId": "capture_platform_result_api_tasks__task_id__ctf_knowledge_platform_results_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagCaptureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture Platform Result",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/dispatch": {
+      "post": {
+        "operationId": "dispatch_api_tasks__task_id__ctf_knowledge_submissions__submission_id__dispatch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagDispatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dispatch",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/receipt": {
+      "post": {
+        "operationId": "receipt_api_tasks__task_id__ctf_knowledge_submissions__submission_id__receipt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagReceiptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagSubmission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Receipt",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/unknown": {
+      "post": {
+        "operationId": "unknown_api_tasks__task_id__ctf_knowledge_submissions__submission_id__unknown_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagUnknownRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagSubmission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unknown",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/tools": {
+      "get": {
+        "operationId": "tools_api_tasks__task_id__ctf_knowledge_tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tools",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}": {
+      "post": {
+        "operationId": "tool_api_tasks__task_id__ctf_knowledge_tools__operation__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "title": "Operation",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tool",
+        "tags": [
+          "challenge-board"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}": {
       "get": {
         "operationId": "board_api_tasks__task_id__ctf_knowledge__challenge_id__get",
@@ -12356,6 +13737,7 @@
         },
         "summary": "Board",
         "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
@@ -12419,6 +13801,253 @@
         },
         "summary": "Post Fact",
         "tags": [
+          "challenge-board",
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags": {
+      "get": {
+        "operationId": "flag_board_api_tasks__task_id__ctf_knowledge__challenge_id__flags_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagBoard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Flag Board",
+        "tags": [
+          "challenge-board",
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates": {
+      "post": {
+        "operationId": "record_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagCandidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagCandidate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Flag",
+        "tags": [
+          "challenge-board",
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates/{candidate_id}/value": {
+      "get": {
+        "operationId": "flag_value_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates__candidate_id__value_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagValueDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Flag Value",
+        "tags": [
+          "challenge-board",
+          "challenge-knowledge"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/submissions": {
+      "post": {
+        "operationId": "submit_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_submissions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagSubmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlagSubmission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Flag",
+        "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
@@ -12482,6 +14111,7 @@
         },
         "summary": "Post Intent",
         "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
@@ -12556,6 +14186,7 @@
         },
         "summary": "Get Object",
         "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
@@ -12635,6 +14266,7 @@
         },
         "summary": "Search",
         "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
@@ -12700,6 +14332,7 @@
         },
         "summary": "Snapshot",
         "tags": [
+          "challenge-board",
           "challenge-knowledge"
         ]
       }
