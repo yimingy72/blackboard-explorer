@@ -1,0 +1,18 @@
+apiVersion: sandbox.opensandbox.io/v1alpha1
+kind: BatchSandbox
+metadata:
+  name: bbx-archv2-g7-template
+spec:
+  replicas: 1
+  shardPatches:
+    - spec:
+        terminationGracePeriodSeconds: 2
+        automountServiceAccountToken: false
+        containers:
+          - name: sandbox
+            imagePullPolicy: Never
+            env:
+              - name: EXECD_ACCESS_TOKEN
+                value: ""
+                valueFrom:
+                  secretKeyRef: {name: bbx-archv2-g7-execd, key: token}

@@ -1,0 +1,198 @@
+--- a/server/opensandbox_server/config.py
++++ b/server/opensandbox_server/config.py
+@@ -728,6 +728,10 @@
+             "does not match the apiserver certificate; disable once cluster CA is fixed."
+         ),
+     )
++    batchsandbox_informer_enabled: bool = Field(
++        default=True,
++        description="Use Server BatchSandbox read/wait informers; false uses bounded direct API reads.",
++    )
+     informer_resync_seconds: int = Field(
+         default=300,
+         ge=1,
+@@ -1534,6 +1538,11 @@
+ 
+ 
+ class TenantsConfig(BaseModel):
++    cache_max_entries: int = Field(
++        default=0,
++        ge=0,
++        description="HTTP tenant cache bound; 0 preserves legacy behavior, positive enables TTL pruning and LRU.",
++    )
+     provider: Literal["file", "http"] = Field(
+         default="file",
+         description="Tenant provider type: 'file' (tenants.toml) or 'http' (remote endpoint).",
+--- a/server/opensandbox_server/services/k8s/client.py
++++ b/server/opensandbox_server/services/k8s/client.py
+@@ -102,6 +102,14 @@
+         return self._node_v1_api
+ 
+ 
++    def _direct_batch_reads(self, group: str, version: str, plural: str) -> bool:
++        return (
++            not self.config.batchsandbox_informer_enabled
++            and group == OPENSANDBOX_API_GROUP
++            and version == OPENSANDBOX_API_VERSION
++            and plural == "batchsandboxes"
++        )
++
+     def _lookup_informer(self, group: str, version: str, plural: str, namespace: str) -> Optional[WorkloadInformer]:
+         """Return an existing informer without starting one. Used by write paths
+         to invalidate cache entries; never auto-create on writes since list paths
+@@ -119,6 +127,8 @@
+         event_handler=None,
+     ) -> Optional[WorkloadInformer]:
+         """Return the informer for this resource+namespace, starting it lazily."""
++        if self._direct_batch_reads(group, version, plural):
++            return None
+         key: _InformerKey = (group, version, plural, namespace)
+         with self._informers_lock:
+             informer = self._informers.get(key)
+@@ -234,6 +244,7 @@
+                 namespace=namespace,
+                 plural=plural,
+                 name=name,
++                **({"_request_timeout": (10, 30)} if self._direct_batch_reads(group, version, plural) else {}),
+             )
+             if not isinstance(obj, dict):
+                 raise TypeError("Custom object GET returned a non-dict response")
+@@ -281,6 +292,7 @@
+                 namespace=namespace,
+                 plural=plural,
+                 label_selector=label_selector,
++                **({"_request_timeout": (10, 30)} if self._direct_batch_reads(group, version, plural) else {}),
+             )
+             return resp.get("items", [])
+         except ApiException as e:
+--- a/server/opensandbox_server/main.py
++++ b/server/opensandbox_server/main.py
+@@ -75,6 +75,7 @@
+ 
+         http_cfg = HTTPTenantProviderConfig(
+             endpoint=config.tenants.endpoint,
++            cache_max_entries=config.tenants.cache_max_entries,
+             max_stale_seconds=config.tenants.max_stale_seconds,
+             timeout_seconds=config.tenants.timeout_seconds,
+             auth_header=config.tenants.auth_header,
+--- a/server/opensandbox_server/tenants/http_provider.py
++++ b/server/opensandbox_server/tenants/http_provider.py
+@@ -43,6 +43,7 @@
+ from __future__ import annotations
+ 
+ import logging
++from collections import OrderedDict
+ import threading
+ import time
+ from dataclasses import dataclass
+@@ -59,6 +60,7 @@
+ @dataclass
+ class HTTPTenantProviderConfig:
+     endpoint: str
++    cache_max_entries: int = 0
+     max_stale_seconds: float = 300.0
+     timeout_seconds: float = 5.0
+     auth_header: Optional[str] = None
+@@ -90,12 +92,19 @@
+     def __init__(self, config: HTTPTenantProviderConfig) -> None:
+         self._config = config
+         self._lock = threading.Lock()
+-        self._cache: Dict[str, _CacheEntry] = {}
++        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+         self._inflight: Dict[str, _FlightEvent] = {}
+         self._ready = False
+         self._callbacks: List[Callable[[List[TenantEntry]], None]] = []
+         self._client: Optional[httpx.Client] = None
+ 
++    def _prune_cache_locked(self, now: float) -> None:
++        if self._config.cache_max_entries <= 0:
++            return
++        for key, entry in list(self._cache.items()):
++            if now - entry.fetched_at > entry.ttl + self._config.max_stale_seconds:
++                self._cache.pop(key, None)
++
+     @property
+     def supports_enumeration(self) -> bool:
+         """The HTTP provider only knows tenants seen in prior per-key lookups."""
+@@ -105,7 +114,10 @@
+         now = time.monotonic()
+ 
+         with self._lock:
++            self._prune_cache_locked(now)
+             cached = self._cache.get(api_key)
++            if cached is not None and self._config.cache_max_entries > 0:
++                self._cache.move_to_end(api_key)
+ 
+         if cached is not None:
+             age = now - cached.fetched_at
+@@ -140,6 +152,7 @@
+ 
+     def list_tenants(self) -> List[TenantEntry]:
+         with self._lock:
++            self._prune_cache_locked(time.monotonic())
+             seen = {}
+             for entry in self._cache.values():
+                 seen[entry.tenant.name] = entry.tenant
+@@ -185,9 +198,13 @@
+                 is_leader = True
+ 
+         if not is_leader:
+-            flight.wait(timeout=self._config.timeout_seconds)
++            completed = flight.wait(timeout=self._config.timeout_seconds)
+             if flight.error is not None:
+                 raise flight.error
++            if self._config.cache_max_entries > 0:
++                if completed and flight.result is not None:
++                    return flight.result
++                raise TenantProviderUnavailable("Timed out waiting for in-flight tenant lookup")
+             with self._lock:
+                 cached = self._cache.get(api_key)
+             if cached:
+@@ -195,7 +212,9 @@
+             raise TenantProviderUnavailable("Timed out waiting for in-flight tenant lookup")
+ 
+         try:
+-            return self._do_fetch(api_key, now)
++            result = self._do_fetch(api_key, now)
++            flight.result = result
++            return result
+         except Exception as e:
+             flight.error = e
+             raise
+@@ -232,7 +251,12 @@
+         )
+ 
+         with self._lock:
++            self._prune_cache_locked(time.monotonic())
+             self._cache[api_key] = _CacheEntry(tenant=entry, fetched_at=now, ttl=ttl)
++            if self._config.cache_max_entries > 0:
++                self._cache.move_to_end(api_key)
++                while len(self._cache) > self._config.cache_max_entries:
++                    self._cache.popitem(last=False)
+ 
+         return entry
+ 
+--- a/server/configuration.md
++++ b/server/configuration.md
+@@ -384,3 +384,21 @@
+ 3. **Release notes** — experimental flags and breaking changes.
+ 
+ For API request fields (`networkPolicy`, volumes, etc.), see the OpenAPI specs under [`specs/`](../specs/) and the [Server README](README.md).
++
++## BBX G7 Server-only opt-in patch
++
++`[kubernetes].batchsandbox_informer_enabled` defaults to `true`. Set it to
++`false` only for the fixed non-pooled BatchSandbox profile to disable Server
++read/creation-wait informers for that GVR. Existing namespace/selector checks,
++read limits and creation polling remain; direct GET/LIST use a (10, 30) second
++connect/read budget. Controller, ingress and explicit snapshot/template
++reactors are unchanged. This is not an official 1.2.0 configuration option.
++
++`[tenants].cache_max_entries` defaults to `0` (legacy). A positive bound opts
++HTTP tenants into lazy expiry after TTL plus max-stale and LRU eviction.
++Active keys resolve again through the authoritative endpoint after eviction.
++The cache is a bounded hint set, never the active-Task inventory. Background
++namespace discovery still needs the existing label-scoped cluster LIST RBAC.
++401, provider failures and max-stale policy are not relaxed. No timer or new
++cache service is introduced. The flag is process-wide; do not switch active
++legacy task bindings without a coordinated deployment boundary.

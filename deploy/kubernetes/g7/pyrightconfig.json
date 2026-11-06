@@ -1,0 +1,7 @@
+{
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.12",
+  "venvPath": "../../../services/sandbox-execution",
+  "venv": ".venv",
+  "include": ["build.py", "load-images.py", "probe.py", "tests/tenant_fixture.py"]
+}
