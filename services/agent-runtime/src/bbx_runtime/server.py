@@ -9,6 +9,7 @@ from bbx_runtime.execenv import ExecEnvManager
 from bbx_runtime.pi.bridge import ensure_pi_runtime
 from bbx_runtime.progress.worker import ProgressWorker
 from bbx_runtime.runner import AgentRunner
+from bbx_runtime.runner_proxy import model_proxy_server
 from bbx_runtime.scheduler.lock import RuntimeLock
 from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import SchedulerSettings
@@ -33,6 +34,7 @@ async def serve(settings: SchedulerSettings) -> None:
             BlackboardClient(
                 settings.blackboard_url, settings.service_token.get_secret_value()
             ) as service,
+            model_proxy_server(settings, service) as proxy_work,
         ):
             await _import_legacy_key(settings, service)
             objects = object_store(settings)
@@ -49,7 +51,8 @@ async def serve(settings: SchedulerSettings) -> None:
             lost = asyncio.create_task(instance.lost.wait())
             try:
                 done, _ = await asyncio.wait(
-                    [work, chat_work, progress_work, shutdown, lost],
+                    [work, chat_work, progress_work, shutdown, lost]
+                    + ([proxy_work] if proxy_work is not None else []),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if lost in done:
@@ -60,6 +63,9 @@ async def serve(settings: SchedulerSettings) -> None:
                     await chat_work
                 if progress_work in done:
                     await progress_work
+                if proxy_work is not None and proxy_work in done:
+                    await proxy_work
+                    raise RuntimeError("Runner model proxy stopped unexpectedly")
             finally:
                 await progress.stop()
                 progress_work.cancel()

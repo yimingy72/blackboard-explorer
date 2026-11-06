@@ -9,9 +9,16 @@ test("Python and Node verify preserved UTF-8 JSON text without reserializing num
   const value = { "10": 1.0, "2": 1e-7, text: "你好 é 😀", nested: [-0.0, 1e20] };
   const nodeText = jsonText(value);
   const script = `import json,sys
-from bbx_contracts.runner import runner_json_text, runner_payload_digest
+from bbx_contracts.runner import runner_json_text, runner_payload_digest, validate_runner_json_object
 data=json.load(sys.stdin)
 assert runner_payload_digest(data['node_text'])==data['node_digest']
+for malformed in ['{"model":"one","model":"two"}', '{"max_tokens":NaN}', '{"max_tokens":1e999}']:
+ try:
+  validate_runner_json_object(malformed,runner_payload_digest(malformed))
+ except ValueError:
+  pass
+ else:
+  raise AssertionError('Ambiguous or non-finite JSON must be refused')
 value={'10':1.0,'2':1e-7,'text':'你好 é 😀','nested':[-0.0,1e20]}
 text=runner_json_text(value)
 print(json.dumps({'python_text':text,'python_digest':runner_payload_digest(text)},ensure_ascii=False))

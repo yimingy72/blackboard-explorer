@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
@@ -146,8 +147,45 @@ class Conversations:
                             s.runner_bindings,
                             s.runner_commands,
                             s.runner_receipts,
+                            s.runner_calls,
                         )
                     },
+                    "native_costs": [
+                        dict(item)
+                        for item in (
+                            await conn.execute(
+                                select(s.native_request_costs).where(
+                                    s.native_request_costs.c.task_id == tid
+                                )
+                            )
+                        ).mappings()
+                    ],
+                    "native_budget": [
+                        {
+                            **{
+                                key: item[key]
+                                for key in (
+                                    "accounting_source_id",
+                                    "key_name",
+                                    "native_resource_id",
+                                    "hold_reason",
+                                    "status_snapshot",
+                                )
+                            },
+                            "config": {
+                                key: value
+                                for key, value in item["config"].items()
+                                if key != "native_value"
+                            },
+                        }
+                        for item in (
+                            await conn.execute(
+                                select(s.native_task_budgets).where(
+                                    s.native_task_budgets.c.task_id == tid
+                                )
+                            )
+                        ).mappings()
+                    ],
                     "sessions": [dict(row) for row in sessions],
                     "messages": [dict(row) for row in messages],
                     "task_runs": [dict(row) for row in task_runs],
@@ -803,6 +841,28 @@ class Conversations:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
+            if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
+                native_key = (
+                    await conn.execute(
+                        select(s.native_task_budgets.c.publication_state).where(
+                            s.native_task_budgets.c.task_id == tid
+                        )
+                    )
+                ).scalar_one_or_none()
+                if native_key is not None and native_key != "retired":
+                    raise HTTPException(409, "Native Task key retirement is not confirmed")
+                unresolved = (
+                    await conn.execute(
+                        select(s.runner_calls.c.id)
+                        .where(
+                            s.runner_calls.c.task_id == tid,
+                            s.runner_calls.c.state.in_(["dispatched", "unknown"]),
+                        )
+                        .limit(1)
+                    )
+                ).first()
+                if unresolved:
+                    raise HTTPException(409, "Original Runner calls still require reconciliation")
             jobs = (
                 (
                     await conn.execute(
@@ -845,6 +905,9 @@ class Conversations:
             except KeyError:
                 return {"purged": True}
             for table in (
+                s.native_request_costs,
+                s.native_task_budgets,
+                s.runner_calls,
                 s.runner_receipts,
                 s.runner_commands,
                 s.runner_bindings,

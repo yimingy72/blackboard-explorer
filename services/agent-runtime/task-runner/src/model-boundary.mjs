@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const frozenSessions = new WeakSet();
 export function freezeSession(session) { frozenSessions.add(session); }
@@ -50,18 +50,17 @@ export function installModelBoundary(session, {
     const stream = createStream();
     const callId = randomUUID();
     let attempt;
-    let usageObserved = false;
     let settlementStarted = false;
     const finish = async (message) => {
       if (!attempt?.admitted || settlementStarted) return;
       settlementStarted = true;
-      // A local error, HTTP error or abort is not proof that upstream stopped or billed zero.
+      // This reports SDK behavior only. Native gateway records own fees and unknown accounting.
       const completed = !["error", "aborted"].includes(message.stopReason);
       await settle({
         ...attempt, binding, callId,
-        outcome: completed && usageObserved ? "completed" : attempt.sent ? "unknown" : "not_sent",
+        outcome: completed ? "completed" : attempt.sent ? "unknown" : "not_sent",
         modelOutcome: completed ? "completed" : message.stopReason,
-        usage: completed && usageObserved ? message.usage : null,
+        usage: completed ? message.usage : null,
       });
     };
     try {
@@ -85,9 +84,13 @@ export function installModelBoundary(session, {
           throw new Error("Implicit retry or a gateway escape was refused");
         }
         attempt = { attemptId: randomUUID(), sent: false, admitted: false, httpStatus: null };
+        const bodyJson = init.body;
+        if (typeof bodyJson !== "string" || Buffer.byteLength(bodyJson) > 8 * 1024 * 1024
+            || Buffer.from(bodyJson, "utf8").toString("utf8") !== bodyJson) throw new Error("The native model body is unavailable or exceeds its byte bound");
+        const bodyDigest = createHash("sha256").update(bodyJson, "utf8").digest("hex");
         const request = {
           binding, callId, attemptId: attempt.attemptId, journal, model: selected.id,
-          purpose: options.sessionId === session.sessionId ? "turn" : "summary", body: JSON.parse(init.body),
+          purpose: options.sessionId === session.sessionId ? "turn" : "summary", bodyJson, bodyDigest,
         };
         const ticket = await admit(request);
         if (ticket?.callId !== callId || ticket?.attemptId !== attempt.attemptId) throw new Error("Admission identity did not match");
@@ -109,8 +112,9 @@ export function installModelBoundary(session, {
         headers.set("x-bbx-call-id", callId);
         headers.set("x-bbx-attempt-id", attempt.attemptId);
         headers.set("x-bbx-journal-hash", journal.hash);
+        headers.set("x-bbx-body-digest", bodyDigest);
         attempt.sent = true;
-        const response = await transport(url, { ...init, headers, redirect: "error" });
+        const response = await transport(url, { ...init, body: bodyJson, headers, redirect: "error" });
         attempt.httpStatus = response.status;
         return response;
       };
@@ -119,11 +123,6 @@ export function installModelBoundary(session, {
       const source = await original({ ...selected, baseUrl: gatewayUrl }, preparedContext, {
         ...options, apiKey: undefined, headers: undefined, env: {}, maxRetries: 0,
         transport: "sse", fetch: fetchOnce, maxTokens: Math.min(options.maxTokens ?? selected.maxTokens, selected.maxTokens),
-        onProviderStreamEvent: async (data, requestModel) => {
-          const usage = data?.usage ?? data?.choices?.find((choice) => choice.usage)?.usage;
-          if (usage && [usage.prompt_tokens, usage.completion_tokens].every((count) => Number.isInteger(count) && count >= 0)) usageObserved = true;
-          await options.onProviderStreamEvent?.(data, requestModel);
-        },
       });
       void (async () => {
         try {

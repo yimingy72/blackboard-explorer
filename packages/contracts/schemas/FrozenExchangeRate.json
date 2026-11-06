@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "rate_cny_per_usd": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Rate Cny Per Usd"
+    },
+    "source_ref": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Source Ref",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "rounding": {
+      "const": "ROUND_DOWN",
+      "default": "ROUND_DOWN",
+      "title": "Rounding",
+      "type": "string"
+    },
+    "usd_decimal_places": {
+      "const": 9,
+      "default": 9,
+      "title": "Usd Decimal Places",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "rate_cny_per_usd",
+    "source_ref",
+    "observed_at"
+  ],
+  "title": "FrozenExchangeRate",
+  "type": "object"
+}

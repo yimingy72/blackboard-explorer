@@ -71,7 +71,7 @@ class SSEDispatcher:
 
                 connection.add_termination_listener(on_termination)
                 async with self._lock:
-                    for channel in self._subscribers:
+                    for channel in tuple(self._subscribers):
                         await connection.add_listener(channel, self._notify)
                         self._listening.add(channel)
                     self._connection = connection
@@ -91,31 +91,70 @@ class SSEDispatcher:
                     with suppress(Exception):
                         await connection.close()
 
+    async def _listener_io(self, connection: Any, operation: Awaitable[None]) -> None:
+        try:
+            await operation
+        except BaseException:
+            # Cancelled LISTEN/UNLISTEN can leave asyncpg and PostgreSQL out of sync.
+            if self._connection is connection:
+                self._connection = None
+                self._ready.clear()
+                self._listening.clear()
+            connection.terminate()
+            raise
+
     @asynccontextmanager
-    async def subscribe(self, tid: UUID) -> AsyncIterator[asyncio.Queue[None]]:
+    async def subscribe(
+        self, tid: UUID, *, wait_ready: bool = True
+    ) -> AsyncIterator[asyncio.Queue[None]]:
         channel = f"bbx_task_{tid.hex}"
         queue: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
         added = False
         try:
-            async with self._lock:
-                self._subscribers[channel].add(queue)
-                added = True
-                if self._connection is not None and channel not in self._listening:
-                    await self._connection.add_listener(channel, self._notify)
-                    self._listening.add(channel)
-            await self._ready.wait()
+            try:
+                async with asyncio.timeout(None if wait_ready else 0.1):
+                    async with self._lock:
+                        if self._connection is not None:
+                            for stale in self._listening.difference(self._subscribers):
+                                await self._listener_io(
+                                    self._connection,
+                                    self._connection.remove_listener(stale, self._notify),
+                                )
+                                self._listening.discard(stale)
+                        self._subscribers[channel].add(queue)
+                        added = True
+                        if self._connection is not None and channel not in self._listening:
+                            await self._listener_io(
+                                self._connection,
+                                self._connection.add_listener(channel, self._notify),
+                            )
+                            self._listening.add(channel)
+                    if wait_ready:
+                        await self._ready.wait()
+            except (TimeoutError, asyncpg.PostgresError, asyncpg.InterfaceError, OSError):
+                if wait_ready:
+                    raise
             yield queue
         finally:
             if added:
-                async with self._lock:
-                    subscribers = self._subscribers[channel]
-                    subscribers.discard(queue)
-                    if not subscribers:
-                        del self._subscribers[channel]
-                        if self._connection is not None and channel in self._listening:
-                            with suppress(Exception):
-                                await self._connection.remove_listener(channel, self._notify)
-                            self._listening.discard(channel)
+                subscribers = self._subscribers[channel]
+                subscribers.discard(queue)
+                if not subscribers:
+                    del self._subscribers[channel]
+                    with suppress(TimeoutError):
+                        async with asyncio.timeout(None if wait_ready else 0.1):
+                            async with self._lock:
+                                if (
+                                    channel not in self._subscribers
+                                    and self._connection is not None
+                                    and channel in self._listening
+                                ):
+                                    with suppress(Exception):
+                                        await self._listener_io(
+                                            self._connection,
+                                            self._connection.remove_listener(channel, self._notify),
+                                        )
+                                        self._listening.discard(channel)
 
 
 async def stream_events(

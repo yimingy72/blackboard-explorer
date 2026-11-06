@@ -216,7 +216,8 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "maxLength": 512,
+          "minLength": 1,
           "title": "Id",
           "type": "string"
         },
@@ -673,10 +674,16 @@
         "model_snapshot": {
           "$ref": "#/$defs/EffectiveRunnerModel"
         },
-        "body": {
-          "additionalProperties": true,
-          "title": "Body",
-          "type": "object"
+        "body_json": {
+          "maxLength": 8388608,
+          "minLength": 1,
+          "title": "Body Json",
+          "type": "string"
+        },
+        "body_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Body Digest",
+          "type": "string"
         }
       },
       "required": [
@@ -691,7 +698,8 @@
         "profile_revision",
         "prompt_revision",
         "model_snapshot",
-        "body"
+        "body_json",
+        "body_digest"
       ],
       "title": "ModelAttemptRequest",
       "type": "object"
@@ -731,6 +739,7 @@
     },
     "ModelOutcomeSubmission": {
       "additionalProperties": false,
+      "description": "SDK observations only; native gateway evidence owns fees and accounting outcomes.",
       "properties": {
         "protocol": {
           "const": "bbx.task-runner.v1",
@@ -1501,6 +1510,25 @@
       "title": "ToolPermit",
       "type": "object"
     },
+    "ToolResultConfirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "invocation": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "protocol",
+        "invocation"
+      ],
+      "title": "ToolResultConfirmation",
+      "type": "object"
+    },
     "ToolResultReceipt": {
       "additionalProperties": false,
       "properties": {
@@ -1523,45 +1551,20 @@
           "pattern": "^[a-f0-9]{64}$",
           "title": "Result Digest",
           "type": "string"
+        },
+        "result_json": {
+          "title": "Result Json",
+          "type": "string"
         }
       },
       "required": [
         "protocol",
         "confirmed",
         "invocation_id",
-        "result_digest"
+        "result_digest",
+        "result_json"
       ],
       "title": "ToolResultReceipt",
-      "type": "object"
-    },
-    "ToolResultSubmission": {
-      "additionalProperties": false,
-      "properties": {
-        "protocol": {
-          "const": "bbx.task-runner.v1",
-          "title": "Protocol",
-          "type": "string"
-        },
-        "invocation": {
-          "$ref": "#/$defs/ToolInvocation"
-        },
-        "result_json": {
-          "title": "Result Json",
-          "type": "string"
-        },
-        "result_digest": {
-          "pattern": "^[a-f0-9]{64}$",
-          "title": "Result Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "protocol",
-        "invocation",
-        "result_json",
-        "result_digest"
-      ],
-      "title": "ToolResultSubmission",
       "type": "object"
     },
     "ToolUnknownSubmission": {
@@ -1625,8 +1628,8 @@
     "tool_result_receipt": {
       "$ref": "#/$defs/ToolResultReceipt"
     },
-    "tool_result_submission": {
-      "$ref": "#/$defs/ToolResultSubmission"
+    "tool_result_confirmation": {
+      "$ref": "#/$defs/ToolResultConfirmation"
     },
     "tool_unknown_submission": {
       "$ref": "#/$defs/ToolUnknownSubmission"
@@ -1664,7 +1667,7 @@
     "tool_invocation",
     "tool_permit",
     "tool_result_receipt",
-    "tool_result_submission",
+    "tool_result_confirmation",
     "tool_unknown_submission",
     "model_attempt_request",
     "published_prompt",

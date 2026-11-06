@@ -4,11 +4,8 @@ from uuid import UUID
 
 from bbx_contracts.challenge_board import (
     Announcement,
-    AnnouncementReadRequest,
     AnnouncementRequest,
     BoardChallengeRequest,
-    BoardFinishRequest,
-    BoardPageRequest,
     ChallengeFactRequest,
     ChallengeIntentRequest,
     ChallengeKnowledge,
@@ -28,7 +25,6 @@ from bbx_contracts.challenge_board import (
 from bbx_contracts.models import SearchHit
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
-from pydantic import ValidationError
 
 from bbx_blackboard.auth import require_agent_writer, require_service, require_task_reader
 from bbx_blackboard.challenge_board import ChallengeBoardService
@@ -164,71 +160,13 @@ async def submit_flag(
 
 @router.post("/tools/{operation}")
 async def tool(request: Request, response: Response, task_id: UUID, operation: str, body: dict):
-    identity = require_agent_writer(request, task_id)
-    manifest = await tasks(request).manifest(task_id, identity)
-    if not any(operation in names for names in manifest["roles"].values()):
-        raise HTTPException(403, "Tool is not published for this role")
+    from bbx_blackboard.business_tools import BusinessTools
+
     response.headers["Cache-Control"] = "no-store"
-    arguments = dict(body)
-    try:
-        if operation == "board_announcements":
-            parsed = AnnouncementReadRequest.model_validate(arguments)
-            return await tasks(request).announcements(
-                task_id, identity, parsed.after_revision, parsed.limit
-            )
-        if operation == "board_challenges":
-            parsed = BoardPageRequest.model_validate(arguments)
-            return await tasks(request).challenges(task_id, identity, parsed.limit, parsed.offset)
-        if operation == "board_publish_announcement":
-            return await tasks(request).publish_announcement(task_id, identity, arguments)
-        if operation == "board_create_challenge":
-            return await tasks(request).create_challenge(task_id, identity, arguments)
-        if operation == "board_finish_task":
-            parsed = BoardFinishRequest.model_validate(arguments)
-            return await tasks(request).finish(
-                task_id, identity, parsed.request_id, parsed.conclusion
-            )
-        cid = UUID(arguments.pop("challenge_id"))
-        if operation in {"board_read", "board_search", "board_flags", "board_flag_value"}:
-            if operation == "board_read" and not arguments:
-                return await service(request).board(task_id, cid, identity)
-            if operation == "board_flags" and not arguments:
-                return await flags(request).board(task_id, cid, identity)
-            if operation == "board_flag_value" and set(arguments) == {"candidate_id"}:
-                return await flags(request).value(
-                    task_id, cid, UUID(arguments["candidate_id"]), identity
-                )
-            if operation == "board_search" and set(arguments) <= {"q", "k"}:
-                limit = arguments.get("k", 20)
-                if (
-                    type(limit) is not int
-                    or not 1 <= limit <= 100
-                    or not isinstance(arguments.get("q", ""), str)
-                ):
-                    raise ValueError("Invalid search")
-                return await service(request).search(
-                    task_id, cid, identity, arguments.get("q", ""), limit
-                )
-            raise ValueError("Unexpected arguments")
-        if operation in {"board_post_fact", "board_post_intent"}:
-            return await service(request).write(
-                task_id,
-                cid,
-                identity,
-                arguments,
-                kind="fact" if operation == "board_post_fact" else "intent",
-            )
-        if operation == "board_record_flag":
-            return await flags(request).candidate(task_id, cid, identity, arguments)
-        if operation == "board_submit_flag":
-            return await flags(request).prepare(task_id, cid, identity, arguments)
-    except ValidationError as error:
-        raise HTTPException(
-            422, {"issues": error.errors(include_input=False, include_context=False)}
-        ) from error
-    except (ValueError, KeyError, TypeError) as error:
-        raise HTTPException(422, "Invalid business tool arguments") from error
-    raise HTTPException(404, "Unknown business tool")
+    identity = require_agent_writer(request, task_id)
+    return await BusinessTools(
+        service(request).ctf, request.app.state.settings.agent_token_secret.get_secret_value()
+    ).invoke(task_id, identity, operation, body)
 
 
 @knowledge_router.get("", response_model=ChallengeKnowledge)

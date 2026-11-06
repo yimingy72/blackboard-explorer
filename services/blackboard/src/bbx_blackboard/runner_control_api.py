@@ -146,7 +146,9 @@ async def poll(
         or epoch != identity.fence.epoch
     ):
         raise HTTPException(403, "Poll identity does not match credential")
-    return await service(request).poll(task_id, identity, after_seq, wait_seconds)
+    return await service(request).poll(
+        task_id, identity, after_seq, wait_seconds, dispatcher=request.app.state.dispatcher
+    )
 
 
 @router.post("/bindings/{binding_id}/acquire", response_model=SessionLeaseReceipt)

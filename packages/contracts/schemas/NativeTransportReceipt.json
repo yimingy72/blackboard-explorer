@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "bbx.task-runner.v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "attempt_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "dispatch_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Dispatch Id",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "confirmed",
+    "attempt_id",
+    "dispatch_id",
+    "request_digest"
+  ],
+  "title": "NativeTransportReceipt",
+  "type": "object"
+}

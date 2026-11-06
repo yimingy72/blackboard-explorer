@@ -5,7 +5,16 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from . import challenge_board, ctf, heartbeat, models, progress, runner_control, traffic
+from . import (
+    challenge_board,
+    ctf,
+    heartbeat,
+    models,
+    native_gateway,
+    progress,
+    runner_control,
+    traffic,
+)
 
 
 def export_schemas(output_dir: Path) -> list[Path]:
@@ -19,6 +28,7 @@ def export_schemas(output_dir: Path) -> list[Path]:
         **vars(traffic),
         **vars(progress),
         **vars(runner_control),
+        **vars(native_gateway),
     }.items():
         if (
             isinstance(obj, type)

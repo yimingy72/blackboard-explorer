@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "runner_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Runner Id",
+      "type": "string"
+    },
+    "pod_uid": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Pod Uid",
+      "type": "string"
+    },
+    "epoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "title": "Epoch",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "task_id",
+    "runner_id",
+    "pod_uid",
+    "epoch"
+  ],
+  "title": "RunnerFence",
+  "type": "object"
+}

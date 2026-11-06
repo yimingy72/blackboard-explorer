@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "FrozenExchangeRate": {
+      "additionalProperties": false,
+      "properties": {
+        "rate_cny_per_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Rate Cny Per Usd"
+        },
+        "source_ref": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "rounding": {
+          "const": "ROUND_DOWN",
+          "default": "ROUND_DOWN",
+          "title": "Rounding",
+          "type": "string"
+        },
+        "usd_decimal_places": {
+          "const": 9,
+          "default": 9,
+          "title": "Usd Decimal Places",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rate_cny_per_usd",
+        "source_ref",
+        "observed_at"
+      ],
+      "title": "FrozenExchangeRate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "accounting_source_id": {
+      "title": "Accounting Source Id",
+      "type": "string"
+    },
+    "key_name": {
+      "title": "Key Name",
+      "type": "string"
+    },
+    "budget_name": {
+      "title": "Budget Name",
+      "type": "string"
+    },
+    "key_fingerprint": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Key Fingerprint",
+      "type": "string"
+    },
+    "native_resource_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Resource Id"
+    },
+    "threshold_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Threshold Usd"
+    },
+    "exchange_rate": {
+      "$ref": "#/$defs/FrozenExchangeRate"
+    },
+    "selected_models": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Models",
+      "type": "array"
+    },
+    "publication_state": {
+      "enum": [
+        "prepared",
+        "creating",
+        "creating_unknown",
+        "ready",
+        "retired"
+      ],
+      "title": "Publication State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "accounting_source_id",
+    "key_name",
+    "budget_name",
+    "key_fingerprint",
+    "threshold_usd",
+    "exchange_rate",
+    "selected_models",
+    "publication_state"
+  ],
+  "title": "NativeBudgetBinding",
+  "type": "object"
+}

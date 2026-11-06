@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Annotated, Literal
 
 from pydantic import Field, RootModel, field_validator, model_validator
@@ -14,6 +15,8 @@ RunnerId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 PROTOCOL = "bbx.task-runner.v1"
 MAX_INPUT_JSON_BYTES = 131072
+MAX_MODEL_BODY_BYTES = 8 * 1024 * 1024
+MAX_MODEL_METADATA_BYTES = 17 * 1024 * 1024
 
 
 class RunnerFence(ContractModel):
@@ -53,7 +56,7 @@ ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max
 
 
 class EffectiveRunnerModel(ContractModel):
-    id: RunnerId
+    id: str = Field(min_length=1, max_length=512)
     api: Literal["openai-completions"]
     input: list[Literal["text", "image"]] = Field(min_length=1, max_length=2)
     reasoning: bool
@@ -260,18 +263,17 @@ class ToolResultReceipt(ContractModel):
     confirmed: Literal[True]
     invocation_id: Digest
     result_digest: Digest
-
-
-class ToolResultSubmission(ContractModel):
-    protocol: Literal["bbx.task-runner.v1"]
-    invocation: ToolInvocation
     result_json: str
-    result_digest: Digest
 
     @model_validator(mode="after")
     def exact_result(self):
         validate_runner_json_object(self.result_json, self.result_digest)
         return self
+
+
+class ToolResultConfirmation(ContractModel):
+    protocol: Literal["bbx.task-runner.v1"]
+    invocation: ToolInvocation
 
 
 class ToolUnknownSubmission(ContractModel):
@@ -291,7 +293,15 @@ class ModelAttemptRequest(ContractModel):
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
     model_snapshot: EffectiveRunnerModel
-    body: dict
+    body_json: str = Field(min_length=1, max_length=MAX_MODEL_BODY_BYTES)
+    body_digest: Digest
+
+    @model_validator(mode="after")
+    def exact_body(self):
+        if len(self.body_json.encode("utf-8")) > MAX_MODEL_BODY_BYTES:
+            raise ValueError("Model body exceeds its UTF-8 byte bound")
+        validate_runner_json_object(self.body_json, self.body_digest)
+        return self
 
 
 class PublishedPrompt(ContractModel):
@@ -311,6 +321,8 @@ class ModelAdmissionReceipt(ContractModel):
 
 
 class ModelOutcomeSubmission(ContractModel):
+    """SDK observations only; native gateway evidence owns fees and accounting outcomes."""
+
     protocol: Literal["bbx.task-runner.v1"]
     fence: RunnerFence
     binding_id: RunnerId
@@ -392,7 +404,7 @@ class RunnerSchemaBundle(ContractModel):
     tool_invocation: ToolInvocation
     tool_permit: ToolPermit
     tool_result_receipt: ToolResultReceipt
-    tool_result_submission: ToolResultSubmission
+    tool_result_confirmation: ToolResultConfirmation
     tool_unknown_submission: ToolUnknownSubmission
     model_attempt_request: ModelAttemptRequest
     published_prompt: PublishedPrompt
@@ -421,9 +433,31 @@ def validate_runner_json_object(text: str, expected_digest: str | None) -> dict:
     def invalid_number(value: str):
         raise ValueError(f"Non-finite JSON number: {value}")
 
-    value = json.loads(text, parse_constant=invalid_number)
+    def finite_float(value: str):
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            invalid_number(value)
+        return parsed
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Repeated JSON object key")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            text,
+            parse_constant=invalid_number,
+            parse_float=finite_float,
+            object_pairs_hook=unique_object,
+        )
+    except RecursionError as error:
+        raise ValueError("JSON object nesting exceeds its bound") from error
     if not isinstance(value, dict):
-        raise ValueError("MCP arguments and results require a JSON object")
+        raise ValueError("Runner JSON requires an object")
     return value
 
 

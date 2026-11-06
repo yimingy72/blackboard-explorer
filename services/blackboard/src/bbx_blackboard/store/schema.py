@@ -597,3 +597,64 @@ Index(
     runner_receipts.c.kind,
     runner_receipts.c.request_id,
 )
+
+# Call identity and one-shot dispatch evidence; native USD fees have their own source IDs.
+runner_calls = scoped(
+    "runner_calls",
+    col("kind", Text, nullable=False),
+    col("binding_id", Text, nullable=False),
+    col("owner_epoch", BigInteger, nullable=False),
+    col("state", Text, nullable=False),
+    col("concurrency_active", Boolean, nullable=False),
+    col("provider_key", Text),
+    col("data", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ix_runner_calls_active",
+    runner_calls.c.kind,
+    runner_calls.c.concurrency_active,
+    runner_calls.c.provider_key,
+)
+Index(
+    "ix_runner_calls_binding",
+    runner_calls.c.task_id,
+    runner_calls.c.binding_id,
+    runner_calls.c.state,
+)
+
+native_task_budgets = Table(
+    "native_task_budgets",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("key_fingerprint", Text, nullable=False),
+    col("key_ciphertext", Text, nullable=False),
+    col("native_resource_id", Text),
+    col("publication_state", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("status_snapshot", JSONB),
+    col("hold_reason", Text),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ux_native_task_key",
+    native_task_budgets.c.accounting_source_id,
+    native_task_budgets.c.key_fingerprint,
+    unique=True,
+)
+
+native_request_costs = Table(
+    "native_request_costs",
+    metadata,
+    col("accounting_source_id", Text, primary_key=True),
+    col("native_log_id", Text, primary_key=True),
+    col("task_id", UUID(as_uuid=True), nullable=False),
+    col("attempt_id", Text, nullable=False),
+    col("state", Text, nullable=False),
+    col("cost_usd", Text),
+    col("evidence", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_native_cost_task", native_request_costs.c.task_id, native_request_costs.c.attempt_id)

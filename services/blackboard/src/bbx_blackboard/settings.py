@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     admin_users: SecretStr
     otel_enabled: bool = False
     profiles_dir: Path = Path("profiles/default")
+    native_gateway_accounting_source_id: str = ""
+    native_gateway_admin_url: str = ""
+    native_gateway_data_url: str = ""
+    native_gateway_admin_token: SecretStr = SecretStr("")
+    native_gateway_catalog_revision: str = ""
 
     @property
     def database_url(self) -> URL:

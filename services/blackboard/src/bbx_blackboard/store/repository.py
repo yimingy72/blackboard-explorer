@@ -139,6 +139,9 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             from bbx_blackboard.board_events import cancel_prepared
 
             await cancel_prepared(conn, tid, evt["version"])
+            from bbx_blackboard.runner_gateway import cancel_admitted
+
+            await cancel_admitted(conn, tid, through=evt["created_at"])
     elif kind == "ctf.member.created":
         await patch(
             conn,

@@ -1,0 +1,111 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "bbx.task-runner.v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "send_allowed": {
+      "title": "Send Allowed",
+      "type": "boolean"
+    },
+    "attempt_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "body_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Body Digest",
+      "type": "string"
+    },
+    "dispatch_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dispatch Id"
+    },
+    "native_gateway_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Gateway Url"
+    },
+    "task_gateway_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Gateway Key"
+    },
+    "accounting_source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accounting Source Id"
+    },
+    "trusted_attributes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Trusted Attributes",
+      "type": "object"
+    },
+    "authorized_wait_until_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Authorized Wait Until Ms"
+    }
+  },
+  "required": [
+    "protocol",
+    "confirmed",
+    "send_allowed",
+    "attempt_id",
+    "state",
+    "body_digest"
+  ],
+  "title": "NativeModelDispatchGrant",
+  "type": "object"
+}

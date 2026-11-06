@@ -2493,7 +2493,8 @@
             "type": "integer"
           },
           "id": {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Id",
             "type": "string"
           },
@@ -3756,6 +3757,109 @@
         "title": "FlagValueDetail",
         "type": "object"
       },
+      "FrozenExchangeRate-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "rate_cny_per_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Rate Cny Per Usd"
+          },
+          "rounding": {
+            "const": "ROUND_DOWN",
+            "default": "ROUND_DOWN",
+            "title": "Rounding",
+            "type": "string"
+          },
+          "source_ref": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "usd_decimal_places": {
+            "const": 9,
+            "default": 9,
+            "title": "Usd Decimal Places",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rate_cny_per_usd",
+          "source_ref",
+          "observed_at"
+        ],
+        "title": "FrozenExchangeRate",
+        "type": "object"
+      },
+      "FrozenExchangeRate-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "rate_cny_per_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Rate Cny Per Usd",
+            "type": "string"
+          },
+          "rounding": {
+            "const": "ROUND_DOWN",
+            "default": "ROUND_DOWN",
+            "title": "Rounding",
+            "type": "string"
+          },
+          "source_ref": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Source Ref",
+            "type": "string"
+          },
+          "usd_decimal_places": {
+            "const": 9,
+            "default": 9,
+            "title": "Usd Decimal Places",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rate_cny_per_usd",
+          "source_ref",
+          "observed_at"
+        ],
+        "title": "FrozenExchangeRate",
+        "type": "object"
+      },
+      "GatewayCredentialsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_epoch"
+        ],
+        "title": "GatewayCredentialsRequest",
+        "type": "object"
+      },
       "GraceBody": {
         "properties": {
           "expected_derive_round": {
@@ -4686,6 +4790,128 @@
         "title": "McpInput",
         "type": "object"
       },
+      "ModelAdmissionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "call_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "call_id",
+          "attempt_id",
+          "request_digest"
+        ],
+        "title": "ModelAdmissionReceipt",
+        "type": "object"
+      },
+      "ModelAttemptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/RunnerBinding"
+          },
+          "body_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Body Digest",
+            "type": "string"
+          },
+          "body_json": {
+            "maxLength": 8388608,
+            "minLength": 1,
+            "title": "Body Json",
+            "type": "string"
+          },
+          "call_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "model_snapshot": {
+            "$ref": "#/components/schemas/EffectiveRunnerModel"
+          },
+          "profile_revision": {
+            "minimum": 1.0,
+            "title": "Profile Revision",
+            "type": "integer"
+          },
+          "prompt_revision": {
+            "minimum": 1.0,
+            "title": "Prompt Revision",
+            "type": "integer"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "turn",
+              "summary"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "fence",
+          "binding",
+          "sdk_session_id",
+          "call_id",
+          "attempt_id",
+          "journal",
+          "purpose",
+          "profile_revision",
+          "prompt_revision",
+          "model_snapshot",
+          "body_json",
+          "body_digest"
+        ],
+        "title": "ModelAttemptRequest",
+        "type": "object"
+      },
       "ModelCatalogResult": {
         "properties": {
           "models": {
@@ -5195,6 +5421,128 @@
         "title": "ModelInput",
         "type": "object"
       },
+      "ModelOutcomeReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "attempt_id",
+          "request_digest"
+        ],
+        "title": "ModelOutcomeReceipt",
+        "type": "object"
+      },
+      "ModelOutcomeSubmission": {
+        "additionalProperties": false,
+        "description": "SDK observations only; native gateway evidence owns fees and accounting outcomes.",
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "call_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "model_outcome": {
+            "enum": [
+              "completed",
+              "error",
+              "aborted"
+            ],
+            "title": "Model Outcome",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "unknown",
+              "not_sent"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          }
+        },
+        "required": [
+          "protocol",
+          "fence",
+          "binding_id",
+          "sdk_session_id",
+          "call_id",
+          "attempt_id",
+          "outcome",
+          "model_outcome",
+          "usage",
+          "http_status"
+        ],
+        "title": "ModelOutcomeSubmission",
+        "type": "object"
+      },
       "ModelSet-Input": {
         "additionalProperties": false,
         "properties": {
@@ -5235,6 +5583,478 @@
           "close"
         ],
         "title": "ModelSet",
+        "type": "object"
+      },
+      "NativeBudgetBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting_source_id": {
+            "title": "Accounting Source Id",
+            "type": "string"
+          },
+          "budget_name": {
+            "title": "Budget Name",
+            "type": "string"
+          },
+          "exchange_rate": {
+            "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+          },
+          "key_fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Key Fingerprint",
+            "type": "string"
+          },
+          "key_name": {
+            "title": "Key Name",
+            "type": "string"
+          },
+          "native_resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Resource Id"
+          },
+          "publication_state": {
+            "enum": [
+              "prepared",
+              "creating",
+              "creating_unknown",
+              "ready",
+              "retired"
+            ],
+            "title": "Publication State",
+            "type": "string"
+          },
+          "selected_models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Models",
+            "type": "array"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "threshold_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "accounting_source_id",
+          "key_name",
+          "budget_name",
+          "key_fingerprint",
+          "threshold_usd",
+          "exchange_rate",
+          "selected_models",
+          "publication_state"
+        ],
+        "title": "NativeBudgetBinding",
+        "type": "object"
+      },
+      "NativeBudgetPrepare": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting_source_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Accounting Source Id",
+            "type": "string"
+          },
+          "exchange_rate": {
+            "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+          },
+          "expected_epoch": {
+            "minimum": 1.0,
+            "title": "Expected Epoch",
+            "type": "integer"
+          },
+          "selected_models": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Selected Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_epoch",
+          "accounting_source_id",
+          "selected_models",
+          "exchange_rate"
+        ],
+        "title": "NativeBudgetPrepare",
+        "type": "object"
+      },
+      "NativeFeeView": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting_source_id": {
+            "title": "Accounting Source Id",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "confirmed_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confirmed Usd",
+            "type": "string"
+          },
+          "converted_cny": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Converted Cny",
+            "type": "string"
+          },
+          "currency": {
+            "const": "USD",
+            "default": "USD",
+            "title": "Currency",
+            "type": "string"
+          },
+          "exchange_rate": {
+            "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+          },
+          "hold_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Reason"
+          },
+          "native_used_high_water_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Used High Water Usd"
+          },
+          "overage_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Overage Usd",
+            "type": "string"
+          },
+          "pending_attempts": {
+            "title": "Pending Attempts",
+            "type": "integer"
+          },
+          "threshold_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accounting_source_id",
+          "confirmed_usd",
+          "converted_cny",
+          "threshold_usd",
+          "overage_usd",
+          "pending_attempts",
+          "exchange_rate",
+          "catalog_revision"
+        ],
+        "title": "NativeFeeView",
+        "type": "object"
+      },
+      "NativeModelDispatchGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting_source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Source Id"
+          },
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "authorized_wait_until_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorized Wait Until Ms"
+          },
+          "body_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Body Digest",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "dispatch_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Id"
+          },
+          "native_gateway_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Gateway Url"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "send_allowed": {
+            "title": "Send Allowed",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "task_gateway_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Gateway Key"
+          },
+          "trusted_attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Trusted Attributes",
+            "type": "object"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "send_allowed",
+          "attempt_id",
+          "state",
+          "body_digest"
+        ],
+        "title": "NativeModelDispatchGrant",
+        "type": "object"
+      },
+      "NativeModelDispatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "body_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Body Digest",
+            "type": "string"
+          },
+          "call_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Call Id",
+            "type": "string"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "fence",
+          "binding_id",
+          "sdk_session_id",
+          "call_id",
+          "attempt_id",
+          "body_digest"
+        ],
+        "title": "NativeModelDispatchRequest",
+        "type": "object"
+      },
+      "NativeModelSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting_source_id": {
+            "title": "Accounting Source Id",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "model_alias": {
+            "title": "Model Alias",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "sdk_model": {
+            "$ref": "#/components/schemas/EffectiveRunnerModel"
+          }
+        },
+        "required": [
+          "protocol",
+          "accounting_source_id",
+          "model_alias",
+          "sdk_model",
+          "catalog_revision"
+        ],
+        "title": "NativeModelSelection",
+        "type": "object"
+      },
+      "NativeTransportObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "dispatch_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Dispatch Id",
+            "type": "string"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "phase": {
+            "enum": [
+              "response_ended",
+              "disconnected",
+              "not_sent"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "attempt_id",
+          "dispatch_id",
+          "phase"
+        ],
+        "title": "NativeTransportObservation",
+        "type": "object"
+      },
+      "NativeTransportReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "dispatch_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Dispatch Id",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "request_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "attempt_id",
+          "dispatch_id",
+          "request_digest"
+        ],
+        "title": "NativeTransportReceipt",
         "type": "object"
       },
       "OperationAck": {
@@ -8244,6 +9064,229 @@
           "tool"
         ],
         "title": "ToolCallBody",
+        "type": "object"
+      },
+      "ToolInvocation": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Arguments Digest",
+            "type": "string"
+          },
+          "arguments_json": {
+            "title": "Arguments Json",
+            "type": "string"
+          },
+          "assistant_entry_id": {
+            "minLength": 1,
+            "title": "Assistant Entry Id",
+            "type": "string"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/RunnerBinding"
+          },
+          "fence": {
+            "$ref": "#/components/schemas/RunnerFence"
+          },
+          "invocation_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Invocation Id",
+            "type": "string"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "minLength": 1,
+            "title": "Tool Call Id",
+            "type": "string"
+          },
+          "tool_name": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "fence",
+          "binding",
+          "sdk_session_id",
+          "invocation_id",
+          "tool_call_id",
+          "assistant_entry_id",
+          "tool_name",
+          "arguments_digest",
+          "arguments_json",
+          "journal"
+        ],
+        "title": "ToolInvocation",
+        "type": "object"
+      },
+      "ToolPermit": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Arguments Digest",
+            "type": "string"
+          },
+          "authorized_wait_until_ms": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorized Wait Until Ms"
+          },
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "disposition": {
+            "enum": [
+              "admitted",
+              "completed",
+              "unknown"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "invocation_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Invocation Id",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "result_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Digest"
+          },
+          "result_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Json"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "invocation_id",
+          "disposition",
+          "arguments_digest"
+        ],
+        "title": "ToolPermit",
+        "type": "object"
+      },
+      "ToolResultConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "invocation": {
+            "$ref": "#/components/schemas/ToolInvocation"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "invocation"
+        ],
+        "title": "ToolResultConfirmation",
+        "type": "object"
+      },
+      "ToolResultReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "invocation_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Invocation Id",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "result_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "result_json": {
+            "title": "Result Json",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "confirmed",
+          "invocation_id",
+          "result_digest",
+          "result_json"
+        ],
+        "title": "ToolResultReceipt",
+        "type": "object"
+      },
+      "ToolUnknownSubmission": {
+        "additionalProperties": false,
+        "properties": {
+          "invocation": {
+            "$ref": "#/components/schemas/ToolInvocation"
+          },
+          "protocol": {
+            "const": "bbx.task-runner.v1",
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "invocation"
+        ],
+        "title": "ToolUnknownSubmission",
         "type": "object"
       },
       "TrafficCapture": {
@@ -15490,6 +16533,338 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/bindings/{binding_id}/credentials": {
+      "post": {
+        "operationId": "credentials_api_tasks__task_id__ctf_runtime_runner_gateway_bindings__binding_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewayCredentialsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Credentials",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/dispatch": {
+      "post": {
+        "operationId": "dispatch_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__dispatch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeModelDispatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeModelDispatchGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dispatch",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/transport": {
+      "post": {
+        "operationId": "transport_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__transport_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeTransportObservation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeTransportReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transport",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/model": {
+      "get": {
+        "operationId": "native_model_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_model_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_alias",
+            "required": true,
+            "schema": {
+              "title": "Model Alias",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeModelSelection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Native Model",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/prepare": {
+      "post": {
+        "operationId": "prepare_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_prepare_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeBudgetPrepare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeBudgetBinding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prepare Budget",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/publish": {
+      "post": {
+        "operationId": "publish_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeBudgetBinding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Budget",
+        "tags": [
+          "runner-gateway-private"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
       "post": {
         "operationId": "register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post",
@@ -16966,6 +18341,210 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/admit": {
+      "post": {
+        "operationId": "admit_tool_api_tasks__task_id__runner_control_bindings__binding_id__tools_admit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolInvocation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolPermit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admit Tool",
+        "tags": [
+          "runner-tools"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/result": {
+      "post": {
+        "operationId": "tool_result_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolResultConfirmation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResultReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tool Result",
+        "tags": [
+          "runner-tools"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/unknown": {
+      "post": {
+        "operationId": "tool_unknown_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__unknown_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolUnknownSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolPermit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tool Unknown",
+        "tags": [
+          "runner-tools"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/runner-control/commands": {
       "get": {
         "operationId": "poll_api_tasks__task_id__runner_control_commands_get",
@@ -17121,6 +18700,164 @@
         "summary": "Acknowledge",
         "tags": [
           "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-model/attempts/admit": {
+      "post": {
+        "operationId": "admit_model_api_tasks__task_id__runner_model_attempts_admit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelAttemptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAdmissionReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admit Model",
+        "tags": [
+          "runner-model"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-model/attempts/{attempt_id}/observation": {
+      "post": {
+        "operationId": "observation_api_tasks__task_id__runner_model_attempts__attempt_id__observation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelOutcomeSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOutcomeReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Observation",
+        "tags": [
+          "runner-model"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-model/fees": {
+      "get": {
+        "operationId": "fees_api_tasks__task_id__runner_model_fees_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeFeeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fees",
+        "tags": [
+          "runner-model"
         ]
       }
     },

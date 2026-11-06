@@ -119,6 +119,10 @@ class ChallengeBoardService:
         return identity.agent_id
 
     async def _task_access(self, conn, tid, identity, *, write=False, lead=False):
+        if getattr(identity, "runtime_context", None) is not None:
+            from bbx_blackboard.gateway_auth import validate_runtime_context
+
+            await validate_runtime_context(conn, tid, identity.runtime_context)
         task = await row(conn, s.tasks, tid)
         if task["mode"] != "ctf" or business_contract(task) != BOARD_CONTRACT:
             raise HTTPException(409, "Published challenge-board-v1 task required")
@@ -158,6 +162,10 @@ class ChallengeBoardService:
         return task, dict(member)
 
     async def _authority(self, conn, tid, cid, identity, *, write=False):
+        if getattr(identity, "runtime_context", None) is not None:
+            from bbx_blackboard.gateway_auth import validate_runtime_context
+
+            await validate_runtime_context(conn, tid, identity.runtime_context)
         task = await row(conn, s.tasks, tid)
         if task["mode"] != "ctf":
             raise HTTPException(409, "mode_mismatch")

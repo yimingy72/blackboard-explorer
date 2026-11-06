@@ -11,6 +11,8 @@ dependencies = [
     "azure-ai-projects>=2.6,<3",
     "google-auth[requests]>=2.58,<3",
     "mcp>=1.24,<2",
+    "starlette>=0.27,<1",
+    "uvicorn>=0.31.1,<1",
     "docker>=7,<8",
     "httpx>=0.28,<1",
     "opentelemetry-sdk==1.44.0",

@@ -19,11 +19,17 @@ async function configure(data) {
       binding_id: bid, expires_at: Date.now() / 1000 + 240, token: `private-model-${bid}` };
     h.credentials[spec.mcp_credential_ref] = { audience: "mcp", task_id: data.fence.task_id,
       binding_id: bid, expires_at: Date.now() / 1000 + 240, token: `private-mcp-${bid}` };
+    if (data.gateway_credentials?.[bid]) {
+      h.credentials[spec.model_credential_ref] = data.gateway_credentials[bid].model;
+      h.credentials[spec.mcp_credential_ref] = data.gateway_credentials[bid].mcp;
+    }
     h.state.leaseStates.set(bid, { binding: spec.binding, lease_expires_at: Date.now() / 1000 + 60 });
     h.state.prompts.set(bid, { prompt_revision: spec.prompt_revision, instructions: spec.instructions });
   }
   await writeFile(h.config.credential_file, JSON.stringify(h.credentials));
-  await h.configure({ control_url: data.control_url });
+  await h.configure({ control_url: data.control_url,
+    ...(data.model_proxy_url ? { model_proxy_url: data.model_proxy_url } : {}),
+    ...(data.mcp_gateway_url ? { mcp_gateway_url: data.mcp_gateway_url } : {}) });
 }
 try {
   await configure(JSON.parse(await readFile(process.argv[2], "utf8")));

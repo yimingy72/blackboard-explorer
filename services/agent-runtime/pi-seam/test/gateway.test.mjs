@@ -117,7 +117,7 @@ test("native tools confirm before dispatch and persist results before the next m
   assert.equal(executions, 1);
   const firstInvocation = toolInvocation(session, "tool-fixed", { taskId: "task", toolName: "record" });
   assert.equal((await store.read(firstInvocation)).state, "completed");
-  assert.ok(h.state.admissions[1].body.messages.some((message) => message.role === "tool" && message.content.includes("saved")));
+  assert.ok(JSON.parse(h.state.admissions[1].bodyJson).messages.some((message) => message.role === "tool" && message.content.includes("saved")));
   await tool.execute("tool-fixed", { value: "a" });
   assert.equal(executions, 1);
   await session.prompt("A new turn may reuse the provider's short tool-call ID.");
@@ -202,7 +202,7 @@ test("unknown tool persistence freezes model and new tool IDs, while a known bus
   h.assertClean();
 });
 
-test("a normal done without provider usage stays unknown instead of charging SDK default zero", async (t) => {
+test("SDK done without provider usage remains a non-accounting SDK observation", async (t) => {
   const h = await harness(t, (_request, response) => {
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.write(`data: ${JSON.stringify({ id: "no-usage", choices: [{ index: 0, delta: { content: "done" }, finish_reason: "stop" }] })}\n\n`);
@@ -211,9 +211,9 @@ test("a normal done without provider usage stays unknown instead of charging SDK
   const session = await h.session();
   await session.prompt("Complete without a usage receipt.");
   assert.equal(session.messages.at(-1).stopReason, "stop");
-  assert.equal(h.state.settlements[0].outcome, "unknown");
+  assert.equal(h.state.settlements[0].outcome, "completed");
   assert.equal(h.state.settlements[0].modelOutcome, "completed");
-  assert.equal(h.state.settlements[0].usage, null);
+  assert.equal(h.state.settlements[0].usage.totalTokens, 0);
   h.assertClean();
 });
 

@@ -68,13 +68,17 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   h.state.enableRenewals = true;
   h.state.hotPrompt = true;
   h.state.manualToolBarrier = true;
+  h.state.dropToolReplyFor = "two";
   await h.configure({ mcp_metadata_timeout_ms: 500 });
   h.state.toolBarrier = deferred();
   const firstSpec = h.spec("one");
   firstSpec.model = { ...firstSpec.model, input: ["text", "image"], reasoning: true, thinking_level: "high",
     thinking_level_map: { off: "none", high: "high" } };
+  const secondSpec = h.spec("two");
+  secondSpec.model = { ...secondSpec.model, reasoning: true, thinking_level: "high",
+    thinking_level_map: { off: "none", high: "high" } };
   h.command({ kind: "prepare", spec: firstSpec }, "prepare-one");
-  h.command({ kind: "prepare", spec: h.spec("two") }, "prepare-two");
+  h.command({ kind: "prepare", spec: secondSpec }, "prepare-two");
   const credentials = new MountedCredentials(h.config.credential_file, "task");
   runner = new TaskRunner(h.config, new HttpPlatform(h.config, credentials), credentials);
   running = runner.run().then(() => { exitCode = 0; }, () => { exitCode = 1; });
@@ -106,7 +110,14 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.ok(JSON.stringify(firstCalls[0].body.messages).includes("OLD ROLE one"));
   assert.ok(JSON.stringify(firstCalls[1].body.messages).includes("NEW ROLE one"));
   assert.equal(JSON.stringify(firstCalls[1].body.messages).includes("OLD ROLE one"), false);
+  assert.ok(JSON.stringify(firstCalls[1].body.messages).includes("one remote result"));
+  assert.equal(JSON.stringify(firstCalls[1].body.messages).includes("Untrusted transport copy"), false);
   assert.ok(firstCalls.every((call) => call.body.reasoning_effort === "high"));
+  const secondCalls = h.state.modelCalls.filter((call) => call.bindingId === "two");
+  assert.ok(secondCalls.every((call) => call.body.reasoning_effort === "high" && call.body.thinking === undefined));
+  assert.ok(secondCalls.every((call) => call.body.max_completion_tokens === secondSpec.model.max_output_tokens && call.body.max_tokens === undefined));
+  assert.ok(firstCalls.every((call) => call.body.max_completion_tokens === firstSpec.model.max_output_tokens && call.body.max_tokens === undefined));
+  assert.equal(h.state.droppedToolReply, true);
   assert.deepEqual(firstCalls.map((call) => call.body.tools.map((tool) => tool.function.name)), [["remote_echo"], ["remote_echo"]]);
   assert.deepEqual([...h.state.attempts.values()].filter((attempt) => attempt.binding.binding_id === "one")[0].model_snapshot.input, ["text", "image"]);
   for (const id of ["one", "two"]) {

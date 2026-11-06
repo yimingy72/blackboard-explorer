@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "FrozenExchangeRate": {
+      "additionalProperties": false,
+      "properties": {
+        "rate_cny_per_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Rate Cny Per Usd"
+        },
+        "source_ref": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "rounding": {
+          "const": "ROUND_DOWN",
+          "default": "ROUND_DOWN",
+          "title": "Rounding",
+          "type": "string"
+        },
+        "usd_decimal_places": {
+          "const": 9,
+          "default": 9,
+          "title": "Usd Decimal Places",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rate_cny_per_usd",
+        "source_ref",
+        "observed_at"
+      ],
+      "title": "FrozenExchangeRate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "accounting_source_id": {
+      "title": "Accounting Source Id",
+      "type": "string"
+    },
+    "currency": {
+      "const": "USD",
+      "default": "USD",
+      "title": "Currency",
+      "type": "string"
+    },
+    "confirmed_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Confirmed Usd"
+    },
+    "converted_cny": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Converted Cny"
+    },
+    "threshold_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Threshold Usd"
+    },
+    "overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Overage Usd"
+    },
+    "pending_attempts": {
+      "title": "Pending Attempts",
+      "type": "integer"
+    },
+    "hold_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hold Reason"
+    },
+    "exchange_rate": {
+      "$ref": "#/$defs/FrozenExchangeRate"
+    },
+    "catalog_revision": {
+      "title": "Catalog Revision",
+      "type": "string"
+    },
+    "native_used_high_water_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Used High Water Usd"
+    }
+  },
+  "required": [
+    "accounting_source_id",
+    "confirmed_usd",
+    "converted_cny",
+    "threshold_usd",
+    "overage_usd",
+    "pending_attempts",
+    "exchange_rate",
+    "catalog_revision"
+  ],
+  "title": "NativeFeeView",
+  "type": "object"
+}

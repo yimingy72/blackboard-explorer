@@ -52,6 +52,7 @@ from bbx_blackboard.auth import (
     require_user_or_service,
 )
 from bbx_blackboard.billing import router as billing_router
+from bbx_blackboard.business_mcp import BusinessMCP
 from bbx_blackboard.challenge_board_api import router as challenge_board_router
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.ctf import CtfService
@@ -69,6 +70,10 @@ from bbx_blackboard.progress import router as progress_router
 from bbx_blackboard.runner_control import RunnerControl
 from bbx_blackboard.runner_control_api import management as runner_management_router
 from bbx_blackboard.runner_control_api import router as runner_control_router
+from bbx_blackboard.runner_gateway import RunnerGateway
+from bbx_blackboard.runner_gateway_api import model_router as runner_model_router
+from bbx_blackboard.runner_gateway_api import private_router as runner_gateway_private_router
+from bbx_blackboard.runner_gateway_api import tool_router as runner_tool_router
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
@@ -553,6 +558,7 @@ def create_app(
         app.state.board_service = BoardService(app.state.engine, app.state.objects)
         app.state.ctf_service = CtfService(app.state.engine, app.state.objects)
         app.state.runner_control = RunnerControl(app.state.engine)
+        app.state.runner_gateway = RunnerGateway(app.state.engine, settings)
         app.state.conversations = Conversations(app.state.engine)
         app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
         app.state.profile_store = ProfileStore(app.state.engine)
@@ -568,10 +574,16 @@ def create_app(
             app.state.dispatcher = SSEDispatcher(settings)
         await app.state.dispatcher.start()
         cleanup = asyncio.create_task(app.state.input_groups.run_cleanup())
+        native_fees = asyncio.create_task(app.state.runner_gateway.native.run())
         await app.state.native_cache.initialize()
         try:
-            yield
+            async with app.state.business_mcp.run():
+                yield
         finally:
+            native_fees.cancel()
+            with suppress(asyncio.CancelledError):
+                await native_fees
+            await app.state.runner_gateway.native.admin.close()
             cleanup.cancel()
             with suppress(asyncio.CancelledError):
                 await cleanup
@@ -595,6 +607,8 @@ def create_app(
     )
     app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
     app.state.runner_control = RunnerControl(engine) if engine is not None else None
+    app.state.runner_gateway = RunnerGateway(engine, settings) if engine is not None else None
+    app.state.business_mcp = BusinessMCP(app)
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.input_groups = (
         InputGroups(engine, objects) if engine is not None and objects is not None else None
@@ -633,6 +647,10 @@ def create_app(
                 pass
         if re.fullmatch(r"/api/tasks/[0-9a-fA-F-]{36}/runner-control(?:/.*)?", request.url.path):
             # This fixed router uses an independent audience and never constructs a Principal.
+            return None
+        if re.fullmatch(
+            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp)(?:/.*)?", request.url.path
+        ):
             return None
         if request.app.state.engine is None and request.app.state.ctf_service is None:
             return None
@@ -1332,6 +1350,9 @@ def create_app(
     @app.post("/api/tasks/{task_id}/purge", tags=["system"])
     async def purge_task(request: Request, task_id: UUID) -> dict[str, bool]:
         require_service(request)
+        gateway = request.app.state.runner_gateway
+        if gateway is not None:
+            await gateway.native.retire(task_id)
         result = await _conversations(request).purge(task_id, request.app.state.objects)
         await request.app.state.workspace_cache.invalidate_task(task_id)
         await request.app.state.native_cache.invalidate_task(task_id)
@@ -2016,6 +2037,10 @@ def create_app(
     app.include_router(challenge_board_router)
     app.include_router(runner_control_router)
     app.include_router(runner_management_router)
+    app.include_router(runner_model_router)
+    app.include_router(runner_tool_router)
+    app.include_router(runner_gateway_private_router)
+    app.mount("/api/tasks/{task_id}/business-mcp", app.state.business_mcp)
     app.include_router(platform_router)
     app.include_router(settings_router)
     app.include_router(progress_router)

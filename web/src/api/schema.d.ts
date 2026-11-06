@@ -1449,6 +1449,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/bindings/{binding_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Credentials */
+        post: operations["credentials_api_tasks__task_id__ctf_runtime_runner_gateway_bindings__binding_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch */
+        post: operations["dispatch_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transport */
+        post: operations["transport_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__transport_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Native Model */
+        get: operations["native_model_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_model_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Budget */
+        post: operations["prepare_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Budget */
+        post: operations["publish_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
         parameters: {
             query?: never;
@@ -1874,6 +1976,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admit Tool */
+        post: operations["admit_tool_api_tasks__task_id__runner_control_bindings__binding_id__tools_admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool Result */
+        post: operations["tool_result_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/unknown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool Unknown */
+        post: operations["tool_unknown_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__unknown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/runner-control/commands": {
         parameters: {
             query?: never;
@@ -1902,6 +2055,57 @@ export interface paths {
         put?: never;
         /** Acknowledge */
         post: operations["acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-model/attempts/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admit Model */
+        post: operations["admit_model_api_tasks__task_id__runner_model_attempts_admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-model/attempts/{attempt_id}/observation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Observation */
+        post: operations["observation_api_tasks__task_id__runner_model_attempts__attempt_id__observation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-model/fees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fees */
+        get: operations["fees_api_tasks__task_id__runner_model_fees_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3890,6 +4094,59 @@ export interface components {
              */
             value: string;
         };
+        /** FrozenExchangeRate */
+        "FrozenExchangeRate-Input": {
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Rate Cny Per Usd */
+            rate_cny_per_usd: number | string;
+            /**
+             * Rounding
+             * @default ROUND_DOWN
+             * @constant
+             */
+            rounding: "ROUND_DOWN";
+            /** Source Ref */
+            source_ref: string;
+            /**
+             * Usd Decimal Places
+             * @default 9
+             * @constant
+             */
+            usd_decimal_places: 9;
+        };
+        /** FrozenExchangeRate */
+        "FrozenExchangeRate-Output": {
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Rate Cny Per Usd */
+            rate_cny_per_usd: string;
+            /**
+             * Rounding
+             * @default ROUND_DOWN
+             * @constant
+             */
+            rounding: "ROUND_DOWN";
+            /** Source Ref */
+            source_ref: string;
+            /**
+             * Usd Decimal Places
+             * @default 9
+             * @constant
+             */
+            usd_decimal_places: 9;
+        };
+        /** GatewayCredentialsRequest */
+        GatewayCredentialsRequest: {
+            /** Expected Epoch */
+            expected_epoch: number;
+        };
         /** GraceBody */
         GraceBody: {
             /** Expected Derive Round */
@@ -4254,6 +4511,56 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** ModelAdmissionReceipt */
+        ModelAdmissionReceipt: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Call Id */
+            call_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Digest */
+            request_digest: string;
+        };
+        /** ModelAttemptRequest */
+        ModelAttemptRequest: {
+            /** Attempt Id */
+            attempt_id: string;
+            binding: components["schemas"]["RunnerBinding"];
+            /** Body Digest */
+            body_digest: string;
+            /** Body Json */
+            body_json: string;
+            /** Call Id */
+            call_id: string;
+            fence: components["schemas"]["RunnerFence"];
+            journal: components["schemas"]["JournalCursor"];
+            model_snapshot: components["schemas"]["EffectiveRunnerModel"];
+            /** Profile Revision */
+            profile_revision: number;
+            /** Prompt Revision */
+            prompt_revision: number;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /**
+             * Purpose
+             * @enum {string}
+             */
+            purpose: "turn" | "summary";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
         /** ModelCatalogResult */
         ModelCatalogResult: {
             /** Models */
@@ -4459,6 +4766,59 @@ export interface components {
             /** Supports Vision */
             supports_vision?: boolean | null;
         };
+        /** ModelOutcomeReceipt */
+        ModelOutcomeReceipt: {
+            /** Attempt Id */
+            attempt_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Digest */
+            request_digest: string;
+        };
+        /**
+         * ModelOutcomeSubmission
+         * @description SDK observations only; native gateway evidence owns fees and accounting outcomes.
+         */
+        ModelOutcomeSubmission: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Binding Id */
+            binding_id: string;
+            /** Call Id */
+            call_id: string;
+            fence: components["schemas"]["RunnerFence"];
+            /** Http Status */
+            http_status: number | null;
+            /**
+             * Model Outcome
+             * @enum {string}
+             */
+            model_outcome: "completed" | "error" | "aborted";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "unknown" | "not_sent";
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** ModelSet */
         "ModelSet-Input": {
             close: components["schemas"]["ModelConfig-Input"];
@@ -4470,6 +4830,176 @@ export interface components {
             close: components["schemas"]["ModelConfig-Output"];
             derive: components["schemas"]["ModelConfig-Output"];
             explore: components["schemas"]["ModelConfig-Output"];
+        };
+        /** NativeBudgetBinding */
+        NativeBudgetBinding: {
+            /** Accounting Source Id */
+            accounting_source_id: string;
+            /** Budget Name */
+            budget_name: string;
+            exchange_rate: components["schemas"]["FrozenExchangeRate-Output"];
+            /** Key Fingerprint */
+            key_fingerprint: string;
+            /** Key Name */
+            key_name: string;
+            /** Native Resource Id */
+            native_resource_id?: string | null;
+            /**
+             * Publication State
+             * @enum {string}
+             */
+            publication_state: "prepared" | "creating" | "creating_unknown" | "ready" | "retired";
+            /** Selected Models */
+            selected_models: string[];
+            /** Task Id */
+            task_id: string;
+            /** Threshold Usd */
+            threshold_usd: string;
+        };
+        /** NativeBudgetPrepare */
+        NativeBudgetPrepare: {
+            /** Accounting Source Id */
+            accounting_source_id: string;
+            exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Selected Models */
+            selected_models: string[];
+        };
+        /** NativeFeeView */
+        NativeFeeView: {
+            /** Accounting Source Id */
+            accounting_source_id: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Confirmed Usd */
+            confirmed_usd: string;
+            /** Converted Cny */
+            converted_cny: string;
+            /**
+             * Currency
+             * @default USD
+             * @constant
+             */
+            currency: "USD";
+            exchange_rate: components["schemas"]["FrozenExchangeRate-Output"];
+            /** Hold Reason */
+            hold_reason?: string | null;
+            /** Native Used High Water Usd */
+            native_used_high_water_usd?: string | null;
+            /** Overage Usd */
+            overage_usd: string;
+            /** Pending Attempts */
+            pending_attempts: number;
+            /** Threshold Usd */
+            threshold_usd: string;
+        };
+        /** NativeModelDispatchGrant */
+        NativeModelDispatchGrant: {
+            /** Accounting Source Id */
+            accounting_source_id?: string | null;
+            /** Attempt Id */
+            attempt_id: string;
+            /** Authorized Wait Until Ms */
+            authorized_wait_until_ms?: number | null;
+            /** Body Digest */
+            body_digest: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /** Dispatch Id */
+            dispatch_id?: string | null;
+            /** Native Gateway Url */
+            native_gateway_url?: string | null;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Send Allowed */
+            send_allowed: boolean;
+            /** State */
+            state: string;
+            /** Task Gateway Key */
+            task_gateway_key?: string | null;
+            /** Trusted Attributes */
+            trusted_attributes?: {
+                [key: string]: string;
+            };
+        };
+        /** NativeModelDispatchRequest */
+        NativeModelDispatchRequest: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Binding Id */
+            binding_id: string;
+            /** Body Digest */
+            body_digest: string;
+            /** Call Id */
+            call_id: string;
+            fence: components["schemas"]["RunnerFence"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** NativeModelSelection */
+        NativeModelSelection: {
+            /** Accounting Source Id */
+            accounting_source_id: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Model Alias */
+            model_alias: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            sdk_model: components["schemas"]["EffectiveRunnerModel"];
+        };
+        /** NativeTransportObservation */
+        NativeTransportObservation: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Dispatch Id */
+            dispatch_id: string;
+            /** Http Status */
+            http_status?: number | null;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "response_ended" | "disconnected" | "not_sent";
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** NativeTransportReceipt */
+        NativeTransportReceipt: {
+            /** Attempt Id */
+            attempt_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /** Dispatch Id */
+            dispatch_id: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Digest */
+            request_digest: string;
         };
         /** OperationAck */
         OperationAck: {
@@ -5688,6 +6218,96 @@ export interface components {
             result_uri?: string | null;
             /** Tool */
             tool: string;
+        };
+        /** ToolInvocation */
+        ToolInvocation: {
+            /** Arguments Digest */
+            arguments_digest: string;
+            /** Arguments Json */
+            arguments_json: string;
+            /** Assistant Entry Id */
+            assistant_entry_id: string;
+            binding: components["schemas"]["RunnerBinding"];
+            fence: components["schemas"]["RunnerFence"];
+            /** Invocation Id */
+            invocation_id: string;
+            journal: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Tool Name */
+            tool_name: string;
+        };
+        /** ToolPermit */
+        ToolPermit: {
+            /** Arguments Digest */
+            arguments_digest: string;
+            /** Authorized Wait Until Ms */
+            authorized_wait_until_ms?: number | null;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "admitted" | "completed" | "unknown";
+            /** Invocation Id */
+            invocation_id: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+        };
+        /** ToolResultConfirmation */
+        ToolResultConfirmation: {
+            invocation: components["schemas"]["ToolInvocation"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** ToolResultReceipt */
+        ToolResultReceipt: {
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /** Invocation Id */
+            invocation_id: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Result Digest */
+            result_digest: string;
+            /** Result Json */
+            result_json: string;
+        };
+        /** ToolUnknownSubmission */
+        ToolUnknownSubmission: {
+            invocation: components["schemas"]["ToolInvocation"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
         };
         /** TrafficCapture */
         TrafficCapture: {
@@ -9743,6 +10363,213 @@ export interface operations {
             };
         };
     };
+    credentials_api_tasks__task_id__ctf_runtime_runner_gateway_bindings__binding_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayCredentialsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeModelDispatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeModelDispatchGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transport_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__transport_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeTransportObservation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeTransportReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    native_model_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_model_get: {
+        parameters: {
+            query: {
+                model_alias: string;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeModelSelection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeBudgetPrepare"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeBudgetBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeBudgetBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post: {
         parameters: {
             query?: never;
@@ -10627,6 +11454,116 @@ export interface operations {
             };
         };
     };
+    admit_tool_api_tasks__task_id__runner_control_bindings__binding_id__tools_admit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPermit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_result_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolResultConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_unknown_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__unknown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolUnknownSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPermit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     poll_api_tasks__task_id__runner_control_commands_get: {
         parameters: {
             query?: {
@@ -10687,6 +11624,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationAck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admit_model_api_tasks__task_id__runner_model_attempts_admit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelAdmissionReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observation_api_tasks__task_id__runner_model_attempts__attempt_id__observation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelOutcomeSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelOutcomeReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fees_api_tasks__task_id__runner_model_fees_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeFeeView"];
                 };
             };
             /** @description Validation Error */

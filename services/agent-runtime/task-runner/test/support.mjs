@@ -29,7 +29,7 @@ export async function fixture(t, ids = ["one"]) {
   const directory = await mkdtemp(join(root, ".test-runs/run-"));
   const fence = { task_id: "task", runner_id: "runner", pod_uid: "pod", epoch: 1 };
   const state = { commands: [], receipts: [], journal: new Map(), confirmations: [], leases: [], attempts: new Map(),
-    modelCalls: [], modelReceipts: [], invocations: new Map(), toolCalls: [], connections: [], errors: [],
+    modelCalls: [], modelReceipts: [], invocations: new Map(), toolResults: new Map(), toolCalls: [], connections: [], errors: [],
     prompts: new Map(), leaseStates: new Map(), renewalHistory: [], lateRenewals: [],
     holdApplied: false, appliedGate: deferred(), appliedEntered: deferred(), actors: [], dropPrepare: false, dropped: false };
   const token = (binding, audience) => `private-${audience}-${binding}`;
@@ -47,7 +47,9 @@ export async function fixture(t, ids = ["one"]) {
       const body = chunks.length ? JSON.parse(raw) : undefined;
       const wireDigest = digest(raw);
       if (url.pathname.startsWith("/blackboard/")) {
-        assert.equal(request.headers.authorization, `Bearer ${token("task", "control")}`);
+        const bindingId = url.pathname.split("/")[3];
+        assert.equal(request.headers.authorization, url.pathname.includes("/tools/")
+          ? `Bearer ${token(bindingId, "mcp")}` : `Bearer ${token("task", "control")}`);
         if (url.pathname === "/blackboard/commands") {
           await new Promise((resolve) => setTimeout(resolve, 25));
           const renewals = state.lateRenewals.splice(0);
@@ -71,7 +73,6 @@ export async function fixture(t, ids = ["one"]) {
           send(response, { protocol: PROTOCOL, confirmed: true, request_id: body.request_id, status: body.status, receipt_digest: wireDigest });
           return;
         }
-        const bindingId = url.pathname.split("/")[3];
         if (url.pathname.endsWith("/acquire")) {
           validate("SessionLeaseRequest", body);
           state.leases.push(body);
@@ -114,8 +115,11 @@ export async function fixture(t, ids = ["one"]) {
           return;
         }
         if (url.pathname.endsWith("/result")) {
-          assert.equal(body.result_digest, digest(body.result_json));
-          send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id, result_digest: body.result_digest });
+          validate("ToolResultConfirmation", body);
+          const resultJson = state.toolResults.get(body.invocation.invocation_id);
+          assert.equal(typeof resultJson, "string");
+          send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id,
+            result_json: resultJson, result_digest: digest(resultJson) });
           return;
         }
         if (url.pathname.endsWith("/unknown")) { send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id,
@@ -141,6 +145,9 @@ export async function fixture(t, ids = ["one"]) {
         if (url.pathname.endsWith("/chat/completions")) {
           assert.equal(request.headers["x-bbx-runtime-epoch"], String(fence.epoch));
           const attempt = state.attempts.get(request.headers["x-bbx-attempt-id"]);
+          assert.equal(raw.toString("utf8"), attempt.body_json);
+          assert.equal(wireDigest, attempt.body_digest);
+          assert.equal(request.headers["x-bbx-body-digest"], attempt.body_digest);
           assert.equal(attempt.binding.binding_id, bindingId);
           assert.equal(attempt.sdk_session_id, request.headers["x-bbx-sdk-session-id"]);
           assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
@@ -183,7 +190,12 @@ export async function fixture(t, ids = ["one"]) {
             }
             await state.toolBarrier.promise;
           }
-          result = { content: [{ type: "text", text: `${bindingId} remote result` }] };
+          const saved = { content: [{ type: "text", text: `${bindingId} remote result` }] };
+          state.toolResults.set(invocation.invocation_id, jsonText(saved).replace(/}$/, ',"saved_number":1.0}'));
+          if (state.dropToolReplyFor === bindingId && !state.droppedToolReply) {
+            state.droppedToolReply = true; response.destroy(); return;
+          }
+          result = { content: [{ type: "text", text: "Untrusted transport copy" }] };
         } else throw new Error("Unexpected MCP method");
         send(response, { jsonrpc: "2.0", id: body.id, result }, { "mcp-session-id": sessionId }); return;
       }

@@ -2,7 +2,8 @@
   "additionalProperties": false,
   "properties": {
     "id": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "maxLength": 512,
+      "minLength": 1,
       "title": "Id",
       "type": "string"
     },

@@ -5,13 +5,16 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import jwt
 from fastapi import HTTPException, Request
 
 from bbx_blackboard.settings import Settings
+
+if TYPE_CHECKING:
+    from bbx_blackboard.gateway_auth import RuntimeBusinessContext
 
 COOKIE_NAME = "bbx_session"
 
@@ -37,6 +40,7 @@ class Principal:
     progress_job_id: UUID | None = None
     progress_claim_token: UUID | None = None
     progress_run_number: int | None = None
+    runtime_context: RuntimeBusinessContext | None = None
 
 
 def issue_agent_token(

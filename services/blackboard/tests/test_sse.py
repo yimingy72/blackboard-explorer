@@ -184,3 +184,127 @@ async def test_sse_catches_notification_during_backfill_query() -> None:
     finally:
         await stream.aclose()
         await dispatcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_optional_subscription_does_not_wait_for_listener_ready() -> None:
+    dispatcher = SSEDispatcher(Settings.model_construct())
+    tid = uuid4()
+    channel = f"bbx_task_{tid.hex}"
+
+    async def subscribe():
+        async with dispatcher.subscribe(tid):
+            pytest.fail("default SSE subscription must wait for readiness")
+
+    waiting = asyncio.create_task(subscribe())
+    try:
+        await until(lambda: channel in dispatcher._subscribers)
+        async with dispatcher.subscribe(tid, wait_ready=False) as wake:
+            assert wake.empty() and not waiting.done()
+        assert len(dispatcher._subscribers[channel]) == 1
+    finally:
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+    assert not dispatcher._subscribers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", ["register", "cleanup", "lock", "entry_lock"])
+async def test_optional_subscription_bounds_listener_io_and_cleans_queues(blocked: str) -> None:
+    tid = uuid4()
+    channel = f"bbx_task_{tid.hex}"
+
+    class StalledConnection(FakeConnection):
+        def __init__(self) -> None:
+            super().__init__()
+            self.server_listeners: set[str] = set()
+            self.stalled = True
+            self.uncertain = False
+
+        async def add_listener(self, channel: str, callback: Callable) -> None:
+            self.server_listeners.add(channel)
+            if channel == f"bbx_task_{tid.hex}" and blocked == "register" and self.stalled:
+                self.uncertain = True
+                assert channel not in self.listeners
+                await asyncio.Event().wait()
+            await super().add_listener(channel, callback)
+
+        async def remove_listener(self, channel: str, callback: Callable) -> None:
+            if channel not in self.listeners:
+                return
+            del self.listeners[channel]
+            if channel == f"bbx_task_{tid.hex}" and blocked == "cleanup" and self.stalled:
+                self.uncertain = True
+                assert channel in self.server_listeners
+                await asyncio.Event().wait()
+            self.server_listeners.discard(channel)
+
+        def terminate(self) -> None:
+            self.closed = True
+            self.listeners.clear()
+            self.server_listeners.clear()
+            self.fail()
+
+        async def close(self) -> None:
+            self.terminate()
+
+    first, second = StalledConnection(), StalledConnection()
+    second.stalled = False
+    connections = iter((first, second))
+
+    async def connect():
+        return next(connections)
+
+    dispatcher = SSEDispatcher(Settings.model_construct(), connect=connect)
+    sse_tid = uuid4()
+    sse_channel = f"bbx_task_{sse_tid.hex}"
+    service = FakeService(first, sse_channel)
+    service.events_log.append({"version": 1, "type": "task.created", "payload": {}})
+    stream = stream_events(service, dispatcher, sse_tid)
+    await dispatcher.start()
+    pending = None
+    try:
+        assert (await anext(stream))["id"] == "1"
+        for wake in dispatcher._subscribers[sse_channel]:
+            while not wake.empty():
+                wake.get_nowait()
+        uncertain = blocked in {"register", "cleanup"}
+        if uncertain:
+            service.listener = second
+        service.events_log.append({"version": 2, "type": "fact.posted", "payload": {}})
+        pending = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        assert not pending.done()
+        try:
+            if blocked == "entry_lock":
+                await dispatcher._lock.acquire()
+            async with asyncio.timeout(0.4):
+                async with dispatcher.subscribe(tid, wait_ready=False):
+                    if blocked == "lock":
+                        await dispatcher._lock.acquire()
+            assert channel not in dispatcher._subscribers
+        finally:
+            if dispatcher._lock.locked():
+                dispatcher._lock.release()
+        assert first.closed == uncertain and first.uncertain == uncertain
+        if uncertain:
+            assert not first.listeners and not first.server_listeners
+        else:
+            assert not pending.done()
+            first.stalled = False
+            first.emit(sse_channel)
+        assert (await asyncio.wait_for(pending, 0.5))["id"] == "2"
+        assert service.queries[-1] == (1, None)
+        async with dispatcher.subscribe(uuid4(), wait_ready=False):
+            assert channel not in first.server_listeners | second.server_listeners
+            assert channel not in dispatcher._listening
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        await stream.aclose()
+        await dispatcher.stop()
+    assert not first.server_listeners and not second.server_listeners
+    assert not dispatcher._subscribers

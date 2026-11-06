@@ -105,12 +105,28 @@ class TaskBoardService(ChallengeBoardService):
     async def challenges(self, tid, identity, limit=100, offset=0):
         async with self.repo.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
-            await self._task_access(conn, tid, identity)
+            _, member = await self._task_access(conn, tid, identity)
             scope = (
                 await knowledge_event_scope(self.repo, conn, tid, identity.agent_id)
                 if identity.kind == "agent"
                 else None
             )
+            runtime = getattr(identity, "runtime_context", None)
+            if (
+                scope is not None
+                and runtime is not None
+                and member is not None
+                and member["role"] == "teammate"
+            ):
+                business = (
+                    await conn.execute(
+                        select(s.runner_bindings.c.business).where(
+                            s.runner_bindings.c.task_id == tid,
+                            s.runner_bindings.c.id == runtime.identity.binding_id,
+                        )
+                    )
+                ).scalar_one()
+                scope &= {business["challenge_id"]}
             query = select(s.ctf_challenges.c.data).where(s.ctf_challenges.c.task_id == tid)
             if scope is not None:
                 query = query.where(s.ctf_challenges.c.id.in_(scope))
@@ -177,5 +193,11 @@ class TaskBoardService(ChallengeBoardService):
             await self.repo.lock(conn, tid)
             await self._task_access(conn, tid, identity, write=True, lead=True)
         return await self.ctf.request_finish(
-            tid, identity.agent_id, request_id, conclusion, identity.generation, identity.turn_id
+            tid,
+            identity.agent_id,
+            request_id,
+            conclusion,
+            identity.generation,
+            identity.turn_id,
+            runtime_context=identity.runtime_context,
         )

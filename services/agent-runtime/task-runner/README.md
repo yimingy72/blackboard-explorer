@@ -2,7 +2,7 @@
 
 本目录是生产 Node 入口，Pi SDK 是唯一 Agent 循环。控制直接连接 Blackboard 持久命令入口，模型连接 Runtime 准入代理，工具只连接 agentgateway 后的 MCP。没有本机 bash/read/write/edit、stdio MCP、动态扩展、个人配置或通用执行接口。
 
-本批完成 Runner 侧和可插入 HTTP 回执接口。Blackboard 的数据库事务、鉴权/lease、Runtime 模型代理及部署接线尚未合入，因此目前不能宣称单题全链路已完成。
+P3b 已接持久控制、输入和 journal 权威；P3c 正接 Runtime 模型代理与可信业务 MCP。本目录的独立测试和代理边界测试已通过，真实 PostgreSQL/Node 组合由 P3c 组合候选验证。V1 start 保护仍保留，Kubernetes、真实 Sandbox MCP 与完整公平调度另批，当前不宣称生产单题全链路已开放。
 
 ```sh
 cd services/agent-runtime/task-runner
@@ -24,6 +24,8 @@ bootstrap 含 `fence`、Blackboard/模型代理/MCP 地址、`control_credential
 Runner 只接受显式 `business_contract: challenge-board-v1`，prepare 回执声明编译支持列表。该声明是能力信息；后续服务端还须核 Task 冻结合同、可信 Runner/readiness、当前 lease，不能仅凭调用方字符串放行。缺合同的旧 Task 由 legacy 路径处理。
 
 控制 request_id 只标识控制操作。业务 operation_id/submission_id 仍由黑板服务稳定生成，platform call_id 保留关联；Runner 的模型 call/attempt 和 MCP invocation 只追踪调用，不生成业务提交/执行权威，也不改写 MCP args.operation_id。
+
+模型准入只传 `body_json` 和 `body_digest`：body_json 就是 SDK 最终 fetch 的原文，摘要覆盖确切 UTF-8，实际 HTTP body 不再解析后序列化。原文上限 8 MiB、admit 元数据上限 17 MiB；服务端拒重复 JSON key 和非有限数值。账本只存摘要、必要准入/计费快照及 journal 引用，不复制一份模型历史。公开 SDK 固定使用 OpenAI 兼容 gateway 前端，snapshot 从服务端 native 目录派生；上游 provider 协议/凭据/用量归一化交 agentgateway，Runner 不维护 DeepSeek 等 provider 分支。代理不改写已准入原文。
 
 binding.generation 是分配/身份版本，不能当作 legacy CtfMember 每次 claim_turn 推进的 generation。Node 只携平台 binding 引用；后端须按当前 binding 与 runtime epoch 映射并核对真实业务 Principal 的 generation/turn_id。业务 turn 推进或旧回执结算不能改写原 prepare、重建 SDK 历史，也不能让旧 epoch 凭据继续写。
 
@@ -49,11 +51,11 @@ binding.generation 是分配/身份版本，不能当作 legacy CtfMember 每次
 
 input 沿现有平台上限为 20,000 个字符，并在接收前检查原文有效 UTF-8 和 JSON 编码不超过 128 KiB；最坏控制字符转义也远低于 native journal 的 2 MiB 单记录上限。不会先 accepted 再因可预测的编码膨胀失败。
 
-SessionSpec 携带可信有效 model 快照：当前仅 OpenAI-completions、text/image 模态、reasoning、thinking_level 与 thinking_level_map。公开 SDK 使用所选值，若 SDK 不能原样满足或传入本路线不支持的显式 thinking_budgets，则拒绝 prepare。SDK cost 固定为计数展示中性值，不能作为平台 CNY 账本。
+SessionSpec 携带可信有效 model 快照：当前仅 OpenAI-completions、text/image 模态、reasoning、thinking_level 与 thinking_level_map。公开 SDK 使用所选值，若 SDK 不能原样满足或传入本路线不支持的显式 thinking_budgets，则拒绝 prepare。SDK cost 固定为计数展示中性值，SDK outcome/usage 只作观察，不能作为原生 USD 费用或平台换算 CNY 账本。
 
 角色提示词每次主模型边界都按 binding 条件读取最新已发布版本，丢通知仍可发现更新；新版本写入原生 system 消息/版本标记并确认后才发送本次请求。只替换 bbx_role 指令，不改模型、工具、Skills 或环境，不重放工具；模型准入记录固定 profile_revision 和动态 prompt_revision。Pi 自身压缩模板保持其用途，仍经过同一模型/日志准入。
 
-模型前、工具前都确认 journal；错误和 unknown 共用会话冻结闩锁。工具 invocation 从 Task/binding、SDK session、持久 assistant entry、原 tool_call_id 和工具名派生，经平台准入后放进 MCP 的独立 `_meta`，不依赖全局 current。工具结果须有匹配的平台持久回执才交回 Pi；未知状态保持冻结，不静默重放。模型和工具隐式重试、预热均关闭。
+模型前、工具前都确认 journal；错误和 unknown 共用会话冻结闩锁。工具 invocation 从 Task/binding、SDK session、持久 assistant entry、原 tool_call_id 和工具名派生，经平台准入后放进 MCP 的独立 `_meta`，不依赖全局 current。工具准入/结果查询使用独立 aud=mcp 凭据。可信 host 自己执行并先保存结果，Node 的 POST result 只携 invocation 确认，不能上传一个 MCP 对象创建完成证据；Pi 只使用该响应的持久 `result_json/result_digest`。tools/call 回包丢失时也只查询原 invocation 的保存结果，不重发 MCP；仍未决才冻结。模型和工具隐式重试、预热均关闭。
 
 MCP 初始化/目录读取使用独立短元数据超时（bootstrap 默认 15 秒）；tools/call 则使用平台 Permit 的 authorized_wait_until_ms，通过官方 McpRequestOptions.timeoutMs 等待剩余获准时间。期限由后端结合任务截止时间计算，模型参数不能延长它。abort 仍可独立取消等待；等待超时只表示结果 unknown，不证明远端命令已停止。
 
@@ -78,3 +80,17 @@ lease_expires_at 是短期会话运行许可，不是 Task deadline 或全局 Ru
 `npm test` 只有四个必要场景：恢复前缀/坏尾完整性、普通增量与丢卷拒绝；Python↔Node JSON 文本摘要互验；独立进程 prepare ACK 丢失重启、原平台最大输入、确认及 abort/close；两个真实会话并发身份隔离，同时验证 prompt 热更、非默认 high reasoning、短许可续期/过期拒绝复活、受信工具等待和逐 binding 资源释放。双会话场景在测试进程直接使用生产 TaskRunner 类，便于核 SDK/MCP/FD 和进行中的 prepare 已释放；独立进程场景仍启动真实生产入口。全部模型、MCP 与平台回执使用本地随机端口假服务，不依赖真实模型、靶场或 Docker；摘要互验需要开发工作区已安装的 uv/Python 依赖。
 
 P1 的模型边界已改为引用本目录生产实现；其全读 hash、FileReceiptStore 仍只保留在 P1 测试 fixture。完整阶段说明见 [P3a 报告](../../../docs/tasks/P3a-SDK-Runner-20261106-report.md)。
+
+## Native 模型薄入口（P3c）
+
+`bbx_runtime.runner_proxy.RunnerModelProxy` 在现 Runtime 进程提供上述三个模型路由，`runner_proxy_port` 默认空值；启用时必须配置固定 `runner_gateway_url` data-plane 根地址，只向它的 `/v1/chat/completions` 发送。默认进程内最多 8 个模型传输，满时 429，无长队列。未新增微服务/Agent 循环、native admin 客户端或第二预算执行器。
+
+Blackboard 先持久关联并发布该 Task 唯一共享 key，从 native 目录派生 SDK snapshot；预算未 ready 不准入，丢创建 ACK 不换 key/复制额度。Runtime 用 binding/epoch 短身份向 Blackboard 请求一次 dispatch，私有 grant 中的 Task key 和七项可信归属只在本次服务请求内使用，覆盖 Caller 伪造头，不能进入 Node、journal 或命令。固定 URL/摘要/fence 不符不发送；失败和不确定不重试原 attempt。
+
+Runtime 删除 provider 凭据读取、provider/SSE/usage 解析、严格 routefile/硬 context/价格证明和计价 capture。请求及响应原字节、HTTP 状态和编码原样透传；不按 `budget_exceeded` 字符串自己终止 Task，不把普通 provider 429混为本地阈值。传输结束只给 Blackboard 关联观察，2秒有界，不等待费用日志，也不能据此计费、解未知费用或重置 CAS。SDK 语义 outcome/usage 同样只观察，缺 provider usage 的 SDK done 不证明已知零。
+
+真实费用、共享 key、FX、native status/log 消费、去重与 stop/hold 由 Blackboard/native gateway 接口承担。缺行/usage/cost待核；native counter 重启回退不能撤销已知费用。legacy CNY 与新 native USD 明确区分，不能隐式1:1。
+
+响应 `__call__`、生成器和 Runtime.close 共用最终收尾；response.start 失败或生成器未启动也保留 active owner，关闭FD并有界记录传输观察。只关闭本地连接不证明 native/provider 已停或费用为0。
+
+MCP 保留官方低层客户端、journal/admit、受信 host 保存结果与确认/不重派 gate。原生 Virtual MCP能力已做隔离probe，但产品 issuer/角色与命名空间→backend原名的唯一冻结映射仍是下一切片门槛，当前不宣称全产品MCP已统一或V1 start已开放。详见 [P3c 薄入口报告](../../../docs/tasks/P3c-Runtime-Proxy-20261106-report.md)和[费用阈值方案](../../../docs/tasks/P3c-Agentgateway费用阈值调整-20261106.md)。

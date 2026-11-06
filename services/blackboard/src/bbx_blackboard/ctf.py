@@ -2863,10 +2863,22 @@ class CtfService(
             }
 
     async def request_finish(
-        self, tid, actor, request_id, conclusion, generation=None, turn_id=None
+        self,
+        tid,
+        actor,
+        request_id,
+        conclusion,
+        generation=None,
+        turn_id=None,
+        *,
+        runtime_context=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            if runtime_context is not None:
+                from bbx_blackboard.gateway_auth import validate_runtime_context
+
+                await validate_runtime_context(conn, tid, runtime_context)
             await self._actor(conn, tid, actor, generation, turn_id)
             require(actor in {"lead", "user", "system", "service"}, "Only Lead can finish")
             control = task["ctf_control"]

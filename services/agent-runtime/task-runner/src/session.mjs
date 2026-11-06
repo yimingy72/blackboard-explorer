@@ -97,7 +97,8 @@ export class RunnerSession {
       retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } });
     const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
       allowModelNetwork: false, refreshOnCreate: false });
-    runtime.registerProvider("bbx-gateway", { api: "openai-completions", baseUrl: this.config.model_proxy_url,
+    const sdkProvider = "openai";
+    runtime.registerProvider(sdkProvider, { api: "openai-completions", baseUrl: this.config.model_proxy_url,
       apiKey: "scoped-gateway-identity", models: [{ id: model.id, name: model.id,
         reasoning: model.reasoning, input: [...model.input], contextWindow: model.context_window, maxTokens: model.max_output_tokens,
         ...(model.thinking_level_map ? { thinkingLevelMap: model.thinking_level_map } : {}),
@@ -127,7 +128,7 @@ export class RunnerSession {
     });
     this.assertLease();
     const created = await createAgentSession({ cwd: directory, agentDir, modelRuntime: runtime, settingsManager: settings,
-      resourceLoader, model: runtime.getModel("bbx-gateway", model.id), thinkingLevel: model.thinking_level, sessionManager: manager,
+      resourceLoader, model: runtime.getModel(sdkProvider, model.id), thinkingLevel: model.thinking_level, sessionManager: manager,
       noTools: "builtin", tools: tools.map((tool) => tool.name), customTools: tools });
     this.session = created.session;
     if (this.session.thinkingLevel !== model.thinking_level) throw Object.assign(new Error("Pi cannot honor the effective thinking level"), { code: "unsupported_model" });
@@ -236,7 +237,7 @@ export class RunnerSession {
       assistant_entry_id: entry.id, tool_name: name, arguments_json: argumentsJson,
       arguments_digest: digest(argumentsJson), journal: await this.confirm(signal) };
     try {
-      const permit = await this.platform.admitTool(invocation, signal);
+      const permit = await this.platform.admitTool(this, invocation, signal);
       this.assertActive();
       if (permit.disposition === "unknown") throw new Error("The tool invocation is unresolved");
       let result;
@@ -248,17 +249,20 @@ export class RunnerSession {
         const remaining = permit.authorized_wait_until_ms - Date.now();
         if (!Number.isSafeInteger(permit.authorized_wait_until_ms) || remaining <= 0) throw new Error("The admitted tool wait deadline is unavailable or expired");
         this.unresolvedInvocations.add(invocationId);
-        result = await this.mcp.request("tools/call", { name, arguments: JSON.parse(argumentsJson),
-          _meta: { bbx: { ...invocation, permit_ref: invocationId } } }, { signal, timeoutMs: Math.min(2147483647, remaining) });
-        if (!result || !Array.isArray(result.content)
-            || result.content.some((part) => !part || typeof part.type !== "string")) throw new Error("The remote tool returned an invalid MCP result");
-        await this.platform.completeTool(invocation, result);
+        try {
+          await this.mcp.request("tools/call", { name, arguments: JSON.parse(argumentsJson),
+            _meta: { bbx: { ...invocation, permit_ref: invocationId } } }, { signal, timeoutMs: Math.min(2147483647, remaining) });
+        } catch { /* A lost transport reply can still have a durable host result. */ }
+        const saved = await this.platform.completeTool(this, invocation, signal);
+        result = JSON.parse(saved.result_json);
         this.unresolvedInvocations.delete(invocationId);
       }
+      if (!result || !Array.isArray(result.content)
+          || result.content.some((part) => !part || typeof part.type !== "string")) throw new Error("The saved remote tool result is invalid");
       return { content: toLlmContent(result), details: { invocation_id: invocationId, bbx_is_error: result.isError === true } };
     } catch (error) {
       freezeSession(this.session);
-      if (this.unresolvedInvocations.has(invocationId)) await this.platform.unknownTool(invocation).catch(() => {});
+      if (this.unresolvedInvocations.has(invocationId)) await this.platform.unknownTool(this, invocation).catch(() => {});
       throw error;
     }
   }

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { PROTOCOL, digest, jsonText, safeUrl, sameValue, validate } from "./protocol.mjs";
+import { PROTOCOL, digest, safeUrl, sameValue, validate } from "./protocol.mjs";
 
 /** The mount contains only this task's scoped credentials, never a platform service key. */
 export class MountedCredentials {
@@ -83,29 +83,28 @@ export class HttpPlatform {
         || prompt.prompt_revision < slot.promptRevision) throw new Error("Published prompt identity or revision did not match");
     return prompt;
   }
-  async admitTool(body, signal) {
+  async admitTool(slot, body, signal) {
     validate("ToolInvocation", body);
     const receipt = validate("ToolPermit", await this.request(this.control,
-      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal }));
+      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal, audience: "mcp",
+        reference: slot.spec.mcp_credential_ref, bindingId: body.binding.binding_id }));
     if (receipt.invocation_id !== body.invocation_id || receipt.arguments_digest !== body.arguments_digest) throw new Error("Tool admission identity did not match");
     return receipt;
   }
-  async completeTool(invocation, result) {
-    const resultJson = jsonText(result);
-    const resultDigest = digest(resultJson);
-    const body = validate("ToolResultSubmission", { protocol: PROTOCOL, invocation, result_json: resultJson, result_digest: resultDigest });
+  async completeTool(slot, invocation, signal) {
+    const body = validate("ToolResultConfirmation", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolResultReceipt", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/result`, {
-        body,
+        body, signal, audience: "mcp", reference: slot.spec.mcp_credential_ref, bindingId: invocation.binding.binding_id,
       }));
-    if (receipt.invocation_id !== invocation.invocation_id || receipt.result_digest !== resultDigest) throw new Error("Tool result receipt did not match");
+    if (receipt.invocation_id !== invocation.invocation_id || digest(receipt.result_json) !== receipt.result_digest) throw new Error("Tool result receipt did not match");
     return receipt;
   }
-  async unknownTool(invocation) {
+  async unknownTool(slot, invocation) {
     const body = validate("ToolUnknownSubmission", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolPermit", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/unknown`, {
-        body,
+        body, timeoutMs: 2000, audience: "mcp", reference: slot.spec.mcp_credential_ref, bindingId: invocation.binding.binding_id,
       }));
     if (receipt.invocation_id !== invocation.invocation_id || receipt.arguments_digest !== invocation.arguments_digest
         || receipt.disposition === "admitted") throw new Error("The unknown tool receipt did not match");
@@ -114,7 +113,8 @@ export class HttpPlatform {
     const body = validate("ModelAttemptRequest", { protocol: PROTOCOL, fence: this.config.fence, binding: slot.binding,
       sdk_session_id: slot.session.sessionId, call_id: request.callId, attempt_id: request.attemptId,
       journal: request.journal, purpose: request.purpose, profile_revision: slot.spec.profile_revision,
-      prompt_revision: slot.promptRevision, model_snapshot: slot.spec.model, body: request.body });
+      prompt_revision: slot.promptRevision, model_snapshot: slot.spec.model,
+      body_json: request.bodyJson, body_digest: request.bodyDigest });
     const receipt = validate("ModelAdmissionReceipt", await this.request(this.model, "/attempts/admit", {
       audience: "model", reference: slot.spec.model_credential_ref, bindingId: slot.binding.binding_id,
       body,

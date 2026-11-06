@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -31,7 +32,7 @@ from bbx_contracts.runner_control import (
 )
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy import and_, insert, literal, or_, select, update
 from sqlalchemy.exc import NoResultFound
 
 from bbx_blackboard.store import Repository
@@ -41,6 +42,7 @@ from bbx_blackboard.store.repository import row as stored_row
 TERMINAL = {"finished", "failed", "stopped"}
 OWNER_SECONDS = 60
 PERMIT_SECONDS = 30
+POLL_RECHECK_SECONDS = 5
 
 
 async def row(conn, table, tid, oid=None):
@@ -78,12 +80,13 @@ class RunnerControl:
         self.repo = Repository(engine)
         self.clock = clock or (lambda: datetime.now(UTC))
 
-    async def _task(self, conn, tid, *, live=False):
+    async def _task(self, conn, tid, *, live=False, allow_held=False):
         task = await row(conn, s.tasks, tid)
         if task["mode"] != "ctf" or business_contract(task) != BOARD_CONTRACT:
             raise HTTPException(409, "Frozen challenge-board-v1 task required")
         if live and (
             task["deleting"]
+            or (task["ctf_control"].get("native_budget_hold") and not allow_held)
             or task["status"] in TERMINAL
             or task["ctf_control"]["phase"]
             in {"closing", "failure_hold", "failed", "stopped", "finished"}
@@ -316,13 +319,17 @@ class RunnerControl:
                 next_seq=0,
             )
             await conn.execute(insert(s.runner_owners).values(**value))
+            await self.repo.notify(tid, 0, connection=conn)
+            from bbx_blackboard.runner_gateway import cancel_admitted
+
+            await cancel_admitted(conn, tid)
             return value
 
     async def update_owner(self, tid, raw, *, revoke=False):
         body, _, _ = decode(RunnerOwnerUpdate, raw)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task(conn, tid, live=not revoke)
+            await self._task(conn, tid, live=not revoke, allow_held=True)
             owner = (
                 (
                     await conn.execute(
@@ -355,6 +362,11 @@ class RunnerControl:
                 )
                 .values(**patch)
             )
+            await self.repo.notify(tid, 0, connection=conn)
+            if revoke:
+                from bbx_blackboard.runner_gateway import cancel_admitted
+
+                await cancel_admitted(conn, tid, epoch=body.expected_epoch)
             return {**owner, **patch}
 
     async def register_binding(self, tid, raw):
@@ -661,13 +673,26 @@ class RunnerControl:
             if bid:
                 query = query.where(s.runner_bindings.c.id == bid)
             await conn.execute(query.values(status="closing", permit_expires_at=None))
+            from bbx_blackboard.runner_gateway import cancel_admitted
+
+            await cancel_admitted(conn, tid, bid)
+        # Runner commands have their own cursor; Task notifications only wake readers.
+        await self.repo.notify(tid, 0, connection=conn)
         return value
 
     async def enqueue(self, tid, raw):
         body, _, _ = decode(RunnerCommandSubmission, raw)
+        try:
+            cleanup = RunnerPayload.model_validate_json(body.payload_json).root.kind in {
+                "abort",
+                "close",
+                "shutdown",
+            }
+        except ValidationError as error:
+            raise HTTPException(422, "Invalid finite Runner payload") from error
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task(conn, tid, live=True)
+            await self._task(conn, tid, live=not cleanup)
             owner = await self._current_owner(conn, tid)
             if body.expected_epoch != owner["epoch"]:
                 raise HTTPException(409, "Runner owner epoch changed")
@@ -729,18 +754,32 @@ class RunnerControl:
                         permit_revision=value["permit_revision"],
                     )
                 )
+                await self.repo.notify(tid, 0, connection=conn)
             receipt = self._lease(owner, value)
             await self._receipt(
                 conn, tid, owner["epoch"], "acquire", body.request_id, text, sha, receipt, bid
             )
             return receipt
 
-    async def poll(self, tid, identity, after_seq=0, wait_seconds: float = 15):
+    async def poll(self, tid, identity, after_seq=0, wait_seconds: float = 15, *, dispatcher=None):
         end = asyncio.get_running_loop().time() + min(15, max(0, wait_seconds))
+        subscription = (
+            dispatcher.subscribe(tid, wait_ready=False)
+            if dispatcher is not None
+            else nullcontext(asyncio.Queue(maxsize=1))
+        )
+        async with subscription as wake:
+            return await self._poll(tid, identity, after_seq, end, wake)
+
+    async def _poll(self, tid, identity, after_seq, end, wake):
         while True:
             async with self.repo.engine.begin() as conn:
                 await self.repo.lock(conn, tid)
-                owner = await self._identity(conn, tid, identity, live=True)
+                task = await self._task(conn, tid, live=True, allow_held=True)
+                held = bool(task["ctf_control"].get("native_budget_hold"))
+                owner = await self._identity(conn, tid, identity)
+                self._owner_live(owner)
+                recheck_at = min(owner["expires_at"], owner["hard_deadline"])
                 bindings = (
                     (
                         await conn.execute(
@@ -772,6 +811,8 @@ class RunnerControl:
                         continue
                     value = dict(found)
                     try:
+                        if held:
+                            raise HTTPException(409, "Native budget admission is held")
                         await self._mapping(conn, tid, value)
                         if (
                             value["permit_expires_at"] is not None
@@ -809,6 +850,7 @@ class RunnerControl:
                             and extended > expiry
                         ):
                             renewed = True
+                            expiry = extended
                             value = {
                                 **value,
                                 "permit_expires_at": extended,
@@ -826,6 +868,10 @@ class RunnerControl:
                                 )
                             )
                         renewals.append(self._lease(owner, value))
+                        renew_at = expiry - timedelta(seconds=PERMIT_SECONDS / 2)
+                        if renew_at <= self.clock():
+                            renew_at = expiry
+                        recheck_at = min(recheck_at, renew_at)
                 commands = (
                     (
                         await conn.execute(
@@ -849,6 +895,10 @@ class RunnerControl:
                                 s.runner_commands.c.task_id == tid,
                                 s.runner_commands.c.owner_epoch == owner["epoch"],
                                 s.runner_commands.c.command_seq > after_seq,
+                                or_(
+                                    literal(not held),
+                                    s.runner_commands.c.kind.in_(["abort", "close", "shutdown"]),
+                                ),
                                 or_(
                                     and_(
                                         s.runner_commands.c.kind == "prepare",
@@ -902,7 +952,15 @@ class RunnerControl:
                         break
             if selected or renewed or asyncio.get_running_loop().time() >= end:
                 return {"protocol": PROTOCOL, "commands": selected, "lease_renewals": renewals}
-            await asyncio.sleep(min(1, max(0, end - asyncio.get_running_loop().time())))
+            delay = min(
+                POLL_RECHECK_SECONDS,
+                max(0, end - asyncio.get_running_loop().time()),
+                max(0, (recheck_at - self.clock()).total_seconds()),
+            )
+            try:
+                await asyncio.wait_for(wake.get(), delay)
+            except TimeoutError:
+                pass
 
     async def _evidence_context(self, conn, tid, bid, identity):
         await self._task(conn, tid)
