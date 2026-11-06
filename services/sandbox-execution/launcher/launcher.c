@@ -15,6 +15,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include "assignment_scope.h"
+
 #define SOLVER_UID 10000
 #define SOLVER_GID 10000
 #define CONTROL_DIR "/var/lib/bbx/control/launches"
@@ -102,7 +104,8 @@ static void add_environment(char **environment, int *size, const char *key, cons
     if (asprintf(&environment[(*size)++], "%s=%s", key, value) < 0) fail("build solver environment");
 }
 
-static void start_execd(void) {
+static void start_execd(int accounting) {
+    if (!accounting && !bbx_scope_legacy_allowed()) { errno = EPERM; fail("assignment accounting is required"); }
     const char *token = getenv("EXECD_ACCESS_TOKEN");
     if (getuid() != 0 || geteuid() != 0 || !token || !*token || strpbrk(token, "\r\n") ||
         strspn(token, " \t") == strlen(token)) {
@@ -115,6 +118,7 @@ static void start_execd(void) {
     add_environment(environment, &count, "EXECD_ENVS", "/var/lib/bbx/control/execd.env");
     add_environment(environment, &count, "PATH", "/usr/local/bin:/usr/bin:/bin");
     add_environment(environment, &count, "HOME", "/root");
+    if (accounting && bbx_scope_prepare()) fail("prepare private assignment cgroup mount");
     if (clearenv()) fail("clear execd startup environment");
     close_extra_fds();
     int directory = control_directory("/var/lib/bbx/control");
@@ -131,7 +135,8 @@ static void start_execd(void) {
     fail("exec official daemon");
 }
 
-static void start_kubernetes_bootstrap(void) {
+static void start_kubernetes_bootstrap(int accounting) {
+    if (!accounting && !bbx_scope_legacy_allowed()) { errno = EPERM; fail("assignment accounting is required"); }
     const char *token = getenv("EXECD_ACCESS_TOKEN");
     const char *sandbox_id = getenv("OPENSANDBOX_ID");
     const char *init = getenv("EXECD_INIT");
@@ -153,6 +158,7 @@ static void start_kubernetes_bootstrap(void) {
     add_environment(environment, &count, "HOME", "/root");
     const char *lifecycle = getenv("OPENSANDBOX_LIFECYCLE");
     if (lifecycle && *lifecycle) add_environment(environment, &count, "OPENSANDBOX_LIFECYCLE", lifecycle);
+    if (accounting && bbx_scope_prepare()) fail("prepare private assignment cgroup mount");
     if (clearenv()) fail("clear Kubernetes bootstrap environment");
     close_extra_fds();
     char *args[] = {"/opt/opensandbox/bootstrap.sh", "/usr/bin/tail", "-f", "/dev/null", NULL};
@@ -161,22 +167,39 @@ static void start_kubernetes_bootstrap(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc == 2 && !strcmp(argv[1], "--execd")) start_execd();
-    if (argc == 2 && !strcmp(argv[1], "--kubernetes-bootstrap")) start_kubernetes_bootstrap();
+    if (argc == 2 && !strcmp(argv[1], "--execd")) start_execd(0);
+    if (argc == 2 && !strcmp(argv[1], "--execd-cgroup-v2")) start_execd(1);
+    if (argc == 2 && !strcmp(argv[1], "--kubernetes-bootstrap")) start_kubernetes_bootstrap(0);
+    if (argc == 2 && !strcmp(argv[1], "--kubernetes-bootstrap-cgroup-v2")) start_kubernetes_bootstrap(1);
     /* Static linkage prevents loader variables from acting before clearenv. */
     if (clearenv()) fail("clear control environment");
-    if (geteuid() != 0 || getuid() != 0 || argc != 10 ||
+    if (argc == 2 && !strcmp(argv[1], "--assignment-context")) {
+        close_extra_fds();
+        if (bbx_scope_read_context()) fail("read trusted assignment context");
+        return 0;
+    }
+    if (argc == 7 && (!strcmp(argv[1], "--assignment-stop") || !strcmp(argv[1], "--assignment-status"))) {
+        close_extra_fds();
+        if (bbx_scope_control(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6])) fail("assignment control evidence");
+        return 0;
+    }
+    if (geteuid() != 0 || getuid() != 0 || (argc != 10 && argc != 15) ||
         !identifier(argv[1]) || !identifier(argv[2]) || !identifier(argv[3]) ||
         (strcmp(argv[9], "basic") && strcmp(argv[9], "net-raw")) ||
         strncmp(argv[5], "/workspace", 10) || (argv[5][10] && argv[5][10] != '/')) {
         errno = EPERM;
         fail("invalid trusted launch request");
     }
+    if (argc == 10 && !bbx_scope_legacy_allowed()) {
+        errno = EPERM;
+        fail("assignment scope is required; legacy launch refused");
+    }
     int directory = control_directory("/run/netns");
     int namespace_fd = openat(directory, argv[1], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (namespace_fd < 0 || setns(namespace_fd, CLONE_NEWNET)) fail("enter assignment network");
     close(namespace_fd);
     close(directory);
+    if (argc == 15 && bbx_scope_join(argv[10], argv[11], argv[12], argv[13], argv[14])) fail("join original assignment cgroup");
     close_extra_fds();
 
     directory = control_directory(CONTROL_DIR);
@@ -198,9 +221,10 @@ int main(int argc, char **argv) {
     if (dprintf(evidence,
         "{\"command_id\":\"%s\",\"network_identity\":\"%s\",\"pid\":%d,\"pgid\":%d,"
         "\"start_ticks\":%llu,\"netns_inode\":%llu,\"uid\":%d,\"gid\":%d,"
-        "\"no_new_privs\":true,\"capabilities\":\"%s\"}\n",
+        "\"no_new_privs\":true,\"capabilities\":\"%s\",\"process_accounting\":\"%s\",\"scope_id\":\"%s\"}\n",
         argv[2], argv[3], getpid(), getpgrp(), ticks,
-        (unsigned long long)namespace_info.st_ino, getuid(), getgid(), raw ? "net-raw" : "none") < 0 ||
+        (unsigned long long)namespace_info.st_ino, getuid(), getgid(), raw ? "net-raw" : "none",
+        argc == 15 ? "cgroup-v2" : "legacy", argc == 15 ? argv[10] : "none") < 0 ||
         fsync(evidence) || close(evidence)) fail("persist launch evidence");
 
     char *environment[32] = {0};

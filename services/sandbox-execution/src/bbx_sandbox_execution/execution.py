@@ -38,6 +38,10 @@ class UnknownCommandOutcome(RuntimeError):
     """The response ended without the execution evidence required for its mode."""
 
 
+class UnknownAssignmentCleanup(RuntimeError):
+    """An Assignment has no verified, durable observation of its sealed empty scope."""
+
+
 @dataclass(frozen=True)
 class AssignmentBinding:
     task_id: str
@@ -55,6 +59,8 @@ class AssignmentBinding:
     challenge_id: str | None = None
     parent_agent_id: str | None = None
     execution_profile: str = "basic"
+    process_accounting: str = "legacy"
+    execution_context_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -70,9 +76,23 @@ class AssignmentBinding:
             or self.epoch < 0
             or (self.role == "helper" and not self.parent_agent_id)
             or self.execution_profile not in {"basic", "net-raw"}
+            or self.process_accounting not in {"legacy", "cgroup-v2"}
+            or (
+                self.process_accounting == "cgroup-v2"
+                and (
+                    not isinstance(self.execution_context_id, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.execution_context_id) is None
+                )
+            )
         ):
             raise ValueError("Invalid trusted assignment binding")
         ipaddress.IPv4Address(self.ipv4)
+
+    def scope_request(self) -> tuple[str, str]:
+        if self.process_accounting != "cgroup-v2":
+            raise ValueError("Assignment cleanup requires the trusted cgroup-v2 profile")
+        binding = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(binding.encode()).hexdigest(), binding
 
 
 @dataclass(frozen=True)
@@ -195,6 +215,29 @@ class CommandJournal:
         if len(identifiers) != 1:
             raise ValueError("Official execution ID is unknown or inconsistent; do not replay")
         return identifiers.pop()
+
+    def claim_assignment_stop(self, command_id: str, binding: AssignmentBinding) -> bool:
+        self.require_binding(command_id, binding)
+        scope_id, _ = binding.scope_request()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            claimed = self.connection.execute(
+                "SELECT 1 FROM events WHERE kind = 'assignment_stop_requested' "
+                "AND json_extract(record, '$.scope_id') = ? LIMIT 1",
+                (scope_id,),
+            ).fetchone()
+            if not claimed:
+                self.append(
+                    command_id,
+                    "assignment_stop_requested",
+                    scope_id=scope_id,
+                    binding=asdict(binding),
+                )
+            self.connection.execute("COMMIT")
+            return claimed is None
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
 
     def output_preview(self, command_id: str, limit: int = 65536) -> dict[str, Any]:
         if not 0 <= limit <= 1024 * 1024:
@@ -373,6 +416,11 @@ class SandboxExecution:
             request.command,
             self.binding.execution_profile,
         ]
+        if self.binding.process_accounting == "cgroup-v2":
+            argv.extend(self.binding.scope_request())
+            argv.extend([self.binding.pod_uid, self.binding.environment_revision])
+            assert self.binding.execution_context_id is not None
+            argv.append(self.binding.execution_context_id)
         self.journal.append(command_id, "dispatching")
         try:
             result = await self.sandbox.commands.run(
@@ -468,3 +516,100 @@ class SandboxExecution:
             raise
         # Successful interrupt is a request acknowledgement, not a descendant drain proof.
         return await self.status(command_id)
+
+    async def stop_assignment(self, command_id: str) -> dict[str, Any]:
+        """Request a stop once; repeated calls only inspect the original sealed scope."""
+        first_request = self.journal.claim_assignment_stop(command_id, self.binding)
+        return await self._assignment_control(command_id, stop=first_request)
+
+    async def assignment_cleanup_status(self, command_id: str) -> dict[str, Any]:
+        """Reconcile the original scope without redispatching a command or kill request."""
+        self.journal.require_binding(command_id, self.binding)
+        self.binding.scope_request()
+        return await self._assignment_control(command_id, stop=False)
+
+    async def _assignment_control(self, command_id: str, *, stop: bool) -> dict[str, Any]:
+        self.journal.require_binding(command_id, self.binding)
+        scope_id, binding = self.binding.scope_request()
+        observed_id = None
+
+        async def on_init(event: ExecutionInit) -> None:
+            nonlocal observed_id
+            if not event.id:
+                raise ValueError("Assignment control execution ID is empty")
+            observed_id = event.id
+            self.journal.append(
+                command_id,
+                "assignment_control_bound",
+                scope_id=scope_id,
+                execution_id=event.id,
+                operation="stop" if stop else "status",
+            )
+
+        try:
+            result = await self.sandbox.commands.run(
+                [
+                    LAUNCHER,
+                    "--assignment-stop" if stop else "--assignment-status",
+                    scope_id,
+                    binding,
+                    self.binding.pod_uid,
+                    self.binding.environment_revision,
+                    self.binding.execution_context_id or "",
+                ],
+                opts=RunCommandOpts(
+                    working_directory="/opt/bbx/control",
+                    timeout=timedelta(seconds=10),
+                ),
+                handlers=ExecutionHandlers(on_init=on_init),
+            )
+            if (
+                not observed_id
+                or result.id != observed_id
+                or result.complete is None
+                or result.exit_code != 0
+                or result.error is not None
+            ):
+                raise UnknownAssignmentCleanup("Assignment control terminal evidence is missing")
+            receipt = json.loads("".join(item.text for item in result.logs.stdout))
+            self.journal.append(
+                command_id,
+                "assignment_scope_observed",
+                scope_id=scope_id,
+                execution_id=observed_id,
+                receipt=receipt,
+            )
+            if (
+                receipt.get("scope_id") != scope_id
+                or receipt.get("execution_context_id") != self.binding.execution_context_id
+                or receipt.get("state") != "confirmed"
+                or receipt.get("reason") != "observed_empty"
+                or receipt.get("sealed") is not True
+                or type(receipt.get("populated")) is not int
+                or receipt["populated"] != 0
+                or any(
+                    type(receipt.get(key)) is not int or receipt[key] <= 0
+                    for key in (
+                        "cgroup_namespace",
+                        "mount_namespace",
+                        "mount_id",
+                        "mount_device",
+                        "mount_inode",
+                        "scope_device",
+                        "scope_inode",
+                    )
+                )
+                or not isinstance(receipt.get("boot_id"), str)
+                or not receipt["boot_id"]
+            ):
+                raise UnknownAssignmentCleanup("Original Assignment scope is not confirmed empty")
+            self.journal.append(command_id, "assignment_cleanup_confirmed", **receipt)
+            return receipt
+        except BaseException as error:
+            self.journal.append(
+                command_id,
+                "assignment_cleanup_unknown",
+                scope_id=scope_id,
+                reason=type(error).__name__,
+            )
+            raise

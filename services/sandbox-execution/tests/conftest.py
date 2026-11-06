@@ -1,6 +1,7 @@
 """One task-local test container with three real assignment namespaces."""
 
 import json
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -13,11 +14,21 @@ from testcontainers.core.container import DockerContainer
 from bbx_sandbox_execution.execution import AssignmentBinding
 
 TOKEN = "bbx-archv2-fixture-token-no-real-secret"
-IMAGE = "bbx-archv2-sandbox-seam-test:20261106"
+IMAGE = os.environ.get("BBX_EXECUTION_TEST_IMAGE", "bbx-archv2-sandbox-seam-test:20261106")
 
 
 @pytest.fixture(scope="module")
 def container() -> Iterator[DockerContainer]:
+    yield from running_container(False)
+
+
+@pytest.fixture(scope="module")
+def accounting_container() -> Iterator[DockerContainer]:
+    yield from running_container(True)
+
+
+def running_container(accounting: bool, pod_uid: str | None = None) -> Iterator[DockerContainer]:
+    pod_uid = pod_uid or "bbx-g1-pod-" + uuid4().hex
     instance = DockerContainer(
         IMAGE,
         name="bbx-archv2-execution-" + uuid4().hex[:10],
@@ -27,11 +38,23 @@ def container() -> Iterator[DockerContainer]:
         mem_limit="1g",
         nano_cpus=1_000_000_000,
         pids_limit=256,
+        cgroupns="private",
+        labels={"bbx.archv2.pod-uid": pod_uid} if accounting else {},
     ).with_env("BBX_TEST_TOKEN", TOKEN)
+    if accounting:
+        instance.with_env("BBX_TEST_ACCOUNTING", "cgroup-v2")
+        instance.with_env("BBX_POD_UID", pod_uid)
+        instance.with_env("BBX_ENVIRONMENT_REVISION", "environment-1")
     # Docker supports a random port restricted to host loopback; the helper's annotation does not.
     instance.ports["44772/tcp"] = ("127.0.0.1", None)  # pyright: ignore[reportArgumentType]
     try:
         instance.start()
+        host = instance.get_wrapped_container().attrs["HostConfig"]
+        assert host["CgroupnsMode"] == "private" and not host["Privileged"]
+        assert {value.removeprefix("CAP_") for value in host["CapAdd"]} == {
+            "SYS_ADMIN",
+            "NET_ADMIN",
+        }
         endpoint = "http://127.0.0.1:" + str(instance.get_exposed_port(44772))
         with httpx.Client(trust_env=False) as client:
             deadline = time.monotonic() + 30
@@ -60,7 +83,9 @@ def binding(container: DockerContainer, index: int = 1) -> AssignmentBinding:
         generation=1,
         epoch=1,
         sandbox_id="sandbox-p1",
-        pod_uid=identifier[:32],
+        pod_uid=container.get_wrapped_container()
+        .attrs["Config"]["Labels"]
+        .get("bbx.archv2.pod-uid", identifier[:32]),
         environment_revision="environment-1",
         network_identity=f"network-{index}-generation-1",
         namespace=("worker-a", "worker-b", "helper-a")[index - 1],

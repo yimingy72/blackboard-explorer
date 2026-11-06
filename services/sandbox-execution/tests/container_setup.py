@@ -196,4 +196,5 @@ environment.update(
     "BBX_FILE_MARKER=bbx-archv2-envfile-must-not-leak\nBBX_CONTROL_MARKER=bbx-archv2-control-must-not-leak\n"
 )
 (root / "execd.env").chmod(0o600)
-os.execve("/opt/bbx/control/launcher", ["launcher", "--execd"], environment)
+mode = "--execd-cgroup-v2" if os.environ.get("BBX_TEST_ACCOUNTING") == "cgroup-v2" else "--execd"
+os.execve("/opt/bbx/control/launcher", ["launcher", mode], environment)

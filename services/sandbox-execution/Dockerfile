@@ -2,8 +2,8 @@ ARG TOOL_IMAGE=bbx-exec-env-kali@sha256:c79ded7b50e9a7ea2433e9740c48417ce0860194
 FROM opensandbox/execd@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c AS official
 FROM ${TOOL_IMAGE} AS launcher-build
 USER root
-COPY launcher/launcher.c /tmp/launcher.c
-RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -static /tmp/launcher.c -o /tmp/launcher \
+COPY launcher/launcher.c launcher/assignment_scope.c launcher/assignment_scope.h /tmp/
+RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -static /tmp/launcher.c /tmp/assignment_scope.c -o /tmp/launcher \
     && ! readelf -l /tmp/launcher | grep -q INTERP
 
 FROM ${TOOL_IMAGE}

@@ -1,4 +1,5 @@
-FROM bbx-archv2-sandbox-seam:20261106
+ARG BASE_IMAGE=bbx-archv2-sandbox-seam:20261106
+FROM ${BASE_IMAGE}
 USER root
 COPY tests/poison.c /tmp/bbx-test-poison.c
 RUN chmod u+w /opt/bbx/control \
