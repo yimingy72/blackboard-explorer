@@ -1,0 +1,9 @@
+namespaceOverride: bbx-archv2-g1-k8s-system
+controller:
+  image:
+    repository: opensandbox/controller
+    tag: release-1.2.0@sha256:7701db7eacda4c3533a961e0451f6ce067535d8ce46f15765a04dcf0ffa6e2c6
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}

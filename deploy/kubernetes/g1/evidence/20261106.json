@@ -1,0 +1,79 @@
+{
+  "execution_source_commit": "d5c84059c55864a84a3efdd09c4ab3477268a318",
+  "opensandbox_release": "1.2.0",
+  "kind_version": "v0.30.0",
+  "cilium_version": "1.18.2",
+  "node": {
+    "architecture": "amd64",
+    "kubeletVersion": "v1.34.0",
+    "kernelVersion": "7.0.12-linuxkit",
+    "containerRuntimeVersion": "containerd://2.1.3"
+  },
+  "node_limits": {
+    "cpus": 2,
+    "memory_bytes": 6442450944
+  },
+  "sandbox_image": {
+    "image": "bbx-archv2-sandbox-g1-k8s:20261106",
+    "digest": "sha256:988149c7d6f19aa1bd85de3d74d943756e3db5f835f10b7c3eb70e84ca12fcc2",
+    "available_before_import": 678558351360
+  },
+  "sandbox_id": "2ba530a1-6e5d-4d88-9eca-1e9e9e6aed8b",
+  "sandbox_count": 1,
+  "controller_replacements": 1,
+  "initial_pod_uid": "5e9689b1-64be-44ed-a537-dd908101f8cf",
+  "replacement_pod_uid": "40132bac-e648-4ed1-a01c-8cdd25209761",
+  "pvc_uid_first_ready": "a8c2714d-d3d3-4cc5-86b3-116481c5d540",
+  "pvc_uid_after_stop": "a8c2714d-d3d3-4cc5-86b3-116481c5d540",
+  "template": {
+    "env_names": [
+      "BBX_ENVIRONMENT_REVISION",
+      "BBX_POD_UID",
+      "EXECD",
+      "EXECD_ACCESS_TOKEN",
+      "EXECD_INIT",
+      "OPENSANDBOX_ID"
+    ],
+    "execd_token_secret": "bbx-archv2-g1-k8s-execd",
+    "pod_uid_field": "metadata.uid",
+    "execd_init": true,
+    "security_profile_unchanged": true
+  },
+  "checks": {
+    "low_uid_files_env_caps_fds_and_assignment_netns": true,
+    "real_sets_id_tree_sealed_killed_and_observed_empty": true,
+    "one_controller_replacement_old_binding_rejected_new_binding_valid": true,
+    "pvc_first_ready_uid_and_shared_file_retained": true,
+    "sandbox_stop_retains_original_pvc": true
+  },
+  "audit_event_counts": {
+    "admitted": 3,
+    "assignment_cleanup_confirmed": 2,
+    "assignment_cleanup_unknown": 1,
+    "assignment_control_bound": 3,
+    "assignment_scope_observed": 3,
+    "assignment_stop_requested": 2,
+    "dispatching": 3,
+    "execution_bound": 3,
+    "output": 2,
+    "returned": 3
+  },
+  "cri_and_receipts": {
+    "initial_private_cgroup_namespace": true,
+    "replacement_private_cgroup_namespace": true,
+    "initial_mount_root_is_container": true,
+    "replacement_mount_root_is_container": true,
+    "initial_receipt_namespace_matches_cri": true,
+    "replacement_receipt_namespace_matches_cri": true,
+    "nonce_changed": true,
+    "initial_sealed": true,
+    "initial_populated": 0,
+    "replacement_sealed": true,
+    "replacement_populated": 0
+  },
+  "cilium_image_references": [
+    "quay.io/cilium/cilium:v1.18.2@sha256:858f807ea4e20e85e3ea3240a762e1f4b29f1cb5bbd0463b8aa77e7b097c0667",
+    "quay.io/cilium/operator-generic:v1.18.2@sha256:cb4e4ffc5789fd5ff6a534e3b1460623df61cba00f5ea1c7b40153b5efb81805"
+  ],
+  "scope": "One Kubernetes Sandbox process-scope seam; no server-scale, full tool, VPN, or seat-reclamation proof."
+}
