@@ -18,6 +18,7 @@ from bbx_contracts.runner import (
     runner_json_text,
     runner_payload_digest,
 )
+from bbx_contracts.sandbox_tools import SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -93,6 +94,9 @@ class RunnerGateway:
         from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 
         self.routes = NativeMCPRoutes(self)
+        from bbx_blackboard.sandbox_tools import SandboxTools
+
+        self.sandbox = SandboxTools(self)
 
     async def _scope(self, conn, tid, identity, *, sdk=None, journal=None, metadata=False):
         owner = await self.control._identity(
@@ -170,7 +174,7 @@ class RunnerGateway:
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
             from bbx_contracts.challenge_board import business_manifest
 
-            allowed = set(business_manifest()["roles"][member["role"]])
+            allowed = set(business_manifest()["roles"][member["role"]]) | set(SANDBOX_TOOLS)
             declared = set(json.loads(binding["payload_json"])["spec"]["allowed_tools"])
             return sorted(allowed & declared)
 
@@ -268,18 +272,12 @@ class RunnerGateway:
 
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
             spec = json.loads(binding["payload_json"])["spec"]
-            if (
-                invocation.tool_name not in spec["allowed_tools"]
-                or invocation.tool_name not in business_manifest()["roles"][member["role"]]
-            ):
+            if invocation.tool_name not in spec["allowed_tools"] or invocation.tool_name not in {
+                *business_manifest()["roles"][member["role"]],
+                *SANDBOX_TOOLS,
+            }:
                 raise HTTPException(403, "Tool is not published for this role")
-            if await self._count(
-                conn,
-                s.runner_calls.c.task_id == tid,
-                s.runner_calls.c.binding_id == binding["id"],
-                self._unresolved(),
-            ):
-                raise HTTPException(409, "Binding has an unresolved call")
+            reconciling = invocation.tool_name in SANDBOX_CONTROLS
             original_args = exact_json(invocation.arguments_json)
             if not isinstance(original_args, dict):
                 raise HTTPException(422, "Tool arguments must be an object")
@@ -287,10 +285,31 @@ class RunnerGateway:
                 raise HTTPException(422, "Platform mutation identity is supplied by the host")
             if (
                 member["role"] == "teammate"
-                and invocation.tool_name not in {"board_announcements", "board_challenges"}
+                and invocation.tool_name
+                not in {*SANDBOX_TOOLS, "board_announcements", "board_challenges"}
                 and str(original_args.get("challenge_id")) != binding["business"]["challenge_id"]
             ):
                 raise HTTPException(403, "Worker tool arguments exceed the current Assignment")
+            if invocation.tool_name in SANDBOX_TOOLS:
+                self.sandbox.validate_arguments(invocation.tool_name, original_args)
+                scoped = await self.sandbox.binding(conn, tid, binding, owner)
+                if reconciling:
+                    await self.sandbox.resolve_command(
+                        conn, tid, original_args["command_id"], scoped
+                    )
+            unrelated = (
+                [s.runner_calls.c.id != "tool:" + original_args["command_id"]]
+                if reconciling
+                else []
+            )
+            if await self._count(
+                conn,
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.binding_id == binding["id"],
+                self._unresolved(),
+                *unrelated,
+            ):
+                raise HTTPException(409, "Binding has an unresolved call")
             wait = min(
                 owner["hard_deadline"].timestamp(),
                 identity.expires_at,
@@ -323,20 +342,24 @@ class RunnerGateway:
                 owner_epoch=owner["epoch"],
                 state="admitted",
                 concurrency_active=True,
-                provider_key="business",
+                provider_key="sandbox" if invocation.tool_name in SANDBOX_TOOLS else "business",
                 data=data,
                 created_at=datetime.now(UTC),
             )
             await conn.execute(insert(s.runner_calls).values(**value))
             return self._permit(value)
 
-    async def claim_business_tool(self, tid, identity, invocation, name, arguments):
+    async def claim_business_tool(
+        self, tid, identity, invocation, name, arguments, *, target="business"
+    ):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             call, owner, binding = await self._tool(conn, tid, identity, invocation)
             if call is None:
                 raise HTTPException(403, "MCP call has no admitted invocation")
             data = call["data"]
+            if call["provider_key"] != target:
+                raise HTTPException(403, "MCP target does not own this tool invocation")
             original = exact_json(
                 self.cipher.decrypt(data["arguments_ciphertext"].encode()).decode()
             )
@@ -353,6 +376,10 @@ class RunnerGateway:
                 .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])
                 .values(state="dispatched")
             )
+            if target == "sandbox":
+                return await self.sandbox.dispatch_claim(
+                    conn, tid, call, owner, binding, original
+                ), None
             context = RuntimeBusinessContext(identity, invocation.sdk_session_id, data["journal"])
             principal = Principal(
                 "agent",
@@ -367,23 +394,26 @@ class RunnerGateway:
             return (principal, data, original), None
 
     async def save_business_result(self, tid, invocation_id, value):
-        result_json = runner_json_text(value)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             call = await self._call(conn, tid, "tool:" + invocation_id)
             if call is None or call["state"] not in {"dispatched", "unknown"}:
                 raise HTTPException(409, "Business result has no original dispatch")
-            data = {
-                **call["data"],
-                "result_digest": runner_payload_digest(result_json),
-                "result_ciphertext": self.cipher.encrypt(result_json.encode()).decode(),
-            }
-            await conn.execute(
-                update(s.runner_calls)
-                .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])
-                .values(state="completed", concurrency_active=False, data=data)
-            )
+            await self._save_tool_result(conn, tid, call, value)
             return value
+
+    async def _save_tool_result(self, conn, tid, call, value):
+        result_json = runner_json_text(value)
+        data = {
+            **call["data"],
+            "result_digest": runner_payload_digest(result_json),
+            "result_ciphertext": self.cipher.encrypt(result_json.encode()).decode(),
+        }
+        await conn.execute(
+            update(s.runner_calls)
+            .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])
+            .values(state="completed", concurrency_active=False, data=data)
+        )
 
     async def unknown_business_result(self, tid, invocation_id):
         async with self.repo.engine.begin() as conn:

@@ -4,9 +4,11 @@ import json
 import re
 from datetime import timedelta
 
+import httpx
 from opensandbox import Sandbox
 from opensandbox.adapters.factory import AdapterFactory
 from opensandbox.config import ConnectionConfig
+from opensandbox.constants import DEFAULT_EXECD_PORT
 from opensandbox.models.execd import ExecutionHandlers, ExecutionInit, RunCommandOpts
 from opensandbox.models.sandboxes import SandboxEndpoint
 from opensandbox.transport import RetryPolicy
@@ -14,14 +16,39 @@ from opensandbox.transport import RetryPolicy
 ACCESS_HEADER = "X-EXECD-ACCESS-TOKEN"
 
 
-def connect_bound_execd(sandbox_id: str, endpoint: str, token: str) -> Sandbox:
+def connect_bound_execd(
+    sandbox_id: str,
+    endpoint: str,
+    token: str,
+    *,
+    endpoint_headers: dict[str, str] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> Sandbox:
     if not token.strip():
         raise ValueError("An empty execd access token must never enable compatibility access")
+    headers = dict(endpoint_headers or {})
+    if any(
+        key not in {"OpenSandbox-Secure-Access", "OpenSandbox-Ingress-To"}
+        or not isinstance(value, str)
+        or not value.strip()
+        or len(value) > 4096
+        or "\r" in value
+        or "\n" in value
+        for key, value in headers.items()
+    ):
+        raise ValueError("Only original native ingress headers may accompany execd")
+    if (
+        "OpenSandbox-Ingress-To" in headers
+        and headers["OpenSandbox-Ingress-To"] != f"{sandbox_id}-{DEFAULT_EXECD_PORT}"
+    ):
+        raise ValueError("The original native execd route changed")
     config = ConnectionConfig(
-        disable_metrics=True, retry_policy=RetryPolicy(max_retries=0, wake_retry_enabled=False)
+        disable_metrics=True,
+        retry_policy=RetryPolicy(max_retries=0, wake_retry_enabled=False),
+        transport=transport,
     )
     factory = AdapterFactory(config)
-    target = SandboxEndpoint(endpoint=endpoint, headers={ACCESS_HEADER: token})
+    target = SandboxEndpoint(endpoint=endpoint, headers={**headers, ACCESS_HEADER: token})
     return Sandbox(
         sandbox_id=sandbox_id,
         sandbox_service=factory.create_sandbox_service(),

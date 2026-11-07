@@ -29,7 +29,9 @@
         "retire_prepare",
         "retire_plan",
         "retire_admit",
-        "retire_complete"
+        "retire_complete",
+        "sandbox_host_material",
+        "sandbox_host_ready"
       ],
       "title": "Action",
       "type": "string"

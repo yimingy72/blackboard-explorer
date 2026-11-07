@@ -1,0 +1,177 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "sequence": {
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "lead",
+        "worker"
+      ],
+      "title": "Role",
+      "type": "string"
+    },
+    "challenge_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Challenge Id"
+    },
+    "assignment_id": {
+      "title": "Assignment Id",
+      "type": "string"
+    },
+    "generation": {
+      "title": "Generation",
+      "type": "integer"
+    },
+    "epoch": {
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "command": {
+      "title": "Command",
+      "type": "string"
+    },
+    "cwd": {
+      "title": "Cwd",
+      "type": "string"
+    },
+    "background": {
+      "title": "Background",
+      "type": "boolean"
+    },
+    "state": {
+      "enum": [
+        "dispatched",
+        "running",
+        "completed",
+        "failed",
+        "unknown"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "execution_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Execution Id"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Code"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "output_truncated": {
+      "title": "Output Truncated",
+      "type": "boolean"
+    },
+    "stdout": {
+      "title": "Stdout",
+      "type": "string"
+    },
+    "stderr": {
+      "title": "Stderr",
+      "type": "string"
+    },
+    "stdout_bytes": {
+      "minimum": 0,
+      "title": "Stdout Bytes",
+      "type": "integer"
+    },
+    "stderr_bytes": {
+      "minimum": 0,
+      "title": "Stderr Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "sequence",
+    "task_id",
+    "agent_id",
+    "role",
+    "challenge_id",
+    "assignment_id",
+    "generation",
+    "epoch",
+    "command",
+    "cwd",
+    "background",
+    "state",
+    "execution_id",
+    "exit_code",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "output_truncated",
+    "stdout",
+    "stderr",
+    "stdout_bytes",
+    "stderr_bytes"
+  ],
+  "title": "SandboxCommandDetail",
+  "type": "object"
+}

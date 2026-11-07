@@ -99,6 +99,9 @@ export type ObjectDetails = {
   object: Record<string, unknown>;
   related: Record<string, Record<string, unknown>>;
 };
+export type SandboxCommandSummary = components['schemas']['SandboxCommandSummary'];
+export type SandboxCommandPage = components['schemas']['SandboxCommandPage'];
+export type SandboxCommandDetail = components['schemas']['SandboxCommandDetail'];
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -204,6 +207,14 @@ export const api = {
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string, signal?: AbortSignal) => request<TaskView>(taskPath(id), { signal }),
+  listSandboxCommands: (id: string, filters: { agentId?: string; before?: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ limit: '50' });
+    if (filters.agentId) params.set('agent_id', filters.agentId);
+    if (filters.before !== undefined) params.set('before', String(filters.before));
+    return request<SandboxCommandPage>(`${taskPath(id)}/sandbox/commands?${params}`, { signal });
+  },
+  getSandboxCommand: (id: string, commandId: string, signal?: AbortSignal) =>
+    request<SandboxCommandDetail>(`${taskPath(id)}/sandbox/commands/${encodeURIComponent(commandId)}`, { signal }),
   resumeTask: (id: string, input: { request_id: string; additional_cost: string; additional_minutes: number; refresh_tools: boolean }) =>
     request<TaskView>(`${taskPath(id)}/resume`, { method: 'POST', body: JSON.stringify(input) }),
   deleteTask: (id: string) => request<{ deleting: boolean }>(taskPath(id), { method: 'DELETE' }),

@@ -14,6 +14,7 @@ from . import (
     progress,
     runner_bootstrap,
     runner_control,
+    sandbox_tools,
     traffic,
 )
 
@@ -31,6 +32,7 @@ def export_schemas(output_dir: Path) -> list[Path]:
         **vars(runner_control),
         **vars(runner_bootstrap),
         **vars(native_gateway),
+        **vars(sandbox_tools),
     }.items():
         if (
             isinstance(obj, type)

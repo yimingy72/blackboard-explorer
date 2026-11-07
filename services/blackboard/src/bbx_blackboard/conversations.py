@@ -985,6 +985,7 @@ class Conversations:
                 s.native_task_mcp_routes,
                 s.native_request_costs,
                 s.native_task_budgets,
+                s.sandbox_command_records,
                 s.runner_calls,
                 s.runner_receipts,
                 s.runner_commands,

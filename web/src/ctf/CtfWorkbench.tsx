@@ -1,4 +1,5 @@
 import TrafficDrawer from '../components/TrafficDrawer';
+import CommandAuditDrawer from '../components/CommandAuditDrawer';
 import ElapsedTime from '../components/ElapsedTime';
 import { ApiOutlined } from '@ant-design/icons';
 import LoadingState from '../components/LoadingState';
@@ -34,6 +35,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     const queryClient = useQueryClient();
     const [memberId, setMemberId] = useState<string | null>(null);
     const [trafficAgent, setTrafficAgent] = useState<string | null | undefined>(undefined);
+    const [commandAuditOpen, setCommandAuditOpen] = useState(false);
     const [challengeId, setChallengeId] = useState<string | null>(null);
     const [dialog, setDialog] = useState<'events' | 'recovery' | 'dispatch' | null>(null);
     const dispatchTrigger = useRef<HTMLElement | null>(null);
@@ -210,7 +212,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         <h1 title={taskTitle(task)}>{taskTitle(task)}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={phase === 'running' ? 'processing' : phase === 'failed' ? 'error' : 'default'}>{phaseLabels[phase] ?? phase}</Tag>
         <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 <ElapsedTime seconds={task.active_seconds ?? 0} since={task.active_since} /></span><span>{formatMoney(task.usage?.cost ?? 0, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
-        <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} size="small" type="text" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button>{task.report_uri && <Button href={`/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" rel="noopener noreferrer" icon={<Icon name="file" />}>报告</Button>}
+        <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button type="text" size="small" onClick={() => setCommandAuditOpen(true)}>命令记录</Button><Button ref={goalButton} size="small" type="text" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button>{task.report_uri && <Button href={`/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" rel="noopener noreferrer" icon={<Icon name="file" />}>报告</Button>}
           {phase === 'created' && <Button aria-label="启动任务" aria-busy={statusAction.busy && operation === 'start'} type="primary" loading={statusAction.busy && operation === 'start'} disabled={statusAction.busy} onClick={() => void changeStatus('start')}>启动任务</Button>}
           {['created','provisioning','running'].includes(phase) && <Button aria-label="停止任务" aria-busy={statusAction.busy && operation === 'stop'} danger disabled={statusAction.busy} loading={statusAction.busy && operation === 'stop'} onClick={() => void changeStatus('stop')}>停止任务</Button>}
           <Dropdown trigger={['click']} menu={{ items: [{ key: 'refresh', label: '刷新', icon: <Icon name="refresh" /> }, { key: 'events', label: '系统事件' }, ...(terminal ? [{ key: 'recovery', label: '收尾与恢复' }] : [])], onClick: ({ key }) => key === 'refresh' ? refresh() : openDialog(key as 'events' | 'recovery') }}><Button type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
@@ -224,6 +226,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
           <main className={styles.canvasRegion} aria-label="CTF 团队协作画布"><CtfBoardCanvas taskId={taskId} ready={Boolean(state.data)} events={assignmentEvents} members={members} challenges={items} records={records} selected={selectedGraphId} phase={phase} onSelect={(next) => select(next.kind,next.id)} onOpenDispatch={() => { dispatchTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; openDialog('dispatch'); }} /></main>
         </InspectorLayout>
       </div>
+      <CommandAuditDrawer taskId={taskId} agents={members.map(member => ({ id: member.id, name: member.display_name }))} challenges={items} open={commandAuditOpen} onClose={() => setCommandAuditOpen(false)} />
       <TrafficDrawer active={['provisioning','running','closing'].includes(phase)} taskId={taskId} currentRun={task.run_number ?? 1} runs={task.runs?.map(run => run.run_number) ?? []} agents={members.map(member => ({ id: member.id, name: member.display_name }))} open={trafficAgent !== undefined} initialAgentId={trafficAgent} onClose={() => setTrafficAgent(undefined)} />
       <Modal title="调度记录" open={dialog === 'dispatch'} onCancel={() => setDialog(null)} footer={null} width={680} focusable={{ focusTriggerAfterClose: false }} afterClose={() => { if (dispatchNavigated.current) workspace.current?.querySelector<HTMLElement>('[data-inspector-panel] h2')?.focus({ preventScroll: true }); else dispatchTrigger.current?.focus({ preventScroll: true }); dispatchNavigated.current = false; }}>
         {eventHistory.isLoading && <LoadingState label="正在读取调度记录…" />}{eventHistory.error && <Alert type="error" title={eventHistory.error.message} action={<Button onClick={ensureHistory}>重试</Button>} />}

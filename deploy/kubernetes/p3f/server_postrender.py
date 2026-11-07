@@ -8,10 +8,13 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[3]
-config = root / ".data/p3f-k8s-20261106/kubeconfig"
+config = os.environ.get(
+    "BBX_POSTRENDER_KUBECONFIG", str(root / ".data/p3f-k8s-20261106/kubeconfig")
+)
+kubectl = os.environ.get("BBX_POSTRENDER_KUBECTL", str(root / ".data/p3f-k8s-20261106/bin/kubectl"))
 converted = subprocess.run(
     [
-        str(root / ".data/p3f-k8s-20261106/bin/kubectl"),
+        kubectl,
         "--kubeconfig",
         str(config),
         "--context",

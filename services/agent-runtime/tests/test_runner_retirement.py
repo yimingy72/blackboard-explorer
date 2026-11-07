@@ -210,7 +210,7 @@ def test_vap_probe_collision_never_deletes_uncreated_policy(monkeypatch, tmp_pat
     )
 
     def call(*args, body=None, check=True):
-        assert checked
+        assert checked and body is not None
         if args[0] == "create":
             if body["kind"] == "ValidatingAdmissionPolicy":
                 assert check is False

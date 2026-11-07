@@ -30,6 +30,7 @@ from bbx_contracts.runner_control import (
     RunnerOwnerUpdate,
     RunnerPromptPublication,
 )
+from bbx_contracts.sandbox_tools import SANDBOX_TOOLS, tool_alias
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, insert, literal, or_, select, update
@@ -146,13 +147,13 @@ class RunnerControl:
             self._owner_live(owner)
         return dict(owner)
 
-    async def _mapping(self, conn, tid, value):
+    async def _mapping(self, conn, tid, value, *, allow_pending=False):
         binding, business = value["binding"], value["business"]
         member = await row(conn, s.ctf_members, tid, binding["agent_id"])
         if (
             member["lifecycle"] != "active"
             or member["run_state"] == "stopping"
-            or member.get("pending_operation")
+            or (member.get("pending_operation") and not allow_pending)
             or business["purpose"] != "execution"
             or member["generation"] != business["generation"]
             or member["current_turn_id"] != business["turn_id"]
@@ -403,6 +404,31 @@ class RunnerControl:
                 raise HTTPException(403, "Runner role is not ready")
             if (member["role"] == "teammate") != (body.challenge_id is not None):
                 raise HTTPException(403, "Worker requires its current challenge Assignment")
+            if (
+                await conn.execute(
+                    select(s.sandbox_command_records.c.id)
+                    .where(
+                        s.sandbox_command_records.c.task_id == tid,
+                        s.sandbox_command_records.c.agent_id == body.agent_id,
+                        s.sandbox_command_records.c.data["scope_state"].astext != "sealed",
+                    )
+                    .limit(1)
+                )
+            ).first():
+                raise HTTPException(409, "Original Sandbox Assignment cleanup is not confirmed")
+            if (
+                await conn.execute(
+                    select(s.runner_calls.c.id)
+                    .where(
+                        s.runner_calls.c.task_id == tid,
+                        s.runner_calls.c.provider_key == "sandbox",
+                        s.runner_calls.c.state.in_(["dispatched", "unknown"]),
+                        s.runner_calls.c.data["binding"]["agent_id"].astext == body.agent_id,
+                    )
+                    .limit(1)
+                )
+            ).first():
+                raise HTTPException(409, "Original Sandbox tool outcome remains unknown")
             cid = str(body.challenge_id) if body.challenge_id else None
             scope_revision = None
             if cid:
@@ -457,7 +483,7 @@ class RunnerControl:
                     **body.model_dump(
                         exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
                     ),
-                    "mcp_tool_aliases": {name: "business_" + name for name in body.allowed_tools},
+                    "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
                 }
             )
             payload = runner_json_text({"kind": "prepare", "spec": spec.model_dump(mode="json")})
@@ -507,6 +533,10 @@ class RunnerControl:
             await self._mapping(conn, tid, value)
             if value["owner_epoch"] == owner["epoch"]:
                 return value
+            if set(json.loads(value["payload_json"])["spec"]["allowed_tools"]).intersection(
+                SANDBOX_TOOLS
+            ):
+                raise HTTPException(409, "Sandbox bindings cannot attach to another owner epoch")
             commands = (
                 (
                     await conn.execute(

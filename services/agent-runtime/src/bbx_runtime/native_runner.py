@@ -102,6 +102,34 @@ class NativeRunnerController:
                 work.cancel()
             await asyncio.gather(work, return_exceptions=True)
 
+    async def _prepare_sandbox_host(self, tid, operation, tenant_key):
+        context = await self.guarded(
+            tid, operation, self.resources.sandbox_host_context(operation, tenant_key)
+        )
+        private = {key: context.pop(key) for key in ("execd_token", "execd_headers")}
+        material = await self.action(
+            tid, operation, "sandbox_host_material", proof={"context": context}
+        )
+        digest = material.pop("context_digest")
+        material.pop("host_url")
+        configuration = {
+            **material,
+            **private,
+            "version": 1,
+            "ca_file": "/var/run/bbx-sandbox-host/ca.pem",
+        }
+        await self.guarded(
+            tid, operation, self.resources.publish_sandbox_host(operation, configuration)
+        )
+        await self.guarded(
+            tid, operation, self.resources.wait_sandbox_host_ready(operation, configuration)
+        )
+        operation.update(
+            await self.action(
+                tid, operation, "sandbox_host_ready", proof={"context_digest": digest}
+            )
+        )
+
     async def _task(self, tid):
         self.current()
         initial = await self.view(tid)
@@ -248,12 +276,18 @@ class NativeRunnerController:
                         await self.action(tid, operation, "observation", observation=observed)
                     )
                     if any(
-                        value.get("observation") == "unknown" or value.get("terminated") is True
+                        value.get("observation") == "unknown"
+                        or value.get("terminated") is True
+                        or value.get("host_terminated") is True
                         for value in (observed.get("runner", {}), observed.get("sandbox", {}))
                     ):
                         raise ResourceUnknown(
                             "The original native execution identity is unavailable"
                         )
+                if self.config.get("runner_profile") == "node-sandbox-host-v1" and not operation[
+                    "data"
+                ].get("sandbox_host_ready"):
+                    await self._prepare_sandbox_host(tid, operation, tenant_key)
                 now = asyncio.get_running_loop().time()
                 if not operation["data"].get("credentials_issued") or now - last_rotation >= 20:
                     material = await self.action(

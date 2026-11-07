@@ -9,24 +9,36 @@ import secrets
 import subprocess
 from pathlib import Path
 
-from common import HERE, ROOT, STATE, SYSTEM, kubectl, owned_cluster
+from common import CONFIG, HERE, KUBECTL, ROOT, STATE, SYSTEM, kubectl, owned_cluster
 
 
 def apply(doc):
     return json.loads(kubectl("apply", "-f", "-", "-o", "json", data=doc))
 
 
-def install(endpoint, resolver_file, ca_file, ingress_host):
+def install(
+    endpoint,
+    resolver_file,
+    ca_file,
+    ingress_host,
+    *,
+    input_state=None,
+    owner="p3f",
+    server_image="bbx-p3f-server-g7:20261106",
+    environment_revision="bbx-p3f-ubuntu-g1-20261106",
+):
     owned_cluster()
+    inputs = input_state or STATE
+    repository, tag = server_image.rsplit(":", 1)
     namespaces = json.loads(kubectl("get", "namespace", "-o", "json"))["items"]
     existing = next((ns for ns in namespaces if ns["metadata"]["name"] == SYSTEM), None)
-    if existing and existing["metadata"].get("labels", {}).get("bbx.dev/owner") != "p3f":
+    if existing and existing["metadata"].get("labels", {}).get("bbx.dev/owner") != owner:
         raise RuntimeError("Foreign control namespace refused")
     namespace = apply(
         {
             "apiVersion": "v1",
             "kind": "Namespace",
-            "metadata": {"name": SYSTEM, "labels": {"bbx.dev/owner": "p3f"}},
+            "metadata": {"name": SYSTEM, "labels": {"bbx.dev/owner": owner}},
         }
     )
     secret_raw = kubectl(
@@ -40,7 +52,7 @@ def install(endpoint, resolver_file, ca_file, ingress_host):
                 "metadata": {
                     "namespace": SYSTEM,
                     "name": "bbx-p3f-signing",
-                    "labels": {"bbx.dev/owner": "p3f"},
+                    "labels": {"bbx.dev/owner": owner},
                 },
                 "stringData": {
                     "active-key": "a",
@@ -49,7 +61,7 @@ def install(endpoint, resolver_file, ca_file, ingress_host):
             }
         )
     else:
-        assert json.loads(secret_raw)["metadata"]["labels"].get("bbx.dev/owner") == "p3f"
+        assert json.loads(secret_raw)["metadata"]["labels"].get("bbx.dev/owner") == owner
     apply(
         {
             "apiVersion": "v1",
@@ -57,7 +69,7 @@ def install(endpoint, resolver_file, ca_file, ingress_host):
             "metadata": {
                 "namespace": SYSTEM,
                 "name": "bbx-p3f-platform-ca",
-                "labels": {"bbx.dev/owner": "p3f"},
+                "labels": {"bbx.dev/owner": owner},
             },
             "stringData": {"ca.pem": Path(ca_file).read_text()},
         }
@@ -66,7 +78,7 @@ def install(endpoint, resolver_file, ca_file, ingress_host):
     template["metadata"]["name"] = "bbx-p3f-template"
     env = template["spec"]["shardPatches"][0]["spec"]["containers"][0]["env"]
     env[0]["valueFrom"]["secretKeyRef"]["name"] = "bbx-execd"
-    env[2]["value"] = "bbx-p3f-ubuntu-g1-20261106"
+    env[2]["value"] = environment_revision
     apply(
         {
             "apiVersion": "v1",
@@ -74,7 +86,7 @@ def install(endpoint, resolver_file, ca_file, ingress_host):
             "metadata": {
                 "namespace": SYSTEM,
                 "name": "bbx-p3f-template",
-                "labels": {"bbx.dev/owner": "p3f"},
+                "labels": {"bbx.dev/owner": owner},
             },
             "data": {"template.json": json.dumps(template)},
         }
@@ -147,7 +159,7 @@ max_stale_seconds=0
 timeout_seconds=3
 """
     server_digest = subprocess.check_output(
-        ["docker", "image", "inspect", "bbx-p3f-server-g7:20261106", "--format", "{{.Id}}"],
+        ["docker", "image", "inspect", server_image, "--format", "{{.Id}}"],
         text=True,
     ).strip()
     patch_identity = json.loads((STATE / "build-source.json").read_text())["g7_identity"]
@@ -164,8 +176,8 @@ timeout_seconds=3
         "fullnameOverride": "bbx-p3f-server",
         "server": {
             "image": {
-                "repository": "bbx-p3f-server-g7",
-                "tag": "20261106@" + server_digest,
+                "repository": repository,
+                "tag": tag + "@" + server_digest,
                 "pullPolicy": "Never",
             },
             "resources": {
@@ -202,7 +214,9 @@ timeout_seconds=3
     }
     env_vars = {
         **os.environ,
-        "KUBECONFIG": str(STATE / "kubeconfig"),
+        "KUBECONFIG": str(CONFIG),
+        "BBX_POSTRENDER_KUBECTL": str(KUBECTL),
+        "BBX_POSTRENDER_KUBECONFIG": str(CONFIG),
         "HELM_CACHE_HOME": str(STATE / "helm-cache"),
         "HELM_CONFIG_HOME": str(STATE / "helm-config"),
         "HELM_DATA_HOME": str(STATE / "helm-data"),
@@ -217,13 +231,13 @@ timeout_seconds=3
         values_path.write_text(json.dumps(values))
         values_path.chmod(0o600)
         command = [
-            str(STATE / "bin/helm"),
+            str(inputs / "bin/helm"),
             "--kubeconfig",
-            str(STATE / "kubeconfig"),
+            str(CONFIG),
             "upgrade",
             "--install",
             "bbx-p3f-" + component,
-            str(STATE / "upstream/manifests/charts" / chart),
+            str(inputs / "upstream/manifests/charts" / chart),
             "-n",
             SYSTEM,
             "-f",

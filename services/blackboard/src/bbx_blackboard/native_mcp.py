@@ -4,12 +4,15 @@ import json
 from uuid import UUID
 
 from bbx_contracts.challenge_board import business_manifest
+from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 
 
-def business_mcp_route(task_id, backend_origin, gateway_origin, jwks_file, backend_token_file):
+def business_mcp_route(
+    task_id, backend_origin, gateway_origin, jwks_file, backend_token_file, *, sandbox=None
+):
     tid = str(UUID(str(task_id)))
     path = f"/api/tasks/{tid}/mcp"
-    return {
+    value = {
         "name": "business-" + tid,
         "gateways": ["business-mcp"],
         "matches": [{"path": {"exact": path}}],
@@ -63,6 +66,29 @@ def business_mcp_route(task_id, backend_origin, gateway_origin, jwks_file, backe
             }
         ],
     }
+    if sandbox:
+        value["policies"]["mcpAuthorization"]["rules"].append(
+            f'jwt.tid == "{tid}" && mcp.tool.target == "sandbox" && '
+            'jwt.role in ["lead", "teammate"] && mcp.tool.name in ' + json.dumps(SANDBOX_TOOLS)
+        )
+        value["backends"][0]["mcp"]["targets"].append(
+            {
+                "name": "sandbox",
+                "mcp": {"host": sandbox["host_url"] + "/mcp/"},
+                "policies": {
+                    "backendAuth": {
+                        "passthrough": {},
+                        "credentials": [
+                            {
+                                "location": {"header": {"name": "x-bbx-sandbox-inbound"}},
+                                "key": sandbox["inbound_key"],
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+    return value
 
 
 if __name__ == "__main__":

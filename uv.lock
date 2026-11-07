@@ -283,6 +283,7 @@ dependencies = [
     { name = "azure-identity" },
     { name = "bbx-contracts" },
     { name = "bbx-objects" },
+    { name = "bbx-sandbox-execution" },
     { name = "docker" },
     { name = "google-auth", extra = ["requests"] },
     { name = "httpx" },
@@ -306,6 +307,7 @@ requires-dist = [
     { name = "azure-identity", specifier = ">=1.25,<2" },
     { name = "bbx-contracts", editable = "packages/contracts" },
     { name = "bbx-objects", editable = "packages/objects" },
+    { name = "bbx-sandbox-execution", editable = "services/sandbox-execution" },
     { name = "docker", specifier = ">=7,<8" },
     { name = "google-auth", extras = ["requests"], specifier = ">=2.58,<3" },
     { name = "httpx", specifier = ">=0.28,<1" },
@@ -320,6 +322,26 @@ requires-dist = [
     { name = "starlette", specifier = ">=0.27,<1" },
     { name = "uvicorn", specifier = ">=0.31.1,<1" },
     { name = "zstandard", specifier = ">=0.25,<1" },
+]
+
+[[package]]
+name = "bbx-sandbox-execution"
+version = "0.1.0"
+source = { editable = "services/sandbox-execution" }
+dependencies = [
+    { name = "opensandbox" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "opensandbox", specifier = "==1.2.0" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.400,<2" },
+    { name = "pytest", specifier = ">=8,<9" },
+    { name = "pytest-asyncio", specifier = ">=1,<2" },
+    { name = "ruff", specifier = ">=0.11,<1" },
+    { name = "testcontainers", specifier = ">=4.10,<5" },
 ]
 
 [[package]]

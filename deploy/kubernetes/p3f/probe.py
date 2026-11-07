@@ -117,7 +117,7 @@ async def forward(service, port):
             await process.wait()
 
 
-def certificates(directory, control_ip):
+def certificates(directory, control_ip, *, dns_names=()):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -151,6 +151,7 @@ def certificates(directory, control_ip):
                 [
                     x509.DNSName("host.docker.internal"),
                     x509.DNSName("localhost"),
+                    *(x509.DNSName(name) for name in dns_names),
                     x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
                     x509.IPAddress(ipaddress.ip_address(control_ip)),
                 ]

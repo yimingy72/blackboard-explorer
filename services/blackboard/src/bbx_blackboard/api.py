@@ -76,6 +76,7 @@ from bbx_blackboard.runner_gateway import RunnerGateway
 from bbx_blackboard.runner_gateway_api import model_router as runner_model_router
 from bbx_blackboard.runner_gateway_api import private_router as runner_gateway_private_router
 from bbx_blackboard.runner_gateway_api import tool_router as runner_tool_router
+from bbx_blackboard.sandbox_tools import router as sandbox_tools_router
 from bbx_blackboard.service import BoardService, ObjectStore
 from bbx_blackboard.settings import Settings
 from bbx_blackboard.store import schema as s
@@ -661,7 +662,8 @@ def create_app(
             # This fixed router uses an independent audience and never constructs a Principal.
             return None
         if re.fullmatch(
-            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp)(?:/.*)?", request.url.path
+            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp|sandbox-host|sandbox/commands)(?:/.*)?",
+            request.url.path,
         ):
             return None
         if request.app.state.engine is None and request.app.state.ctf_service is None:
@@ -2054,6 +2056,7 @@ def create_app(
     app.include_router(runner_model_router)
     app.include_router(runner_tool_router)
     app.include_router(runner_gateway_private_router)
+    app.include_router(sandbox_tools_router)
     app.mount("/api/tasks/{task_id}/business-mcp", app.state.business_mcp)
     app.include_router(platform_router)
     app.include_router(settings_router)

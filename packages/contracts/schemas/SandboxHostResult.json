@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "result": {
+      "additionalProperties": true,
+      "title": "Result",
+      "type": "object"
+    }
+  },
+  "required": [
+    "result"
+  ],
+  "title": "SandboxHostResult",
+  "type": "object"
+}

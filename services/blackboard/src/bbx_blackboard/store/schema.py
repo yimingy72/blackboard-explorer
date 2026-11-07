@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     MetaData,
@@ -667,10 +668,35 @@ task_runner_resources = Table(
     col("tenant_key_hash", Text, nullable=False, unique=True),
     col("tenant_key_ciphertext", Text, nullable=False),
     col("observation", JSONB, nullable=False),
+    col("sandbox_host", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     col("data", JSONB, nullable=False),
     col("last_error", Text),
     col("next_check_at", DateTime(timezone=True), nullable=False),
     col("created_at", DateTime(timezone=True), nullable=False),
+)
+
+sandbox_command_records = scoped(
+    "sandbox_command_records",
+    Column("sequence", BigInteger, Identity(), nullable=False),
+    col("binding_id", Text, nullable=False),
+    col("agent_id", Text, nullable=False),
+    col("role", Text, nullable=False),
+    col("challenge_id", UUID(as_uuid=True)),
+    col("assignment_id", Text, nullable=False),
+    col("generation", BigInteger, nullable=False),
+    col("epoch", BigInteger, nullable=False),
+    col("execution_id", Text),
+    col("state", Text, nullable=False),
+    col("exit_code", Integer),
+    col("created_at", DateTime(timezone=True), nullable=False),
+    col("started_at", DateTime(timezone=True)),
+    col("finished_at", DateTime(timezone=True)),
+    col("data", JSONB, nullable=False),
+)
+Index(
+    "ix_sandbox_commands_page",
+    sandbox_command_records.c.task_id,
+    sandbox_command_records.c.sequence,
 )
 
 native_task_mcp_routes = Table(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import logging
 import re
@@ -18,13 +19,19 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 import httpx
+from bbx_sandbox_execution.connect import read_execution_context
 from opensandbox import Sandbox, SandboxManager
 from opensandbox.adapters.factory import AdapterFactory
 from opensandbox.config import ConnectionConfig
+from opensandbox.constants import DEFAULT_EXECD_PORT
 from opensandbox.models.sandboxes import PVC, SandboxFilter, SandboxImageSpec, Volume
 from opensandbox.transport import RetryPolicy
 
 CLEANUP_GRACE_SECONDS = 120
+SANDBOX_HOST_PROFILE = "node-sandbox-host-v1"
+SANDBOX_HOST_SECRET = "bbx-sandbox-host"
+SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
+SANDBOX_HOST_PORT = 8766
 
 
 class ResourceUnknown(RuntimeError):
@@ -34,6 +41,10 @@ class ResourceUnknown(RuntimeError):
 class RunnerResources:
     def __init__(self, config: dict):
         self.config = dict(config)
+        profile = config.get("runner_profile")
+        if profile not in {None, SANDBOX_HOST_PROFILE}:
+            raise ValueError("Unknown trusted Runner resource profile")
+        self.sandbox_host = profile == SANDBOX_HOST_PROFILE
         for key in (
             "source_id",
             "kubeconfig",
@@ -48,8 +59,23 @@ class RunnerResources:
         ):
             if not self.config.get(key):
                 raise ValueError("The trusted resource deployment is incomplete")
-        for key in ("runner_image", "sandbox_image"):
-            if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.config[key]):
+        images = ["runner_image", "sandbox_image"]
+        if self.sandbox_host:
+            images.append("sandbox_host_image")
+            network = self.config.get("sandbox_network")
+            if not isinstance(network, dict) or set(network) != {
+                "namespace",
+                "network_identity",
+                "ipv4",
+            }:
+                raise ValueError("A frozen Sandbox Assignment network is required")
+            self._name(network["namespace"])
+            self._name(network["network_identity"])
+            ipaddress.IPv4Address(network["ipv4"])
+            if self.config.get("sandbox_host_execd_origin"):
+                self._execd_origin(self.config["sandbox_host_execd_origin"])
+        for key in images:
+            if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.config.get(key, "")):
                 raise ValueError("Resource images must use trusted immutable digests")
         url = urlsplit(self.config["sandbox_server_url"])
         if (
@@ -127,6 +153,22 @@ class RunnerResources:
             "bbx.dev/task-id": tid,
             "bbx.dev/operation-id": oid,
         }
+
+    @staticmethod
+    def _execd_origin(value):
+        if not isinstance(value, str) or not value or any(c.isspace() for c in value):
+            raise ResourceUnknown("A fixed native execd ingress authority is required")
+        parsed = urlsplit("http://" + value)
+        if (
+            not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ResourceUnknown("The native execd ingress authority is invalid")
+        return parsed.netloc
 
     async def _get(self, kind, name, namespace=None):
         if not isinstance(name, str) or len(name) > 253:
@@ -374,6 +416,32 @@ class RunnerResources:
             },
         )
         runner_policy["apiVersion"] = "cilium.io/v2"
+        if self.sandbox_host:
+            for target, port in (
+                ({"k8s:bbx.dev/component": "native-mcp-gateway"}, "3000"),
+                (
+                    {
+                        "k8s:app.kubernetes.io/component": "ingress-gateway",
+                        "k8s:app.kubernetes.io/part-of": "opensandbox",
+                    },
+                    "28888",
+                ),
+            ):
+                runner_policy["spec"]["egress"].append(
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    "k8s:io.kubernetes.pod.namespace": self.config[
+                                        "system_namespace"
+                                    ],
+                                    **target,
+                                }
+                            }
+                        ],
+                        "toPorts": [{"ports": [{"port": port, "protocol": "TCP"}]}],
+                    }
+                )
         await self._ensure(runner_policy, labels)
         refs = {}
         for name, size in [("journal", "128Mi"), ("workspace", "64Mi")]:
@@ -519,6 +587,29 @@ class RunnerResources:
         expected_ca = Path(self.config["ca_file"]).read_text() if self.config.get("ca_file") else ""
         if base64.b64decode(mount.get("data", {}).get("ca.pem", "")).decode() != expected_ca:
             raise ResourceUnknown("The Runner startup trust anchor changed")
+        if self.sandbox_host:
+            host_mount = await self._ensure(
+                self._document(
+                    "Secret",
+                    SANDBOX_HOST_SECRET,
+                    labels,
+                    namespace,
+                    type="Opaque",
+                    stringData={"ca.pem": expected_ca},
+                ),
+                labels,
+                observed.get("sandbox_host_secret", {}).get("uid"),
+            )
+            self._host_secret(host_mount)
+            if (
+                base64.b64decode(host_mount.get("data", {}).get("ca.pem", "")).decode()
+                != expected_ca
+            ):
+                raise ResourceUnknown("The Sandbox host startup trust anchor changed")
+            refs["sandbox_host_secret"] = {
+                "name": SANDBOX_HOST_SECRET,
+                "uid": host_mount["metadata"]["uid"],
+            }
         runner_doc = self._runner_document(namespace, labels)
         fingerprint = hashlib.sha256(
             json.dumps(runner_doc["spec"], sort_keys=True).encode()
@@ -537,7 +628,15 @@ class RunnerResources:
         self._runner_spec(runner, runner_doc["spec"])
         runner_uid = runner["metadata"]["uid"]
         until = time.monotonic() + 120
-        while not self._pod_projection(runner).get("container_id"):
+        while True:
+            projection = self._pod_projection(runner, with_host=self.sandbox_host)
+            if projection["terminated"] or projection.get("observation") == "unknown":
+                raise ResourceUnknown("An original Runner container exited before readiness")
+            if projection.get("container_id") and (
+                not self.sandbox_host
+                or (projection.get("host_container_id") and projection.get("pod_ip"))
+            ):
+                break
             if time.monotonic() >= until:
                 raise ResourceUnknown("The original Runner container has not started")
             await asyncio.sleep(0.25)
@@ -565,7 +664,7 @@ class RunnerResources:
                 "environment_revision": environment_revision,
                 "container_id": self._pod_projection(pod).get("container_id"),
             },
-            "runner": self._pod_projection(runner),
+            "runner": projection,
         }
 
     def _sandbox_spec(self, pod):
@@ -603,7 +702,7 @@ class RunnerResources:
         return env["BBX_ENVIRONMENT_REVISION"]["value"]
 
     def _runner_document(self, namespace, labels):
-        return self._document(
+        document = self._document(
             "Pod",
             "bbx-runner",
             {**labels, "bbx.dev/component": "runner"},
@@ -659,6 +758,46 @@ class RunnerResources:
             },
         )
 
+        if self.sandbox_host:
+            spec = document["spec"]
+            spec["shareProcessNamespace"] = False
+            spec["containers"].append(
+                {
+                    "name": "sandbox-host",
+                    "image": self.config["sandbox_host_image"],
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["python", "-m", "bbx_runtime.sandbox_mcp"],
+                    "args": ["--config", SANDBOX_HOST_MOUNT + "/host.json"],
+                    "env": [
+                        {
+                            "name": "BBX_POD_UID",
+                            "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}},
+                        },
+                        {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
+                    ],
+                    "ports": [{"containerPort": SANDBOX_HOST_PORT, "protocol": "TCP"}],
+                    "resources": {
+                        "requests": {"cpu": "25m", "memory": "64Mi"},
+                        "limits": {"cpu": "200m", "memory": "192Mi"},
+                    },
+                    "securityContext": {
+                        **spec["containers"][0]["securityContext"],
+                        "runAsUser": 1001,
+                        "runAsGroup": 1001,
+                    },
+                    "volumeMounts": [
+                        {"name": "sandbox-host", "mountPath": SANDBOX_HOST_MOUNT, "readOnly": True}
+                    ],
+                }
+            )
+            spec["volumes"].append(
+                {
+                    "name": "sandbox-host",
+                    "secret": {"secretName": SANDBOX_HOST_SECRET, "defaultMode": 0o440},
+                }
+            )
+        return document
+
     @staticmethod
     def _runner_secret(secret):
         if secret.get("type") != "Opaque" or not set(secret.get("data", {})) <= {
@@ -669,11 +808,21 @@ class RunnerResources:
             raise ResourceUnknown("The Runner Secret contains undeclared material")
 
     @staticmethod
+    def _host_secret(secret):
+        data = secret.get("data", {})
+        if (
+            secret.get("type") != "Opaque"
+            or "ca.pem" not in data
+            or not set(data) <= {"ca.pem", "host.json"}
+        ):
+            raise ResourceUnknown("The Sandbox host Secret contains undeclared material")
+
+    @staticmethod
     def _runner_spec(pod, expected):
         spec = pod["spec"]
         if (
             pod["metadata"].get("ownerReferences")
-            or len(spec.get("containers", [])) != 1
+            or len(spec.get("containers", [])) != len(expected["containers"])
             or any(
                 spec.get(k)
                 for k in (
@@ -698,17 +847,14 @@ class RunnerResources:
             )
         ):
             raise ResourceUnknown("The original Runner Pod isolation or mounts changed")
-        actual = spec["containers"][0]
-        desired = expected["containers"][0]
-        env = json.loads(json.dumps(actual.get("env", [])))
-        for entry in env:
-            if "fieldRef" in entry.get("valueFrom", {}):
-                if entry["valueFrom"]["fieldRef"].pop("apiVersion", "v1") != "v1":
-                    raise ResourceUnknown("The Runner Downward API changed")
-        if (
-            env != desired["env"]
-            or any(
-                actual.get(k) != desired[k]
+        for actual, desired in zip(spec["containers"], expected["containers"], strict=True):
+            env = json.loads(json.dumps(actual.get("env", [])))
+            for entry in env:
+                if "fieldRef" in entry.get("valueFrom", {}):
+                    if entry["valueFrom"]["fieldRef"].pop("apiVersion", "v1") != "v1":
+                        raise ResourceUnknown("The Runner Downward API changed")
+            if env != desired["env"] or any(
+                actual.get(k) != desired.get(k)
                 for k in (
                     "name",
                     "image",
@@ -716,11 +862,6 @@ class RunnerResources:
                     "resources",
                     "securityContext",
                     "volumeMounts",
-                )
-            )
-            or any(
-                actual.get(k)
-                for k in (
                     "command",
                     "args",
                     "envFrom",
@@ -733,51 +874,63 @@ class RunnerResources:
                     "stdin",
                     "tty",
                 )
-            )
-        ):
-            raise ResourceUnknown("The original Runner container contract changed")
+            ):
+                raise ResourceUnknown("The original Runner container contract changed")
 
     @staticmethod
-    def _pod_projection(pod):
+    def _pod_projection(pod, *, with_host=False):
         spec = pod.get("spec", {})
         containers = spec.get("containers", [])
+        names = [c["name"] for c in containers]
         states = pod.get("status", {}).get("containerStatuses", [])
+        by_name = {state.get("name"): state for state in states}
         if (
-            len(containers) != 1
+            (names != ["runner", "sandbox-host"] if with_host else len(names) != 1)
             or spec.get("ephemeralContainers")
             or pod.get("status", {}).get("ephemeralContainerStatuses")
-            or len(states) > 1
-            or any(s.get("name") != containers[0]["name"] for s in states)
+            or len(by_name) != len(states)
+            or not set(by_name) <= set(names)
             or any(c.get("restartPolicy") == "Always" for c in spec.get("initContainers", []))
             or any(
-                "running" in s.get("state", {}) or "waiting" in s.get("state", {})
-                for s in pod.get("status", {}).get("initContainerStatuses", [])
+                "running" in st.get("state", {}) or "waiting" in st.get("state", {})
+                for st in pod.get("status", {}).get("initContainerStatuses", [])
             )
         ):
             raise ResourceUnknown("The native Pod has an unapproved container scope")
-        ended = bool(states) and all("terminated" in s.get("state", {}) for s in states)
+        primary = by_name.get(names[0], {})
+        host = by_name.get("sandbox-host", {}) if with_host else {}
+        primary_ended = "terminated" in primary.get("state", {})
+        host_ended = "terminated" in host.get("state", {})
+        ended = primary_ended and (not with_host or host_ended)
         return {
             "pod_name": pod["metadata"]["name"],
             "pod_uid": pod["metadata"]["uid"],
             "phase": pod.get("status", {}).get("phase", "Pending"),
             "terminated": ended,
-            "container_name": containers[0]["name"],
+            "container_name": names[0],
             **(
                 {"resource_version": pod["metadata"]["resourceVersion"]}
                 if pod["metadata"].get("resourceVersion")
                 else {}
             ),
+            **({"container_id": primary["containerID"]} if primary.get("containerID") else {}),
+            **({"exit_code": primary["state"]["terminated"]["exitCode"]} if primary_ended else {}),
+            **({"host_container_id": host["containerID"]} if host.get("containerID") else {}),
+            **({"host_terminated": host_ended} if with_host else {}),
             **(
-                {"container_id": states[0]["containerID"]}
-                if len(states) == 1 and states[0].get("containerID")
+                {"pod_ip": pod["status"]["podIP"]}
+                if with_host and pod.get("status", {}).get("podIP")
                 else {}
             ),
-            **(
-                {"exit_code": states[0]["state"]["terminated"]["exitCode"]}
-                if ended and len(states) == 1
-                else {}
-            ),
+            **({"observation": "unknown"} if with_host and primary_ended != host_ended else {}),
         }
+
+    @staticmethod
+    def _same_process(projection, reference):
+        return all(
+            projection.get(key) == reference.get(key)
+            for key in ("pod_uid", "container_id", "host_container_id")
+        )
 
     @staticmethod
     def _scoped_credentials(value, task_id):
@@ -790,6 +943,230 @@ class RunnerResources:
             raise ResourceUnknown("Only Task-scoped Runner credentials can be mounted")
         return value
 
+    async def _original_host_runner(self, operation):
+        if not self.sandbox_host:
+            raise ResourceUnknown("The original Runner has no Sandbox host profile")
+        observed = operation["observation"]
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        pod = self._owned(
+            await self._get("pod", "bbx-runner", namespace),
+            {**labels, "bbx.dev/component": "runner"},
+            observed["runner"]["pod_uid"],
+        )
+        self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+        actual = self._pod_projection(pod, with_host=True)
+        if (
+            pod["metadata"].get("deletionTimestamp")
+            or not self._same_process(actual, observed["runner"])
+            or not actual.get("host_container_id")
+            or not actual.get("pod_ip")
+            or any(
+                "running" not in state.get("state", {})
+                for state in pod["status"]["containerStatuses"]
+            )
+            or actual.get("pod_ip") != observed["runner"].get("pod_ip")
+            or actual["terminated"]
+            or actual.get("observation") == "unknown"
+        ):
+            raise ResourceUnknown("The original Sandbox host process is not live")
+        return namespace, labels, pod
+
+    async def sandbox_host_context(self, operation, tenant_key):
+        namespace, labels, runner = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        original = observed["sandbox"]
+        pod = await self._get("pod", original["pod_name"], namespace)
+        if (
+            not pod
+            or pod["metadata"].get("deletionTimestamp")
+            or not any(
+                owner.get("uid") == original["cr_uid"]
+                for owner in pod["metadata"].get("ownerReferences", [])
+            )
+            or not self._same_process(self._pod_projection(pod), original)
+            or self._pod_projection(pod)["terminated"]
+            or self._sandbox_spec(pod) != original["environment_revision"]
+        ):
+            raise ResourceUnknown("The original Sandbox Pod identity changed")
+        secret = self._owned(
+            await self._get("secret", "bbx-execd", namespace),
+            labels,
+            observed["execd_secret"]["uid"],
+        )
+        if secret.get("type") != "Opaque" or set(secret.get("data", {})) != {"token"}:
+            raise ResourceUnknown("The original execd identity is unavailable")
+        token = base64.b64decode(secret["data"]["token"], validate=True).decode()
+        if not token.strip():
+            raise ResourceUnknown("The original execd identity is unavailable")
+        connection = self._connection(tenant_key, token)
+        sandbox = None
+        try:
+            sandbox = await Sandbox.connect(
+                original["id"], connection_config=connection, connect_timeout=timedelta(seconds=30)
+            )
+            endpoint = await sandbox.get_endpoint(DEFAULT_EXECD_PORT)
+            context = await read_execution_context(sandbox)
+        except Exception:
+            raise ResourceUnknown(
+                "The original native execd endpoint or context is unresolved"
+            ) from None
+        finally:
+            if sandbox is not None:
+                await sandbox.close()
+            if connection.transport is not None:
+                await connection.transport.aclose()
+        headers = endpoint.headers
+        if (
+            set(headers) != {"OpenSandbox-Ingress-To", "OpenSandbox-Secure-Access"}
+            or headers["OpenSandbox-Ingress-To"] != f"{original['id']}-{DEFAULT_EXECD_PORT}"
+            or not headers["OpenSandbox-Secure-Access"].strip()
+            or context["pod_uid"] != original["pod_uid"]
+            or context["environment_revision"] != original["environment_revision"]
+        ):
+            raise ResourceUnknown("The original native execd route or execution identity changed")
+        origin = self._execd_origin(endpoint.endpoint)
+        # Runtime and its sidecar may reach the same ingress through different addresses.
+        if self.config.get("sandbox_host_execd_origin"):
+            origin = self._execd_origin(self.config["sandbox_host_execd_origin"])
+        address = str(ipaddress.IPv4Address(runner["status"]["podIP"]))
+        return {
+            "sandbox_id": original["id"],
+            "sandbox_pod_uid": original["pod_uid"],
+            "environment_revision": original["environment_revision"],
+            "execution_context_id": context["execution_context_id"],
+            "execd_endpoint": origin,
+            "execd_headers": headers,
+            "execd_token": token,
+            "host_url": f"http://{address}:{SANDBOX_HOST_PORT}",
+        }
+
+    async def publish_sandbox_host(self, operation, configuration):
+        namespace, labels, _ = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        expected = {
+            "version": 1,
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "runner_pod_uid": observed["runner"]["pod_uid"],
+            "sandbox_id": observed["sandbox"]["id"],
+            "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
+            "environment_revision": observed["sandbox"]["environment_revision"],
+            "network": self.config["sandbox_network"],
+            "ca_file": SANDBOX_HOST_MOUNT + "/ca.pem",
+        }
+        fields = set(expected) | {
+            "execution_context_id",
+            "blackboard_url",
+            "inbound_key",
+            "report_key",
+            "execd_endpoint",
+            "execd_headers",
+            "execd_token",
+            "hard_deadline",
+        }
+        if (
+            set(configuration) != fields
+            or any(configuration[k] != value for k, value in expected.items())
+            or configuration["inbound_key"] == configuration["report_key"]
+            or not re.fullmatch(r"[a-f0-9]{64}", configuration["execution_context_id"])
+        ):
+            raise ResourceUnknown("The Sandbox host mount does not match the original Task")
+        secret = self._owned(
+            await self._get("secret", SANDBOX_HOST_SECRET, namespace),
+            labels,
+            observed["sandbox_host_secret"]["uid"],
+        )
+        self._host_secret(secret)
+        existing = secret["data"].get("host.json")
+        if existing:
+            if json.loads(base64.b64decode(existing)) != configuration:
+                raise ResourceUnknown("The original Sandbox host startup material cannot change")
+            return
+        secret["data"]["host.json"] = base64.b64encode(
+            json.dumps(configuration, ensure_ascii=False, separators=(",", ":")).encode()
+        ).decode()
+        await self._kubectl("replace", "-f", "-", body=secret)
+
+    async def wait_sandbox_host_ready(self, operation, configuration):
+        namespace, _, pod = await self._original_host_runner(operation)
+        process = await asyncio.create_subprocess_exec(
+            "kubectl",
+            "--kubeconfig",
+            self.config["kubeconfig"],
+            "--context",
+            self.config["context"],
+            "-n",
+            namespace,
+            "port-forward",
+            "pod/" + pod["metadata"]["name"],
+            f":{SANDBOX_HOST_PORT}",
+            "--address",
+            "127.0.0.1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            async with asyncio.timeout(120):
+                assert process.stdout is not None
+                port = None
+                while port is None:
+                    line = await process.stdout.readline()
+                    if not line:
+                        raise ResourceUnknown("The original Sandbox host readiness forward failed")
+                    match = re.fullmatch(rb"Forwarding from 127\.0\.0\.1:(\d+) -> 8766\s*", line)
+                    if match:
+                        port = int(match[1])
+                async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
+                    while process.returncode is None:
+                        try:
+                            response = await client.get(
+                                f"http://127.0.0.1:{port}/ready",
+                                headers={"x-bbx-sandbox-inbound": configuration["inbound_key"]},
+                            )
+                        except httpx.RequestError:
+                            await asyncio.sleep(0.2)
+                            continue
+                        if response.status_code == 200:
+                            value = response.json()
+                            if (
+                                not isinstance(value, dict)
+                                or value.get("ready") is not True
+                                or any(
+                                    value.get(k) != configuration[k]
+                                    for k in (
+                                        "task_id",
+                                        "operation_id",
+                                        "runner_pod_uid",
+                                        "sandbox_id",
+                                        "sandbox_pod_uid",
+                                        "execution_context_id",
+                                    )
+                                )
+                            ):
+                                raise ResourceUnknown(
+                                    "Sandbox host readiness belongs to a different identity"
+                                )
+                            await self._original_host_runner(operation)
+                            return
+                        if response.status_code < 500:
+                            raise ResourceUnknown(
+                                "The original Sandbox host readiness authority was refused"
+                            )
+                        await asyncio.sleep(0.2)
+        except (TimeoutError, ValueError):
+            raise ResourceUnknown("The original Sandbox host readiness is unresolved") from None
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 3)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+        raise ResourceUnknown("The original Sandbox host readiness is unresolved")
+
     async def publish_mount(self, observation, bootstrap, credentials, *, control_only=False):
         namespace, labels = self._scope(observation)
         await self._cluster()
@@ -798,15 +1175,26 @@ class RunnerResources:
             {**labels, "bbx.dev/component": "runner"},
             observation["runner"]["pod_uid"],
         )
+        projection = self._pod_projection(pod, with_host=self.sandbox_host)
         if (
-            self._pod_projection(pod)["terminated"]
-            or self._pod_projection(pod).get("container_id")
-            != observation["runner"].get("container_id")
+            projection["terminated"]
+            or projection.get("observation") == "unknown"
+            or not self._same_process(projection, observation["runner"])
+            or (self.sandbox_host and not projection.get("host_container_id"))
             or bootstrap["fence"]["pod_uid"] != pod["metadata"]["uid"]
             or bootstrap["fence"]["task_id"] != labels["bbx.dev/task-id"]
         ):
             raise ResourceUnknown("The Runner mount is not bound to the original live Pod")
         self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+        if self.sandbox_host:
+            host = self._owned(
+                await self._get("secret", SANDBOX_HOST_SECRET, namespace),
+                labels,
+                observation["sandbox_host_secret"]["uid"],
+            )
+            self._host_secret(host)
+            if "host.json" not in host["data"]:
+                raise ResourceUnknown("The original Sandbox host has no frozen startup material")
         secret = self._owned(
             await self._get("secret", "bbx-runner", namespace),
             labels,
@@ -884,12 +1272,16 @@ class RunnerResources:
             return {**result, "not_started": True}
         self._owned(ns, labels, prior.get("namespace_uid"))
         result["namespace_uid"] = ns["metadata"]["uid"]
-        for key in ("journal_pvc", "workspace_pvc", "execd_secret", "runner_secret"):
+        retained = ("journal_pvc", "workspace_pvc", "execd_secret", "runner_secret")
+        if self.sandbox_host:
+            retained += ("sandbox_host_secret",)
+        for key in retained:
             name = {
                 "journal_pvc": "bbx-journal",
                 "workspace_pvc": "bbx-workspace",
                 "execd_secret": "bbx-execd",
                 "runner_secret": "bbx-runner",
+                "sandbox_host_secret": SANDBOX_HOST_SECRET,
             }[key]
             value = await self._get("pvc" if key.endswith("_pvc") else "secret", name, namespace)
             if not value:
@@ -912,6 +1304,8 @@ class RunnerResources:
                     raise ResourceUnknown("The retained PVC contract changed")
             elif key == "runner_secret":
                 self._runner_secret(value)
+            elif key == "sandbox_host_secret":
+                self._host_secret(value)
             elif (
                 value.get("type") != "Opaque"
                 or set(value.get("data", {})) != {"token"}
@@ -967,10 +1361,11 @@ class RunnerResources:
                 prior.get("runner", {}).get("pod_uid"),
             )
             self._runner_spec(runner, self._runner_document(namespace, labels)["spec"])
-            projection = self._pod_projection(runner)
-            if prior.get("runner", {}).get("container_id") and prior["runner"][
-                "container_id"
-            ] != projection.get("container_id"):
+            projection = self._pod_projection(runner, with_host=self.sandbox_host)
+            if any(
+                prior.get("runner", {}).get(key) and prior["runner"][key] != projection.get(key)
+                for key in ("container_id", "host_container_id", "pod_ip")
+            ):
                 raise ResourceUnknown("The original Runner container identity changed")
             result["runner"] = projection
         known_pods = {result.get(key, {}).get("pod_uid") for key in ("runner", "sandbox")}
@@ -998,15 +1393,17 @@ class RunnerResources:
                 result[key] = {**ref, "terminated": False, "observation": "unknown"}
                 continue
             pod = await self._get("pod", ref["pod_name"], namespace)
-            if (
-                not pod
-                or pod["metadata"]["uid"] != observation[key]["pod_uid"]
-                or self._pod_projection(pod).get("container_id")
-                != observation[key].get("container_id")
-            ):
-                result[key] = {**observation[key], "terminated": False, "observation": "unknown"}
+            projection = (
+                self._pod_projection(pod, with_host=self.sandbox_host and key == "runner")
+                if pod
+                else {}
+            )
+            if not pod or not self._same_process(projection, ref):
+                result[key] = {**ref, "terminated": False, "observation": "unknown"}
             else:
-                result[key] = {**observation[key], **self._pod_projection(pod)}
+                if key == "runner":
+                    self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+                result[key] = {**ref, **projection}
         return result
 
     async def _terminated_watch(self, reference, namespace):
@@ -1064,20 +1461,16 @@ class RunnerResources:
                     if current.get("metadata", {}).get("uid") != meta["uid"]:
                         failure = "watch_uid_changed"
                         break
-                    states = current.get("status", {}).get("containerStatuses", [])
-                    if not states:
-                        continue
-                    if (
-                        len(states) != 1
-                        or states[0].get("name") != reference["container_name"]
-                        or states[0].get("containerID") not in {None, container_id}
+                    projection = self._pod_projection(
+                        current, with_host=bool(reference.get("host_container_id"))
+                    )
+                    if projection["container_name"] != reference["container_name"] or any(
+                        projection.get(k) not in {None, reference.get(k)}
+                        for k in ("container_id", "host_container_id")
                     ):
                         failure = "watch_container_changed"
                         break
-                    if "terminated" not in states[0].get("state", {}):
-                        continue
-                    projection = self._pod_projection(current)
-                    if projection["terminated"] and projection.get("container_id") == container_id:
+                    if projection["terminated"] and self._same_process(projection, reference):
                         confirmed = True
                         break
         except TimeoutError:
@@ -1106,12 +1499,16 @@ class RunnerResources:
                 ref = observation.get(key, {})
                 if not ref.get("pod_name") or not ref.get("pod_uid") or not ref.get("container_id"):
                     continue
+                if key == "runner" and self.sandbox_host and not ref.get("host_container_id"):
+                    continue
                 pod = await self._get("pod", ref["pod_name"], namespace)
                 if pod:
                     if pod["metadata"]["uid"] != ref["pod_uid"]:
                         raise ResourceUnknown("The original Pod identity changed")
-                    projection = self._pod_projection(pod)
-                    if projection.get("container_id") != ref["container_id"]:
+                    projection = self._pod_projection(
+                        pod, with_host=self.sandbox_host and key == "runner"
+                    )
+                    if not self._same_process(projection, ref):
                         raise ResourceUnknown("The original container identity changed")
                     if projection["terminated"]:
                         result[key + "_terminated"] = True
@@ -1382,7 +1779,13 @@ class RunnerResources:
                 original.add(uid)
                 continue
             expected = None
-            for key in ("journal_pvc", "workspace_pvc", "runner_secret", "execd_secret"):
+            for key in (
+                "journal_pvc",
+                "workspace_pvc",
+                "runner_secret",
+                "execd_secret",
+                "sandbox_host_secret",
+            ):
                 ref = observed.get(key, {})
                 if name == ref.get("name") and kind == (
                     "PersistentVolumeClaim" if key.endswith("pvc") else "Secret"
@@ -1398,7 +1801,14 @@ class RunnerResources:
                     {},
                 )
                 expected = ref.get("pod_uid")
-                if not expected or not self._pod_projection(value)["terminated"]:
+                projection = self._pod_projection(
+                    value, with_host=self.sandbox_host and name == "bbx-runner"
+                )
+                if (
+                    not expected
+                    or not projection["terminated"]
+                    or not self._same_process(projection, ref)
+                ):
                     raise ResourceUnknown("Retirement still has an unresolved execution Pod")
             if kind == "BatchSandbox" or (expected is None and (kind, name) not in allowed):
                 raise ResourceUnknown(
@@ -1408,6 +1818,8 @@ class RunnerResources:
             if kind == "Secret":
                 if name == "bbx-runner":
                     self._runner_secret(value)
+                elif name == SANDBOX_HOST_SECRET and self.sandbox_host:
+                    self._host_secret(value)
                 elif value.get("type") != "Opaque" or set(value.get("data", {})) != {"token"}:
                     raise ResourceUnknown("The original execd Secret changed")
             resources.append({"path": path, "uid": uid, "kind": kind, "name": name})

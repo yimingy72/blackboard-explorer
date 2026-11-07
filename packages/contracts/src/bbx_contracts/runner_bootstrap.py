@@ -56,6 +56,8 @@ class NativeRunnerAction(ContractModel):
         "retire_plan",
         "retire_admit",
         "retire_complete",
+        "sandbox_host_material",
+        "sandbox_host_ready",
     ]
     observation: dict[str, Any] = Field(default_factory=dict, max_length=16)
     proof: dict[str, Any] = Field(default_factory=dict, max_length=8)

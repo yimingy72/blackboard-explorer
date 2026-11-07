@@ -375,10 +375,18 @@ class NativeRunnerBootstrap:
             "workspace_pvc",
             "execd_secret",
             "runner_secret",
+            "sandbox_host_secret",
             "sandbox",
             "runner",
         }
-        mutable = {"phase", "terminated", "exit_code", "observation", "resource_version"}
+        mutable = {
+            "phase",
+            "terminated",
+            "host_terminated",
+            "exit_code",
+            "observation",
+            "resource_version",
+        }
         allowed = {
             "name",
             "uid",
@@ -389,6 +397,8 @@ class NativeRunnerBootstrap:
             "environment_revision",
             "container_id",
             "container_name",
+            "host_container_id",
+            "pod_ip",
         } | mutable
         if set(incoming) - (set(identity) | nested | {"namespace_uid"}):
             raise HTTPException(422, "Unexpected native resource evidence")
@@ -444,6 +454,7 @@ class NativeRunnerBootstrap:
             and observation["runner"].get("phase") == "Running"
             and all(
                 observation[key].get("terminated") is not True
+                and observation[key].get("host_terminated") is not True
                 and observation[key].get("observation") != "unknown"
                 and observation[key].get("phase") not in {"Failed", "Succeeded", "Unknown"}
                 for key in ("runner", "sandbox")
@@ -534,6 +545,33 @@ class NativeRunnerBootstrap:
 
     async def act(self, tid, raw):
         body, _ = decode(NativeRunnerAction, raw, 262144)
+        if body.action in {"sandbox_host_material", "sandbox_host_ready"}:
+            async with self.repo.engine.begin() as conn:
+                record, _ = await self._checked(conn, tid, body, live=True)
+                if not self._resources_ready(record["observation"]):
+                    raise HTTPException(409, "Original Task resources are not ready")
+                if not record["observation"].get("sandbox_host_secret", {}).get(
+                    "uid"
+                ) or not record["observation"]["runner"].get("host_container_id"):
+                    raise HTTPException(
+                        409, "Original Sandbox host container and mount are not identified"
+                    )
+                if body.action == "sandbox_host_material":
+                    return await self.gateway.sandbox.host_material(
+                        conn, tid, record, body.proof.get("context", {})
+                    )
+                host = record["sandbox_host"]
+                if not host or body.proof.get(
+                    "context_digest"
+                ) != self.gateway.sandbox.context_digest(host["context"]):
+                    raise HTTPException(409, "Original Sandbox host context changed")
+                await conn.execute(
+                    update(s.task_runner_resources)
+                    .where(s.task_runner_resources.c.task_id == tid)
+                    .values(sandbox_host={**host, "ready": True})
+                )
+                await self._set(conn, tid, data={**record["data"], "sandbox_host_ready": True})
+                return self._public(await self._get(conn, tid))
         if body.action.startswith("retire_"):
             return await self.retirement.act(tid, body)
         if body.action in {"material", "renew"}:
@@ -716,7 +754,13 @@ class NativeRunnerBootstrap:
                         conn, tid, state="unknown", last_error="native_exit_unconfirmed"
                     )
                     return self._public(await self._get(conn, tid))
-                if not never_dispatched and not self._resources_identified(record["observation"]):
+                if not never_dispatched and (
+                    not self._resources_identified(record["observation"])
+                    or (
+                        record["config"].get("runner_profile") == "node-sandbox-host-v1"
+                        and not record["observation"].get("runner", {}).get("host_container_id")
+                    )
+                ):
                     raise HTTPException(
                         409, "Original native container identities are not registered"
                     )
@@ -735,6 +779,24 @@ class NativeRunnerBootstrap:
                     "exit_reason": "not_dispatched" if never_dispatched else "terminated",
                 }
                 await self._set(conn, tid, state="exited", data=data, last_error=None)
+                if record["sandbox_host"]:
+                    await conn.execute(
+                        update(s.sandbox_command_records)
+                        .where(
+                            s.sandbox_command_records.c.task_id == tid,
+                            s.sandbox_command_records.c.state.in_(["dispatched", "running"]),
+                        )
+                        .values(state="unknown")
+                    )
+                    await conn.execute(
+                        update(s.runner_calls)
+                        .where(
+                            s.runner_calls.c.task_id == tid,
+                            s.runner_calls.c.provider_key == "sandbox",
+                            s.runner_calls.c.state == "dispatched",
+                        )
+                        .values(state="unknown")
+                    )
                 member = await row(conn, s.ctf_members, tid, "lead")
                 if data.get("lead_turn_id") and member["current_turn_id"] == data["lead_turn_id"]:
                     turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
@@ -822,6 +884,10 @@ class NativeRunnerBootstrap:
             record, task = await self._checked(conn, tid, body, live=True)
             if not self._resources_ready(record["observation"]):
                 raise HTTPException(409, "Native environment and original Runner must be ready")
+            if record["config"].get("runner_profile") == "node-sandbox-host-v1" and not record[
+                "sandbox_host"
+            ].get("ready"):
+                raise HTTPException(409, "Original Sandbox host is not ready")
             if (
                 record["observation"]["sandbox"]["environment_revision"]
                 != record["config"]["environment_revision"]
@@ -905,6 +971,12 @@ class NativeRunnerBootstrap:
             )
             model = EffectiveRunnerModel.model_validate(model).model_dump(mode="json")
             tools = task["ctf_control"]["business_tools"]["roles"]["lead"]
+            if record["config"].get("runner_profile") == "node-sandbox-host-v1":
+                from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
+
+                async with self.repo.engine.connect() as conn:
+                    await self.gateway.sandbox.require_ready(conn, tid)
+                tools = [*tools, *SANDBOX_TOOLS]
             instructions = render_ctf_prompt(
                 profile,
                 "lead",
@@ -916,8 +988,8 @@ class NativeRunnerBootstrap:
                 allowed_tool_names=", ".join(tools),
             )
             instructions += (
-                "\nOnly the published business tools are available; "
-                "Sandbox command tools are not enabled."
+                "\nUse only the published tools. "
+                "Commands and files use the shared low-privilege Task workspace."
             )
             binding = await self.control.register_binding(
                 tid,

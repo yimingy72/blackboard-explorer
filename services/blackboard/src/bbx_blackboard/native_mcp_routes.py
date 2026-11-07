@@ -2,11 +2,13 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -108,6 +110,15 @@ class NativeMCPRoutes:
         ):
             raise HTTPException(409, "mcp_deployment_changed")
 
+    def _value(self, record):
+        value = record["value"]
+        if "ciphertext" not in value:
+            return value
+        try:
+            return json.loads(self.gateway.cipher.decrypt(value["ciphertext"].encode()))
+        except (InvalidToken, ValueError) as error:
+            raise HTTPException(503, "mcp_route_config_unavailable") from error
+
     async def prepare(self, conn, tid):
         """Called under the real Task lock after its owner and binding have been checked."""
         original = await self._get(conn, tid)
@@ -117,12 +128,33 @@ class NativeMCPRoutes:
                 raise HTTPException(409, "mcp_route_retirement_is_final")
             return
         config = self.configuration()
+        resource = (
+            (
+                await conn.execute(
+                    select(s.task_runner_resources).where(s.task_runner_resources.c.task_id == tid)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        sandbox = None
+        if resource and (resource["config"] or {}).get("runner_profile") == "node-sandbox-host-v1":
+            host = resource["sandbox_host"]
+            if not host.get("ready"):
+                raise HTTPException(503, "mcp_sandbox_host_not_ready")
+            sandbox = {
+                "host_url": host["context"]["host_url"],
+                "inbound_key": self.gateway.cipher.decrypt(
+                    host["inbound_key_ciphertext"].encode()
+                ).decode(),
+            }
         value = business_mcp_route(
             tid,
             config["backend_url"],
             config["gateway_url"],
             config["jwks_file"],
             config["backend_token_file"],
+            sandbox=sandbox,
         )
         source_hash = hashlib.sha256(config["source"].encode()).hexdigest()[:16]
         value["name"] = f"bbx-mcp-{source_hash}-{tid}"
@@ -132,7 +164,11 @@ class NativeMCPRoutes:
                 accounting_source_id=config["source"],
                 resource_id=value["name"],
                 config=config,
-                value=value,
+                value={
+                    "ciphertext": self.gateway.cipher.encrypt(json.dumps(value).encode()).decode()
+                }
+                if sandbox
+                else value,
                 desired="active",
                 publication_state="pending",
                 revision=1,
@@ -193,7 +229,7 @@ class NativeMCPRoutes:
         }
         async with self.repo.engine.connect() as conn:
             owned = {
-                item["resource_id"]: item["value"]
+                item["resource_id"]: self._value(item)
                 for item in (
                     await conn.execute(
                         select(s.native_task_mcp_routes).where(
@@ -212,7 +248,7 @@ class NativeMCPRoutes:
             ):
                 raise HTTPException(409, "mcp_route_ownership_conflict")
         matches = [resource for resource in resources if resource["id"] == record["resource_id"]]
-        if len(matches) > 1 or (matches and matches[0]["value"] != record["value"]):
+        if len(matches) > 1 or (matches and matches[0]["value"] != self._value(record)):
             raise HTTPException(409, "mcp_route_ownership_conflict")
         # DB resource reads describe desired config; only this live store proves reload.
         try:
@@ -268,26 +304,28 @@ class NativeMCPRoutes:
             raise HTTPException(409, "mcp_active_route_conflict")
         target = mcp_backend[1]["target"]
         targets = target["targets"]
-        if (
-            target["prefixMode"] != "always"
-            or len(targets) != 1
-            or targets[0]["name"] != "business"
-        ):
+        expected_targets = owned[record["resource_id"]]["backends"][0]["mcp"]["targets"]
+        if target["prefixMode"] != "always" or [t["name"] for t in targets] != [
+            t["name"] for t in expected_targets
+        ]:
             raise HTTPException(409, "mcp_active_route_conflict")
-        upstream = targets[0]["mcp"]
-        expected_url = urlsplit(record["config"]["backend_url"])
-        if upstream["path"] != f"/api/tasks/{record['task_id']}/business-mcp/":
-            raise HTTPException(409, "mcp_active_route_conflict")
-        host_backend = backends.get(upstream["backend"]["backend"])
-        if host_backend is None:
-            return None
-        expected_host = expected_url.hostname
-        if expected_host and ":" in expected_host:
-            expected_host = "[" + expected_host + "]"
-        expected_port = expected_url.port or (443 if expected_url.scheme == "https" else 80)
-        expected_target = f"{expected_host}:{expected_port}"
-        if host_backend[0] != "host" or host_backend[1]["target"] != expected_target:
-            raise HTTPException(409, "mcp_active_route_conflict")
+        for item, expected in zip(targets, expected_targets, strict=True):
+            upstream = item["mcp"]
+            expected_url = urlsplit(expected["mcp"]["host"])
+            if upstream["path"] != expected_url.path:
+                raise HTTPException(409, "mcp_active_route_conflict")
+            host_backend = backends.get(upstream["backend"]["backend"])
+            if host_backend is None:
+                return None
+            expected_host = expected_url.hostname
+            if expected_host and ":" in expected_host:
+                expected_host = "[" + expected_host + "]"
+            expected_port = expected_url.port or (443 if expected_url.scheme == "https" else 80)
+            if (
+                host_backend[0] != "host"
+                or host_backend[1]["target"] != f"{expected_host}:{expected_port}"
+            ):
+                raise HTTPException(409, "mcp_active_route_conflict")
         return True
 
     async def _remember_error(self, tid, code, *, uncertain=False):
@@ -412,7 +450,7 @@ class NativeMCPRoutes:
                 )
         try:
             if action == "put":
-                await self.admin.put_route(record["value"])
+                await self.admin.put_route(self._value(record))
                 async with self.repo.engine.begin() as conn:
                     await self.repo.lock(conn, tid)
                     current = await self._get(conn, tid)

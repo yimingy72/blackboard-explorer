@@ -542,3 +542,56 @@ async def test_original_exit_does_not_confirm_a_replaced_logical_sandbox(monkeyp
     monkeypatch.setattr(adapter, "_kubectl", kubectl)
     with pytest.raises(ResourceUnknown, match="identity changed|another execution"):
         await adapter.stop(observation, "synthetic-tenant")
+
+
+def test_sandbox_host_profile_keeps_mounts_separate_and_requires_both_original_exits():
+    from bbx_runtime.runner_resources import SANDBOX_HOST_PROFILE
+
+    old = configured()
+    adapter = RunnerResources(
+        {
+            **old.config,
+            "runner_profile": SANDBOX_HOST_PROFILE,
+            "sandbox_host_image": "host@sha256:" + "c" * 64,
+            "sandbox_network": {
+                "namespace": "worker-a",
+                "network_identity": "worker-a",
+                "ipv4": "198.19.1.2",
+            },
+        }
+    )
+    _, labels = identity(adapter)
+    pod = adapter._runner_document("synthetic-task", labels)
+    pod["metadata"].update(uid="original-runner", resourceVersion="123")
+    desired = copy.deepcopy(pod["spec"])
+    node, host = pod["spec"]["containers"]
+    assert pod["spec"]["shareProcessNamespace"] is False
+    assert {v["name"] for v in node["volumeMounts"]} == {"identity", "journal", "start"}
+    assert {v["name"] for v in host["volumeMounts"]} == {"sandbox-host"}
+    assert host["securityContext"]["runAsUser"] == 1001
+    adapter._runner_spec(pod, desired)
+    pod["status"] = {
+        "podIP": "10.216.0.4",
+        "containerStatuses": [
+            {"name": "runner", "containerID": "containerd://node", "state": {"running": {}}},
+            {"name": "sandbox-host", "containerID": "containerd://host", "state": {"running": {}}},
+        ],
+    }
+    original = adapter._pod_projection(pod, with_host=True)
+    assert (
+        original["host_container_id"] == "containerd://host" and original["pod_ip"] == "10.216.0.4"
+    )
+    node_state, host_state = pod["status"]["containerStatuses"]
+    node_state["state"] = {"terminated": {"exitCode": 143}}
+    half = adapter._pod_projection(pod, with_host=True)
+    assert half["terminated"] is False and half["observation"] == "unknown"
+    host_state["state"] = {"terminated": {"exitCode": 143}}
+    both = adapter._pod_projection(pod, with_host=True)
+    assert both["terminated"] and adapter._same_process(both, original)
+    host_state["containerID"] = "containerd://replacement-host"
+    assert not adapter._same_process(adapter._pod_projection(pod, with_host=True), original)
+    with pytest.raises(ResourceUnknown):
+        old._pod_projection(pod)
+    pod["spec"]["ephemeralContainers"] = [{"name": "debug"}]
+    with pytest.raises(ResourceUnknown):
+        adapter._pod_projection(pod, with_host=True)
