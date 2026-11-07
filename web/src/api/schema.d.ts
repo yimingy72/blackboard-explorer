@@ -1518,6 +1518,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/budget-increase": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** User Budget Increase */
+        post: operations["user_budget_increase_api_tasks__task_id__ctf_runtime_runner_bootstrap_budget_increase_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/claim": {
         parameters: {
             query?: never;
@@ -5161,6 +5178,38 @@ export interface components {
             selected_models: string[];
             /** Task Id */
             task_id: string;
+            /** Threshold Usd */
+            threshold_usd: string;
+        };
+        /** NativeBudgetIncreaseRequest */
+        NativeBudgetIncreaseRequest: {
+            /** Additional Cny */
+            additional_cny: number | string;
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativeBudgetIncreaseStatus */
+        NativeBudgetIncreaseStatus: {
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Threshold Cny */
+            threshold_cny: string;
             /** Threshold Usd */
             threshold_usd: string;
         };
@@ -11028,6 +11077,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_budget_increase_api_tasks__task_id__ctf_runtime_runner_bootstrap_budget_increase_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeBudgetIncreaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeBudgetIncreaseStatus"];
                 };
             };
             /** @description Validation Error */

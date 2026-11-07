@@ -5665,6 +5665,74 @@
         "title": "NativeBudgetBinding",
         "type": "object"
       },
+      "NativeBudgetIncreaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "additional_cny": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,7}|(?=[\\d.]{1,17}0*$)\\d{0,7}\\.\\d{0,9}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Additional Cny"
+          },
+          "pause_id": {
+            "format": "uuid",
+            "title": "Pause Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "pause_id",
+          "additional_cny"
+        ],
+        "title": "NativeBudgetIncreaseRequest",
+        "type": "object"
+      },
+      "NativeBudgetIncreaseStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "pause_id": {
+            "format": "uuid",
+            "title": "Pause Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "threshold_cny": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold Cny",
+            "type": "string"
+          },
+          "threshold_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Threshold Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "pause_id",
+          "threshold_cny",
+          "threshold_usd"
+        ],
+        "title": "NativeBudgetIncreaseStatus",
+        "type": "object"
+      },
       "NativeBudgetPrepare": {
         "additionalProperties": false,
         "properties": {
@@ -17359,6 +17427,59 @@
           }
         },
         "summary": "Bootstrap Action",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/budget-increase": {
+      "post": {
+        "operationId": "user_budget_increase_api_tasks__task_id__ctf_runtime_runner_bootstrap_budget_increase_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeBudgetIncreaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeBudgetIncreaseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Budget Increase",
         "tags": [
           "native-runner-bootstrap"
         ]

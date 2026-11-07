@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
+from bbx_blackboard.native_fees import threshold_hold_id
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 
@@ -31,8 +32,14 @@ def pause_status(task):
     elif task["status"] == "closing" or control.get("native_stop_requested"):
         state = "stopping"
         blocker = None
-    elif control.get("native_budget_hold") or control.get("failure_hold"):
-        blocker = "budget_or_failure_hold"
+    elif (control.get("native_budget_hold") or control.get("failure_hold")) and (
+        not threshold_hold_id(task) or state not in {"draining", "paused"}
+    ):
+        blocker = (control.get("native_budget_hold") or {}).get("recovery_blocker") or (
+            "budget_or_failure_hold"
+        )
+    elif state == "paused" and threshold_hold_id(task):
+        blocker = "budget_exceeded"
     return {
         "pause_id": pause.get("pause_id"),
         "state": state,
@@ -45,6 +52,7 @@ class NativePause:
         self.bootstrap = bootstrap
         self.repo, self.control, self.ctf = bootstrap.repo, bootstrap.control, bootstrap.ctf
         self.native = bootstrap.gateway.native
+        self.native.pause_control = self
 
     async def _context(self, conn, tid):
         task = await self.control._task(conn, tid)
@@ -100,76 +108,7 @@ class NativePause:
             task, record, owner = await self._context(conn, tid)
             if native_pause_state(task) in {"draining", "paused", "resuming"}:
                 raise HTTPException(409, "Another manual pause or continuation is active")
-            data, control = dict(record["data"]), dict(task["ctf_control"])
-            if not data.get("activated") or not data.get("binding_id"):
-                raise HTTPException(409, "Original Lead session is not ready")
-            assignments = dict(control.get("native_worker_active", {}))
-            ids = {data["binding_id"], *(a["binding_id"] for a in assignments.values())}
-            live = (
-                (
-                    await conn.execute(
-                        select(s.runner_bindings.c.id).where(
-                            s.runner_bindings.c.task_id == tid,
-                            s.runner_bindings.c.owner_epoch == owner["epoch"],
-                            s.runner_bindings.c.status.in_(["registered", "prepared", "closing"]),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if set(live) - ids:
-                raise HTTPException(409, "Original Runner has an untracked active binding")
-            pause_id = str(request.request_id)
-            pause = {"pause_id": pause_id, "state": "draining", "blocker": "original_close_pending"}
-            snapshot = {
-                **self._identity(record, owner),
-                "pause_id": pause_id,
-                "binding_ids": sorted(ids),
-                "assignments": assignments,
-                "lead_binding_id": data["binding_id"],
-            }
-            await conn.execute(
-                update(s.tasks)
-                .where(s.tasks.c.id == tid)
-                .values(ctf_control={**control, "native_pause": pause})
-            )
-            await self.bootstrap._set(
-                conn, tid, data={**data, "pause_state": "draining", "pause_snapshot": snapshot}
-            )
-            for bid in snapshot["binding_ids"]:
-                binding = await row(conn, s.runner_bindings, tid, bid)
-                if binding["owner_epoch"] != owner["epoch"]:
-                    raise HTTPException(409, "Original binding owner changed")
-                close = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{owner['epoch']}:{bid}"))
-                await self.bootstrap.workers._enqueue(
-                    conn, tid, close, {"kind": "close", "binding_id": bid}
-                )
-            flags = s.flag_submissions
-            prepared = (
-                (
-                    await conn.execute(
-                        select(flags.c.data).where(
-                            flags.c.task_id == tid,
-                            flags.c.status == "prepared",
-                            flags.c.platform_call_id.is_(None),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for flag in prepared:
-                await emit(
-                    self.repo,
-                    conn,
-                    tid,
-                    "system",
-                    "board.flag.cancelled",
-                    operation_id(pause_id, flag["id"]),
-                    digest({"pause_id": pause_id, "flag": flag["id"]}),
-                    {**flag, "status": "cancelled", "updated_version": 0},
-                )
+            pause = await self._start(conn, tid, task, record, owner, str(request.request_id))
             return await emit(
                 self.repo,
                 conn,
@@ -181,8 +120,100 @@ class NativePause:
                 pause,
             )
 
+    async def start_budget(self, conn, tid, hold_id, budget):
+        task, record, owner = await self._context(conn, tid)
+        captured = {
+            "budget_hold_id": hold_id,
+            "budget_key": list(self._budget_identity(budget)[:-1]),
+        }
+        state = native_pause_state(task)
+        if state in {"draining", "paused"}:
+            data = record["data"]
+            snapshot = data["pause_snapshot"]
+            if any(snapshot.get(k) != v for k, v in self._identity(record, owner).items()):
+                raise HTTPException(409, "Original budget pause resources changed")
+            await self.bootstrap._set(
+                conn, tid, data={**data, "pause_snapshot": {**snapshot, **captured}}
+            )
+        elif state != "resuming":
+            await self._start(conn, tid, task, record, owner, hold_id, budget=captured)
+
+    async def _start(self, conn, tid, task, record, owner, pause_id, *, budget=None):
+        data, control = dict(record["data"]), dict(task["ctf_control"])
+        if not data.get("activated") or not data.get("binding_id"):
+            raise HTTPException(409, "Original Lead session is not ready")
+        assignments = dict(control.get("native_worker_active", {}))
+        ids = {data["binding_id"], *(a["binding_id"] for a in assignments.values())}
+        live = (
+            (
+                await conn.execute(
+                    select(s.runner_bindings.c.id).where(
+                        s.runner_bindings.c.task_id == tid,
+                        s.runner_bindings.c.owner_epoch == owner["epoch"],
+                        s.runner_bindings.c.status.in_(["registered", "prepared", "closing"]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if set(live) - ids:
+            raise HTTPException(409, "Original Runner has an untracked active binding")
+        pause = {"pause_id": pause_id, "state": "draining", "blocker": "original_close_pending"}
+        snapshot = {
+            **self._identity(record, owner),
+            "pause_id": pause_id,
+            "binding_ids": sorted(ids),
+            "assignments": assignments,
+            "lead_binding_id": data["binding_id"],
+            **(budget or {}),
+        }
+        await conn.execute(
+            update(s.tasks)
+            .where(s.tasks.c.id == tid)
+            .values(ctf_control={**control, "native_pause": pause})
+        )
+        await self.bootstrap._set(
+            conn, tid, data={**data, "pause_state": "draining", "pause_snapshot": snapshot}
+        )
+        for bid in snapshot["binding_ids"]:
+            binding = await row(conn, s.runner_bindings, tid, bid)
+            if binding["owner_epoch"] != owner["epoch"]:
+                raise HTTPException(409, "Original binding owner changed")
+            close = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{owner['epoch']}:{bid}"))
+            await self.bootstrap.workers._enqueue(
+                conn, tid, close, {"kind": "close", "binding_id": bid}
+            )
+        flags = s.flag_submissions
+        prepared = (
+            (
+                await conn.execute(
+                    select(flags.c.data).where(
+                        flags.c.task_id == tid,
+                        flags.c.status == "prepared",
+                        flags.c.platform_call_id.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for flag in prepared:
+            await emit(
+                self.repo,
+                conn,
+                tid,
+                "system",
+                "board.flag.cancelled",
+                operation_id(pause_id, flag["id"]),
+                digest({"pause_id": pause_id, "flag": flag["id"]}),
+                {**flag, "status": "cancelled", "updated_version": 0},
+            )
+        return pause
+
     async def _blocker(self, conn, tid, task, snapshot):
-        if self.bootstrap._held(task):
+        hold_id = snapshot.get("budget_hold_id")
+        if self.bootstrap._held(task) and not (hold_id and threshold_hold_id(task) == hold_id):
             return "budget_or_failure_hold"
         if task["ctf_control"].get("unresolved_checkpoints"):
             return "original_checkpoint_unresolved"
@@ -192,7 +223,15 @@ class NativePause:
                 select(calls.c.id)
                 .where(
                     calls.c.task_id == tid,
-                    calls.c.state.in_(["admitted", "dispatched", "unknown"]),
+                    or_(
+                        calls.c.state.in_(["admitted", "dispatched", "unknown"]),
+                        (calls.c.kind == "model")
+                        & (calls.c.state != "not_sent")
+                        & calls.c.data["dispatch_id"].astext.is_not(None)
+                        & calls.c.data["transport"]["phase"].astext.is_distinct_from(
+                            "response_ended"
+                        ),
+                    ),
                 )
                 .limit(1)
             )
@@ -209,6 +248,22 @@ class NativePause:
             )
         ).first():
             return "original_cost_unresolved"
+        commands = s.sandbox_command_records
+        if (
+            hold_id
+            and (
+                await conn.execute(
+                    select(commands.c.id)
+                    .where(
+                        commands.c.task_id == tid,
+                        commands.c.binding_id.in_(snapshot["binding_ids"]),
+                        commands.c.state.in_(["dispatched", "running", "unknown"]),
+                    )
+                    .limit(1)
+                )
+            ).first()
+        ):
+            return "original_command_unresolved"
         for bid in snapshot["binding_ids"]:
             binding = await row(conn, s.runner_bindings, tid, bid)
             if binding["permit_revision"] > 0 and not binding["sdk_session_id"]:
@@ -297,47 +352,79 @@ class NativePause:
             raise HTTPException(409, "Original pause is not confirmed or has changed")
         return snapshot
 
+    async def _confirmed_pause(self, conn, tid, pause_id):
+        task, record, owner = await self._context(conn, tid)
+        snapshot = self._resume_snapshot(task, record, owner, pause_id)
+        if blocker := await self._blocker(conn, tid, task, snapshot):
+            raise HTTPException(409, blocker)
+        return task, record, owner, snapshot
+
+    def _budget_pause(self, task, snapshot, budget):
+        hold_id = snapshot.get("budget_hold_id")
+        if (
+            not hold_id
+            or threshold_hold_id(task) != hold_id
+            or budget["hold_reason"] != "budget_exceeded"
+            or budget["publication_state"] != "ready"
+            or not budget["native_resource_id"]
+            or snapshot.get("budget_key") != list(self._budget_identity(budget)[:-1])
+            or task["ctf_control"]["native_budget_hold"]["source_id"]
+            != budget["accounting_source_id"]
+        ):
+            raise HTTPException(409, "Original threshold pause is unavailable")
+        return hold_id
+
+    def _resume_budget(self, task, snapshot, budget):
+        if budget["publication_state"] != "ready" or budget["config"].get("pending_increase"):
+            raise HTTPException(409, "Original native budget is not confirmed")
+        if not snapshot.get("budget_hold_id") and not budget["hold_reason"]:
+            return False
+        hold_id = self._budget_pause(task, snapshot, budget)
+        if budget["config"].get("last_increase_hold_id") != hold_id:
+            raise HTTPException(409, "Original threshold pause needs a confirmed increase")
+        return True
+
     async def resume(self, tid, request):
         hashed = digest({"operation": "native_user_resume", **request.model_dump(mode="json")})
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            task, record, owner = await self._context(conn, tid)
-            snapshot = self._resume_snapshot(task, record, owner, request.pause_id)
-            if blocker := await self._blocker(conn, tid, task, snapshot):
-                raise HTTPException(409, blocker)
+            task, _, _, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
             budget = await self.native._budget(conn, tid)
-            if budget["publication_state"] != "ready" or budget["hold_reason"]:
-                raise HTTPException(409, "Original native budget is held")
-        native = await self.native.admin.budget(budget["key_name"])
-        try:
-            used, exceeded = self.native._status_used(native, budget)
-        except (ValueError, KeyError, TypeError, ArithmeticError) as error:
-            raise HTTPException(503, "Original native budget readback is unconfirmed") from error
+            budget_resume = self._resume_budget(task, snapshot, budget)
+        if budget_resume:
+            await self.native.verified_key(budget, budget["config"]["native_value"], exact=True)
+        native, used, exceeded = await self.native.threshold_status(budget)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            task, record, owner = await self._context(conn, tid)
-            snapshot = self._resume_snapshot(task, record, owner, request.pause_id)
-            if blocker := await self._blocker(conn, tid, task, snapshot):
-                raise HTTPException(409, blocker)
+            task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
             current = await self.native._budget(conn, tid)
-            prior_used = Decimal((current["status_snapshot"] or {}).get("used_high_water_usd", "0"))
             if (
                 self._budget_identity(current) != self._budget_identity(budget)
-                or current["publication_state"] != "ready"
-                or current["hold_reason"]
+                or current["config"] != budget["config"]
+                or self._resume_budget(task, snapshot, current) != budget_resume
                 or exceeded
                 or used >= Decimal(current["config"]["threshold_usd"])
-                or used < max(prior_used, await self.native._total(conn, tid))
+                or used < await self.native.usage_floor(conn, tid, current)
             ):
                 raise HTTPException(409, "Original native budget cannot authorize continuation")
+            if budget_resume:
+                control = dict(task["ctf_control"])
+                del control["native_budget_hold"], control["failure_hold"]
+                task = {**task, "ctf_control": control}
+                await conn.execute(
+                    update(s.tasks).where(s.tasks.c.id == tid).values(ctf_control=control)
+                )
             await conn.execute(
                 update(s.native_task_budgets)
                 .where(s.native_task_budgets.c.task_id == tid)
-                .values(status_snapshot={"latest": native, "used_high_water_usd": str(used)})
+                .values(
+                    hold_reason=None,
+                    status_snapshot={"latest": native, "used_high_water_usd": str(used)},
+                )
             )
             return await self._continue(conn, tid, task, record, owner, snapshot, request, hashed)
 

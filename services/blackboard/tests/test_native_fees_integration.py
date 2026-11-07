@@ -525,8 +525,8 @@ async def test_native_unknown_missing_observation_status_rollback_and_worker_sur
             fees.clock = lambda: instant + timedelta(seconds=61)
             held, hold = asyncio.Event(), fees.hold
 
-            async def observe_hold(tid, reason):
-                await hold(tid, reason)
+            async def observe_hold(tid, reason, **kwargs):
+                await hold(tid, reason, **kwargs)
                 held.set()
 
             fees.hold = observe_hold
@@ -690,8 +690,8 @@ async def test_native_key_creation_retirement_and_deleted_task_consumer_races(ct
                 await resume.wait()
                 return result
 
-            async def observed_hold(tid, reason):
-                await hold(tid, reason)
+            async def observed_hold(tid, reason, **kwargs):
+                await hold(tid, reason, **kwargs)
                 handled.set()
 
             fees.admin.budget, fees.hold = delayed_status, observed_hold

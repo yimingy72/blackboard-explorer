@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "pause_id": {
+      "format": "uuid",
+      "title": "Pause Id",
+      "type": "string"
+    },
+    "threshold_cny": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Threshold Cny"
+    },
+    "threshold_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Threshold Usd"
+    }
+  },
+  "required": [
+    "request_id",
+    "pause_id",
+    "threshold_cny",
+    "threshold_usd"
+  ],
+  "title": "NativeBudgetIncreaseStatus",
+  "type": "object"
+}

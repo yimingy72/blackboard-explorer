@@ -9,6 +9,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal, DecimalException, InvalidOperation
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
@@ -34,6 +35,27 @@ from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import fence, row
 from bbx_blackboard.store import schema as s
 
+if TYPE_CHECKING:
+    from bbx_blackboard.native_pause import NativePause
+
+
+def threshold_hold_id(task):
+    control = task["ctf_control"]
+    hold = control.get("native_budget_hold") or {}
+    hold_id = hold.get("id")
+    if (
+        hold_id
+        and hold.get("reason") == "budget_exceeded"
+        and not hold.get("recovery_blocker")
+        and control.get("failure_hold") == budget_failure_hold(hold_id)
+    ):
+        return hold_id
+    return None
+
+
+def budget_failure_hold(hold_id):
+    return {"task_wide": True, "source": "native_gateway", "budget_hold_id": hold_id}
+
 
 class NativeFees:
     def __init__(self, gateway):
@@ -41,6 +63,7 @@ class NativeFees:
         self.repo, self.control, self.settings = gateway.repo, gateway.control, gateway.settings
         self.admin = NativeAdmin(self.settings)
         self.clock = lambda: datetime.now(UTC)
+        self.pause_control: NativePause | None = None
 
     def _configured(self):
         if not all(
@@ -199,21 +222,69 @@ class NativeFees:
             and value.get("budgets") == expected["budgets"]
         )
 
+    @staticmethod
+    def key_candidates(resources, budget):
+        def name_of(item):
+            metadata = item["value"].get("metadata")
+            return metadata.get("name") if isinstance(metadata, dict) else None
+
+        return [
+            item
+            for item in resources
+            if item["id"] == budget["native_resource_id"]
+            or item["value"].get("keyHash") == budget["config"]["native_value"]["keyHash"]
+            or name_of(item) == budget["key_name"]
+        ]
+
+    async def verified_key(self, budget, expected, *, exact=False):
+        items = self.key_candidates(await self.admin.resources(), budget)
+        if (
+            len(items) != 1
+            or items[0]["id"] != budget["native_resource_id"]
+            or expected.get("keyHash") != "sha256:" + budget["key_fingerprint"]
+            or expected.get("metadata", {}).get("name") != budget["key_name"]
+        ):
+            raise HTTPException(503, "Original native key configuration is unconfirmed")
+        value = items[0]["value"]
+        compare = value
+        if not exact and isinstance(value.get("metadata"), dict):
+            metadata = dict(value["metadata"])
+            if (
+                metadata.pop("agentgateway.dev/id", budget["native_resource_id"])
+                != budget["native_resource_id"]
+                or type(metadata.pop("agentgateway.dev/createdAt", 0)) is not int
+                or not isinstance(metadata.pop("agentgateway.dev/owner", ""), str)
+            ):
+                raise HTTPException(503, "Original native key metadata is unconfirmed")
+            compare = {**value, "metadata": metadata}
+        if compare != expected:
+            raise HTTPException(503, "Original native key configuration is unconfirmed")
+        return value
+
+    async def threshold_status(self, budget):
+        status = await self.admin.budget(budget["key_name"])
+        try:
+            used, exceeded = self._status_used(status, budget)
+        except (ValueError, KeyError, TypeError, ArithmeticError) as error:
+            raise HTTPException(503, "Original native budget readback is unconfirmed") from error
+        return status, used, exceeded
+
+    async def usage_floor(self, conn, tid, budget):
+        prior_used = Decimal((budget["status_snapshot"] or {}).get("used_high_water_usd", "0"))
+        return max(prior_used, await self._total(conn, tid))
+
     async def publish(self, tid):
         """A lost creation ACK is resolved by readback, never a second create."""
         self._configured()
         async with self.repo.engine.connect() as conn:
             budget = await self._budget(conn, tid)
+        if budget["config"].get("pending_increase"):
+            raise HTTPException(409, "Original native budget increase requires readback")
         resources = await self.admin.resources()
         expected = budget["config"]["native_value"]
-        same = [
-            item
-            for item in resources
-            if item["value"].get("keyHash") == expected["keyHash"]
-            or item["value"].get("metadata", {}).get("name") == budget["key_name"]
-        ]
+        same = self.key_candidates(resources, budget)
         if same and (len(same) != 1 or not self._matches(same[0]["value"], expected)):
-            await self.hold(tid, "native_key_conflict")
+            await self.hold(tid, "native_key_conflict", config=budget["config"])
             raise HTTPException(409, "Native Task key publication conflicts")
         if not same:
             async with self.repo.engine.begin() as conn:
@@ -260,6 +331,8 @@ class NativeFees:
             await self.repo.lock(conn, tid)
             current = await self._budget(conn, tid)
             config = current["config"]
+            if config.get("pending_increase") or config["native_value"] != expected:
+                raise HTTPException(409, "Original native key configuration changed")
             if current["publication_state"] == "retired":
                 raise HTTPException(409, "Native Task key has been retired")
             if current["native_resource_id"] not in {None, same[0]["id"]}:
@@ -625,30 +698,61 @@ class NativeFees:
 
         task = await row(conn, s.tasks, tid)
         budget = await self._budget(conn, tid, current_source=False)
+        control = task["ctf_control"]
+        if existing := control.get("native_budget_hold"):
+            if (
+                existing.get("id")
+                and reason != "budget_exceeded"
+                and not existing.get("recovery_blocker")
+            ):
+                await conn.execute(
+                    update(s.tasks)
+                    .where(s.tasks.c.id == tid)
+                    .values(
+                        ctf_control={
+                            **control,
+                            "native_budget_hold": {**existing, "recovery_blocker": reason},
+                        }
+                    )
+                )
+            return
         reason = budget["hold_reason"] or reason
+        hold = {"reason": reason, "source_id": budget["accounting_source_id"]}
+        if (
+            reason == "budget_exceeded"
+            and not budget["hold_reason"]
+            and not control.get("failure_hold")
+        ):
+            hold["id"] = str(uuid4())
         await conn.execute(
             update(s.native_task_budgets)
             .where(s.native_task_budgets.c.task_id == tid)
             .values(hold_reason=reason)
         )
-        if task["ctf_control"].get("native_budget_hold"):
-            return
         await conn.execute(
             update(s.tasks)
             .where(s.tasks.c.id == tid)
             .values(
                 ctf_control={
-                    **task["ctf_control"],
-                    "native_budget_hold": {
-                        "reason": reason,
-                        "source_id": budget["accounting_source_id"],
-                    },
-                    "failure_hold": task["ctf_control"].get("failure_hold")
-                    or {"task_wide": True, "source": "native_gateway"},
+                    **control,
+                    "native_budget_hold": hold,
+                    "failure_hold": control.get("failure_hold")
+                    or (
+                        budget_failure_hold(hold["id"])
+                        if "id" in hold
+                        else {"task_wide": True, "source": "native_gateway"}
+                    ),
                 }
             )
         )
         await cancel_admitted(conn, tid)
+        if self.pause_control is not None and "id" in hold:
+            try:
+                async with conn.begin_nested():
+                    await self.pause_control.start_budget(conn, tid, hold["id"], budget)
+            except (HTTPException, KeyError):
+                # An unconfirmed original Runner stays held without any recovery snapshot.
+                pass
         await self.gateway.ctf._emit(
             conn,
             tid,
@@ -663,11 +767,16 @@ class NativeFees:
             },
         )
 
-    async def hold(self, tid, reason):
+    async def hold(self, tid, reason, *, config=None):
         async with self.repo.engine.begin() as conn:
             try:
                 await self.repo.lock(conn, tid)
             except KeyError:
+                return
+            if (
+                config is not None
+                and (await self._budget(conn, tid, current_source=False))["config"] != config
+            ):
                 return
             await self._hold(conn, tid, reason)
 
@@ -740,20 +849,40 @@ class NativeFees:
                 .mappings()
                 .all()
             )
-        status = await self.admin.budget(budget["key_name"])
-        used, exceeded = self._status_used(status, budget)
-        async with self.repo.engine.begin() as conn:
-            await self.repo.lock(conn, tid)
-            current = await self._budget(conn, tid)
-            prior = Decimal((current["status_snapshot"] or {}).get("used_high_water_usd", "0"))
-            high_water = max(prior, used)
-            await conn.execute(
-                update(s.native_task_budgets)
-                .where(s.native_task_budgets.c.task_id == tid)
-                .values(status_snapshot={"latest": status, "used_high_water_usd": str(high_water)})
-            )
-            if exceeded or high_water >= Decimal(budget["config"]["threshold_usd"]):
-                await self._hold(conn, tid, "budget_exceeded")
+        if not budget["config"].get("pending_increase"):
+            try:
+                status = await self.admin.budget(budget["key_name"])
+                used, exceeded = self._status_used(status, budget)
+            except (
+                HTTPException,
+                httpx.HTTPError,
+                ValueError,
+                KeyError,
+                TypeError,
+                DecimalException,
+            ):
+                await self.hold(tid, "native_accounting_unavailable", config=budget["config"])
+            else:
+                async with self.repo.engine.begin() as conn:
+                    await self.repo.lock(conn, tid)
+                    current = await self._budget(conn, tid)
+                    if current["config"] == budget["config"]:
+                        prior = Decimal(
+                            (current["status_snapshot"] or {}).get("used_high_water_usd", "0")
+                        )
+                        high_water = max(prior, used)
+                        await conn.execute(
+                            update(s.native_task_budgets)
+                            .where(s.native_task_budgets.c.task_id == tid)
+                            .values(
+                                status_snapshot={
+                                    "latest": status,
+                                    "used_high_water_usd": str(high_water),
+                                }
+                            )
+                        )
+                        if exceeded or high_water >= Decimal(current["config"]["threshold_usd"]):
+                            await self._hold(conn, tid, "budget_exceeded")
         for call in calls:
             cursor, records = None, []
             for _ in range(10):
@@ -774,7 +903,7 @@ class NativeFees:
                 async with self.repo.engine.begin() as conn:
                     await self.repo.lock(conn, tid)
                     current_call = await self.gateway._call(conn, tid, call["id"])
-                    if current_call["state"] == "not_sent":
+                    if current_call["state"] in {"not_sent", "completed"}:
                         continue
                     await conn.execute(
                         update(s.runner_calls)
@@ -907,7 +1036,8 @@ class NativeFees:
             )
             if not known:
                 await self._hold(conn, tid, "native_fee_pending")
-            if await self._total(conn, tid) >= Decimal(budget["config"]["threshold_usd"]):
+            current_budget = await self._budget(conn, tid)
+            if await self._total(conn, tid) >= Decimal(current_budget["config"]["threshold_usd"]):
                 await self._hold(conn, tid, "budget_exceeded")
 
     async def view(self, tid):
@@ -999,16 +1129,24 @@ class NativeFees:
         if budget["accounting_source_id"] != self.settings.native_gateway_accounting_source_id:
             raise HTTPException(409, "Native accounting source changed")
         resources = await self.admin.resources()
-        expected = budget["config"]["native_value"]
-        matches = [item for item in resources if self._matches(item["value"], expected)]
-        owned = [item for item in resources if item["id"] == budget["native_resource_id"]]
-        if owned and (not matches or matches[0]["id"] != budget["native_resource_id"]):
-            raise HTTPException(409, "Native key identity or configuration changed")
-        if len(matches) > 1:
+        config = budget["config"]
+        expected = config["native_value"]
+        pending = config.get("pending_increase")
+        owned = self.key_candidates(resources, budget)
+        if len(owned) > 1:
             raise HTTPException(409, "Duplicate native key requires reconciliation")
-        if matches:
-            await self.admin.delete_key(matches[0]["id"])
-            if any(self._matches(item["value"], expected) for item in await self.admin.resources()):
+        if owned:
+            value = owned[0]["value"]
+            if pending:
+                matches = value in (pending["previous_native_value"], pending["native_value"])
+            elif config.get("last_increase_hold_id"):
+                matches = value == expected
+            else:
+                matches = self._matches(value, expected)
+            if owned[0]["id"] != budget["native_resource_id"] or not matches:
+                raise HTTPException(409, "Native key identity or configuration changed")
+            await self.admin.delete_key(owned[0]["id"])
+            if self.key_candidates(await self.admin.resources(), budget):
                 raise HTTPException(503, "Native key retirement requires readback")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)

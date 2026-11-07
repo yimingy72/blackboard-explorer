@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any
 from urllib.parse import quote, urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
@@ -128,6 +129,15 @@ class NativeAdmin:
         if not isinstance(result, dict):
             raise unavailable()
         return result
+
+    async def update_key(self, resource_id: str, value: dict) -> None:
+        try:
+            if str(UUID(resource_id)) != resource_id:
+                raise ValueError
+        except (ValueError, AttributeError, TypeError) as error:
+            raise unavailable() from error
+        # Only the existing resource path updates a key; the caller verifies desired and live state.
+        await self.request("PUT", KEYS_PATH + "/" + resource_id, body={"value": value})
 
     async def delete_key(self, resource_id: str) -> None:
         if not resource_id or len(resource_id) > 512:

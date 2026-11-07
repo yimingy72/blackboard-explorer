@@ -1274,15 +1274,18 @@ class RunnerControl:
             )
 
     async def _paused_journal_tail(self, conn, tid, owner, binding):
+        from bbx_blackboard.native_fees import threshold_hold_id
+
         task = await self._task(conn, tid)
         control = task["ctf_control"]
+        held = bool(control.get("native_budget_hold") or control.get("failure_hold"))
+        hold_id = threshold_hold_id(task)
         if (
             native_pause_state(task) != "draining"
             or task["status"] != "running"
             or task["deleting"]
             or control.get("native_stop_requested")
-            or control.get("native_budget_hold")
-            or control.get("failure_hold")
+            or (held and not hold_id)
             or control.get("phase") != "running"
             or binding["status"] != "closing"
             or not binding["sdk_session_id"]
@@ -1310,6 +1313,7 @@ class RunnerControl:
         snapshot = resource["data"].get("pause_snapshot", {})
         if (
             snapshot.get("pause_id") != control["native_pause"]["pause_id"]
+            or (held and snapshot.get("budget_hold_id") != hold_id)
             or snapshot.get("owner_epoch") != owner["epoch"]
             or snapshot.get("runner_pod_uid") != owner["pod_uid"]
             or binding["id"] not in snapshot.get("binding_ids", [])

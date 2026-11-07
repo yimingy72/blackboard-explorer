@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -42,6 +43,19 @@ class NativeResumeRequest(ContractModel):
     request_id: UUID
     pause_id: UUID
     instruction: str | None = Field(default=None, min_length=1, max_length=1500)
+
+
+class NativeBudgetIncreaseRequest(ContractModel):
+    request_id: UUID
+    pause_id: UUID
+    additional_cny: Decimal = Field(gt=0, max_digits=16, decimal_places=9)
+
+
+class NativeBudgetIncreaseStatus(ContractModel):
+    request_id: UUID
+    pause_id: UUID
+    threshold_cny: Decimal
+    threshold_usd: Decimal
 
 
 class NativePauseStatus(ContractModel):

@@ -20,6 +20,8 @@ from bbx_contracts.runner import (
 from bbx_contracts.runner_bootstrap import (
     RUNTIME_FENCE_SEQUENCE,
     RUNTIME_LOCK_KEY,
+    NativeBudgetIncreaseRequest,
+    NativeBudgetIncreaseStatus,
     NativePauseRequest,
     NativePauseStatus,
     NativeResumeRequest,
@@ -34,6 +36,7 @@ from sqlalchemy import insert, or_, select, text, update
 
 from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
+from bbx_blackboard.native_budget_increase import increase_budget
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
@@ -1305,7 +1308,9 @@ async def bootstrap_status(request: Request, response: Response, task_id: UUID):
 
 def _user_pause(request: Request, response: Response):
     if require_user_or_service(request).kind != "user":
-        raise HTTPException(403, "Manual pause and continuation require a user token")
+        raise HTTPException(
+            403, "Native pause, continuation and budget changes require a user token"
+        )
     response.headers["Cache-Control"] = "no-store"
     return service(request).pause_control
 
@@ -1325,6 +1330,13 @@ async def user_resume(
     request: Request, response: Response, task_id: UUID, body: NativeResumeRequest
 ):
     return await _user_pause(request, response).resume(task_id, body)
+
+
+@router.post(PREFIX + "/budget-increase", response_model=NativeBudgetIncreaseStatus)
+async def user_budget_increase(
+    request: Request, response: Response, task_id: UUID, body: NativeBudgetIncreaseRequest
+):
+    return await increase_budget(_user_pause(request, response), task_id, body)
 
 
 @router.post(PREFIX + "/claim")

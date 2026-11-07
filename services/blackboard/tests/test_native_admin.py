@@ -1,4 +1,4 @@
-"""Fixed native HTTP shapes and uncertain create failures, without native money or DB logic."""
+"""Fixed native HTTP shapes and uncertain writes, without native money or DB logic."""
 
 import asyncio
 import json
@@ -74,6 +74,35 @@ async def test_fixed_io_keeps_key_creation_single_and_admin_separate_from_task()
         await client.close()
         assert not http.is_closed
     assert sum(method == "PUT" for method, *_ in calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_key_update_targets_existing_uuid_and_never_falls_back_to_create():
+    resource_id = "6e29c25c-eab9-4d9e-8616-60825ac29ee1"
+    path = KEYS_PATH + "/" + resource_id
+    value = {"keyHash": "sha256:" + "a" * 64, "metadata": {"name": "task-key"}}
+    calls = []
+
+    def transport(request):
+        calls.append(request.url.path)
+        assert request.method == "PUT"
+        assert request.url.host == "native-admin"
+        assert request.headers["authorization"] == "Bearer admin-private-token"
+        assert request.url.path == path and json.loads(request.content) == {"value": value}
+        if len(calls) == 1:
+            return httpx.Response(200, json={"resources": [{"id": resource_id, "value": value}]})
+        if len(calls) == 2:
+            raise httpx.ReadTimeout("write ACK lost", request=request)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        client = NativeAdmin(configured(), http=http)
+        await client.update_key(resource_id, value)
+        for original_id in (resource_id, resource_id, ".."):
+            with pytest.raises(HTTPException) as refused:
+                await client.update_key(original_id, value)
+            assert refused.value.status_code == 503
+    assert calls == [path, path, path]
 
 
 @pytest.mark.asyncio
