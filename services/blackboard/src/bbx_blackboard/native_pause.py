@@ -63,7 +63,7 @@ class NativePause:
             raise HTTPException(409, "Original native Task pause is unavailable")
         if self.bootstrap._stopping(task, record) or task["status"] != "running":
             raise HTTPException(409, "Original Task is stopping or unavailable")
-        if native_recovery_frozen(task):
+        if native_recovery_frozen(task) or task["ctf_control"].get("native_recovery_rebuilding"):
             raise HTTPException(409, "Original native execution is frozen")
         if not self.bootstrap._resources_ready(record["observation"]) or not record[
             "sandbox_host"
@@ -464,7 +464,9 @@ class NativePause:
             for item in rows
         ]
 
-    async def _continue(self, conn, tid, task, record, owner, snapshot, request, hashed):
+    async def stage_continuation(
+        self, conn, tid, task, record, snapshot, request, hashed, *, recovery=False
+    ):
         old_lead = await row(conn, s.runner_bindings, tid, snapshot["lead_binding_id"])
         old_ids = snapshot["binding_ids"]
         settled = set()
@@ -531,16 +533,19 @@ class NativePause:
                 changed,
             )
         pause = {"pause_id": str(request.pause_id), "state": "resuming", "blocker": None}
+        if recovery:
+            del control["native_recovery"], control["failure_hold"]
+            control.update(
+                native_recovery_rebuilding=str(request.pause_id),
+                native_recovered_epoch=snapshot["owner_epoch"] + 1,
+            )
+        else:
+            control["native_pause"] = pause
         await conn.execute(
             update(s.tasks)
             .where(s.tasks.c.id == tid)
             .values(
-                ctf_control={
-                    **control,
-                    "native_pause": pause,
-                    "native_worker_active": {},
-                    "native_worker_ready": ready,
-                }
+                ctf_control={**control, "native_worker_active": {}, "native_worker_ready": ready}
             )
         )
         lead_turn_id = operation_id(request.pause_id, request.request_id, "lead-turn")
@@ -604,6 +609,16 @@ class NativePause:
         await self.bootstrap._lead(
             conn, tid, {**record, "data": {**record["data"], "lead_turn_id": lead_turn_id}}
         )
+        return pause, {
+            "lead_turn_id": lead_turn_id,
+            "binding_id": bid,
+            "registration": registration,
+            "previous_binding_id": old_lead["id"],
+        }
+
+    async def register_continuation(self, conn, tid, owner, continuation):
+        old_lead = await row(conn, s.runner_bindings, tid, continuation["previous_binding_id"])
+        bid = continuation["binding_id"]
         spec = json.loads(old_lead["payload_json"])["spec"]
         spec.pop("binding")
         spec.pop("mcp_tool_aliases")
@@ -613,7 +628,7 @@ class NativePause:
             runner_json_text(
                 {
                     **spec,
-                    "request_id": registration,
+                    "request_id": continuation["registration"],
                     "expected_epoch": owner["epoch"],
                     "agent_id": "lead",
                     "model_credential_ref": "native-model-" + bid,
@@ -625,14 +640,21 @@ class NativePause:
         )
         if binding["id"] != bid:
             raise HTTPException(409, "Replacement Lead binding identity changed")
+        return binding
+
+    async def _continue(self, conn, tid, task, record, owner, snapshot, request, hashed):
+        pause, continuation = await self.stage_continuation(
+            conn, tid, task, record, snapshot, request, hashed
+        )
+        binding = await self.register_continuation(conn, tid, owner, continuation)
         await self.bootstrap._set(
             conn,
             tid,
             data={
                 **record["data"],
                 "pause_state": "resuming",
-                "lead_turn_id": lead_turn_id,
-                "binding_id": bid,
+                "lead_turn_id": continuation["lead_turn_id"],
+                "binding_id": binding["id"],
                 "worker_binding_ids": [],
                 "activated": False,
             },

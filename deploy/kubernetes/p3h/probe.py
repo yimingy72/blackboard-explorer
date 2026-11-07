@@ -162,8 +162,8 @@ def native_gateway(document, files, *, name=SERVICE, owner="p3h"):
 
 async def main(candidate, resume, stop_only=False, fresh=False, retire_only=False, *, workers=None):
     if workers is not None and (STATE != workers.state or fresh or retire_only):
-        raise RuntimeError("P4a must use its own private fixture state")
-    prefix = "p4a" if workers is not None else "p3h"
+        raise RuntimeError("The scoped fixture must use its own private state")
+    prefix = getattr(workers, "prefix", "p4a") if workers is not None else "p3h"
     service_name = f"bbx-{prefix}-gateway"
     gateway_dns = f"{service_name}.{SYSTEM}.svc.cluster.local"
     context = kubectl("config", "current-context").strip()
@@ -615,7 +615,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 "environment_revision": images["environment_revision"],
                 "runner_image": images["images"][f"bbx-{prefix}-runner:20261107"]["reference"],
                 "sandbox_image": images["images"][
-                    "bbx-p4a-sandbox:20261107"
+                    f"bbx-{prefix}-sandbox:20261107"
                     if workers is not None
                     else "bbx-p3g-sandbox:20261107"
                 ]["reference"],
@@ -638,6 +638,8 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 resources_cfg["retirement_single_apiserver"] = cluster[
                     "retirement_single_apiserver"
                 ]
+            if workers is not None:
+                resources_cfg.update(getattr(workers, "resource_options", {}))
             private_json(directory / "resources.json", resources_cfg)
             settings = NativeRunnerSettings(
                 _env_file=None,
@@ -962,7 +964,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
 
                 cmd = None
                 if workers is not None and not stop_only:
-                    stage = "P4a Worker overlap and original Assignment replacement"
+                    stage = "Scoped native Task checks"
                     await workers.verify(tid, app, engine, wait, evidence)
                     completed = all(evidence["checks"].values())
                 elif not stop_only:

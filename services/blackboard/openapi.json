@@ -6135,7 +6135,7 @@
                 "type": "null"
               }
             ],
-            "description": "Last database confirmation; journal bytes were not read."
+            "description": "Last database confirmation; this projection does not read journal bytes."
           },
           "sdk_session_id": {
             "anyOf": [
@@ -6167,9 +6167,64 @@
         "title": "NativeRecoveryBinding",
         "type": "object"
       },
+      "NativeRecoveryIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "incident_id"
+        ],
+        "title": "NativeRecoveryIntent",
+        "type": "object"
+      },
+      "NativeRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "maxLength": 1500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "incident_id"
+        ],
+        "title": "NativeRecoveryRequest",
+        "type": "object"
+      },
       "NativeRecoveryStatus": {
         "additionalProperties": false,
-        "description": "Read-only original evidence, without proof of volume writer exit or recovery readiness.",
+        "description": "Recovery progress and the original execution ledgers, without journal contents.",
         "properties": {
           "bindings": {
             "items": {
@@ -6183,6 +6238,17 @@
             "default": false,
             "title": "Bindings Truncated",
             "type": "boolean"
+          },
+          "blocker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocker"
           },
           "captured_at": {
             "anyOf": [
@@ -6263,6 +6329,29 @@
             ],
             "title": "Reason"
           },
+          "replacement_epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Epoch"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
           "resources": {
             "additionalProperties": {
               "type": "string"
@@ -6279,6 +6368,9 @@
             "enum": [
               "not_frozen",
               "frozen",
+              "requested",
+              "rebuilding",
+              "resumed",
               "stopping",
               "stopped"
             ],
@@ -6344,7 +6436,13 @@
               "retire_admit",
               "retire_complete",
               "sandbox_host_material",
-              "sandbox_host_ready"
+              "sandbox_host_ready",
+              "recovery_exit",
+              "recovery_prepare",
+              "recovery_verifier_admit",
+              "recovery_verifier_observe",
+              "recovery_replace",
+              "recovery_blocked"
             ],
             "title": "Action",
             "type": "string"
@@ -6378,7 +6476,7 @@
           },
           "observation": {
             "additionalProperties": true,
-            "maxProperties": 16,
+            "maxProperties": 18,
             "title": "Observation",
             "type": "object"
           },
@@ -6392,6 +6490,12 @@
             "maxProperties": 8,
             "title": "Proof",
             "type": "object"
+          },
+          "resource_generation": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Resource Generation",
+            "type": "integer"
           }
         },
         "required": [
@@ -17859,6 +17963,57 @@
           }
         },
         "summary": "User Recovery Status",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      },
+      "post": {
+        "operationId": "user_recovery_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeRecoveryIntent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Recovery",
         "tags": [
           "native-runner-bootstrap"
         ]

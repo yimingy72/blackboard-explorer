@@ -1580,7 +1580,8 @@ export interface paths {
         /** User Recovery Status */
         get: operations["user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get"];
         put?: never;
-        post?: never;
+        /** User Recovery */
+        post: operations["user_recovery_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5365,7 +5366,7 @@ export interface components {
             assignment_id?: string | null;
             /** Binding Id */
             binding_id: string;
-            /** @description Last database confirmation; journal bytes were not read. */
+            /** @description Last database confirmation; this projection does not read journal bytes. */
             confirmed_cursor?: components["schemas"]["JournalCursor"] | null;
             /** Sdk Session Id */
             sdk_session_id?: string | null;
@@ -5374,9 +5375,37 @@ export interface components {
             /** State */
             state: string;
         };
+        /** NativeRecoveryIntent */
+        NativeRecoveryIntent: {
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativeRecoveryRequest */
+        NativeRecoveryRequest: {
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Instruction */
+            instruction?: string | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
         /**
          * NativeRecoveryStatus
-         * @description Read-only original evidence, without proof of volume writer exit or recovery readiness.
+         * @description Recovery progress and the original execution ledgers, without journal contents.
          */
         NativeRecoveryStatus: {
             /** Bindings */
@@ -5386,6 +5415,8 @@ export interface components {
              * @default false
              */
             bindings_truncated: boolean;
+            /** Blocker */
+            blocker?: string | null;
             /** Captured At */
             captured_at?: string | null;
             /** Controller Generation */
@@ -5404,6 +5435,10 @@ export interface components {
             original_epoch?: number | null;
             /** Reason */
             reason?: string | null;
+            /** Replacement Epoch */
+            replacement_epoch?: number | null;
+            /** Request Id */
+            request_id?: string | null;
             /** Resources */
             resources?: {
                 [key: string]: string;
@@ -5417,7 +5452,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "not_frozen" | "frozen" | "stopping" | "stopped";
+            state: "not_frozen" | "frozen" | "requested" | "rebuilding" | "resumed" | "stopping" | "stopped";
         };
         /** NativeResumeRequest */
         NativeResumeRequest: {
@@ -5440,7 +5475,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready";
+            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
             /** Controller Generation */
             controller_generation: number;
             /** Controller Id */
@@ -5460,6 +5495,11 @@ export interface components {
             proof?: {
                 [key: string]: unknown;
             };
+            /**
+             * Resource Generation
+             * @default 1
+             */
+            resource_generation: number;
         };
         /** NativeRunnerClaim */
         NativeRunnerClaim: {
@@ -11323,6 +11363,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NativeRecoveryStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_recovery_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeRecoveryIntent"];
                 };
             };
             /** @description Validation Error */

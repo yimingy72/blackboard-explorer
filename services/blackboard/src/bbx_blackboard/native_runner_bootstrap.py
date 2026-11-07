@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -24,6 +25,8 @@ from bbx_contracts.runner_bootstrap import (
     NativeBudgetIncreaseStatus,
     NativePauseRequest,
     NativePauseStatus,
+    NativeRecoveryIntent,
+    NativeRecoveryRequest,
     NativeRecoveryStatus,
     NativeResumeRequest,
     NativeRunnerAction,
@@ -91,6 +94,7 @@ class NativeRunnerBootstrap:
         self.retirement = NativeResourceRetirement(self)
         self.workers = NativeWorkers(self)
         self.pause_control = NativePause(self)
+        self.recovery = native_recovery.NativeRecovery(self)
 
     async def _get(self, conn, tid):
         found = (
@@ -159,6 +163,7 @@ class NativeRunnerBootstrap:
             record["operation_id"] != str(action.operation_id)
             or record["controller_id"] != action.controller_id
             or record["controller_generation"] != action.controller_generation
+            or record["data"].get("resource_generation", 1) != action.resource_generation
         ):
             raise HTTPException(409, "Native Runner controller fence changed")
         await self._global_fence(
@@ -315,6 +320,11 @@ class NativeRunnerBootstrap:
                 or parsed.path not in {"", "/"}
             ):
                 raise HTTPException(422, "Runner control origins must use the trusted TLS boundary")
+        if "journal_writer_lock" in value and (
+            value["journal_writer_lock"] is not True
+            or value.get("runner_profile") != "node-sandbox-host-v1"
+        ):
+            raise HTTPException(422, "Native journal writer lock requires the Sandbox host profile")
         if any("@sha256:" not in value[key] for key in ("runner_image", "sandbox_image")):
             raise HTTPException(422, "Native resource images require immutable digests")
         return value
@@ -475,10 +485,45 @@ class NativeRunnerBootstrap:
             "container_id",
             "container_name",
             "host_container_id",
+            "journal_writer_lock",
             "pod_ip",
         } | mutable
-        if set(incoming) - (set(identity) | nested | {"namespace_uid"}):
+        if set(incoming) - (
+            set(identity)
+            | nested
+            | {
+                "namespace_uid",
+                "resource_generation",
+                "journal_subdir",
+                "journal_lock_id",
+                "journal_storage",
+            }
+        ):
             raise HTTPException(422, "Unexpected native resource evidence")
+        generation = record["data"].get("resource_generation", 1)
+        for key, expected in {
+            "resource_generation": generation,
+            "journal_subdir": f"epoch-{generation}" if config.get("journal_writer_lock") else None,
+        }.items():
+            if key in incoming and incoming[key] != expected:
+                raise HTTPException(409, "Original native journal generation changed")
+        if "journal_lock_id" in incoming and (
+            not config.get("journal_writer_lock")
+            or not isinstance(incoming["journal_lock_id"], str)
+            or not re.fullmatch(r"[0-9]{1,20}:[0-9]{1,20}", incoming["journal_lock_id"])
+        ):
+            raise HTTPException(422, "Invalid native journal writer identity")
+        if "journal_storage" in incoming:
+            storage = incoming["journal_storage"]
+            if (
+                not config.get("journal_writer_lock")
+                or not isinstance(storage, dict)
+                or set(storage) != {"node", "node_uid", "journal_pv_uid", "workspace_pv_uid"}
+                or not all(
+                    isinstance(value, str) and 0 < len(value) <= 253 for value in storage.values()
+                )
+            ):
+                raise HTTPException(422, "Invalid native journal storage identity")
         merged = dict(old)
         for name, expected in identity.items():
             if name in incoming and str(incoming[name]) != expected:
@@ -505,6 +550,17 @@ class NativeRunnerBootstrap:
                 if old.get(name) is not None and old[name] != value:
                     raise HTTPException(409, "Original native resource UID changed")
                 merged[name] = value
+        history = record["data"].get("recovery_history", [])
+        if history:
+            original = history[-1]["resources"]
+            for name, (scope, field) in native_recovery.IDENTITIES.items():
+                if (
+                    scope in {"runner", "sandbox"}
+                    and merged.get(scope, {}).get(field) == original[name]
+                ):
+                    raise HTTPException(
+                        409, "Replacement resource reused an original execution identity"
+                    )
         return merged
 
     @staticmethod
@@ -529,6 +585,14 @@ class NativeRunnerBootstrap:
             )
             and all(observation["runner"].get(key) for key in ("pod_uid", "container_id"))
             and observation["runner"].get("phase") == "Running"
+            and (
+                not observation.get("journal_subdir")
+                or (
+                    observation.get("journal_lock_id")
+                    and observation.get("journal_storage")
+                    and observation["runner"].get("journal_writer_lock") is True
+                )
+            )
             and all(
                 observation[key].get("terminated") is not True
                 and observation[key].get("host_terminated") is not True
@@ -540,9 +604,9 @@ class NativeRunnerBootstrap:
 
     async def _lead(self, conn, tid, record):
         member = await row(conn, s.ctf_members, tid, "lead")
-        turn_id = record.get("data", {}).get("lead_turn_id") or identity_id(
-            record["operation_id"], "lead-turn"
-        )
+        data = record.get("data", {})
+        generation = data.get("resource_generation", 1)
+        turn_id = data.get("lead_turn_id") or identity_id(record["operation_id"], "lead-turn")
         if member["current_turn_id"] is not None:
             turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
             if (
@@ -583,7 +647,9 @@ class NativeRunnerBootstrap:
             id=turn_id,
             agent_id="lead",
             generation=member["generation"] + 1,
-            runtime_instance="native:" + record["operation_id"],
+            runtime_instance="native:"
+            + record["operation_id"]
+            + (f":{generation}" if generation > 1 else ""),
             status="running",
             purpose="execution",
             assignment_message_ids=list(messages),
@@ -651,6 +717,8 @@ class NativeRunnerBootstrap:
                 )
                 await self._set(conn, tid, data={**record["data"], "sandbox_host_ready": True})
                 return self._public(await self._get(conn, tid))
+        if body.action.startswith("recovery_"):
+            return await self.recovery.act(tid, body)
         if body.action.startswith("retire_"):
             return await self.retirement.act(tid, body)
         if body.action in {"material", "renew"}:
@@ -871,7 +939,8 @@ class NativeRunnerBootstrap:
                         for key in ("runner_terminated", "sandbox_terminated")
                     )
                 )
-                if not positive:
+                verifier = record["data"].get("recovery", {}).get("verifier")
+                if not positive or (verifier and verifier.get("terminated") is not True):
                     await self._set(
                         conn, tid, state="unknown", last_error="native_exit_unconfirmed"
                     )
@@ -1007,7 +1076,10 @@ class NativeRunnerBootstrap:
         owner = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
-            if not self._resources_ready(record["observation"]):
+            if not self._resources_ready(record["observation"]) or (
+                record["config"].get("journal_writer_lock")
+                and not record["observation"].get("journal_subdir")
+            ):
                 raise HTTPException(409, "Native environment and original Runner must be ready")
             if record["config"].get("runner_profile") == "node-sandbox-host-v1" and not record[
                 "sandbox_host"
@@ -1031,16 +1103,27 @@ class NativeRunnerBootstrap:
                         raise
                     held = True
             if not held:
+                continuation = data.get("continuation")
+                previous_epoch = (
+                    data["recovery_history"][-1]["original_epoch"] if continuation else 0
+                )
+                generation = data.get("resource_generation", 1)
                 if not data.get("owner_epoch"):
                     owner = await self.control._register_owner(
                         conn,
                         tid,
                         runner_json_text(
                             {
-                                "request_id": identity_id(record["operation_id"], "owner"),
-                                "runner_id": identity_id(record["operation_id"], "runner"),
+                                "request_id": identity_id(
+                                    record["operation_id"],
+                                    "owner" if generation == 1 else f"owner:{generation}",
+                                ),
+                                "runner_id": identity_id(
+                                    record["operation_id"],
+                                    "runner" if generation == 1 else f"runner:{generation}",
+                                ),
                                 "pod_uid": record["observation"]["runner"]["pod_uid"],
-                                "expected_epoch": 0,
+                                "expected_epoch": previous_epoch,
                                 "hard_deadline": record["hard_deadline"].isoformat(),
                             }
                         ).encode(),
@@ -1056,6 +1139,15 @@ class NativeRunnerBootstrap:
                 ):
                     raise HTTPException(409, "Original native owner scope changed")
                 owner = await self.control._update_owner(conn, tid, owner["epoch"])
+                if continuation and not data.get("binding_id"):
+                    budget = await self.gateway.native._budget(conn, tid)
+                    if not self.recovery._budget_available(budget):
+                        raise HTTPException(409, "Original native budget is unconfirmed")
+                    binding = await self.pause_control.register_continuation(
+                        conn, tid, owner, continuation
+                    )
+                    data["binding_id"] = binding["id"]
+                    await self._set(conn, tid, data=data)
         if held:
             return await self._control_material(tid, body)
         assert owner is not None
@@ -1236,6 +1328,25 @@ class NativeRunnerBootstrap:
             }
 
     async def _activate(self, tid, body):
+        budget_proof = None
+        if body.resource_generation > 1:
+            async with self.repo.engine.begin() as conn:
+                record, task = await self._checked(conn, tid, body, live=True)
+                binding_id = record["data"].get("binding_id")
+                if task["ctf_control"].get("native_recovery_rebuilding") and binding_id:
+                    prepared = await row(conn, s.runner_bindings, tid, binding_id)
+                    if prepared["status"] == "prepared" and prepared["cursor"]:
+                        budget = await self.gateway.native._budget(conn, tid)
+                        if self.recovery._budget_available(budget):
+                            budget_proof = (budget,)
+            if budget_proof:
+                try:
+                    budget_proof = (
+                        *budget_proof,
+                        *await self.recovery.read_budget(budget_proof[0]),
+                    )
+                except HTTPException:
+                    budget_proof = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
             if native_pause_state(task) in {"draining", "paused"}:
@@ -1279,6 +1390,33 @@ class NativeRunnerBootstrap:
                 if native_pause_state(task) == "resuming":
                     control["native_pause"] = {**control["native_pause"], "state": "resumed"}
                     data["pause_state"] = "resumed"
+                if recovery_id := control.pop("native_recovery_rebuilding", None):
+                    if not budget_proof or not await self.recovery.matching_budget(
+                        conn, tid, budget_proof[0], budget_proof[2], budget_proof[3]
+                    ):
+                        if not data.get("recovery_activation_blocker"):
+                            await self._set(
+                                conn,
+                                tid,
+                                data={
+                                    **data,
+                                    "recovery_activation_blocker": "original_budget_unconfirmed",
+                                },
+                            )
+                        return self._public(await self._get(conn, tid))
+                    data.pop("recovery_activation_blocker", None)
+                    await self.recovery.record_usage(conn, tid, budget_proof[1], budget_proof[2])
+                    history = data["recovery_history"]
+                    if (
+                        history[-1]["incident_id"] != recovery_id
+                        or history[-1]["replacement_epoch"] != owner["epoch"]
+                        or not binding["cursor"]
+                    ):
+                        raise HTTPException(409, "Replacement SDK journal is not confirmed")
+                    data["recovery_history"] = [
+                        *history[:-1],
+                        {**history[-1], "replacement_activated": True},
+                    ]
                 await conn.execute(
                     update(s.tasks)
                     .where(s.tasks.c.id == tid)
@@ -1412,6 +1550,16 @@ async def user_recovery_status(request: Request, response: Response, task_id: UU
         raise HTTPException(403, "Native recovery status requires a user token")
     response.headers["Cache-Control"] = "no-store"
     return await service(request).recovery_status(task_id)
+
+
+@router.post(PREFIX + "/recovery", response_model=NativeRecoveryIntent)
+async def user_recovery(
+    request: Request, response: Response, task_id: UUID, body: NativeRecoveryRequest
+):
+    if require_user_or_service(request).kind != "user":
+        raise HTTPException(403, "Native recovery requires a user token")
+    response.headers["Cache-Control"] = "no-store"
+    return await service(request).recovery.request(task_id, body)
 
 
 @router.post(PREFIX + "/claim")

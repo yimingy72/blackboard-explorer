@@ -61,6 +61,119 @@ def object_with(adapter, kind, name, labels, uid, **fields):
     return obj
 
 
+async def test_retirement_accepts_only_events_about_positively_exited_recovery_resources(
+    monkeypatch,
+):
+    adapter = configured()
+    observation, labels = identity(adapter)
+    namespace = object_with(adapter, "Namespace", observation["namespace"], labels, "ns-uid")
+    operation = {
+        **observation,
+        "observation": observation,
+        "retirement_id": str(uuid4()),
+        "data": {
+            "recovery_history": [
+                {
+                    "exit_proof": {
+                        "runner_terminated": True,
+                        "sandbox_terminated": True,
+                        "pvcs_retained": True,
+                    },
+                    "exit_observation": {
+                        "namespace_uid": "ns-uid",
+                        "runner": {"pod_uid": "prior-runner"},
+                        "sandbox": {"pod_uid": "prior-sandbox", "cr_uid": "prior-cr"},
+                    },
+                    "verifier": {
+                        "pod_uid": "prior-verifier",
+                        "init_container_id": "init",
+                        "container_id": "main",
+                        "terminated": True,
+                    },
+                }
+            ]
+        },
+    }
+    manifest = {
+        "volumes": [
+            {
+                "name": key,
+                "uid": key,
+                "claim_uid": observation[key]["uid"],
+                "claim_name": observation[key]["name"],
+                "claim_namespace": observation["namespace"],
+                "storage_class": "unused",
+                "reclaim_policy": "Delete",
+            }
+            for key in ("journal_pvc", "workspace_pvc")
+        ]
+    }
+    contents = []
+
+    async def get(kind, *_):
+        return namespace if kind == "namespace" else None
+
+    async def inventory(_):
+        return contents
+
+    def event(uid, kind):
+        return (
+            "/events/" + uid,
+            {
+                "kind": "Event",
+                "metadata": {"name": uid, "uid": "event-" + uid},
+                "regarding": {"uid": uid, "kind": kind},
+            },
+        )
+
+    monkeypatch.setattr(adapter, "_get", get)
+    monkeypatch.setattr(adapter, "_retirement_inventory", inventory)
+    contents[:] = [
+        event("prior-runner", "Pod"),
+        event("prior-cr", "BatchSandbox"),
+        event("prior-verifier", "Pod"),
+    ]
+    planned = await adapter._retirement_plan(operation, manifest)
+    assert len(planned["resources"]) == 3 and all(
+        item["namespace_gc"] for item in planned["resources"]
+    )
+    contents[:] = [event("unrelated", "Pod")]
+    with pytest.raises(ResourceUnknown, match="no original UID"):
+        await adapter._retirement_plan(operation, manifest)
+    contents[:] = [
+        (
+            "/pods/prior-runner",
+            {
+                "kind": "Pod",
+                "metadata": {"name": "bbx-runner", "uid": "prior-runner"},
+                "spec": {"containers": [{"name": "runner"}]},
+                "status": {
+                    "containerStatuses": [
+                        {
+                            "name": "runner",
+                            "containerID": "containerd://prior",
+                            "state": {"terminated": {"exitCode": 0}},
+                        }
+                    ]
+                },
+            },
+        )
+    ]
+    with pytest.raises(ResourceUnknown, match="unresolved execution Pod"):
+        await adapter._retirement_plan(operation, manifest)
+    contents[:] = [
+        (
+            "/batchsandboxes/prior-cr",
+            {
+                "kind": "BatchSandbox",
+                "metadata": {"name": "prior-cr", "uid": "prior-cr"},
+            },
+        )
+    ]
+    with pytest.raises(ResourceUnknown, match="foreign or unresolved"):
+        await adapter._retirement_plan(operation, manifest)
+
+
 def test_runner_native_defaults_do_not_allow_extra_processes_mounts_env_or_secret_material():
     expected = {
         "restartPolicy": "Never",

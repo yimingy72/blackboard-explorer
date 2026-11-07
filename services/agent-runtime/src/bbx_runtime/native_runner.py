@@ -74,6 +74,7 @@ class NativeRunnerController:
                 "operation_id": operation["operation_id"],
                 "controller_id": self.controller_id,
                 "controller_generation": self.instance.fence,
+                "resource_generation": operation["data"].get("resource_generation", 1),
                 "action": action,
                 **values,
             },
@@ -227,6 +228,73 @@ class NativeRunnerController:
             or (not control_only and scope[2] != published[2])
         )
 
+    async def _recover_original(self, tid, operation, tenant_key):
+        incident = operation["data"]["recovery"]
+        identity = {"incident_id": incident["incident_id"]}
+        blocker = "journal_writer_unconfirmed"
+        try:
+            node = await self.guarded(tid, operation, self.resources.recovery_volumes(operation))
+            if not incident.get("exit_proof"):
+                blocker = "original_exit_unconfirmed"
+                original = operation["observation"]
+                proof = await self.guarded(
+                    tid, operation, self.resources.stop(original, tenant_key)
+                )
+                if not all(
+                    proof.get(key) is True
+                    for key in ("runner_terminated", "sandbox_terminated", "pvcs_retained")
+                ):
+                    raise ResourceUnknown("Original native exits remain unconfirmed")
+                result = await self.action(
+                    tid,
+                    operation,
+                    "recovery_exit",
+                    proof={
+                        **identity,
+                        **proof,
+                        "observation_digest": runner_payload_digest(runner_json_text(original)),
+                    },
+                )
+                operation.update(result)
+                return
+            prepared = await self.action(tid, operation, "recovery_prepare", proof=identity)
+            if prepared.get("blocker"):
+                return
+            blocker = "journal_writer_unconfirmed"
+            await self.guarded(tid, operation, self.resources.release_recovery(operation))
+            blocker = "original_journal_unconfirmed"
+            verifier = {**identity, "manifest_digest": prepared["manifest_digest"]}
+
+            async def admit():
+                result = await self.action(
+                    tid, operation, "recovery_verifier_admit", proof=verifier
+                )
+                return result.get("create_allowed") is True
+
+            async def checkpoint(receipt):
+                operation.update(
+                    await self.action(
+                        tid, operation, "recovery_verifier_observe", proof={**verifier, **receipt}
+                    )
+                )
+
+            proof = await self.guarded(
+                tid,
+                operation,
+                self.resources.verify_recovery_journal(
+                    operation, prepared, node, admit=admit, checkpoint=checkpoint
+                ),
+            )
+            result = await self.action(
+                tid, operation, "recovery_replace", proof={**identity, **proof}
+            )
+            if not result.get("blocker"):
+                operation.update(result)
+        except ResourceUnknown:
+            await self.action(
+                tid, operation, "recovery_blocked", proof={**identity, "blocker": blocker}
+            )
+
     async def _drive(self, tid, operation, tenant_key, idle):
         last_rotation = 0.0
         published_scope = None
@@ -286,6 +354,47 @@ class NativeRunnerController:
                     continue
                 if self.stopping(operation):
                     operation.update(await self.action(tid, operation, "stop"))
+                    if operation["data"].get("recovery", {}).get("exit_proof"):
+                        incident = operation["data"]["recovery"]
+
+                        async def checkpoint_stopped_verifier(receipt, incident=incident):
+                            operation.update(
+                                await self.action(
+                                    tid,
+                                    operation,
+                                    "recovery_verifier_observe",
+                                    proof={
+                                        "incident_id": incident["incident_id"],
+                                        "manifest_digest": incident["verifier"]["manifest_digest"],
+                                        **receipt,
+                                    },
+                                )
+                            )
+
+                        await self.guarded(
+                            tid,
+                            operation,
+                            self.resources.release_recovery(
+                                operation, stopping=True, checkpoint=checkpoint_stopped_verifier
+                            ),
+                            cleanup=True,
+                        )
+                        operation.update(
+                            await self.action(
+                                tid,
+                                operation,
+                                "cleanup",
+                                proof={
+                                    "runner_terminated": True,
+                                    "sandbox_terminated": True,
+                                    "pvcs_retained": True,
+                                    "observation_digest": runner_payload_digest(
+                                        runner_json_text(operation["observation"])
+                                    ),
+                                },
+                            )
+                        )
+                        continue
                     recovered = await self.guarded(
                         tid, operation, self.resources.recover(operation, tenant_key), cleanup=True
                     )
@@ -312,6 +421,11 @@ class NativeRunnerController:
                     await asyncio.sleep(1)
                     continue
                 if operation["data"].get("recovery"):
+                    if operation["data"]["recovery"].get("request"):
+                        await self._recover_original(tid, operation, tenant_key)
+                        if operation["data"].get("recovery") and not self.stopping(operation):
+                            await idle()
+                        continue
                     try:
                         observed = await self.guarded(
                             tid, operation, self.resources.observe(operation["observation"])

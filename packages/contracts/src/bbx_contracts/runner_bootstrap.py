@@ -39,6 +39,12 @@ def native_recovery_frozen(task):
     return bool((task.get("ctf_control") or {}).get("native_recovery"))
 
 
+def native_resume_pending(task):
+    return native_pause_state(task) == "resuming" or bool(
+        (task.get("ctf_control") or {}).get("native_recovery_rebuilding")
+    )
+
+
 class NativePauseRequest(ContractModel):
     request_id: UUID
 
@@ -68,6 +74,17 @@ class NativePauseStatus(ContractModel):
     blocker: str | None = None
 
 
+class NativeRecoveryRequest(ContractModel):
+    request_id: UUID
+    incident_id: UUID
+    instruction: str | None = Field(default=None, min_length=1, max_length=1500)
+
+
+class NativeRecoveryIntent(ContractModel):
+    request_id: UUID
+    incident_id: UUID
+
+
 class NativeRecoveryBinding(ContractModel):
     binding_id: RunnerId
     agent_id: RunnerId
@@ -75,15 +92,21 @@ class NativeRecoveryBinding(ContractModel):
     assignment_id: RunnerId | None = None
     sdk_session_id: RunnerId | None = None
     confirmed_cursor: JournalCursor | None = Field(
-        default=None, description="Last database confirmation; journal bytes were not read."
+        default=None,
+        description="Last database confirmation; this projection does not read journal bytes.",
     )
     sdk_start_unconfirmed: bool
 
 
 class NativeRecoveryStatus(ContractModel):
-    """Read-only original evidence, without proof of volume writer exit or recovery readiness."""
+    """Recovery progress and the original execution ledgers, without journal contents."""
 
-    state: Literal["not_frozen", "frozen", "stopping", "stopped"]
+    state: Literal[
+        "not_frozen", "frozen", "requested", "rebuilding", "resumed", "stopping", "stopped"
+    ]
+    blocker: str | None = None
+    request_id: UUID | None = None
+    replacement_epoch: int | None = None
     incident_id: UUID | None = None
     operation_id: UUID | None = None
     reason: str | None = None
@@ -110,6 +133,7 @@ class NativeRunnerAction(ContractModel):
     operation_id: UUID
     controller_id: RunnerId
     controller_generation: int = Field(ge=1)
+    resource_generation: int = Field(default=1, ge=1)
     action: Literal[
         "sandbox_create",
         "observation",
@@ -125,8 +149,14 @@ class NativeRunnerAction(ContractModel):
         "retire_complete",
         "sandbox_host_material",
         "sandbox_host_ready",
+        "recovery_exit",
+        "recovery_prepare",
+        "recovery_verifier_admit",
+        "recovery_verifier_observe",
+        "recovery_replace",
+        "recovery_blocked",
     ]
-    observation: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    observation: dict[str, Any] = Field(default_factory=dict, max_length=18)
     proof: dict[str, Any] = Field(default_factory=dict, max_length=8)
     error_code: (
         Literal[

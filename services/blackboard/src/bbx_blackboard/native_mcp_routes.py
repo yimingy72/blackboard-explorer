@@ -89,7 +89,8 @@ class NativeMCPRoutes:
         if not changed:
             return current["revision"]
         fenced = bool(
-            set(changed) & {"desired", "publication_state", "operation_id", "config", "value"}
+            set(changed)
+            & {"desired", "publication_state", "operation_id", "config", "value", "resource_id"}
         )
         revision = current["revision"] + int(fenced)
         await conn.execute(
@@ -124,11 +125,16 @@ class NativeMCPRoutes:
         original = await self._get(conn, tid)
         if original:
             self._same_deployment(original)
-            if original["desired"] != "active":
+            if original["desired"] == "active":
+                return
+            if (original["desired"], original["publication_state"]) != ("recovery", "retired"):
                 raise HTTPException(409, "mcp_route_retirement_is_final")
-            return
         config = self.configuration()
         task = await row(conn, s.tasks, tid)
+        if original and (
+            self.stopping(task) or not task["ctf_control"].get("native_recovery_rebuilding")
+        ):
+            raise HTTPException(409, "mcp_route_retirement_is_final")
         resource = (
             (
                 await conn.execute(
@@ -160,24 +166,74 @@ class NativeMCPRoutes:
         )
         source_hash = hashlib.sha256(config["source"].encode()).hexdigest()[:16]
         value["name"] = f"bbx-mcp-{source_hash}-{tid}"
-        await conn.execute(
-            insert(s.native_task_mcp_routes).values(
-                task_id=tid,
-                accounting_source_id=config["source"],
-                resource_id=value["name"],
-                config=config,
-                value={
-                    "ciphertext": self.gateway.cipher.encrypt(json.dumps(value).encode()).decode()
-                }
-                if sandbox
-                else value,
-                desired="active",
-                publication_state="pending",
-                revision=1,
-                next_check_at=datetime.now(UTC),
-                created_at=datetime.now(UTC),
+        generation = resource["data"].get("resource_generation", 1) if resource else 1
+        if generation > 1:
+            value["name"] += f"-{generation}"
+        values = {
+            "resource_id": value["name"],
+            "value": {
+                "ciphertext": self.gateway.cipher.encrypt(json.dumps(value).encode()).decode()
+            }
+            if sandbox
+            else value,
+            "desired": "active",
+            "publication_state": "pending",
+            "next_check_at": datetime.now(UTC),
+        }
+        if original:
+            await self._set(conn, tid, **values, operation_id=None, last_error=None)
+        else:
+            await conn.execute(
+                insert(s.native_task_mcp_routes).values(
+                    **values,
+                    task_id=tid,
+                    accounting_source_id=config["source"],
+                    config=config,
+                    revision=1,
+                    created_at=datetime.now(UTC),
+                )
             )
-        )
+
+    async def retire_for_recovery(self, tid, action, recovery, budget, used, exceeded):
+        bootstrap = recovery.bootstrap
+        async with self.repo.engine.begin() as conn:
+            await bootstrap._checked(conn, tid, action)
+            route = await self._get(conn, tid)
+            if not route or (route["desired"], route["publication_state"]) not in {
+                ("active", "ready"),
+                ("recovery", "recovery_retiring"),
+                ("recovery", "retired"),
+            }:
+                return
+        present = await self._preflight(route)
+        claim = False
+        async with self.repo.engine.begin() as conn:
+            resource, task = await bootstrap._checked(conn, tid, action)
+            incident = recovery._context(resource, task, action.proof["incident_id"])
+            if recovery._independent_hold(task, incident) or not await recovery.matching_budget(
+                conn, tid, budget, used, exceeded
+            ):
+                return
+            current = await self._get(conn, tid)
+            if not current or current["revision"] != route["revision"]:
+                return
+            if route["desired"] == "active":
+                if not present:
+                    return
+                await self._set(
+                    conn,
+                    tid,
+                    desired="recovery",
+                    publication_state="recovery_retiring",
+                    last_error=None,
+                )
+                claim = True
+            elif not present and route["publication_state"] == "recovery_retiring":
+                await self._set(conn, tid, publication_state="retired", last_error=None)
+        if claim:
+            # Only the caller that claimed retirement may send. Later callers verify absence.
+            await self.admin.delete_route(route["resource_id"])
+            await self.retire_for_recovery(tid, action, recovery, budget, used, exceeded)
 
     async def require_ready(self, conn, tid, verified_revision):
         record = await self._get(conn, tid)
@@ -375,6 +431,8 @@ class NativeMCPRoutes:
                 await self._set(conn, tid, desired="retired")
                 record = await self._get(conn, tid)
                 assert record is not None
+            if record["desired"] == "recovery":
+                return
         present = await self._preflight(record)
         operation_id = None
         async with self.repo.engine.begin() as conn:

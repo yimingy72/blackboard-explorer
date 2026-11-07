@@ -23,7 +23,11 @@ from bbx_contracts.runner import (
     runner_json_text,
     runner_payload_digest,
 )
-from bbx_contracts.runner_bootstrap import native_pause_state, native_recovery_frozen
+from bbx_contracts.runner_bootstrap import (
+    native_pause_state,
+    native_recovery_frozen,
+    native_resume_pending,
+)
 from bbx_contracts.runner_control import (
     RunnerBindingRegistration,
     RunnerCommandSubmission,
@@ -462,17 +466,30 @@ class RunnerControl:
             raise HTTPException(403, "Runner role is not ready")
         if (member["role"] == "teammate") != (body.challenge_id is not None):
             raise HTTPException(403, "Worker requires its current challenge Assignment")
-        if (
-            await conn.execute(
-                select(s.sandbox_command_records.c.id)
-                .where(
-                    s.sandbox_command_records.c.task_id == tid,
-                    s.sandbox_command_records.c.agent_id == body.agent_id,
-                    s.sandbox_command_records.c.data["scope_state"].astext != "sealed",
+        commands = s.sandbox_command_records
+        unsealed = select(commands.c.id).where(
+            commands.c.task_id == tid,
+            commands.c.agent_id == body.agent_id,
+            commands.c.data["scope_state"].astext.is_distinct_from("sealed")
+            if task["ctf_control"].get("native_recovered_epoch")
+            else commands.c.data["scope_state"].astext != "sealed",
+        )
+        if task["ctf_control"].get("native_recovered_epoch"):
+            from bbx_blackboard.native_recovery import exited_scopes
+
+            resource = (
+                (
+                    await conn.execute(
+                        select(s.task_runner_resources).where(
+                            s.task_runner_resources.c.task_id == tid
+                        )
+                    )
                 )
-                .limit(1)
+                .mappings()
+                .one()
             )
-        ).first():
+            unsealed = unsealed.where(~exited_scopes(resource, commands))
+        if (await conn.execute(unsealed.limit(1))).first():
             raise HTTPException(409, "Original Sandbox Assignment cleanup is not confirmed")
         if (
             await conn.execute(
@@ -511,6 +528,10 @@ class RunnerControl:
                         s.runner_bindings.c.task_id == tid,
                         s.runner_bindings.c.binding["agent_id"].astext == body.agent_id,
                         s.runner_bindings.c.status.in_(["registered", "prepared", "closing"]),
+                        or_(
+                            s.runner_bindings.c.owner_epoch == owner["epoch"],
+                            literal(not task["ctf_control"].get("native_recovered_epoch")),
+                        ),
                     )
                 )
             ).all()
@@ -1024,7 +1045,7 @@ class RunnerControl:
                                     ),
                                     and_(
                                         s.runner_commands.c.kind == "input",
-                                        literal(pause != "resuming"),
+                                        literal(not native_resume_pending(task)),
                                         s.runner_commands.c.status.in_(["queued", "accepted"]),
                                         s.runner_bindings.c.status.in_(["registered", "prepared"]),
                                         s.runner_bindings.c.owner_epoch == owner["epoch"],

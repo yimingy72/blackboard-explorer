@@ -114,7 +114,7 @@
         }
       ],
       "default": null,
-      "description": "Last database confirmation; journal bytes were not read."
+      "description": "Last database confirmation; this projection does not read journal bytes."
     },
     "sdk_start_unconfirmed": {
       "title": "Sdk Start Unconfirmed",

@@ -16,6 +16,12 @@
       "title": "Controller Generation",
       "type": "integer"
     },
+    "resource_generation": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Resource Generation",
+      "type": "integer"
+    },
     "action": {
       "enum": [
         "sandbox_create",
@@ -31,14 +37,20 @@
         "retire_admit",
         "retire_complete",
         "sandbox_host_material",
-        "sandbox_host_ready"
+        "sandbox_host_ready",
+        "recovery_exit",
+        "recovery_prepare",
+        "recovery_verifier_admit",
+        "recovery_verifier_observe",
+        "recovery_replace",
+        "recovery_blocked"
       ],
       "title": "Action",
       "type": "string"
     },
     "observation": {
       "additionalProperties": true,
-      "maxProperties": 16,
+      "maxProperties": 18,
       "title": "Observation",
       "type": "object"
     },

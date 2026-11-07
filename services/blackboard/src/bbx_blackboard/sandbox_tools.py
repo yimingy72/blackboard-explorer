@@ -320,13 +320,19 @@ class SandboxTools:
         )
         return {"binding": binding, "arguments": args}
 
+    @staticmethod
+    def _host_epoch_floor(resource):
+        history = resource["data"].get("recovery_history", [])
+        return history[-1]["replacement_epoch"] if history else 0
+
     async def event(self, tid, invocation_id, key, event, payload):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self.host(conn, tid, key)
+            resource, _ = await self.host(conn, tid, key)
             call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
             if (
                 not call
+                or call["owner_epoch"] < self._host_epoch_floor(resource)
                 or call["provider_key"] != "sandbox"
                 or not call["data"].get("sandbox_binding")
                 or call["state"] not in {"dispatched", "unknown", "completed"}
@@ -508,10 +514,11 @@ class SandboxTools:
     async def complete(self, tid, invocation_id, key, result):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self.host(conn, tid, key)
+            resource, _ = await self.host(conn, tid, key)
             call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
             if (
                 call is None
+                or call["owner_epoch"] < self._host_epoch_floor(resource)
                 or call["provider_key"] != "sandbox"
                 or not call["data"].get("sandbox_binding")
             ):
@@ -556,15 +563,18 @@ class SandboxTools:
             return False
 
     async def pending_scopes(self, tid, key):
+        from bbx_blackboard.native_recovery import exited_scopes
+
         records = s.sandbox_command_records
         async with self.repo.engine.connect() as conn:
-            await self.host(conn, tid, key)
+            resource, _ = await self.host(conn, tid, key)
             pending = (
                 (
                     await conn.execute(
                         select(records)
                         .where(
                             records.c.task_id == tid,
+                            ~exited_scopes(resource, records),
                             records.c.data["scope_state"].astext != "sealed",
                         )
                         .distinct(records.c.binding_id)
@@ -595,8 +605,10 @@ class SandboxTools:
     async def claim_scope(self, tid, command_id, key):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self.host(conn, tid, key)
+            resource, _ = await self.host(conn, tid, key)
             command = await self.audit(conn, tid, command_id)
+            if command["epoch"] < self._host_epoch_floor(resource):
+                raise HTTPException(403, "Sandbox scope belongs to an exited epoch")
             if command["data"].get("scope_state") == "sealed" or await self._scope_live(
                 conn, tid, command["binding_id"]
             ):
@@ -611,8 +623,10 @@ class SandboxTools:
     async def scope_event(self, tid, command_id, key, event, payload):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self.host(conn, tid, key)
+            resource, _ = await self.host(conn, tid, key)
             command = await self.audit(conn, tid, command_id)
+            if command["epoch"] < self._host_epoch_floor(resource):
+                raise HTTPException(403, "Sandbox scope belongs to an exited epoch")
             data = command["data"]
             if data["scope_state"] == "sealed":
                 return {"saved": True}

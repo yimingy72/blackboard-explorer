@@ -32,6 +32,10 @@ SANDBOX_HOST_PROFILE = "node-sandbox-host-v1"
 SANDBOX_HOST_SECRET = "bbx-sandbox-host"
 SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
 SANDBOX_HOST_PORT = 8766
+JOURNAL_LOCK = ".bbx-writer.lock"
+JOURNAL_SCRIPT = "/opt/bbx-runner/src/recovery-journal.mjs"
+JOURNAL_VERIFIER = "journal-verifier"
+JOURNAL_LOCK_ID = re.compile(r"[0-9]{1,20}:[0-9]{1,20}")
 
 
 class ResourceUnknown(RuntimeError):
@@ -45,6 +49,10 @@ class RunnerResources:
         if profile not in {None, SANDBOX_HOST_PROFILE}:
             raise ValueError("Unknown trusted Runner resource profile")
         self.sandbox_host = profile == SANDBOX_HOST_PROFILE
+        lock = config.get("journal_writer_lock", False)
+        if type(lock) is not bool or (lock and not self.sandbox_host):
+            raise ValueError("Journal writer locking requires the trusted Sandbox host profile")
+        self.journal_writer_lock = lock
         for key in (
             "source_id",
             "kubeconfig",
@@ -262,6 +270,14 @@ class RunnerResources:
         finally:
             await self._close_sdk(manager, connection)
 
+    @staticmethod
+    def _sandbox_metadata(operation, labels):
+        operation_id = operation.get("data", {}).get("sandbox_create_op_id")
+        return {
+            "bbx-task-id": labels["bbx.dev/task-id"],
+            "bbx-create-op": str(UUID(operation_id or operation["operation_id"])),
+        }
+
     async def _wait_pod(self, namespace, cr_uid, old_uid=None):
         deadline = time.monotonic() + 150
         while time.monotonic() < deadline:
@@ -298,6 +314,12 @@ class RunnerResources:
         namespace, labels = self._scope(operation)
         await self._cluster()
         observed = operation.get("observation") or {}
+        generation = operation.get("data", {}).get("resource_generation", 1)
+        journal_identity = (
+            {"resource_generation": generation, "journal_subdir": f"epoch-{generation}"}
+            if self.journal_writer_lock
+            else {}
+        )
         if observed and (
             observed.get("task_id") != labels["bbx.dev/task-id"]
             or observed.get("operation_id") != labels["bbx.dev/operation-id"]
@@ -488,10 +510,7 @@ class RunnerResources:
         token = base64.b64decode(secret["data"]["token"]).decode()
         if not token or secret.get("type") != "Opaque" or set(secret.get("data", {})) != {"token"}:
             raise ResourceUnknown("The original execd identity is absent")
-        metadata = {
-            "bbx-task-id": labels["bbx.dev/task-id"],
-            "bbx-create-op": labels["bbx.dev/operation-id"],
-        }
+        metadata = self._sandbox_metadata(operation, labels)
         sid = await self._sandbox_id(tenant_key, metadata)
         if observed.get("sandbox") and sid != observed["sandbox"]["id"]:
             raise ResourceUnknown("The original Sandbox is absent or changed")
@@ -502,6 +521,7 @@ class RunnerResources:
             "cluster_uid": self.config["cluster_uid"],
             "namespace": namespace,
             "namespace_uid": ns["metadata"]["uid"],
+            **journal_identity,
             **refs,
             "task_id": labels["bbx.dev/task-id"],
             "operation_id": labels["bbx.dev/operation-id"],
@@ -610,7 +630,22 @@ class RunnerResources:
                 "name": SANDBOX_HOST_SECRET,
                 "uid": host_mount["metadata"]["uid"],
             }
-        runner_doc = self._runner_document(namespace, labels)
+        if self.journal_writer_lock and generation > 1:
+            storage = await self._recovery_storage(namespace, labels, refs)
+            if storage != observed.get("journal_storage"):
+                raise ResourceUnknown("The original journal Node or bound PV changed")
+            journal_identity["journal_storage"] = storage
+            pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+                "items"
+            ]
+            if any(
+                value["metadata"]["uid"] != pod["metadata"]["uid"]
+                and value["metadata"]["name"] != "bbx-runner"
+                for value in pods
+            ):
+                raise ResourceUnknown("Unexpected Pod before opening the replacement writer")
+        lock_id = observed.get("journal_lock_id")
+        runner_doc = self._runner_document(namespace, labels, generation, lock_id)
         fingerprint = hashlib.sha256(
             json.dumps(runner_doc["spec"], sort_keys=True).encode()
         ).hexdigest()
@@ -629,14 +664,43 @@ class RunnerResources:
         runner_uid = runner["metadata"]["uid"]
         until = time.monotonic() + 120
         while True:
-            projection = self._pod_projection(runner, with_host=self.sandbox_host)
-            if projection["terminated"] or projection.get("observation") == "unknown":
-                raise ResourceUnknown("An original Runner container exited before readiness")
-            if projection.get("container_id") and (
-                not self.sandbox_host
-                or (projection.get("host_container_id") and projection.get("pod_ip"))
-            ):
-                break
+            initialized = not runner_doc["spec"].get("initContainers") or any(
+                status.get("name") == "journal-initial"
+                and status.get("state", {}).get("terminated", {}).get("exitCode") == 0
+                for status in runner.get("status", {}).get("initContainerStatuses", [])
+            )
+            if initialized:
+                projection = self._pod_projection(runner, with_host=self.sandbox_host)
+                if projection["terminated"] or projection.get("observation") == "unknown":
+                    raise ResourceUnknown("An original Runner container exited before readiness")
+                if projection.get("container_id") and (
+                    not self.sandbox_host
+                    or (projection.get("host_container_id") and projection.get("pod_ip"))
+                ):
+                    if not self.journal_writer_lock:
+                        break
+                    output = await self._kubectl(
+                        "logs", "bbx-runner", "-n", namespace, "-c", "runner", "--tail=50"
+                    )
+                    identity = re.findall(
+                        r'^\{"journal_lock_id":"([0-9]+:[0-9]+)"\}$', output, re.M
+                    )
+                    if len(identity) == 1 and JOURNAL_LOCK_ID.fullmatch(identity[0]):
+                        if lock_id and identity[0] != lock_id:
+                            raise ResourceUnknown("The original journal lock inode changed")
+                        current = self._owned(
+                            await self._get("pod", "bbx-runner", namespace),
+                            {**labels, "bbx.dev/component": "runner"},
+                            runner_uid,
+                        )
+                        if not self._same_process(
+                            self._pod_projection(current, with_host=self.sandbox_host), projection
+                        ):
+                            raise ResourceUnknown("The journal lock holder changed")
+                        journal_identity["journal_lock_id"] = identity[0]
+                        break
+            elif runner.get("status", {}).get("phase") in {"Failed", "Succeeded"}:
+                raise ResourceUnknown("The original journal initialization did not succeed")
             if time.monotonic() >= until:
                 raise ResourceUnknown("The original Runner container has not started")
             await asyncio.sleep(0.25)
@@ -646,11 +710,16 @@ class RunnerResources:
                 runner_uid,
             )
             self._runner_spec(runner, runner_doc["spec"])
+        if self.journal_writer_lock and generation == 1:
+            journal_identity["journal_storage"] = await self._recovery_storage(
+                namespace, labels, refs
+            )
         return {
             "source_id": self.config["source_id"],
             "cluster_uid": self.config["cluster_uid"],
             "namespace": namespace,
             "namespace_uid": ns["metadata"]["uid"],
+            **journal_identity,
             **refs,
             "task_id": labels["bbx.dev/task-id"],
             "operation_id": labels["bbx.dev/operation-id"],
@@ -664,7 +733,10 @@ class RunnerResources:
                 "environment_revision": environment_revision,
                 "container_id": self._pod_projection(pod).get("container_id"),
             },
-            "runner": projection,
+            "runner": {
+                **projection,
+                **({"journal_writer_lock": True} if self.journal_writer_lock else {}),
+            },
         }
 
     def _sandbox_spec(self, pod):
@@ -701,7 +773,7 @@ class RunnerResources:
             raise ResourceUnknown("The native Sandbox deployment identity changed")
         return env["BBX_ENVIRONMENT_REVISION"]["value"]
 
-    def _runner_document(self, namespace, labels):
+    def _runner_document(self, namespace, labels, generation=1, lock_id=None):
         document = self._document(
             "Pod",
             "bbx-runner",
@@ -758,6 +830,38 @@ class RunnerResources:
             },
         )
 
+        if self.journal_writer_lock:
+            if (
+                type(generation) is not int
+                or not 1 <= generation <= 999999999
+                or (generation > 1 and not JOURNAL_LOCK_ID.fullmatch(lock_id or ""))
+            ):
+                raise ResourceUnknown("The journal resource generation or original lock is absent")
+            spec = document["spec"]
+            runner = spec["containers"][0]
+            runner["command"] = [
+                "node",
+                JOURNAL_SCRIPT,
+                "run",
+                *([lock_id] if generation > 1 else []),
+            ]
+            runner["volumeMounts"][1]["subPath"] = f"epoch-{generation}"
+            runner["volumeMounts"].append(
+                {
+                    "name": "journal",
+                    "mountPath": "/run/bbx-journal-lock",
+                    "subPath": JOURNAL_LOCK,
+                    "readOnly": True,
+                }
+            )
+            if generation == 1:
+                spec["initContainers"] = [
+                    self._journal_container(
+                        "journal-initial",
+                        ["node", JOURNAL_SCRIPT, "initial"],
+                        [{"name": "journal", "mountPath": "/journal-root"}],
+                    )
+                ]
         if self.sandbox_host:
             spec = document["spec"]
             spec["shareProcessNamespace"] = False
@@ -798,6 +902,25 @@ class RunnerResources:
             )
         return document
 
+    def _journal_container(self, name, command, mounts):
+        return {
+            "name": name,
+            "image": self.config["runner_image"],
+            "imagePullPolicy": "IfNotPresent",
+            "command": command,
+            "resources": {
+                "requests": {"cpu": "25m", "memory": "64Mi"},
+                "limits": {"cpu": "200m", "memory": "256Mi"},
+            },
+            "securityContext": {
+                "allowPrivilegeEscalation": False,
+                "readOnlyRootFilesystem": True,
+                "capabilities": {"drop": ["ALL"]},
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
+            "volumeMounts": mounts,
+        }
+
     @staticmethod
     def _runner_secret(secret):
         if secret.get("type") != "Opaque" or not set(secret.get("data", {})) <= {
@@ -823,10 +946,10 @@ class RunnerResources:
         if (
             pod["metadata"].get("ownerReferences")
             or len(spec.get("containers", [])) != len(expected["containers"])
+            or len(spec.get("initContainers", [])) != len(expected.get("initContainers", []))
             or any(
                 spec.get(k)
                 for k in (
-                    "initContainers",
                     "ephemeralContainers",
                     "hostNetwork",
                     "hostPID",
@@ -847,13 +970,17 @@ class RunnerResources:
             )
         ):
             raise ResourceUnknown("The original Runner Pod isolation or mounts changed")
-        for actual, desired in zip(spec["containers"], expected["containers"], strict=True):
+        for actual, desired in zip(
+            spec["containers"] + spec.get("initContainers", []),
+            expected["containers"] + expected.get("initContainers", []),
+            strict=True,
+        ):
             env = json.loads(json.dumps(actual.get("env", [])))
             for entry in env:
                 if "fieldRef" in entry.get("valueFrom", {}):
                     if entry["valueFrom"]["fieldRef"].pop("apiVersion", "v1") != "v1":
                         raise ResourceUnknown("The Runner Downward API changed")
-            if env != desired["env"] or any(
+            if env != desired.get("env", []) or any(
                 actual.get(k) != desired.get(k)
                 for k in (
                     "name",
@@ -955,7 +1082,15 @@ class RunnerResources:
             {**labels, "bbx.dev/component": "runner"},
             observed["runner"]["pod_uid"],
         )
-        self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+        self._runner_spec(
+            pod,
+            self._runner_document(
+                namespace,
+                labels,
+                observed.get("resource_generation", 1),
+                observed.get("journal_lock_id"),
+            )["spec"],
+        )
         actual = self._pod_projection(pod, with_host=True)
         if (
             pod["metadata"].get("deletionTimestamp")
@@ -1187,7 +1322,15 @@ class RunnerResources:
             or bootstrap["fence"]["task_id"] != labels["bbx.dev/task-id"]
         ):
             raise ResourceUnknown("The Runner mount is not bound to the original live Pod")
-        self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+        self._runner_spec(
+            pod,
+            self._runner_document(
+                namespace,
+                labels,
+                observation.get("resource_generation", 1),
+                observation.get("journal_lock_id"),
+            )["spec"],
+        )
         if self.sandbox_host:
             host = self._owned(
                 await self._get("secret", SANDBOX_HOST_SECRET, namespace),
@@ -1350,10 +1493,7 @@ class RunnerResources:
             ):
                 raise ResourceUnknown("The original execd Secret changed")
             result[key] = {"name": name, "uid": value["metadata"]["uid"]}
-        metadata = {
-            "bbx-task-id": labels["bbx.dev/task-id"],
-            "bbx-create-op": labels["bbx.dev/operation-id"],
-        }
+        metadata = self._sandbox_metadata(operation, labels)
         sid = prior.get("sandbox", {}).get("id") or await self._sandbox_id(tenant_key, metadata)
         pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
             "items"
@@ -1397,7 +1537,15 @@ class RunnerResources:
                 {**labels, "bbx.dev/component": "runner"},
                 prior.get("runner", {}).get("pod_uid"),
             )
-            self._runner_spec(runner, self._runner_document(namespace, labels)["spec"])
+            self._runner_spec(
+                runner,
+                self._runner_document(
+                    namespace,
+                    labels,
+                    prior.get("resource_generation", 1),
+                    prior.get("journal_lock_id"),
+                )["spec"],
+            )
             projection = self._pod_projection(runner, with_host=self.sandbox_host)
             if any(
                 prior.get("runner", {}).get(key) and prior["runner"][key] != projection.get(key)
@@ -1439,7 +1587,15 @@ class RunnerResources:
                 result[key] = {**ref, "terminated": False, "observation": "unknown"}
             else:
                 if key == "runner":
-                    self._runner_spec(pod, self._runner_document(namespace, labels)["spec"])
+                    self._runner_spec(
+                        pod,
+                        self._runner_document(
+                            namespace,
+                            labels,
+                            observation.get("resource_generation", 1),
+                            observation.get("journal_lock_id"),
+                        )["spec"],
+                    )
                 result[key] = {**ref, **projection}
         return result
 
@@ -1645,6 +1801,339 @@ class RunnerResources:
                     watch.cancel()
             await asyncio.gather(*watches.values(), return_exceptions=True)
 
+    async def recovery_volumes(self, operation):
+        observed = operation["observation"]
+        if (
+            not self.journal_writer_lock
+            or observed.get("runner", {}).get("journal_writer_lock") is not True
+            or not JOURNAL_LOCK_ID.fullmatch(observed.get("journal_lock_id") or "")
+        ):
+            raise ResourceUnknown(
+                "The original Runner did not hold a supported journal writer lock"
+            )
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        storage = await self._recovery_storage(namespace, labels, observed)
+        if storage != observed.get("journal_storage"):
+            raise ResourceUnknown("The original local volume or Node UID changed")
+        return storage["node"]
+
+    async def _recovery_storage(self, namespace, labels, observed):
+        storage = await self._get("storageclass", self.config["storage_class"])
+        nodes = json.loads(await self._kubectl("get", "nodes", "-o", "json"))["items"]
+        if (
+            not storage
+            or storage["provisioner"] != "rancher.io/local-path"
+            or len(nodes) != 1
+            or not any(
+                item["type"] == "Ready" and item["status"] == "True"
+                for item in nodes[0].get("status", {}).get("conditions", [])
+            )
+        ):
+            raise ResourceUnknown("Recovery requires the original single-node local-path topology")
+        node = nodes[0]["metadata"]
+        hostname = node["labels"].get("kubernetes.io/hostname")
+        if not hostname:
+            raise ResourceUnknown("The original local-volume node is unidentified")
+        paths = set()
+        identities = {"node": node["name"], "node_uid": node["uid"]}
+        for key in ("journal_pvc", "workspace_pvc"):
+            claim = observed[key]
+            pvc = self._owned(
+                await self._get("pvc", claim["name"], namespace), labels, claim["uid"]
+            )
+            pv = await self._get("pv", pvc["spec"].get("volumeName") or "unbound")
+            spec = (pv or {}).get("spec", {})
+            ref = spec.get("claimRef", {})
+            path = spec.get("hostPath", spec.get("local", {})).get("path")
+            if (
+                pvc["status"].get("phase") != "Bound"
+                or spec.get("storageClassName") != storage["metadata"]["name"]
+                or any(
+                    ref.get(field) != expected
+                    for field, expected in {
+                        "namespace": namespace,
+                        "name": claim["name"],
+                        "uid": claim["uid"],
+                    }.items()
+                )
+                or spec.get("nodeAffinity", {}).get("required", {}).get("nodeSelectorTerms")
+                != [
+                    {
+                        "matchExpressions": [
+                            {
+                                "key": "kubernetes.io/hostname",
+                                "operator": "In",
+                                "values": [hostname],
+                            }
+                        ]
+                    }
+                ]
+                or not isinstance(path, str)
+                or not path.startswith("/")
+                or path in paths
+            ):
+                raise ResourceUnknown("The original bound local volume identity is unconfirmed")
+            assert pv is not None
+            identities[key.replace("pvc", "pv_uid")] = pv["metadata"]["uid"]
+            paths.add(path)
+        return identities
+
+    async def _remove_recovery_object(self, kind, namespace, name, uid):
+        current = await self._get(kind, name, namespace)
+        if current is None:
+            return
+        if current["metadata"]["uid"] != uid:
+            raise ResourceUnknown("The original recovery resource was replaced")
+        prefix = "/apis/cilium.io/v2" if kind == "ciliumnetworkpolicies" else "/api/v1"
+        try:
+            await self._kubectl(
+                "delete",
+                "--raw",
+                f"{prefix}/namespaces/{namespace}/{kind}/{name}",
+                "-f",
+                "-",
+                body={"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": uid}},
+            )
+        except ResourceUnknown:
+            if await self._get(kind, name, namespace) is not None:
+                raise
+        deadline = time.monotonic() + 35
+        while (current := await self._get(kind, name, namespace)) is not None:
+            if current["metadata"]["uid"] != uid or time.monotonic() >= deadline:
+                raise ResourceUnknown("Recovery object removal did not converge")
+            await asyncio.sleep(0.2)
+
+    async def release_recovery(self, operation, *, stopping=False, checkpoint=None):
+        """After durable positive exit, remove only the original names and any owned verifier."""
+        observed, incident = operation["observation"], operation["data"]["recovery"]
+        if not incident.get("exit_proof"):
+            raise ResourceUnknown("Original terminal evidence was not persisted")
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        for key in ("journal_pvc", "workspace_pvc"):
+            claim = observed[key]
+            self._owned(await self._get("pvc", claim["name"], namespace), labels, claim["uid"])
+        for key in ("runner", "sandbox"):
+            ref = observed[key]
+            value = await self._get("pod", ref["pod_name"], namespace)
+            if value:
+                projection = self._pod_projection(value, with_host=key == "runner")
+                if not projection["terminated"] or not self._same_process(projection, ref):
+                    raise ResourceUnknown("Original terminal Pod identity changed")
+                await self._remove_recovery_object(
+                    "pods", namespace, ref["pod_name"], ref["pod_uid"]
+                )
+        if await self._get("batchsandbox", observed["sandbox"]["id"], namespace):
+            raise ResourceUnknown("The original logical Sandbox still exists")
+        for key in ("runner_secret", "sandbox_host_secret"):
+            ref = observed[key]
+            value = await self._get("secret", ref["name"], namespace)
+            if value:
+                self._owned(value, labels, ref["uid"])
+                await self._remove_recovery_object("secrets", namespace, ref["name"], ref["uid"])
+        verifier_labels = self._verifier_labels(labels, incident)
+        verifier = await self._get("pod", "bbx-journal-verify", namespace)
+        if verifier:
+            self._owned(verifier, verifier_labels)
+            if stopping:
+                observed_verifier = self._verifier_receipt(verifier)
+                if not observed_verifier["verifier_terminated"] or checkpoint is None:
+                    raise ResourceUnknown("The original recovery verifier has not exited")
+                await checkpoint(observed_verifier)
+                await self._remove_recovery_object(
+                    "pods", namespace, "bbx-journal-verify", verifier["metadata"]["uid"]
+                )
+                verifier = None
+        elif stopping and incident.get("verifier") and not incident["verifier"].get("terminated"):
+            raise ResourceUnknown("The original recovery verifier exit is unresolved")
+        pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+            "items"
+        ]
+        if {p["metadata"]["uid"] for p in pods} != (
+            {verifier["metadata"]["uid"]} if verifier else set()
+        ):
+            raise ResourceUnknown("An unexpected Pod still uses the original Task namespace")
+        if stopping:
+            await self._remove_verifier_policy(namespace, verifier_labels)
+
+    @staticmethod
+    def _verifier_labels(labels, incident):
+        return {
+            **labels,
+            "bbx.dev/component": JOURNAL_VERIFIER,
+            "bbx.dev/recovery-id": str(UUID(incident["incident_id"])),
+        }
+
+    async def _remove_verifier_policy(self, namespace, labels):
+        value = await self._get("ciliumnetworkpolicies", "bbx-journal-verify", namespace)
+        if value:
+            self._owned(value, labels)
+            await self._remove_recovery_object(
+                "ciliumnetworkpolicies", namespace, "bbx-journal-verify", value["metadata"]["uid"]
+            )
+
+    @staticmethod
+    def _verifier_receipt(pod):
+        status = pod.get("status", {})
+        init = status.get("initContainerStatuses", [])
+        main = status.get("containerStatuses", [])
+        init = init[0] if len(init) == 1 and init[0]["name"] == "prepare-copy" else {}
+        main = main[0] if len(main) == 1 and main[0]["name"] == "verify" else {}
+        return {
+            "verifier_pod_uid": pod["metadata"]["uid"],
+            "verifier_init_container_id": init.get("containerID"),
+            "verifier_container_id": main.get("containerID"),
+            "verifier_terminated": all(
+                item.get("containerID")
+                and item.get("state", {}).get("terminated", {}).get("containerID")
+                == item["containerID"]
+                for item in (init, main)
+            ),
+        }
+
+    async def verify_recovery_journal(self, operation, prepared, node, *, admit, checkpoint):
+        observed, incident = operation["observation"], operation["data"]["recovery"]
+        manifest = prepared["manifest"]
+        text = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        )
+        if hashlib.sha256(text.encode()).hexdigest() != prepared["manifest_digest"]:
+            raise ResourceUnknown("The recovery manifest bytes do not match the durable digest")
+        namespace, labels = self._scope(operation)
+        labels = self._verifier_labels(labels, incident)
+        generation = manifest["resource_generation"]
+        directory = f"epoch-{generation}"
+        name = "bbx-journal-verify"
+        saved = incident.get("verifier", {})
+        existing = await self._get("pod", name, namespace)
+        if saved.get("terminated") and saved.get("work_copy"):
+            if existing:
+                self._owned(existing, labels, saved["pod_uid"])
+                if not self._verifier_receipt(existing)["verifier_terminated"]:
+                    raise ResourceUnknown("The verified journal Pod exit changed")
+                await self._remove_recovery_object("pods", namespace, name, saved["pod_uid"])
+            await self._remove_verifier_policy(namespace, labels)
+            if await self.recovery_volumes(operation) != node:
+                raise ResourceUnknown("The verified local-volume node changed")
+            await self.release_recovery(operation)
+            return {
+                "manifest_digest": prepared["manifest_digest"],
+                "work_copy": saved["work_copy"],
+                "writer_released": True,
+                "journal_pvc_uid": observed["journal_pvc"]["uid"],
+                "workspace_pvc_uid": observed["workspace_pvc"]["uid"],
+                "verifier_pod_uid": saved["pod_uid"],
+            }
+        if (existing is None and saved) or (existing is not None and not saved):
+            raise ResourceUnknown("The original journal verifier claim cannot be replayed")
+        policy = self._document(
+            "CiliumNetworkPolicy",
+            name,
+            labels,
+            namespace,
+            spec={
+                "endpointSelector": {"matchLabels": {"bbx.dev/component": JOURNAL_VERIFIER}},
+                "ingressDeny": [{"fromEntities": ["all"]}],
+                "egressDeny": [{"toEntities": ["all"]}],
+            },
+        )
+        policy["apiVersion"] = "cilium.io/v2"
+        await self._ensure(policy, labels)
+        root = {"name": "journal", "mountPath": "/journal-root"}
+        doc = self._document(
+            "Pod",
+            name,
+            labels,
+            namespace,
+            spec={
+                "nodeName": node,
+                "restartPolicy": "Never",
+                "serviceAccountName": "bbx-runner",
+                "automountServiceAccountToken": False,
+                "activeDeadlineSeconds": 150,
+                "securityContext": {
+                    "runAsUser": 1000,
+                    "runAsGroup": 1000,
+                    "fsGroup": 1000,
+                    "runAsNonRoot": True,
+                },
+                "initContainers": [
+                    self._journal_container(
+                        "prepare-copy",
+                        ["node", JOURNAL_SCRIPT, "prepare", directory, manifest["journal_lock_id"]],
+                        [root],
+                    )
+                ],
+                "containers": [
+                    self._journal_container(
+                        "verify",
+                        ["node", JOURNAL_SCRIPT, "verify", text],
+                        [
+                            {"name": "journal", "mountPath": "/journal-original", "readOnly": True},
+                            {"name": "journal", "mountPath": "/journal-work", "subPath": directory},
+                        ],
+                    )
+                ],
+                "volumes": [
+                    {
+                        "name": "journal",
+                        "persistentVolumeClaim": {"claimName": observed["journal_pvc"]["name"]},
+                    }
+                ],
+            },
+        )
+        if existing is None and not await admit():
+            raise ResourceUnknown("The journal verifier create is already claimed")
+        pod = (
+            self._owned(existing, labels, saved.get("pod_uid"))
+            if existing
+            else await self._ensure(doc, labels)
+        )
+        uid = pod["metadata"]["uid"]
+        deadline = time.monotonic() + 150
+        previous = None
+        while True:
+            self._runner_spec(pod, doc["spec"])
+            if (
+                pod["spec"].get("nodeName") != node
+                or pod["spec"].get("activeDeadlineSeconds") != 150
+            ):
+                raise ResourceUnknown("The recovery verifier Pod contract changed")
+            receipt = self._verifier_receipt(pod)
+            if receipt != previous and not receipt["verifier_terminated"]:
+                await checkpoint(receipt)
+                previous = receipt
+            if pod.get("status", {}).get("phase") == "Succeeded" and receipt["verifier_terminated"]:
+                if self._pod_projection(pod)["exit_code"] == 0:
+                    break
+            if pod.get("status", {}).get("phase") == "Failed" or time.monotonic() >= deadline:
+                raise ResourceUnknown("Original journal or writer lock could not be confirmed")
+            await asyncio.sleep(0.25)
+            pod = self._owned(await self._get("pod", name, namespace), labels, uid)
+        try:
+            proof = json.loads(await self._kubectl("logs", name, "-n", namespace, "-c", "verify"))
+        except ValueError as error:
+            raise ResourceUnknown("The verifier did not return a journal receipt") from error
+        self._owned(await self._get("pod", name, namespace), labels, uid)
+        if proof.get("manifest_digest") != prepared["manifest_digest"]:
+            raise ResourceUnknown("The verifier did not check the original manifest")
+        await checkpoint({**receipt, "work_copy": proof["work_copy"]})
+        await self._remove_recovery_object("pods", namespace, name, uid)
+        await self._remove_verifier_policy(namespace, labels)
+        if await self.recovery_volumes(operation) != node:
+            raise ResourceUnknown("The verified local-volume node changed")
+        await self.release_recovery(operation)
+        return {
+            **proof,
+            "writer_released": True,
+            "journal_pvc_uid": observed["journal_pvc"]["uid"],
+            "workspace_pvc_uid": observed["workspace_pvc"]["uid"],
+            "verifier_pod_uid": uid,
+        }
+
     async def _retirement_topology(self):
         frozen = self.config.get("retirement_single_apiserver") or {}
         pods = json.loads(
@@ -1786,6 +2275,29 @@ class RunnerResources:
         original.update(r["uid"] for r in saved.values())
         resources = list(saved.values())
         native = []
+        historical_events = {}
+        for entry in operation.get("data", {}).get("recovery_history", []):
+            exit_proof = entry.get("exit_proof", {})
+            if not all(
+                exit_proof.get(key) is True
+                for key in ("runner_terminated", "sandbox_terminated", "pvcs_retained")
+            ):
+                continue
+            scope = entry.get("exit_observation", {})
+            if scope.get("namespace_uid") != observed["namespace_uid"]:
+                continue
+            for container, field, kind in (
+                ("runner", "pod_uid", "Pod"),
+                ("sandbox", "pod_uid", "Pod"),
+                ("sandbox", "cr_uid", "BatchSandbox"),
+            ):
+                if uid := scope.get(container, {}).get(field):
+                    historical_events[uid] = kind
+            verifier = entry.get("verifier", {})
+            if verifier.get("terminated") is True and all(
+                verifier.get(key) for key in ("pod_uid", "init_container_id", "container_id")
+            ):
+                historical_events[verifier["pod_uid"]] = "Pod"
         for path, value in inventory:
             meta, kind = value["metadata"], value["kind"]
             name, uid = meta["name"], meta["uid"]
@@ -1866,7 +2378,16 @@ class RunnerResources:
             related = value.get("regarding", value.get("involvedObject", {}))
             owners = meta.get("ownerReferences", [])
             if not (
-                (value["kind"] == "Event" and related.get("uid") in original)
+                (
+                    value["kind"] == "Event"
+                    and (
+                        related.get("uid") in original
+                        or (
+                            related.get("uid") in historical_events
+                            and historical_events[related["uid"]] == related.get("kind")
+                        )
+                    )
+                )
                 or (owners and all(o.get("uid") in original for o in owners))
             ):
                 raise ResourceUnknown("A native metadata object has no original UID reference")

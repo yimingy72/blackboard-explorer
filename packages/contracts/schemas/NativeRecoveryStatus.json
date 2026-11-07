@@ -114,7 +114,7 @@
             }
           ],
           "default": null,
-          "description": "Last database confirmation; journal bytes were not read."
+          "description": "Last database confirmation; this projection does not read journal bytes."
         },
         "sdk_start_unconfirmed": {
           "title": "Sdk Start Unconfirmed",
@@ -132,17 +132,57 @@
     }
   },
   "additionalProperties": false,
-  "description": "Read-only original evidence, without proof of volume writer exit or recovery readiness.",
+  "description": "Recovery progress and the original execution ledgers, without journal contents.",
   "properties": {
     "state": {
       "enum": [
         "not_frozen",
         "frozen",
+        "requested",
+        "rebuilding",
+        "resumed",
         "stopping",
         "stopped"
       ],
       "title": "State",
       "type": "string"
+    },
+    "blocker": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocker"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request Id"
+    },
+    "replacement_epoch": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Replacement Epoch"
     },
     "incident_id": {
       "anyOf": [
