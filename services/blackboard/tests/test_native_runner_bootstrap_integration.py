@@ -3,24 +3,44 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
 import pytest
 from bbx_blackboard.api import create_app
+from bbx_blackboard.auth import issue_user_token
+from bbx_blackboard.native_runner_bootstrap import identity_id
+from bbx_blackboard.runner_auth import issue_runner_control_token
+from bbx_blackboard.runner_control import fence
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
-from bbx_contracts.runner import runner_json_text, runner_payload_digest
+from bbx_contracts.runner import PROTOCOL, runner_json_text, runner_payload_digest
+from bbx_contracts.runner_bootstrap import NativeRunnerAction
 from bbx_runtime.scheduler.lock import RuntimeLock
 from bbx_runtime.settings import NativeRunnerSettings
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import insert, select, update
 from sqlalchemy.engine import make_url
 from test_board_flags_integration import Objects
 from test_ctf_api import settings
 from test_ctf_integration import ctf as ctf
 from test_ctf_integration import ctf_url as ctf_url
-from test_runner_control_integration import SERVICE, control, mgmt, poll_query, registration
+from test_runner_control_integration import (
+    SERVICE,
+    acknowledge,
+    acquire,
+    auth,
+    confirm,
+    confirmation,
+    control,
+    cursor,
+    empty_cursor,
+    mgmt,
+    poll_query,
+    register_owner,
+    registration,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -51,6 +71,27 @@ def runtime_settings(url):
         runner_model_proxy_url="https://runtime.invalid",
         runner_gateway_url="http://native.invalid",
     )
+
+
+async def fixture_owner(native, tid, actor):
+    async with native.repo.engine.begin() as conn:
+        record, _ = await native._checked(
+            conn, tid, NativeRunnerAction.model_validate({**actor, "action": "material"}), live=True
+        )
+        owner = await native.control._register_owner(
+            conn,
+            tid,
+            runner_json_text(
+                {
+                    "request_id": identity_id(record["operation_id"], "owner"),
+                    "runner_id": identity_id(record["operation_id"], "runner"),
+                    "pod_uid": record["observation"]["runner"]["pod_uid"],
+                    "expected_epoch": 0,
+                    "hard_deadline": record["hard_deadline"].isoformat(),
+                }
+            ).encode(),
+        )
+    return {"fence": fence(owner), "token": issue_runner_control_token(native.settings, owner)}
 
 
 async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
@@ -244,20 +285,8 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
                     json={**action_a, "action": "observation", "observation": restored},
                 )
             ).status_code == 200
-            # Synthetic standalone control identity tests the finite closing filter only.
-            owner = (
-                await http.post(
-                    mgmt(tid) + "/owners",
-                    headers=SERVICE,
-                    json={
-                        "request_id": str(uuid4()),
-                        "runner_id": "synthetic-runner",
-                        "pod_uid": observed["runner"]["pod_uid"],
-                        "expected_epoch": 0,
-                        "hard_deadline": queued["hard_deadline"],
-                    },
-                )
-            ).json()
+            # Synthetic control identity tests the finite closing filter only.
+            owner = await fixture_owner(app.state.native_runner_bootstrap, tid, action_a)
             binding_request = registration(owner)
             registered = await http.post(
                 mgmt(tid) + "/bindings", headers=SERVICE, json=binding_request
@@ -630,18 +659,7 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
                 json={**actor, "action": "observation", "observation": observed},
             )
         ).status_code == 200
-        owner_response = await http.post(
-            mgmt(tid) + "/owners",
-            headers=SERVICE,
-            json={
-                "request_id": str(uuid4()),
-                "runner_id": "held-runner",
-                "pod_uid": observed["runner"]["pod_uid"],
-                "expected_epoch": 0,
-                "hard_deadline": queued["hard_deadline"],
-            },
-        )
-        owner = owner_response.json()
+        owner = await fixture_owner(native, tid, actor)
         bound = await http.post(mgmt(tid) + "/bindings", headers=SERVICE, json=registration(owner))
         assert bound.status_code == 200, bound.text
         bid = bound.json()["binding"]["binding_id"]
@@ -748,3 +766,369 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             for c in polled.json()["commands"]
         )
     await app.state.runner_gateway.native.admin.close()
+
+
+@pytest.mark.parametrize("reason", ["native_resource_unknown", "native_owner_expired"])
+async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
+    ctf, ctf_url, monkeypatch, reason
+):
+    options = settings().model_copy(
+        update={
+            "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
+            "native_gateway_accounting_source_id": "fixture-accounting",
+            "native_gateway_admin_url": "https://native.invalid",
+            "native_gateway_data_url": "https://native.invalid",
+            "native_gateway_catalog_revision": "fixture-catalog",
+            "native_mcp_gateway_url": "https://mcp.invalid",
+            "native_mcp_backend_url": "https://blackboard.invalid",
+            "native_mcp_jwks_file": "/private/public-jwks.json",
+            "native_mcp_backend_token_file": "/private/backend-token",
+        }
+    )
+    ctf.objects = Objects()
+    app = create_app(options, engine=ctf.repo.engine, objects=ctf.objects)
+    await app.state.profile_store.ensure_bundled(
+        Path(__file__).resolve().parents[3] / "profiles/default"
+    )
+    native = app.state.native_runner_bootstrap
+    fees = native.gateway.native
+    monkeypatch.setattr(fees, "prepare", AsyncMock())
+    monkeypatch.setattr(fees, "publish", AsyncMock())
+    monkeypatch.setattr(
+        fees,
+        "selection",
+        AsyncMock(
+            return_value={
+                "sdk_model": {
+                    "id": "fixture-model",
+                    "api": "openai-completions",
+                    "input": ["text", "image"],
+                    "reasoning": True,
+                    "thinking_level": "off",
+                    "context_window": 1048576,
+                    "max_output_tokens": 524288,
+                }
+            }
+        ),
+    )
+    credentials = AsyncMock(
+        return_value={
+            "mcp_gateway_url": "https://mcp.invalid/api/tasks/fixture/mcp",
+            "model": {"token": "never-in-recovery-view"},
+            "mcp": {"token": "synthetic-mcp"},
+        }
+    )
+    monkeypatch.setattr(native.gateway, "credentials", credentials)
+    task_input = {
+        "mode": "ctf",
+        "goal": "Preserve the original journal and dispatched model attempt",
+        "budget": {"max_cost": "1", "max_minutes": 5},
+        "ctf_options": {"max_teammates": 1},
+    }
+    tid = await ctf.create_task(task_input, business_contract=BOARD_CONTRACT)
+    path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
+    user = {"Authorization": "Bearer " + issue_user_token(options, "fixture-owner")}
+    lock_settings, deployment = runtime_settings(ctf_url), config()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+    ) as http:
+        request = {
+            "request_id": str(uuid4()),
+            "model_alias": "fixture-model",
+            "exchange_rate": {
+                "rate_cny_per_usd": "7",
+                "source_ref": "fixture://fx",
+                "observed_at": datetime.now(UTC).isoformat(),
+            },
+        }
+        if reason == "native_resource_unknown":
+            preowned = await ctf.create_task(task_input, business_contract=BOARD_CONTRACT)
+            await register_owner(http, preowned)
+            blocked_launch = await http.post(
+                path.replace(str(tid), str(preowned)), headers=SERVICE, json=request
+            )
+            assert (
+                blocked_launch.status_code == 409 and "Existing Runner owner" in blocked_launch.text
+            )
+        start = await http.post(path, headers=SERVICE, json=request)
+        assert start.status_code == 200, start.text
+        operation = start.json()
+        assert (await http.get(path + "/recovery", headers=SERVICE)).status_code == 403
+        assert (await http.get(path + "/recovery", headers=user)).json()["state"] == "not_frozen"
+
+        async def claim(lock, controller_id):
+            assert lock.backend_started_at is not None
+            response = await http.post(
+                path + "/claim",
+                headers=SERVICE,
+                json={
+                    "controller_id": controller_id,
+                    "controller_fence": lock.fence,
+                    "controller_pid": lock.backend_pid,
+                    "controller_started_at": lock.backend_started_at.isoformat(),
+                    "resource_config": deployment,
+                },
+            )
+            assert response.status_code == 200, response.text
+            actor = {
+                "operation_id": operation["operation_id"],
+                "controller_id": controller_id,
+                "controller_generation": lock.fence,
+            }
+            return actor, response.json()
+
+        async def act(actor, action, **extra):
+            return await http.post(
+                path + "/actions", headers=SERVICE, json={**actor, "action": action, **extra}
+            )
+
+        async def recovery():
+            response = await http.get(path + "/recovery", headers=user)
+            assert response.status_code == 200, response.text
+            assert response.headers["cache-control"] == "no-store"
+            return response.json()
+
+        observation = {
+            "namespace_uid": str(uuid4()),
+            "journal_pvc": {"uid": str(uuid4())},
+            "workspace_pvc": {"uid": str(uuid4())},
+            "runner_secret": {"uid": str(uuid4())},
+            "sandbox": {
+                "id": str(uuid4()),
+                "cr_uid": str(uuid4()),
+                "pod_uid": str(uuid4()),
+                "container_id": "fixture-sandbox",
+                "environment_revision": deployment["environment_revision"],
+            },
+            "runner": {
+                "pod_uid": str(uuid4()),
+                "container_id": "fixture-runner",
+                "phase": "Running",
+            },
+        }
+        async with RuntimeLock(lock_settings, fenced=True) as first:
+            actor_a, _ = await claim(first, "first-controller")
+            assert (await act(actor_a, "sandbox_create")).json()["create_allowed"]
+            assert (await act(actor_a, "observation", observation=observation)).status_code == 200
+            forged = {
+                "request_id": identity_id(operation["operation_id"], "owner"),
+                "runner_id": identity_id(operation["operation_id"], "runner"),
+                "pod_uid": observation["runner"]["pod_uid"],
+                "expected_epoch": 0,
+                "hard_deadline": operation["hard_deadline"],
+            }
+            assert (
+                await http.post(mgmt(tid) + "/owners", headers=SERVICE, json=forged)
+            ).status_code == 409
+            issued = await act(actor_a, "material")
+            assert issued.status_code == 200, issued.text
+            material = issued.json()
+            owner = {
+                "fence": material["bootstrap"]["fence"],
+                "token": material["credentials"]["control"]["token"],
+            }
+            epoch = owner["fence"]["epoch"]
+            polled = await http.get(
+                control(tid) + "/commands", headers=auth(owner), params=poll_query(owner)
+            )
+            prepare = polled.json()["commands"][0]
+            binding = json.loads(prepare["payload_json"])["spec"]["binding"]
+            bid = binding["binding_id"]
+            permit, _ = await acquire(http, tid, owner, binding, prepare)
+            original_cursor = cursor(empty_cursor(), "confirmed-original")
+            first_journal = confirmation(owner, binding, empty_cursor(), original_cursor)
+            await confirm(http, tid, owner, binding, first_journal)
+            await acknowledge(
+                http,
+                tid,
+                owner,
+                prepare,
+                "prepared",
+                binding_id=bid,
+                sdk_session_id=first_journal["sdk_session_id"],
+                cursor=original_cursor,
+                journal_confirmed=True,
+                sdk_idle=True,
+            )
+            assert (await act(actor_a, "activate")).json()["state"] == "ready"
+
+        async with RuntimeLock(lock_settings, fenced=True) as second:
+            actor_b, healthy = await claim(second, "second-controller")
+            assert healthy["state"] == "ready" and healthy["data"]["owner_epoch"] == epoch
+            assert (await act(actor_a, "renew")).status_code == 409
+            renewal = await act(actor_b, "renew")
+            assert (
+                renewal.status_code == 200
+                and renewal.json()["bootstrap"]["fence"] == owner["fence"]
+            )
+            assert credentials.await_count == 2
+            old_attempt, dispatch = str(uuid4()), str(uuid4())
+            existing_hold = {"task_wide": True, "source": "fixture-independent"}
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                task_control = (
+                    await conn.execute(select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid))
+                ).scalar_one()
+                await conn.execute(
+                    update(s.tasks)
+                    .where(s.tasks.c.id == tid)
+                    .values(
+                        ctf_control={
+                            **task_control,
+                            "failure_hold": existing_hold,
+                            "native_budget_hold": {"reason": "fixture-budget-hold"},
+                        }
+                    )
+                )
+                await conn.execute(
+                    insert(s.native_task_budgets).values(
+                        task_id=tid,
+                        accounting_source_id="fixture-accounting",
+                        key_name=str(tid),
+                        key_fingerprint=tid.hex,
+                        key_ciphertext="never-in-recovery-view",
+                        native_resource_id=str(uuid4()),
+                        publication_state="ready",
+                        config={"threshold_usd": "1.0"},
+                        status_snapshot={"used_high_water_usd": "0.4"},
+                        hold_reason="fixture-budget-hold",
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                for call, state, data in (
+                    (
+                        old_attempt,
+                        "dispatched",
+                        {"dispatch_id": dispatch, "fee_state": "awaiting_log"},
+                    ),
+                    (str(uuid4()), "admitted", {}),
+                ):
+                    await conn.execute(
+                        insert(s.runner_calls).values(
+                            task_id=tid,
+                            id="model:" + call,
+                            owner_epoch=epoch,
+                            binding_id=bid,
+                            kind="model",
+                            state=state,
+                            concurrency_active=True,
+                            data=data,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                if reason == "native_owner_expired":
+                    await conn.execute(
+                        update(s.runner_owners)
+                        .where(s.runner_owners.c.task_id == tid)
+                        .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+                    )
+            unavailable = {
+                **observation,
+                "sandbox": {**observation["sandbox"], "observation": "unknown"},
+            }
+            frozen = await act(
+                actor_b,
+                "observation",
+                observation=unavailable if reason == "native_resource_unknown" else observation,
+            )
+            assert frozen.status_code == 200 and frozen.json()["state"] == "frozen", frozen.text
+            incident = await recovery()
+            assert incident["reason"] == reason and incident["original_epoch"] == epoch
+            assert (
+                incident["controller_generation"] == second.fence
+                and incident["sandbox_create_claimed"]
+            )
+            assert incident["resources"]["journal_pvc_uid"] == observation["journal_pvc"]["uid"]
+            assert incident["bindings"][0]["confirmed_cursor"] == original_cursor
+            assert incident["ledger"]["model_attempts"] == {"dispatched": 1, "not_sent": 1}
+            assert incident["ledger"]["model_transport"] == {"unconfirmed": 1}
+            assert "never-in-recovery-view" not in json.dumps(incident)
+
+        async with RuntimeLock(lock_settings, fenced=True) as third:
+            actor_c, inherited = await claim(third, "third-controller")
+            assert inherited["state"] == "frozen" and inherited["data"]["owner_epoch"] == epoch
+            assert (
+                await act(actor_b, "error", error_code="native_control_unavailable")
+            ).status_code == 409
+            refreshed = {**observation, "sandbox": {**observation["sandbox"], "observation": None}}
+            assert (await act(actor_c, "observation", observation=refreshed)).json()[
+                "state"
+            ] == "frozen"
+            assert (await recovery())["incident_id"] == incident["incident_id"]
+            assert not (await act(actor_c, "sandbox_create")).json()["create_allowed"]
+            for action in ("material", "renew", "activate", "sandbox_host_material"):
+                assert (await act(actor_c, action)).status_code == 409
+            assert credentials.await_count == 2
+            assert (
+                await http.post(
+                    mgmt(tid) + "/owners/renew", headers=SERVICE, json={"expected_epoch": epoch}
+                )
+            ).status_code == 409
+            assert (
+                await http.post(
+                    control(tid) + f"/bindings/{bid}/acquire", headers=auth(owner), json=permit
+                )
+            ).status_code == 409
+            unproven = confirmation(
+                owner, binding, original_cursor, cursor(original_cursor, "late-unproven")
+            )
+            assert (
+                await http.post(
+                    control(tid) + f"/bindings/{bid}/journal/confirm",
+                    headers=auth(owner),
+                    json=unproven,
+                )
+            ).status_code == 409
+            await confirm(http, tid, owner, binding, first_journal)
+            observed = await http.post(
+                f"/api/tasks/{tid}/ctf/runtime/runner-gateway/model/{old_attempt}/transport",
+                headers=SERVICE,
+                json={
+                    "protocol": PROTOCOL,
+                    "attempt_id": old_attempt,
+                    "dispatch_id": dispatch,
+                    "phase": "response_ended",
+                    "http_status": 200,
+                },
+            )
+            assert observed.status_code == 200, observed.text
+            reconciled = await recovery()
+            assert reconciled["ledger"]["model_transport"] == {"response_ended": 1}
+            assert reconciled["ledger"]["model_attempts"] == {"dispatched": 1, "not_sent": 1}
+            assert reconciled["bindings"][0]["confirmed_cursor"] == original_cursor
+            async with ctf.repo.engine.connect() as conn:
+                current = (
+                    (
+                        await conn.execute(
+                            select(s.runner_owners).where(s.runner_owners.c.task_id == tid)
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                assert current["epoch"] == epoch and not current["current"] and current["revoked"]
+                task_control = (
+                    await conn.execute(select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid))
+                ).scalar_one()
+                assert task_control["failure_hold"] == existing_hold
+                budget = await fees._budget(conn, tid)
+                assert budget["status_snapshot"] == {"used_high_water_usd": "0.4"}
+                assert budget["hold_reason"] == "fixture-budget-hold"
+            assert (await http.post(f"/api/tasks/{tid}/stop", headers=SERVICE)).status_code == 200
+            assert (await recovery())["state"] == "stopping"
+            checkpoint = (await http.get(path, headers=SERVICE)).json()
+            proof = {
+                "observation_digest": runner_payload_digest(
+                    runner_json_text(checkpoint["observation"])
+                ),
+                "pvcs_retained": True,
+                "runner_terminated": True,
+                "sandbox_terminated": True,
+            }
+            absent = await act(actor_c, "cleanup", proof={**proof, "runner_terminated": False})
+            assert absent.status_code == 200 and absent.json()["state"] == "unknown"
+            assert (await recovery())["state"] == "stopping"
+            done = await act(actor_c, "cleanup", proof=proof)
+            assert done.status_code == 200 and done.json()["state"] == "stopped", done.text
+            assert (await recovery())["state"] == "stopped"
+    await fees.admin.close()

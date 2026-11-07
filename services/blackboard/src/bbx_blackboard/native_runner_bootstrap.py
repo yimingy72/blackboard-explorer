@@ -24,16 +24,19 @@ from bbx_contracts.runner_bootstrap import (
     NativeBudgetIncreaseStatus,
     NativePauseRequest,
     NativePauseStatus,
+    NativeRecoveryStatus,
     NativeResumeRequest,
     NativeRunnerAction,
     NativeRunnerClaim,
     NativeRunnerLaunch,
     native_pause_state,
+    native_recovery_frozen,
 )
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
 
+from bbx_blackboard import native_recovery
 from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_budget_increase import increase_budget
@@ -167,6 +170,8 @@ class NativeRunnerBootstrap:
         task = await self.control._task(conn, tid)
         if live and self._stopping(task, record):
             raise HTTPException(409, "Native Runner bootstrap is stopped")
+        if live and (record["data"].get("recovery") or native_recovery_frozen(task)):
+            raise HTTPException(409, "Original native execution is frozen")
         return record, task
 
     @staticmethod
@@ -223,6 +228,12 @@ class NativeRunnerBootstrap:
                 return self._public(old)
             if task["status"] not in {"created", "provisioning"}:
                 raise HTTPException(409, "Only an unstarted V1 Task can bootstrap")
+            if (
+                await conn.execute(
+                    select(s.runner_owners.c.epoch).where(s.runner_owners.c.task_id == tid).limit(1)
+                )
+            ).first():
+                raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
             if (
                 native_dispatch_enabled(task)
                 and not 1 <= task["ctf_options"]["max_teammates"] <= 20
@@ -341,6 +352,15 @@ class NativeRunnerBootstrap:
             generation = body.controller_fence
             desired = "stopped" if self._stopping(task, record) else "active"
             data = dict(record["data"])
+            state, last_error = record["state"], record["last_error"]
+            if desired == "active" and not data.get("recovery"):
+                if reason := await native_recovery.original_owner_issue(
+                    conn, tid, record, instant()
+                ):
+                    data = await native_recovery.capture(
+                        self.repo, conn, tid, record, task, reason, instant()
+                    )
+                    state, last_error = "frozen", reason
             if task["deleting"] and record["config"] is not None:
                 if not data.get("retirement"):
                     data["retirement"] = {
@@ -370,6 +390,8 @@ class NativeRunnerBootstrap:
                 controller_backend_start=body.controller_started_at,
                 controller_generation=generation,
                 desired=desired,
+                state=state,
+                last_error=last_error,
                 data=data,
             )
             record = await self._get(conn, tid)
@@ -385,6 +407,12 @@ class NativeRunnerBootstrap:
     async def view(self, tid):
         async with self.repo.engine.connect() as conn:
             return self._public(await self._get(conn, tid))
+
+    async def recovery_status(self, tid):
+        async with self.repo.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            task = await self.control._task(conn, tid)
+            return await native_recovery.status(conn, tid, await self._get(conn, tid), task)
 
     async def pending(self, after=None):
         async with self.repo.engine.connect() as conn:
@@ -637,7 +665,11 @@ class NativeRunnerBootstrap:
             record, task = await self._checked(conn, tid, body)
             stopping = self._stopping(task, record)
             if body.action == "sandbox_create":
-                allowed = not stopping and not record["sandbox_create_claimed"]
+                allowed = (
+                    not stopping
+                    and not record["data"].get("recovery")
+                    and not record["sandbox_create_claimed"]
+                )
                 if allowed:
                     await self._set(conn, tid, sandbox_create_claimed=True, state="preparing")
                 return {"create_allowed": allowed, "operation_id": record["operation_id"]}
@@ -647,13 +679,25 @@ class NativeRunnerBootstrap:
                 observed = self._merge_observation(record, body.observation)
                 ready = self._resources_ready(observed)
                 data = dict(record["data"])
-                if ready and not stopping:
+                if not stopping and not data.get("recovery") and data.get("credentials_issued"):
+                    reason = (
+                        await native_recovery.original_owner_issue(conn, tid, record, instant())
+                        if ready
+                        else "native_resource_unknown"
+                    )
+                    if reason:
+                        data = await native_recovery.capture(
+                            self.repo, conn, tid, record, task, reason, instant()
+                        )
+                if ready and not stopping and not data.get("recovery"):
                     await self._lead(conn, tid, record)
                     data.setdefault(
                         "lead_turn_id", identity_id(record["operation_id"], "lead-turn")
                     )
                 state = "stopping" if stopping else record["state"]
-                if not ready and data.get("credentials_issued"):
+                if not stopping and data.get("recovery"):
+                    state = "frozen"
+                elif not ready and data.get("credentials_issued"):
                     state = "unknown"
                     if data.get("owner_epoch"):
                         await conn.execute(
@@ -677,7 +721,13 @@ class NativeRunnerBootstrap:
                     data=data,
                     state=state,
                     desired="stopped" if stopping else "active",
-                    last_error="native_resource_unknown" if state == "unknown" else None,
+                    last_error=(
+                        data["recovery"]["reason"]
+                        if state == "frozen"
+                        else "native_resource_unknown"
+                        if state == "unknown"
+                        else None
+                    ),
                 )
             elif body.action == "error":
                 if record["state"] == "stopped":
@@ -698,11 +748,30 @@ class NativeRunnerBootstrap:
                         )
                         return self._public(await self._get(conn, tid))
                     return self._public(record)
+                data = dict(record["data"])
+                if not stopping and not data.get("recovery") and data.get("credentials_issued"):
+                    reason = (
+                        "native_resource_unknown"
+                        if body.proof.get("revoke_owner") is True
+                        else await native_recovery.original_owner_issue(
+                            conn, tid, record, instant()
+                        )
+                    )
+                    if reason:
+                        data = await native_recovery.capture(
+                            self.repo, conn, tid, record, task, reason, instant()
+                        )
+                state = "exited" if data.get("exit_confirmed") else "unknown"
+                if not stopping and data.get("recovery"):
+                    state = "frozen"
                 await self._set(
                     conn,
                     tid,
-                    state="exited" if record["data"].get("exit_confirmed") else "unknown",
-                    last_error=body.error_code or "native_bootstrap_unavailable",
+                    state=state,
+                    data=data,
+                    last_error=data["recovery"]["reason"]
+                    if state == "frozen"
+                    else body.error_code or "native_bootstrap_unavailable",
                     next_check_at=instant() + timedelta(seconds=20),
                 )
                 if body.proof.get("revoke_owner") is True and record["data"].get("owner_epoch"):
@@ -875,7 +944,9 @@ class NativeRunnerBootstrap:
     @staticmethod
     def _held(task):
         return bool(
-            task["ctf_control"].get("native_budget_hold") or task["ctf_control"].get("failure_hold")
+            task["ctf_control"].get("native_budget_hold")
+            or task["ctf_control"].get("failure_hold")
+            or native_recovery_frozen(task)
         )
 
     async def _control_material(self, tid, body):
@@ -933,6 +1004,7 @@ class NativeRunnerBootstrap:
             }
 
     async def _material(self, tid, body, *, renew):
+        owner = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
             if not self._resources_ready(record["observation"]):
@@ -947,6 +1019,8 @@ class NativeRunnerBootstrap:
             ):
                 raise HTTPException(409, "Native environment revision changed")
             data = dict(record["data"])
+            if data.get("credentials_issued") and not data.get("owner_epoch"):
+                raise HTTPException(409, "Original native owner identity is unconfirmed")
             held = self._held(task) or native_pause_state(task) in {"draining", "paused"}
             if not held and data.get("worker_spec") and data.get("bootstrap"):
                 owner = await self.control._current_owner(conn, tid)
@@ -956,42 +1030,35 @@ class NativeRunnerBootstrap:
                     if error.status_code not in {403, 404, 409}:
                         raise
                     held = True
-        if held:
-            return await self._control_material(tid, body)
-        if not data.get("owner_epoch"):
-            owner = await self.control.register_owner(
-                tid,
-                runner_json_text(
-                    {
-                        "request_id": identity_id(record["operation_id"], "owner"),
-                        "runner_id": identity_id(record["operation_id"], "runner"),
-                        "pod_uid": record["observation"]["runner"]["pod_uid"],
-                        "expected_epoch": 0,
-                        "hard_deadline": record["hard_deadline"].isoformat(),
-                    }
-                ).encode(),
-            )
-            self.control._owner_live(owner)
-            async with self.repo.engine.begin() as conn:
-                current, _ = await self._checked(conn, tid, body, live=True)
+            if not held:
+                if not data.get("owner_epoch"):
+                    owner = await self.control._register_owner(
+                        conn,
+                        tid,
+                        runner_json_text(
+                            {
+                                "request_id": identity_id(record["operation_id"], "owner"),
+                                "runner_id": identity_id(record["operation_id"], "runner"),
+                                "pod_uid": record["observation"]["runner"]["pod_uid"],
+                                "expected_epoch": 0,
+                                "hard_deadline": record["hard_deadline"].isoformat(),
+                            }
+                        ).encode(),
+                    )
+                    data["owner_epoch"] = owner["epoch"]
+                    await self._set(conn, tid, data=data)
+                else:
+                    owner = await self.control._current_owner(conn, tid)
                 if (
-                    owner["hard_deadline"] > current["hard_deadline"]
-                    or owner["pod_uid"] != current["observation"]["runner"]["pod_uid"]
+                    owner["epoch"] != data["owner_epoch"]
+                    or owner["pod_uid"] != record["observation"]["runner"]["pod_uid"]
+                    or owner["hard_deadline"] > record["hard_deadline"]
                 ):
                     raise HTTPException(409, "Original native owner scope changed")
-                data = {**current["data"], "owner_epoch": owner["epoch"]}
-                await self._set(conn, tid, data=data)
-        else:
-            async with self.repo.engine.connect() as conn:
-                owner = await self.control._current_owner(conn, tid)
-            if (
-                owner["epoch"] != data["owner_epoch"]
-                or owner["pod_uid"] != record["observation"]["runner"]["pod_uid"]
-            ):
-                raise HTTPException(409, "Original native owner changed")
-        owner = await self.control.update_owner(
-            tid, runner_json_text({"expected_epoch": owner["epoch"]}).encode()
-        )
+                owner = await self.control._update_owner(conn, tid, owner["epoch"])
+        if held:
+            return await self._control_material(tid, body)
+        assert owner is not None
         if not data.get("binding_id"):
             await self.gateway.native.prepare(
                 tid,
@@ -1337,6 +1404,14 @@ async def user_budget_increase(
     request: Request, response: Response, task_id: UUID, body: NativeBudgetIncreaseRequest
 ):
     return await increase_budget(_user_pause(request, response), task_id, body)
+
+
+@router.get(PREFIX + "/recovery", response_model=NativeRecoveryStatus)
+async def user_recovery_status(request: Request, response: Response, task_id: UUID):
+    if require_user_or_service(request).kind != "user":
+        raise HTTPException(403, "Native recovery status requires a user token")
+    response.headers["Cache-Control"] = "no-store"
+    return await service(request).recovery_status(task_id)
 
 
 @router.post(PREFIX + "/claim")

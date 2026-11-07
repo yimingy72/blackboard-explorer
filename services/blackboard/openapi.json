@@ -6101,6 +6101,197 @@
         "title": "NativePauseStatus",
         "type": "object"
       },
+      "NativeRecoveryBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "confirmed_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last database confirmation; journal bytes were not read."
+          },
+          "sdk_session_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Session Id"
+          },
+          "sdk_start_unconfirmed": {
+            "title": "Sdk Start Unconfirmed",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "agent_id",
+          "state",
+          "sdk_start_unconfirmed"
+        ],
+        "title": "NativeRecoveryBinding",
+        "type": "object"
+      },
+      "NativeRecoveryStatus": {
+        "additionalProperties": false,
+        "description": "Read-only original evidence, without proof of volume writer exit or recovery readiness.",
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/NativeRecoveryBinding"
+            },
+            "maxItems": 32,
+            "title": "Bindings",
+            "type": "array"
+          },
+          "bindings_truncated": {
+            "default": false,
+            "title": "Bindings Truncated",
+            "type": "boolean"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "controller_generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controller Generation"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "ledger": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Ledger",
+            "type": "object"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
+          "original_epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Epoch"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "resources": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Resources",
+            "type": "object"
+          },
+          "sandbox_create_claimed": {
+            "default": false,
+            "title": "Sandbox Create Claimed",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "not_frozen",
+              "frozen",
+              "stopping",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "NativeRecoveryStatus",
+        "type": "object"
+      },
       "NativeResumeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -17625,6 +17816,49 @@
           }
         },
         "summary": "User Pause",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/recovery": {
+      "get": {
+        "operationId": "user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeRecoveryStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Recovery Status",
         "tags": [
           "native-runner-bootstrap"
         ]

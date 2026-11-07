@@ -10,7 +10,7 @@ from pydantic import AwareDatetime, Field
 
 from .models import ContractModel
 from .native_gateway import FrozenExchangeRate
-from .runner import RunnerId
+from .runner import JournalCursor, RunnerId
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -33,6 +33,10 @@ class NativeRunnerLaunch(ContractModel):
 
 def native_pause_state(task):
     return ((task.get("ctf_control") or {}).get("native_pause") or {}).get("state")
+
+
+def native_recovery_frozen(task):
+    return bool((task.get("ctf_control") or {}).get("native_recovery"))
 
 
 class NativePauseRequest(ContractModel):
@@ -62,6 +66,35 @@ class NativePauseStatus(ContractModel):
     pause_id: UUID | None = None
     state: Literal["running", "draining", "paused", "resuming", "resumed", "stopping", "stopped"]
     blocker: str | None = None
+
+
+class NativeRecoveryBinding(ContractModel):
+    binding_id: RunnerId
+    agent_id: RunnerId
+    state: str
+    assignment_id: RunnerId | None = None
+    sdk_session_id: RunnerId | None = None
+    confirmed_cursor: JournalCursor | None = Field(
+        default=None, description="Last database confirmation; journal bytes were not read."
+    )
+    sdk_start_unconfirmed: bool
+
+
+class NativeRecoveryStatus(ContractModel):
+    """Read-only original evidence, without proof of volume writer exit or recovery readiness."""
+
+    state: Literal["not_frozen", "frozen", "stopping", "stopped"]
+    incident_id: UUID | None = None
+    operation_id: UUID | None = None
+    reason: str | None = None
+    captured_at: AwareDatetime | None = None
+    original_epoch: int | None = None
+    controller_generation: int | None = None
+    sandbox_create_claimed: bool = False
+    resources: dict[str, str] = Field(default_factory=dict)
+    bindings: list[NativeRecoveryBinding] = Field(default_factory=list, max_length=32)
+    bindings_truncated: bool = False
+    ledger: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
 class NativeRunnerClaim(ContractModel):

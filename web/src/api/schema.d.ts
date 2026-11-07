@@ -1570,6 +1570,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User Recovery Status */
+        get: operations["user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/resume": {
         parameters: {
             query?: never;
@@ -5339,6 +5356,68 @@ export interface components {
              * @enum {string}
              */
             state: "running" | "draining" | "paused" | "resuming" | "resumed" | "stopping" | "stopped";
+        };
+        /** NativeRecoveryBinding */
+        NativeRecoveryBinding: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id?: string | null;
+            /** Binding Id */
+            binding_id: string;
+            /** @description Last database confirmation; journal bytes were not read. */
+            confirmed_cursor?: components["schemas"]["JournalCursor"] | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Sdk Start Unconfirmed */
+            sdk_start_unconfirmed: boolean;
+            /** State */
+            state: string;
+        };
+        /**
+         * NativeRecoveryStatus
+         * @description Read-only original evidence, without proof of volume writer exit or recovery readiness.
+         */
+        NativeRecoveryStatus: {
+            /** Bindings */
+            bindings?: components["schemas"]["NativeRecoveryBinding"][];
+            /**
+             * Bindings Truncated
+             * @default false
+             */
+            bindings_truncated: boolean;
+            /** Captured At */
+            captured_at?: string | null;
+            /** Controller Generation */
+            controller_generation?: number | null;
+            /** Incident Id */
+            incident_id?: string | null;
+            /** Ledger */
+            ledger?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Operation Id */
+            operation_id?: string | null;
+            /** Original Epoch */
+            original_epoch?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /** Resources */
+            resources?: {
+                [key: string]: string;
+            };
+            /**
+             * Sandbox Create Claimed
+             * @default false
+             */
+            sandbox_create_claimed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "not_frozen" | "frozen" | "stopping" | "stopped";
         };
         /** NativeResumeRequest */
         NativeResumeRequest: {
@@ -11213,6 +11292,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeRecoveryStatus"];
                 };
             };
             /** @description Validation Error */

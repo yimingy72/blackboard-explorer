@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "JournalCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "leaf_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Leaf Id"
+        },
+        "anchor_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Anchor Offset",
+          "type": "integer"
+        },
+        "anchor_size": {
+          "maximum": 2097152,
+          "minimum": 0,
+          "title": "Anchor Size",
+          "type": "integer"
+        },
+        "anchor_hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Anchor Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offset",
+        "seq",
+        "hash",
+        "anchor_offset",
+        "anchor_size",
+        "anchor_hash"
+      ],
+      "title": "JournalCursor",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binding_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "assignment_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Assignment Id"
+    },
+    "sdk_session_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sdk Session Id"
+    },
+    "confirmed_cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JournalCursor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Last database confirmation; journal bytes were not read."
+    },
+    "sdk_start_unconfirmed": {
+      "title": "Sdk Start Unconfirmed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "binding_id",
+    "agent_id",
+    "state",
+    "sdk_start_unconfirmed"
+  ],
+  "title": "NativeRecoveryBinding",
+  "type": "object"
+}

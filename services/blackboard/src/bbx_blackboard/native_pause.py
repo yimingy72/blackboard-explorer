@@ -6,7 +6,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from bbx_contracts.challenge_board import native_dispatch_enabled
 from bbx_contracts.runner import InputPayload, runner_json_text
-from bbx_contracts.runner_bootstrap import native_pause_state
+from bbx_contracts.runner_bootstrap import native_pause_state, native_recovery_frozen
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import or_, select, update
@@ -32,6 +32,8 @@ def pause_status(task):
     elif task["status"] == "closing" or control.get("native_stop_requested"):
         state = "stopping"
         blocker = None
+    elif native_recovery_frozen(task):
+        blocker = "native_recovery_frozen"
     elif (control.get("native_budget_hold") or control.get("failure_hold")) and (
         not threshold_hold_id(task) or state not in {"draining", "paused"}
     ):
@@ -61,6 +63,8 @@ class NativePause:
             raise HTTPException(409, "Original native Task pause is unavailable")
         if self.bootstrap._stopping(task, record) or task["status"] != "running":
             raise HTTPException(409, "Original Task is stopping or unavailable")
+        if native_recovery_frozen(task):
+            raise HTTPException(409, "Original native execution is frozen")
         if not self.bootstrap._resources_ready(record["observation"]) or not record[
             "sandbox_host"
         ].get("ready"):

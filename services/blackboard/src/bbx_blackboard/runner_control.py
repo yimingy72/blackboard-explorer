@@ -23,7 +23,7 @@ from bbx_contracts.runner import (
     runner_json_text,
     runner_payload_digest,
 )
-from bbx_contracts.runner_bootstrap import native_pause_state
+from bbx_contracts.runner_bootstrap import native_pause_state, native_recovery_frozen
 from bbx_contracts.runner_control import (
     RunnerBindingRegistration,
     RunnerCommandSubmission,
@@ -89,6 +89,7 @@ class RunnerControl:
         if live and (
             task["deleting"]
             or task["ctf_control"].get("native_stop_requested")
+            or native_recovery_frozen(task)
             or (task["ctf_control"].get("native_budget_hold") and not allow_held)
             or (native_pause_state(task) in {"draining", "paused"} and not allow_held)
             or task["status"] in TERMINAL
@@ -289,122 +290,139 @@ class RunnerControl:
             raise HTTPException(409, "Runner request bytes conflict")
         return dict(previous) if previous else None
 
+    async def _native_owner_management(self, conn, tid):
+        return (
+            await conn.execute(
+                select(s.task_runner_resources.c.task_id).where(
+                    s.task_runner_resources.c.task_id == tid
+                )
+            )
+        ).first() is not None
+
     async def register_owner(self, tid, raw):
-        body, _, sha = decode(RunnerOwnerRegistration, raw)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            task = await self._task(conn, tid, live=True)
-            original = (
-                (
-                    await conn.execute(
-                        select(s.runner_owners).where(
-                            s.runner_owners.c.task_id == tid,
-                            s.runner_owners.c.registration_id == str(body.request_id),
-                        )
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if original:
-                if original["registration_digest"] != sha:
-                    raise HTTPException(409, "Owner registration bytes conflict")
-                return dict(original)
-            previous = (
-                (
-                    await conn.execute(
-                        select(s.runner_owners)
-                        .where(s.runner_owners.c.task_id == tid)
-                        .order_by(s.runner_owners.c.epoch.desc())
-                        .limit(1)
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            epoch = previous["epoch"] if previous else 0
-            if body.expected_epoch != epoch:
-                raise HTTPException(409, "Runner owner epoch changed")
-            instant = self.clock()
-            remaining = task["budget"]["max_minutes"] * 60 - task["active_seconds"]
-            if task["active_since"]:
-                remaining -= max(0, (instant - task["active_since"]).total_seconds())
-            deadline = instant + timedelta(seconds=max(0, remaining))
-            if body.hard_deadline is not None:
-                deadline = min(deadline, body.hard_deadline)
-            if previous:
-                deadline = min(deadline, previous["hard_deadline"])
-            if deadline <= instant:
-                raise HTTPException(409, "Task deadline has expired")
-            await conn.execute(
-                update(s.runner_owners)
-                .where(s.runner_owners.c.task_id == tid, s.runner_owners.c.current.is_(True))
-                .values(current=False, revoked=True)
-            )
-            value = dict(
-                task_id=tid,
-                epoch=epoch + 1,
-                current=True,
-                runner_id=body.runner_id,
-                pod_uid=body.pod_uid,
-                token_version=str(uuid4()),
-                expires_at=min(deadline, instant + timedelta(seconds=OWNER_SECONDS)),
-                hard_deadline=deadline,
-                revoked=False,
-                registration_id=str(body.request_id),
-                registration_digest=sha,
-                next_seq=0,
-            )
-            await conn.execute(insert(s.runner_owners).values(**value))
-            await self.repo.notify(tid, 0, connection=conn)
-            from bbx_blackboard.runner_gateway import cancel_admitted
+            if await self._native_owner_management(conn, tid):
+                raise HTTPException(409, "Native owner requires the fenced Task controller")
+            return await self._register_owner(conn, tid, raw)
 
-            await cancel_admitted(conn, tid)
-            return value
+    async def _register_owner(self, conn, tid, raw):
+        body, _, sha = decode(RunnerOwnerRegistration, raw)
+        task = await self._task(conn, tid, live=True)
+        original = (
+            (
+                await conn.execute(
+                    select(s.runner_owners).where(
+                        s.runner_owners.c.task_id == tid,
+                        s.runner_owners.c.registration_id == str(body.request_id),
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if original:
+            if original["registration_digest"] != sha:
+                raise HTTPException(409, "Owner registration bytes conflict")
+            return dict(original)
+        previous = (
+            (
+                await conn.execute(
+                    select(s.runner_owners)
+                    .where(s.runner_owners.c.task_id == tid)
+                    .order_by(s.runner_owners.c.epoch.desc())
+                    .limit(1)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        epoch = previous["epoch"] if previous else 0
+        if body.expected_epoch != epoch:
+            raise HTTPException(409, "Runner owner epoch changed")
+        instant = self.clock()
+        remaining = task["budget"]["max_minutes"] * 60 - task["active_seconds"]
+        if task["active_since"]:
+            remaining -= max(0, (instant - task["active_since"]).total_seconds())
+        deadline = instant + timedelta(seconds=max(0, remaining))
+        if body.hard_deadline is not None:
+            deadline = min(deadline, body.hard_deadline)
+        if previous:
+            deadline = min(deadline, previous["hard_deadline"])
+        if deadline <= instant:
+            raise HTTPException(409, "Task deadline has expired")
+        await conn.execute(
+            update(s.runner_owners)
+            .where(s.runner_owners.c.task_id == tid, s.runner_owners.c.current.is_(True))
+            .values(current=False, revoked=True)
+        )
+        value = dict(
+            task_id=tid,
+            epoch=epoch + 1,
+            current=True,
+            runner_id=body.runner_id,
+            pod_uid=body.pod_uid,
+            token_version=str(uuid4()),
+            expires_at=min(deadline, instant + timedelta(seconds=OWNER_SECONDS)),
+            hard_deadline=deadline,
+            revoked=False,
+            registration_id=str(body.request_id),
+            registration_digest=sha,
+            next_seq=0,
+        )
+        await conn.execute(insert(s.runner_owners).values(**value))
+        await self.repo.notify(tid, 0, connection=conn)
+        from bbx_blackboard.runner_gateway import cancel_admitted
+
+        await cancel_admitted(conn, tid)
+        return value
 
     async def update_owner(self, tid, raw, *, revoke=False):
         body, _, _ = decode(RunnerOwnerUpdate, raw)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task(conn, tid, live=not revoke, allow_held=True)
-            owner = (
-                (
-                    await conn.execute(
-                        select(s.runner_owners).where(
-                            s.runner_owners.c.task_id == tid,
-                            s.runner_owners.c.epoch == body.expected_epoch,
-                        )
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if owner is None:
-                raise HTTPException(404, "Runner owner not found")
-            if not revoke:
-                self._owner_live(owner)
-            patch = (
-                {"revoked": True, "current": False}
-                if revoke
-                else {
-                    "expires_at": min(
-                        owner["hard_deadline"], self.clock() + timedelta(seconds=OWNER_SECONDS)
-                    )
-                }
-            )
-            await conn.execute(
-                update(s.runner_owners)
-                .where(
-                    s.runner_owners.c.task_id == tid, s.runner_owners.c.epoch == body.expected_epoch
-                )
-                .values(**patch)
-            )
-            await self.repo.notify(tid, 0, connection=conn)
-            if revoke:
-                from bbx_blackboard.runner_gateway import cancel_admitted
+            if await self._native_owner_management(conn, tid):
+                raise HTTPException(409, "Native owner requires the fenced Task controller")
+            return await self._update_owner(conn, tid, body.expected_epoch, revoke=revoke)
 
-                await cancel_admitted(conn, tid, epoch=body.expected_epoch)
-            return {**owner, **patch}
+    async def _update_owner(self, conn, tid, epoch, *, revoke=False):
+        await self._task(conn, tid, live=not revoke, allow_held=True)
+        owner = (
+            (
+                await conn.execute(
+                    select(s.runner_owners).where(
+                        s.runner_owners.c.task_id == tid,
+                        s.runner_owners.c.epoch == epoch,
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if owner is None:
+            raise HTTPException(404, "Runner owner not found")
+        if not revoke:
+            self._owner_live(owner)
+        patch = (
+            {"revoked": True, "current": False}
+            if revoke
+            else {
+                "expires_at": min(
+                    owner["hard_deadline"], self.clock() + timedelta(seconds=OWNER_SECONDS)
+                )
+            }
+        )
+        await conn.execute(
+            update(s.runner_owners)
+            .where(s.runner_owners.c.task_id == tid, s.runner_owners.c.epoch == epoch)
+            .values(**patch)
+        )
+        await self.repo.notify(tid, 0, connection=conn)
+        if revoke:
+            from bbx_blackboard.runner_gateway import cancel_admitted
+
+            await cancel_admitted(conn, tid, epoch=epoch)
+        return {**owner, **patch}
 
     async def register_binding(self, tid, raw):
         async with self.repo.engine.begin() as conn:
@@ -576,6 +594,8 @@ class RunnerControl:
             await self._mapping(conn, tid, value)
             if value["owner_epoch"] == owner["epoch"]:
                 return value
+            if await self._native_owner_management(conn, tid):
+                raise HTTPException(409, "Native bindings cannot attach to another owner epoch")
             if set(json.loads(value["payload_json"])["spec"]["allowed_tools"]).intersection(
                 SANDBOX_TOOLS
             ):

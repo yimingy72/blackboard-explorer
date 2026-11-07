@@ -311,6 +311,21 @@ class NativeRunnerController:
                     operation.update(await self.action(tid, operation, "cleanup", proof=proof))
                     await asyncio.sleep(1)
                     continue
+                if operation["data"].get("recovery"):
+                    try:
+                        observed = await self.guarded(
+                            tid, operation, self.resources.observe(operation["observation"])
+                        )
+                    except ResourceUnknown:
+                        # The original recovery snapshot remains the authority.
+                        pass
+                    else:
+                        operation.update(
+                            await self.action(tid, operation, "observation", observation=observed)
+                        )
+                    if not self.stopping(operation):
+                        await idle()
+                    continue
                 if not operation["data"].get("credentials_issued"):
 
                     async def admit():
@@ -339,6 +354,8 @@ class NativeRunnerController:
                     operation.update(
                         await self.action(tid, operation, "observation", observation=observed)
                     )
+                    if operation["data"].get("recovery"):
+                        continue
                     if any(
                         value.get("observation") == "unknown"
                         or value.get("terminated") is True
@@ -370,6 +387,8 @@ class NativeRunnerController:
                     latest = await self.view(tid)
                     if self.stopping(latest):
                         raise BootstrapStopped("Native credential publication was stopped")
+                    if latest["data"].get("recovery"):
+                        continue
                     scope = self._credential_scope(operation)
                     if self._credential_scope(latest) != scope:
                         continue
@@ -413,12 +432,10 @@ class NativeRunnerController:
             except RemoteError as error:
                 if error.status in {401, 403, 404}:
                     raise
-                try:
+                if not operation["data"].get("recovery") or self.stopping(operation):
                     await self.action(
                         tid, operation, "error", error_code="native_control_unavailable"
                     )
-                except RemoteError:
-                    raise
                 await asyncio.sleep(10)
             except Exception as error:
                 if not is_control_transport_error(error):

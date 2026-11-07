@@ -1,0 +1,263 @@
+{
+  "$defs": {
+    "JournalCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "leaf_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Leaf Id"
+        },
+        "anchor_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Anchor Offset",
+          "type": "integer"
+        },
+        "anchor_size": {
+          "maximum": 2097152,
+          "minimum": 0,
+          "title": "Anchor Size",
+          "type": "integer"
+        },
+        "anchor_hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Anchor Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offset",
+        "seq",
+        "hash",
+        "anchor_offset",
+        "anchor_size",
+        "anchor_hash"
+      ],
+      "title": "JournalCursor",
+      "type": "object"
+    },
+    "NativeRecoveryBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "assignment_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assignment Id"
+        },
+        "sdk_session_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdk Session Id"
+        },
+        "confirmed_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Last database confirmation; journal bytes were not read."
+        },
+        "sdk_start_unconfirmed": {
+          "title": "Sdk Start Unconfirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "binding_id",
+        "agent_id",
+        "state",
+        "sdk_start_unconfirmed"
+      ],
+      "title": "NativeRecoveryBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Read-only original evidence, without proof of volume writer exit or recovery readiness.",
+  "properties": {
+    "state": {
+      "enum": [
+        "not_frozen",
+        "frozen",
+        "stopping",
+        "stopped"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "incident_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Incident Id"
+    },
+    "operation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Operation Id"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "captured_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Captured At"
+    },
+    "original_epoch": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Original Epoch"
+    },
+    "controller_generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Controller Generation"
+    },
+    "sandbox_create_claimed": {
+      "default": false,
+      "title": "Sandbox Create Claimed",
+      "type": "boolean"
+    },
+    "resources": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Resources",
+      "type": "object"
+    },
+    "bindings": {
+      "items": {
+        "$ref": "#/$defs/NativeRecoveryBinding"
+      },
+      "maxItems": 32,
+      "title": "Bindings",
+      "type": "array"
+    },
+    "bindings_truncated": {
+      "default": false,
+      "title": "Bindings Truncated",
+      "type": "boolean"
+    },
+    "ledger": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "type": "integer"
+        },
+        "type": "object"
+      },
+      "title": "Ledger",
+      "type": "object"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "NativeRecoveryStatus",
+  "type": "object"
+}
