@@ -65,7 +65,9 @@ class RunnerResources:
         self.server = url
         self._name(self.config["system_namespace"])
 
-    async def _kubectl(self, *args: str, body: dict | None = None) -> str:
+    async def _kubectl(
+        self, *args: str, body: dict | None = None, expected_denial: tuple[str, str] | None = None
+    ) -> str:
         process = await asyncio.create_subprocess_exec(
             "kubectl",
             "--kubeconfig",
@@ -78,7 +80,7 @@ class RunnerResources:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            out, _ = await asyncio.wait_for(
+            out, err = await asyncio.wait_for(
                 process.communicate(None if body is None else json.dumps(body).encode()), timeout=25
             )
         except BaseException:
@@ -86,6 +88,16 @@ class RunnerResources:
                 process.kill()
             await process.wait()
             raise
+        if expected_denial is not None:
+            policy, message = expected_denial
+            if (
+                process.returncode
+                and f"ValidatingAdmissionPolicy '{policy}'".encode() in err
+                and f"with binding '{policy}' denied request: {message}".encode() in err
+                and b"resulted in error" not in err
+            ):
+                return "denied-by-original-retirement-policy"
+            raise ResourceUnknown("The original retirement admission fence is not confirmed")
         if process.returncode or len(out) > 16 * 1024 * 1024:
             raise ResourceUnknown("The native resource operation is unresolved")
         return out.decode()
@@ -117,7 +129,11 @@ class RunnerResources:
         }
 
     async def _get(self, kind, name, namespace=None):
-        args = ["get", kind, self._name(name), "--ignore-not-found", "-o", "json"]
+        if not isinstance(name, str) or len(name) > 253:
+            raise ResourceUnknown("Invalid trusted object name")
+        for label in name.split("."):
+            self._name(label)
+        args = ["get", kind, name, "--ignore-not-found", "-o", "json"]
         if namespace:
             args += ["-n", self._name(namespace)]
         raw = await self._kubectl(*args)
@@ -1194,3 +1210,481 @@ class RunnerResources:
                 if not watch.done():
                     watch.cancel()
             await asyncio.gather(*watches.values(), return_exceptions=True)
+
+    async def _retirement_topology(self):
+        frozen = self.config.get("retirement_single_apiserver") or {}
+        pods = json.loads(
+            await self._kubectl(
+                "get", "pods", "-n", "kube-system", "-l", "component=kube-apiserver", "-o", "json"
+            )
+        )["items"]
+        if len(pods) != 1 or pods[0]["metadata"]["uid"] != frozen.get("pod_uid"):
+            raise ResourceUnknown("Automatic retirement requires the frozen single API server")
+        pod = pods[0]
+        if not any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in pod.get("status", {}).get("conditions", [])
+        ):
+            raise ResourceUnknown("The single API server is not ready")
+        node = await self._get("node", pod["spec"]["nodeName"])
+        endpoints = await self._get("endpoints", "kubernetes", "default")
+        addresses = [
+            a for s in (endpoints or {}).get("subsets", []) for a in s.get("addresses", [])
+        ]
+        if not node or node["metadata"]["uid"] != frozen.get("node_uid") or len(addresses) != 1:
+            raise ResourceUnknown("The original single API server topology changed")
+        return dict(frozen)
+
+    async def _retirement_inventory(self, namespace):
+        groups = json.loads(await self._kubectl("get", "--raw", "/apis"))["groups"]
+        versions = [
+            "/api/" + version
+            for version in json.loads(await self._kubectl("get", "--raw", "/api"))["versions"]
+        ]
+        versions += [
+            "/apis/" + version["groupVersion"] for group in groups for version in group["versions"]
+        ]
+        found = []
+        seen = {}
+        for version in versions:
+            discovery = json.loads(await self._kubectl("get", "--raw", version))
+            for resource in discovery["resources"]:
+                if not resource.get("namespaced") or "/" in resource["name"]:
+                    continue
+                if "list" not in resource.get("verbs", []) and "get" not in resource.get(
+                    "verbs", []
+                ):
+                    if (version, resource["name"]) in {
+                        ("/api/v1", "bindings"),
+                        ("/apis/authorization.k8s.io/v1", "localsubjectaccessreviews"),
+                    }:
+                        continue
+                    raise ResourceUnknown("An unknown namespaced API cannot be inventoried")
+                if "list" not in resource.get("verbs", []):
+                    raise ResourceUnknown("A namespaced resource cannot be inventoried")
+                path = version + "/namespaces/" + namespace + "/" + resource["name"]
+                listing = json.loads(await self._kubectl("get", "--raw", path))
+                if listing.get("metadata", {}).get("continue"):
+                    raise ResourceUnknown("The retirement inventory is incomplete")
+                for value in listing["items"]:
+                    value.setdefault("kind", resource["kind"])
+                    meta = value["metadata"]
+                    identity = (value["kind"], meta["name"], meta.get("namespace"))
+                    if not meta.get("uid"):
+                        raise ResourceUnknown("A namespaced resource has no native UID")
+                    if meta["uid"] in seen:
+                        if seen[meta["uid"]] != identity:
+                            raise ResourceUnknown(
+                                "A native UID has conflicting resource identities"
+                            )
+                        continue
+                    seen[meta["uid"]] = identity
+                    found.append((path + "/" + value["metadata"]["name"], value))
+        return found
+
+    def _retirement_fence(self, operation, labels, namespace_uid):
+        namespace = operation["namespace"]
+        name = "bbx-retire-" + str(UUID(operation["retirement_id"]))
+        message = "BBX retirement " + str(UUID(operation["retirement_id"]))
+        policy = self._document("ValidatingAdmissionPolicy", name, labels)
+        policy["apiVersion"] = "admissionregistration.k8s.io/v1"
+        policy["spec"] = {
+            "failurePolicy": "Fail",
+            "paramKind": {"apiVersion": "v1", "kind": "Namespace"},
+            "matchConstraints": {
+                "matchPolicy": "Equivalent",
+                "objectSelector": {},
+                "resourceRules": [
+                    {
+                        "apiGroups": ["*"],
+                        "apiVersions": ["*"],
+                        "operations": ["CREATE"],
+                        "resources": ["*"],
+                        "scope": "Namespaced",
+                    }
+                ],
+                "namespaceSelector": {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": namespace,
+                        "bbx.dev/managed-by": "runner-resources",
+                        "bbx.dev/retiring": "true",
+                    }
+                },
+            },
+            "validations": [
+                {
+                    "expression": "params.metadata.uid != " + json.dumps(namespace_uid),
+                    "message": message,
+                }
+            ],
+        }
+        binding = self._document("ValidatingAdmissionPolicyBinding", name, labels)
+        binding["apiVersion"] = policy["apiVersion"]
+        binding["spec"] = {
+            "policyName": name,
+            "validationActions": ["Deny"],
+            "paramRef": {"name": namespace, "parameterNotFoundAction": "Deny"},
+        }
+        return policy, binding, message
+
+    async def _retirement_plan(self, operation, manifest):
+        namespace, labels = self._scope(operation)
+        observed = operation["observation"]
+        ns = await self._get("namespace", namespace)
+        if ns is None:
+            if not manifest.get("namespace_delete_started"):
+                raise ResourceUnknown("The original Namespace disappeared before retirement")
+            return manifest
+        self._owned(ns, labels, observed["namespace_uid"])
+        native_ca = await self._get("configmap", "kube-root-ca.crt", "kube-system")
+        inventory = await self._retirement_inventory(namespace)
+        allowed = {
+            ("ServiceAccount", "bbx-runner"),
+            ("ResourceQuota", "bbx-task"),
+            ("CiliumNetworkPolicy", "bbx-task"),
+            ("CiliumNetworkPolicy", "bbx-runner-control"),
+        }
+        original = {observed["namespace_uid"]}
+        for value in observed.values():
+            if isinstance(value, dict):
+                original.update(value[k] for k in ("uid", "pod_uid", "cr_uid") if value.get(k))
+        saved = {r["path"]: r for r in manifest.get("resources", [])}
+        original.update(r["uid"] for r in saved.values())
+        resources = list(saved.values())
+        native = []
+        for path, value in inventory:
+            meta, kind = value["metadata"], value["kind"]
+            name, uid = meta["name"], meta["uid"]
+            if path in saved:
+                if saved[path]["uid"] != uid:
+                    raise ResourceUnknown("A retired resource name was rebound to another UID")
+            if kind in {"Event", "CiliumEndpoint", "Endpoints", "EndpointSlice"}:
+                native.append((path, value))
+                continue
+            if kind == "ServiceAccount" and name == "default":
+                if (
+                    value.get("secrets")
+                    or value.get("imagePullSecrets")
+                    or meta.get("ownerReferences")
+                ):
+                    raise ResourceUnknown("The default service account has foreign attachments")
+                resources.append(
+                    {"path": path, "uid": uid, "kind": kind, "name": name, "namespace_gc": True}
+                )
+                original.add(uid)
+                continue
+            if kind == "ConfigMap" and name == "kube-root-ca.crt":
+                if value.get("data") != (native_ca or {}).get("data") or value.get("binaryData"):
+                    raise ResourceUnknown("The native root CA ConfigMap changed")
+                resources.append(
+                    {"path": path, "uid": uid, "kind": kind, "name": name, "namespace_gc": True}
+                )
+                original.add(uid)
+                continue
+            expected = None
+            for key in ("journal_pvc", "workspace_pvc", "runner_secret", "execd_secret"):
+                ref = observed.get(key, {})
+                if name == ref.get("name") and kind == (
+                    "PersistentVolumeClaim" if key.endswith("pvc") else "Secret"
+                ):
+                    expected = ref["uid"]
+            if kind == "Pod":
+                ref = next(
+                    (
+                        observed[k]
+                        for k in ("runner", "sandbox")
+                        if observed.get(k, {}).get("pod_name") == name
+                    ),
+                    {},
+                )
+                expected = ref.get("pod_uid")
+                if not expected or not self._pod_projection(value)["terminated"]:
+                    raise ResourceUnknown("Retirement still has an unresolved execution Pod")
+            if kind == "BatchSandbox" or (expected is None and (kind, name) not in allowed):
+                raise ResourceUnknown(
+                    "The Task namespace contains a foreign or unresolved resource"
+                )
+            self._owned(value, labels, expected)
+            if kind == "Secret":
+                if name == "bbx-runner":
+                    self._runner_secret(value)
+                elif value.get("type") != "Opaque" or set(value.get("data", {})) != {"token"}:
+                    raise ResourceUnknown("The original execd Secret changed")
+            resources.append({"path": path, "uid": uid, "kind": kind, "name": name})
+            original.add(uid)
+        for path, value in native:
+            meta = value["metadata"]
+            related = value.get("regarding", value.get("involvedObject", {}))
+            owners = meta.get("ownerReferences", [])
+            if not (
+                (value["kind"] == "Event" and related.get("uid") in original)
+                or (owners and all(o.get("uid") in original for o in owners))
+            ):
+                raise ResourceUnknown("A native metadata object has no original UID reference")
+            resources.append(
+                {
+                    "path": path,
+                    "uid": meta["uid"],
+                    "kind": value["kind"],
+                    "name": meta["name"],
+                    "namespace_gc": True,
+                }
+            )
+        volumes = manifest.get("volumes", [])
+        if not volumes:
+            for key in ("journal_pvc", "workspace_pvc"):
+                ref = observed.get(key)
+                if not ref:
+                    raise ResourceUnknown("Retirement lacks an original retained PVC identity")
+                claim = self._owned(
+                    await self._get("pvc", ref["name"], namespace), labels, ref["uid"]
+                )
+                if claim["spec"].get("storageClassName") != self.config["storage_class"]:
+                    raise ResourceUnknown("The original PVC storage class changed")
+                if not claim["spec"].get("volumeName"):
+                    raise ResourceUnknown(
+                        "An unbound retained PVC has no frozen provisioning history"
+                    )
+                pv = await self._get("pv", claim["spec"].get("volumeName", ""))
+                if (
+                    not pv
+                    or pv["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
+                    or pv["spec"].get("claimRef", {}).get("uid") != ref["uid"]
+                    or pv["spec"]["claimRef"].get("namespace") != namespace
+                    or pv["spec"]["claimRef"].get("name") != ref["name"]
+                    or pv["spec"].get("storageClassName") != self.config["storage_class"]
+                ):
+                    raise ResourceUnknown("The retained PV binding or Delete policy is not proven")
+                volumes.append(
+                    {
+                        "name": pv["metadata"]["name"],
+                        "uid": pv["metadata"]["uid"],
+                        "claim_uid": ref["uid"],
+                        "claim_name": ref["name"],
+                        "claim_namespace": namespace,
+                        "storage_class": self.config["storage_class"],
+                        "reclaim_policy": "Delete",
+                    }
+                )
+        else:
+            for ref in volumes:
+                claims = [observed.get(k, {}) for k in ("journal_pvc", "workspace_pvc")]
+                if (
+                    not any(
+                        c.get("uid") == ref.get("claim_uid")
+                        and c.get("name") == ref.get("claim_name")
+                        for c in claims
+                    )
+                    or ref.get("claim_namespace") != namespace
+                    or ref.get("storage_class") != self.config["storage_class"]
+                    or ref.get("reclaim_policy") != "Delete"
+                ):
+                    raise ResourceUnknown("The frozen PV claim projection changed")
+                if ref.get("unbound"):
+                    raise ResourceUnknown("Unbound retained PVC retirement is not supported")
+                pv = await self._get("pv", ref["name"])
+                if pv and (
+                    pv["metadata"]["uid"] != ref["uid"]
+                    or pv["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
+                    or pv["spec"].get("claimRef", {}).get("uid") != ref["claim_uid"]
+                    or pv["spec"]["claimRef"].get("namespace") != namespace
+                    or pv["spec"]["claimRef"].get("name") != ref["claim_name"]
+                    or pv["spec"].get("storageClassName") != ref["storage_class"]
+                ):
+                    raise ResourceUnknown("The original PV retirement identity changed")
+        if len(volumes) != 2 or {v["claim_uid"] for v in volumes} != {
+            observed[k]["uid"] for k in ("journal_pvc", "workspace_pvc")
+        }:
+            raise ResourceUnknown("The retirement manifest does not cover both original claims")
+        return {
+            **manifest,
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "retirement_id": operation["retirement_id"],
+            "namespace": {"name": namespace, "uid": observed["namespace_uid"]},
+            "namespace_uid": observed["namespace_uid"],
+            "source_id": self.config["source_id"],
+            "cluster_uid": self.config["cluster_uid"],
+            "resources": list({ref["path"]: ref for ref in resources}.values()),
+            "volumes": volumes,
+        }
+
+    async def retire(self, operation, *, checkpoint, admit_retire):
+        """Retire only the explicitly authorized original retained resources, never infer exit."""
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        topology = await self._retirement_topology()
+        manifest = json.loads(json.dumps(operation.get("retirement") or {}))
+        if manifest.get("authority") != topology:
+            raise ResourceUnknown("The original retirement topology authority changed")
+        for key in ("task_id", "operation_id", "retirement_id"):
+            if key in manifest and manifest[key] != operation[key]:
+                raise ResourceUnknown("The original retirement operation changed")
+        if manifest.get("namespace") not in (
+            None,
+            {"name": namespace, "uid": operation["observation"]["namespace_uid"]},
+        ):
+            raise ResourceUnknown("The original retirement Namespace changed")
+        if any(
+            k in manifest and manifest[k] != self.config[k] for k in ("source_id", "cluster_uid")
+        ):
+            raise ResourceUnknown("The persisted retirement resource source changed")
+        manifest = await self._retirement_plan(operation, manifest)
+        policy, binding, message = self._retirement_fence(
+            operation, labels, manifest["namespace_uid"]
+        )
+        expected_fence = {"policy": policy, "binding": binding}
+        if manifest.get("fence") and manifest["fence"] != expected_fence:
+            raise ResourceUnknown("The original retirement admission configuration changed")
+        manifest.update(fence=expected_fence, topology=topology)
+        await checkpoint(manifest)
+
+        async def admit():
+            if not await admit_retire():
+                raise ResourceUnknown("The original retirement authority was revoked")
+
+        async def delete(ref):
+            current = json.loads(await self._kubectl("get", "--raw", ref["path"]))
+            if current["metadata"]["uid"] != ref["uid"]:
+                raise ResourceUnknown("Retirement cannot delete a replacement UID")
+            await admit()
+            await self._kubectl(
+                "delete",
+                "--raw",
+                ref["path"],
+                "-f",
+                "-",
+                body={
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "preconditions": {"uid": ref["uid"]},
+                },
+            )
+
+        ns = await self._get("namespace", namespace)
+        if ns is not None:
+            for key, document in (("policy", policy), ("binding", binding)):
+                resource = (
+                    "validatingadmissionpolicies"
+                    if key == "policy"
+                    else "validatingadmissionpolicybindings"
+                )
+                existing = await self._get(resource, document["metadata"]["name"])
+                ref = manifest.get(key)
+                if existing is None:
+                    if ref:
+                        raise ResourceUnknown("The original retirement fence disappeared")
+                    await admit()
+                    await self._kubectl("create", "-f", "-", body=document)
+                    existing = await self._get(resource, document["metadata"]["name"])
+                existing = self._owned(existing, labels, ref.get("uid") if ref else None)
+                if existing["spec"] != document["spec"]:
+                    raise ResourceUnknown("The original retirement policy changed")
+                manifest[key] = {
+                    "path": "/apis/admissionregistration.k8s.io/v1/"
+                    + resource
+                    + "/"
+                    + document["metadata"]["name"],
+                    "uid": existing["metadata"]["uid"],
+                }
+                await checkpoint(manifest)
+            until = time.monotonic() + 25
+            while True:
+                active = await self._get("validatingadmissionpolicies", policy["metadata"]["name"])
+                self._owned(active, labels, manifest["policy"]["uid"])
+                if active and active.get("status", {}).get("observedGeneration") == active[
+                    "metadata"
+                ].get("generation"):
+                    if active["status"].get("typeChecking", {}).get("expressionWarnings"):
+                        raise ResourceUnknown("The original retirement policy has CEL warnings")
+                    break
+                if time.monotonic() >= until:
+                    raise ResourceUnknown("The original retirement policy is not type checked")
+                await asyncio.sleep(0.1)
+            self._owned(ns, labels, manifest["namespace_uid"])
+            if ns["metadata"].get("labels", {}).get("bbx.dev/retiring") != "true":
+                await admit()
+                ns["metadata"].setdefault("labels", {})["bbx.dev/retiring"] = "true"
+                await self._kubectl("replace", "-f", "-", body=ns)
+            sentinel = self._document(
+                "ConfigMap", "bbx-retirement-sentinel", labels, namespace, data={}
+            )
+            await self._kubectl(
+                "create",
+                "--dry-run=server",
+                "-f",
+                "-",
+                body=sentinel,
+                expected_denial=(policy["metadata"]["name"], message),
+            )
+            manifest = await self._retirement_plan(operation, manifest)
+            await checkpoint(manifest)
+            for ref in manifest["resources"]:
+                if ref.get("namespace_gc"):
+                    continue
+                current = await self._get(ref["kind"], ref["name"], namespace)
+                if current is not None:
+                    await delete(ref)
+            for ref in manifest["volumes"]:
+                until = time.monotonic() + 25
+                while (pv := await self._get("pv", ref["name"])) is not None:
+                    if pv["metadata"]["uid"] != ref["uid"]:
+                        raise ResourceUnknown("The original PV name was rebound")
+                    if time.monotonic() >= until:
+                        raise ResourceUnknown("The original provisioner has not reclaimed the PV")
+                    await asyncio.sleep(0.2)
+            # Reinventory after every original object deletion; CREATE is fenced above.
+            manifest = await self._retirement_plan(operation, manifest)
+            remaining = await self._retirement_inventory(namespace)
+            by_path = {r["path"]: r for r in manifest["resources"]}
+            if any(not by_path.get(path, {}).get("namespace_gc") for path, _ in remaining):
+                raise ResourceUnknown("Original namespaced deletions have not converged")
+            manifest["namespace_delete_started"] = True
+            await checkpoint(manifest)
+            await delete(
+                {"path": "/api/v1/namespaces/" + namespace, "uid": manifest["namespace_uid"]}
+            )
+        until = time.monotonic() + 25
+        while (ns := await self._get("namespace", namespace)) is not None:
+            if ns["metadata"]["uid"] != manifest["namespace_uid"]:
+                raise ResourceUnknown("The retired Namespace name was rebound")
+            if time.monotonic() >= until:
+                raise ResourceUnknown("The original Namespace deletion is unresolved")
+            await asyncio.sleep(0.2)
+        for ref in manifest["volumes"]:
+            if await self._get("pv", ref["name"]) is not None:
+                raise ResourceUnknown("The original retained PV reclamation is unresolved")
+        pvs = json.loads(await self._kubectl("get", "pv", "-o", "json"))["items"]
+        claim_uids = {ref["claim_uid"] for ref in manifest["volumes"]}
+        if any(p["spec"].get("claimRef", {}).get("uid") in claim_uids for p in pvs):
+            raise ResourceUnknown("An original claim still has a provisioned PV")
+        if await self._retirement_inventory(namespace):
+            raise ResourceUnknown("The original Namespace still has orphaned resources")
+        manifest["namespace_absent"] = True
+        for ref in manifest["resources"] + manifest["volumes"]:
+            ref["absent"] = True
+        for key, kind in (
+            ("binding", "validatingadmissionpolicybindings"),
+            ("policy", "validatingadmissionpolicies"),
+        ):
+            ref = manifest.get(key)
+            if not ref:
+                continue
+            current = await self._get(kind, policy["metadata"]["name"])
+            if current is not None:
+                await delete(ref)
+            if await self._get(kind, policy["metadata"]["name"]) is not None:
+                raise ResourceUnknown("The original admission fence cleanup is unresolved")
+            ref["absent"] = True
+        manifest["fence_absent"] = True
+        manifest["retired"] = True
+        await checkpoint(manifest)
+        return {
+            "retired": True,
+            "namespace_uid": manifest["namespace_uid"],
+            "pvc_uids": [
+                operation["observation"][key]["uid"] for key in ("journal_pvc", "workspace_pvc")
+            ],
+            "pv_uids": [ref["uid"] for ref in manifest["volumes"] if ref["uid"]],
+            "storage_erasure_verified": False,
+        }

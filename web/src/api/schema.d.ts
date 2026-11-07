@@ -5072,7 +5072,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error";
+            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete";
             /** Controller Generation */
             controller_generation: number;
             /** Controller Id */
@@ -5109,6 +5109,10 @@ export interface components {
             /** Resource Config */
             resource_config: {
                 [key: string]: unknown;
+            };
+            /** Retirement Single Apiserver */
+            retirement_single_apiserver?: {
+                [key: string]: string;
             };
         };
         /** NativeRunnerLaunch */

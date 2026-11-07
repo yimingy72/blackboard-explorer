@@ -5980,7 +5980,11 @@
               "renew",
               "stop",
               "cleanup",
-              "error"
+              "error",
+              "retire_prepare",
+              "retire_plan",
+              "retire_admit",
+              "retire_complete"
             ],
             "title": "Action",
             "type": "string"
@@ -6066,6 +6070,14 @@
             "additionalProperties": true,
             "maxProperties": 32,
             "title": "Resource Config",
+            "type": "object"
+          },
+          "retirement_single_apiserver": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 2,
+            "title": "Retirement Single Apiserver",
             "type": "object"
           }
         },

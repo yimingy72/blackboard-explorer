@@ -1,5 +1,7 @@
 """Trusted Task resource bootstrap requests, separate from Runner capabilities."""
 
+import hashlib
+import json
 from typing import Any, Literal
 from uuid import UUID
 
@@ -11,6 +13,15 @@ from .runner import RunnerId
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
+
+
+def retirement_manifest_digest(manifest: dict) -> str:
+    """Hash management state semantically; Runner invocation digests still cover original bytes."""
+    return hashlib.sha256(
+        json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
 
 
 class NativeRunnerLaunch(ContractModel):
@@ -25,6 +36,7 @@ class NativeRunnerClaim(ContractModel):
     controller_pid: int = Field(ge=1)
     controller_started_at: AwareDatetime
     resource_config: dict[str, Any] = Field(max_length=32)
+    retirement_single_apiserver: dict[str, str] = Field(default_factory=dict, max_length=2)
 
 
 class NativeRunnerAction(ContractModel):
@@ -32,7 +44,18 @@ class NativeRunnerAction(ContractModel):
     controller_id: RunnerId
     controller_generation: int = Field(ge=1)
     action: Literal[
-        "sandbox_create", "observation", "material", "activate", "renew", "stop", "cleanup", "error"
+        "sandbox_create",
+        "observation",
+        "material",
+        "activate",
+        "renew",
+        "stop",
+        "cleanup",
+        "error",
+        "retire_prepare",
+        "retire_plan",
+        "retire_admit",
+        "retire_complete",
     ]
     observation: dict[str, Any] = Field(default_factory=dict, max_length=16)
     proof: dict[str, Any] = Field(default_factory=dict, max_length=8)

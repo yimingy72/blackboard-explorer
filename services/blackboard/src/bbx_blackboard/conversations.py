@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from bbx_contracts.heartbeat import usage_receipt_support
@@ -39,6 +39,28 @@ MESSAGE_FIELDS = (
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+async def require_settled_progress(conn, tid):
+    jobs = (
+        (
+            await conn.execute(
+                select(s.progress_jobs.c.data).where(
+                    s.progress_jobs.c.task_id == tid,
+                    s.progress_jobs.c.status.in_(("running", "cancelled")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(
+        job.get("lease_until")
+        and datetime.fromisoformat(job["lease_until"]) > _now()
+        and any(receipt.get("status") == "reserved" for receipt in job.get("receipts", {}).values())
+        for job in jobs
+    ):
+        raise HTTPException(409, "Progress request is still settling")
 
 
 def _public(row: Any) -> dict[str, Any]:
@@ -778,6 +800,35 @@ class Conversations:
             if active_agent or processing or ctf_active:
                 raise HTTPException(409, "Task has active work")
             await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(deleting=True))
+            if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
+                resources = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if resources is not None:
+                    data = dict(resources["data"])
+                    if not data.get("retirement"):
+                        data["retirement"] = {
+                            "operation_id": str(
+                                uuid5(NAMESPACE_URL, "native-retire:" + resources["operation_id"])
+                            ),
+                            "policy": "user_delete",
+                            "requested_at": _now().isoformat(),
+                            "state": "pending",
+                            "manifest": {},
+                        }
+                    await conn.execute(
+                        update(s.task_runner_resources)
+                        .where(s.task_runner_resources.c.task_id == tid)
+                        .values(data=data, revision=s.task_runner_resources.c.revision + 1)
+                    )
             await conn.execute(
                 update(s.progress_jobs)
                 .where(
@@ -842,6 +893,7 @@ class Conversations:
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
             if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
+                retired = False
                 native_resources = (
                     (
                         await conn.execute(
@@ -860,7 +912,14 @@ class Conversations:
                         and native_resources["sandbox_create_claimed"] is False
                         and not native_resources["observation"]
                     )
-                    if not never_claimed:
+                    retired = (
+                        native_resources["state"] == "stopped"
+                        and native_resources["data"].get("exit_confirmed") is True
+                        and native_resources["data"].get("retirement", {}).get("state") == "retired"
+                        and native_resources["data"].get("retirement", {}).get("policy")
+                        == "user_delete"
+                    )
+                    if not never_claimed and not retired:
                         raise HTTPException(
                             409,
                             "Native namespace and retained volumes still require "
@@ -877,7 +936,7 @@ class Conversations:
                     raise HTTPException(409, "Native MCP route retirement is not confirmed")
                 if native_route is not None and (
                     task["status"] not in {"stopped", "failed", "finished"}
-                    or not task["cleanup_ready"]
+                    or (not task["cleanup_ready"] and not retired)
                 ):
                     raise HTTPException(409, "Original Runner cleanup is not confirmed")
                 native_key = (
@@ -901,28 +960,7 @@ class Conversations:
                 ).first()
                 if unresolved:
                     raise HTTPException(409, "Original Runner calls still require reconciliation")
-            jobs = (
-                (
-                    await conn.execute(
-                        select(s.progress_jobs.c.data).where(
-                            s.progress_jobs.c.task_id == tid,
-                            s.progress_jobs.c.status.in_(("running", "cancelled")),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if any(
-                job.get("lease_until")
-                and datetime.fromisoformat(job["lease_until"]) > _now()
-                and any(
-                    receipt.get("status") == "reserved"
-                    for receipt in job.get("receipts", {}).values()
-                )
-                for job in jobs
-            ):
-                raise HTTPException(409, "Progress request is still settling")
+            await require_settled_progress(conn, tid)
         for prefix in (
             f"evidence/{tid}/",
             f"toolcalls/{tid}/",

@@ -26,6 +26,14 @@
       "maxProperties": 32,
       "title": "Resource Config",
       "type": "object"
+    },
+    "retirement_single_apiserver": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 2,
+      "title": "Retirement Single Apiserver",
+      "type": "object"
     }
   },
   "required": [

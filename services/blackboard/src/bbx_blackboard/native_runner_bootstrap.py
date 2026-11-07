@@ -48,6 +48,9 @@ class NativeRunnerBootstrap:
     def __init__(self, gateway):
         self.gateway, self.repo, self.control = gateway, gateway.repo, gateway.control
         self.settings, self.ctf = gateway.settings, gateway.ctf
+        from bbx_blackboard.native_resource_retirement import NativeResourceRetirement
+
+        self.retirement = NativeResourceRetirement(self)
 
     async def _get(self, conn, tid):
         found = (
@@ -133,7 +136,7 @@ class NativeRunnerBootstrap:
     def _public(record):
         if record is None:
             return {"state": "not_registered"}
-        return {
+        result = {
             key: record[key]
             for key in (
                 "task_id",
@@ -151,6 +154,19 @@ class NativeRunnerBootstrap:
                 "last_error",
             )
         }
+        retirement = record["data"].get("retirement", {})
+        result["retirement"] = {
+            **retirement.get("manifest", {}),
+            **({"authority": retirement["authority"]} if retirement.get("authority") else {}),
+        }
+        result["retirement_id"] = retirement.get("operation_id")
+        result["never_claimed"] = (
+            record["config"] is None
+            and record["controller_id"] is None
+            and record["sandbox_create_claimed"] is False
+            and not record["observation"]
+        )
+        return result
 
     async def launch(self, tid, raw):
         body, digest = decode(NativeRunnerLaunch, raw, 262144)
@@ -275,6 +291,27 @@ class NativeRunnerBootstrap:
                 raise HTTPException(409, "Native Runtime claim is stale")
             generation = body.controller_fence
             desired = "stopped" if self._stopping(task, record) else "active"
+            data = dict(record["data"])
+            if task["deleting"] and record["config"] is not None:
+                if not data.get("retirement"):
+                    data["retirement"] = {
+                        "operation_id": str(
+                            uuid5(NAMESPACE_URL, "native-retire:" + record["operation_id"])
+                        ),
+                        "policy": "user_delete",
+                        "requested_at": instant().isoformat(),
+                        "state": "pending",
+                        "manifest": {},
+                    }
+                authority = body.retirement_single_apiserver
+                if authority:
+                    if set(authority) != {"pod_uid", "node_uid"} or not all(authority.values()):
+                        raise HTTPException(
+                            422, "Retirement requires a trusted single-apiserver identity"
+                        )
+                    if data["retirement"].get("authority") not in (None, authority):
+                        raise HTTPException(409, "Frozen retirement apiserver authority changed")
+                    data["retirement"] = {**data["retirement"], "authority": authority}
             await self._set(
                 conn,
                 tid,
@@ -284,6 +321,7 @@ class NativeRunnerBootstrap:
                 controller_backend_start=body.controller_started_at,
                 controller_generation=generation,
                 desired=desired,
+                data=data,
             )
             record = await self._get(conn, tid)
         assert record is not None
@@ -305,7 +343,7 @@ class NativeRunnerBootstrap:
                 select(s.task_runner_resources.c.task_id)
                 .join(s.tasks, s.tasks.c.id == s.task_runner_resources.c.task_id)
                 .where(
-                    s.task_runner_resources.c.state != "stopped",
+                    or_(s.task_runner_resources.c.state != "stopped", s.tasks.c.deleting.is_(True)),
                     or_(
                         s.task_runner_resources.c.next_check_at <= instant(),
                         s.tasks.c.deleting.is_(True),
@@ -496,6 +534,8 @@ class NativeRunnerBootstrap:
 
     async def act(self, tid, raw):
         body, _ = decode(NativeRunnerAction, raw, 262144)
+        if body.action.startswith("retire_"):
+            return await self.retirement.act(tid, body)
         if body.action in {"material", "renew"}:
             return await self._material(tid, body, renew=body.action == "renew")
         if body.action == "activate":
@@ -550,6 +590,22 @@ class NativeRunnerBootstrap:
                 )
             elif body.action == "error":
                 if record["state"] == "stopped":
+                    retirement = record["data"].get("retirement")
+                    if retirement and retirement.get("state") != "retired":
+                        await self._set(
+                            conn,
+                            tid,
+                            data={
+                                **record["data"],
+                                "retirement": {
+                                    **retirement,
+                                    "state": "unknown",
+                                    "last_error": body.error_code,
+                                },
+                            },
+                            next_check_at=instant() + timedelta(seconds=20),
+                        )
+                        return self._public(await self._get(conn, tid))
                     return self._public(record)
                 await self._set(
                     conn,

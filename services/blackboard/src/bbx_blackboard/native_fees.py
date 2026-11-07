@@ -937,7 +937,7 @@ class NativeFees:
                 ),
             }
 
-    async def retire(self, tid):
+    async def retire(self, tid, *, explicit_delete=False):
         """Remove the native credential before dropping its only encrypted local copy."""
         async with self.repo.engine.begin() as conn:
             if not (await conn.execute(select(s.tasks.c.id).where(s.tasks.c.id == tid))).first():
@@ -955,9 +955,28 @@ class NativeFees:
             )
             if found is None or found["publication_state"] == "retired":
                 return
+            deletion_policy = False
+            if explicit_delete:
+                resources = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                deletion_policy = bool(
+                    resources is not None
+                    and resources["state"] == "stopped"
+                    and resources["data"].get("exit_confirmed") is True
+                    and resources["data"].get("retirement", {}).get("policy") == "user_delete"
+                )
             if (
                 not task["deleting"]
-                or not task["cleanup_ready"]
+                or (not task["cleanup_ready"] and not deletion_policy)
                 or task["status"] not in {"stopped", "failed", "finished"}
             ):
                 raise HTTPException(409, "Native key retirement requires completed Task cleanup")
@@ -997,7 +1016,7 @@ class NativeFees:
             task = await row(conn, s.tasks, tid)
             if (
                 not task["deleting"]
-                or not task["cleanup_ready"]
+                or (not task["cleanup_ready"] and not deletion_policy)
                 or current["native_resource_id"] != budget["native_resource_id"]
             ):
                 raise HTTPException(409, "Native key retirement authority changed")

@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 import uvicorn
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
+from bbx_contracts.runner_bootstrap import retirement_manifest_digest
 
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
@@ -39,8 +40,13 @@ class NativeRunnerController:
         ):
             raise RuntimeError("Native Runner control requires the fenced Runtime instance lock")
         self.controller_id = str(uuid4())
+        self.retirement_authority = resources.config.get("retirement_single_apiserver", {})
         self.config = {
-            **resources.config,
+            **{
+                key: value
+                for key, value in resources.config.items()
+                if key != "retirement_single_apiserver"
+            },
             "runner_blackboard_url": settings.runner_blackboard_url.rstrip("/"),
             "runner_model_proxy_url": settings.runner_model_proxy_url.rstrip("/"),
         }
@@ -98,6 +104,13 @@ class NativeRunnerController:
 
     async def _task(self, tid):
         self.current()
+        initial = await self.view(tid)
+        if (
+            initial.get("never_claimed")
+            and initial.get("data", {}).get("retirement", {}).get("policy") == "user_delete"
+        ):
+            await self.service._json("POST", f"/tasks/{tid}/purge")
+            return
         while True:
             try:
                 operation = await self.service._json(
@@ -109,6 +122,7 @@ class NativeRunnerController:
                         "controller_pid": self.instance.backend_pid,
                         "controller_started_at": self.instance.backend_started_at.isoformat(),
                         "resource_config": self.config,
+                        "retirement_single_apiserver": self.retirement_authority,
                     },
                 )
                 break
@@ -130,6 +144,49 @@ class NativeRunnerController:
             try:
                 state = await self.view(tid)
                 if state["state"] == "stopped":
+                    retirement = state["data"].get("retirement", {})
+                    if retirement and retirement.get("state") != "retired":
+                        operation.update(state)
+                        operation.update(await self.action(tid, operation, "retire_prepare"))
+
+                        async def checkpoint_retirement(manifest):
+                            operation.update(
+                                await self.action(
+                                    tid, operation, "retire_plan", proof={"manifest": manifest}
+                                )
+                            )
+
+                        async def admit_retirement():
+                            result = await self.action(
+                                tid,
+                                operation,
+                                "retire_admit",
+                                proof={
+                                    "manifest_digest": retirement_manifest_digest(
+                                        operation["retirement"]
+                                    )
+                                },
+                            )
+                            return result["admitted"]
+
+                        proof = await self.guarded(
+                            tid,
+                            operation,
+                            self.resources.retire(
+                                operation,
+                                checkpoint=checkpoint_retirement,
+                                admit_retire=admit_retirement,
+                            ),
+                            cleanup=True,
+                        )
+                        proof["manifest_digest"] = retirement_manifest_digest(
+                            operation["retirement"]
+                        )
+                        operation.update(
+                            await self.action(tid, operation, "retire_complete", proof=proof)
+                        )
+                    if retirement.get("policy") == "user_delete":
+                        await self.service._json("POST", f"/tasks/{tid}/purge")
                     return
                 operation.update(state)
                 if state["state"] == "exited":

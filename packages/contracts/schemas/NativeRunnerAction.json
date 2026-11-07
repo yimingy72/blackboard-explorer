@@ -25,7 +25,11 @@
         "renew",
         "stop",
         "cleanup",
-        "error"
+        "error",
+        "retire_prepare",
+        "retire_plan",
+        "retire_admit",
+        "retire_complete"
       ],
       "title": "Action",
       "type": "string"
