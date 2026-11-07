@@ -16,6 +16,7 @@ from bbx_contracts.challenge_board import (
     BOARD_EVENTS,
     CHALLENGE_KNOWLEDGE_EVENTS,
     business_contract,
+    native_scope_updates_enabled,
 )
 from bbx_contracts.heartbeat import HeartbeatRequest
 from bbx_contracts.models import (
@@ -34,7 +35,7 @@ from sqlalchemy import case, func, insert, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bbx_blackboard.challenge_board import knowledge_event_scope
+from bbx_blackboard.challenge_board import knowledge_event_scope, knowledge_scope_revision
 from bbx_blackboard.domain import (
     RuleViolation,
     calculate_cost,
@@ -922,9 +923,12 @@ class BoardService:
         self, tid: UUID, since: int = 0, for_agent: str | None = None
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.connect() as conn:
+            if for_agent is not None:
+                await conn.execution_options(isolation_level="REPEATABLE READ")
             stmt = select(s.events).where(s.events.c.task_id == tid, s.events.c.version > since)
             task_mode = None
             versioned = False
+            scope_revision = None
             if for_agent is not None:
                 task = (
                     (
@@ -937,6 +941,11 @@ class BoardService:
                 )
                 task_mode = task["mode"]
                 versioned = business_contract(task) == BOARD_CONTRACT
+                if native_scope_updates_enabled(task):
+                    assignment = (
+                        task["ctf_control"].get("native_worker_active", {}).get(for_agent, {})
+                    )
+                    scope_revision = assignment.get("scope_revision")
                 if task_mode == "ctf":
                     unrelated_message = (s.events.c.type == "ctf.message.posted") & ~or_(
                         s.events.c.payload["sender_id"].astext == for_agent,
@@ -990,7 +999,11 @@ class BoardService:
                     knowledge_scope = await knowledge_event_scope(self.repo, conn, tid, for_agent)
                 result = [
                     ctf_agent_event(
-                        item, for_agent, knowledge_scope=knowledge_scope, versioned=versioned
+                        item,
+                        for_agent,
+                        knowledge_scope=knowledge_scope,
+                        versioned=versioned,
+                        scope_revision=scope_revision,
                     )
                     for item in result
                 ]
@@ -1026,6 +1039,7 @@ def ctf_agent_event(
     *,
     knowledge_scope: set[str] | None = None,
     versioned: bool = False,
+    scope_revision: int | None = None,
 ) -> dict[str, Any]:
     """Retain cursors while hiding other members' messages and private turn data."""
     kind = item["type"]
@@ -1046,7 +1060,20 @@ def ctf_agent_event(
         and not challenge_id
         and kind != "board.announcement.published"
     )
-    if (scoped and challenge_id not in (knowledge_scope or set())) or unscoped_board:
+    historical_scope = False
+    if scoped and scope_revision is not None:
+        if kind in CHALLENGE_KNOWLEDGE_EVENTS:
+            original = payload.get("scope_revision", knowledge_scope_revision(payload))
+        else:
+            result = payload.get("result") or {}
+            snapshot = result.get("challenge", result)
+            original = snapshot.get("scope_revision", knowledge_scope_revision(result))
+        historical_scope = original != scope_revision
+    if (
+        (scoped and challenge_id not in (knowledge_scope or set()))
+        or unscoped_board
+        or historical_scope
+    ):
         return {
             **item,
             "type": "ctf.cursor",

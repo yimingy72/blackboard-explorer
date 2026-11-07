@@ -14,6 +14,7 @@ from bbx_contracts.challenge_board import (
     ChallengeIntentRequest,
     business_contract,
     native_dispatch_enabled,
+    native_scope_updates_enabled,
 )
 from bbx_contracts.models import Fact, Intent, KnowledgeAssignment
 from fastapi import HTTPException
@@ -56,6 +57,20 @@ def current_assignment(task, challenge, member):
     ):
         raise HTTPException(403, "Current Assignment binding is unavailable")
     return {**snapshot, "assignment_ref": reference}
+
+
+def knowledge_scope_revision(item):
+    return (item.get("assignment_ref") or {}).get("scope_revision", 1)
+
+
+def retain_current_knowledge(state, challenge):
+    scope = challenge.get("scope_revision", 1)
+    state.facts = {
+        key: item for key, item in state.facts.items() if knowledge_scope_revision(item) == scope
+    }
+    state.intents = {
+        key: item for key, item in state.intents.items() if knowledge_scope_revision(item) == scope
+    }
 
 
 async def knowledge_event_scope(repo, conn, tid, aid):
@@ -246,6 +261,8 @@ class ChallengeBoardService:
         for evidence in data["evidence"]:
             uri = evidence.get("uri")
             call_id = evidence.get("call_id")
+            if uri and call_id and native_scope_updates_enabled(task):
+                raise HTTPException(422, "Use separate object and command evidence references")
             if not uri and assignment and evidence["type"] == "command_output" and call_id:
                 commands, calls = s.sandbox_command_records, s.runner_calls
                 if any(evidence.get(key) is not None for key in ("path", "size", "sha256")):
@@ -295,6 +312,10 @@ class ChallengeBoardService:
                     raise HTTPException(403, "Initial attachment is not shared with this Agent")
                 material = initial
             else:
+                if native_scope_updates_enabled(task):
+                    raise HTTPException(
+                        403, "Native scope evidence requires a saved command or a shared Task input"
+                    )
                 registered = (
                     (
                         await conn.execute(
@@ -404,6 +425,8 @@ class ChallengeBoardService:
                 return self._response(previous)
             self.ctf._revision(challenge, body["expected_revision"])
             state = await self.repo.load(conn, tid, include_tool_calls=False, challenge_id=str(cid))
+            if native_scope_updates_enabled(task):
+                retain_current_knowledge(state, challenge)
             assert identity.generation is not None and identity.turn_id is not None
             origin = KnowledgeAssignment(
                 agent_id=aid,
@@ -459,6 +482,8 @@ class ChallengeBoardService:
                     request_actor=aid,
                     request_hash=digest,
                 )
+                if native_scope_updates_enabled(task):
+                    event["payload"]["scope_revision"] = challenge.get("scope_revision", 1)
             saved = await self.repo.append(conn, tid, planned)
             if kind == "fact" and snapshot and native_dispatch_enabled(task):
                 fact_id = saved[0]["object_id"]
@@ -486,8 +511,10 @@ class ChallengeBoardService:
     async def board(self, tid: UUID, cid: UUID, identity: Principal):
         async with self.repo.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
-            _, challenge, _ = await self._authority(conn, tid, cid, identity)
+            task, challenge, snapshot = await self._authority(conn, tid, cid, identity)
             state = await self.repo.load(conn, tid, include_tool_calls=False, challenge_id=str(cid))
+            if snapshot and native_scope_updates_enabled(task):
+                retain_current_knowledge(state, challenge)
         fields = dispute_fields(state.facts)
         facts = {
             fid: Fact.model_validate(

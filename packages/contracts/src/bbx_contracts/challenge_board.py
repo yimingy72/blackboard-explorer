@@ -33,11 +33,19 @@ def business_contract(task) -> str:
 
 
 DISPATCH_TOOL = "board_dispatch_challenge"
+UPDATE_CHALLENGE_TOOL = "board_update_challenge"
 
 
 def native_dispatch_enabled(task) -> bool:
     manifest = (task.get("ctf_control") or {}).get("business_tools", {})
-    return manifest.get("revision") == 2 and DISPATCH_TOOL in manifest.get("roles", {}).get(
+    return manifest.get("revision") in {2, 3} and DISPATCH_TOOL in manifest.get("roles", {}).get(
+        "lead", []
+    )
+
+
+def native_scope_updates_enabled(task) -> bool:
+    manifest = (task.get("ctf_control") or {}).get("business_tools", {})
+    return manifest.get("revision") == 3 and UPDATE_CHALLENGE_TOOL in manifest.get("roles", {}).get(
         "lead", []
     )
 
@@ -53,14 +61,14 @@ def business_manifest(*, automatic=False) -> dict:
     ]
     return {
         "contract": BOARD_CONTRACT,
-        "revision": 2 if automatic else 1,
+        "revision": 3 if automatic else 1,
         "transport": "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}",
         "roles": {
             "lead": [
                 *common,
                 "board_publish_announcement",
                 "board_create_challenge",
-                *([DISPATCH_TOOL] if automatic else []),
+                *([DISPATCH_TOOL, UPDATE_CHALLENGE_TOOL] if automatic else []),
                 "board_submit_flag",
                 "board_finish_task",
             ],
@@ -172,6 +180,36 @@ class BoardDispatchChallengeRequest(ContractModel):
     def explicit_readiness(self):
         if (self.action == "ready") != (self.readiness is not None):
             raise ValueError("Ready requires an explicit material state; withdraw does not")
+        return self
+
+
+class BoardChallengeUpdateRequest(ContractModel):
+    """Edit the challenge title or revise its execution scope.
+
+    A title change preserves scope. Changed description or requirements revoke old admission
+    and clear readiness; explicitly mark the new scope ready to queue it after cleanup.
+    Unconfirmed execution or journal evidence keeps the original Assignment draining.
+    """
+
+    request_id: UUID
+    challenge_id: UUID
+    expected_revision: int = Field(ge=1)
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=16000)
+    requirements: str | None = Field(default=None, max_length=16000)
+    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    priority: int = Field(default=1, ge=0, le=3, strict=True)
+
+    @model_validator(mode="after")
+    def explicit_patch(self):
+        fields = self.model_fields_set
+        if not fields.intersection({"title", "description", "requirements"}):
+            raise ValueError("Specify a challenge field to update")
+        for key in fields.intersection({"title", "description"}):
+            if not (getattr(self, key) or "").strip():
+                raise ValueError("Title and description cannot be empty")
+        if "priority" in fields and self.readiness is None:
+            raise ValueError("Priority requires explicit readiness")
         return self
 
 

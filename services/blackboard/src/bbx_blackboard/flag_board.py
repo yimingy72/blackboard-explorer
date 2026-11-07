@@ -21,12 +21,13 @@ from bbx_contracts.challenge_board import (
     FlagSubmissionRequest,
     FlagUnknownRequest,
     business_contract,
+    native_scope_updates_enabled,
 )
 from bbx_contracts.models import KnowledgeAssignment
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 
 from bbx_blackboard.auth import Principal
 from bbx_blackboard.board_events import digest, emit, prior
@@ -149,18 +150,20 @@ class FlagBoardService(ChallengeBoardService):
             self.ctf._revision(challenge, body.expected_revision)
             if challenge["work_status"] in {"completed", "cancelled"}:
                 raise HTTPException(409, "Challenge is not accepting candidates")
+            if native_scope_updates_enabled(task) and body.evidence_refs:
+                raise HTTPException(403, "Native scope Flag evidence must reference current facts")
             refs = await self.ctf._artifact_refs(conn, tid, body.evidence_refs, cid)
-            facts = set(
-                (
-                    await conn.execute(
-                        select(s.facts.c.id).where(
-                            s.facts.c.task_id == tid,
-                            s.facts.c.challenge_id == str(cid),
-                            s.facts.c.id.in_(body.fact_refs),
-                        )
-                    )
-                ).scalars()
+            fact_query = select(s.facts.c.id).where(
+                s.facts.c.task_id == tid,
+                s.facts.c.challenge_id == str(cid),
+                s.facts.c.id.in_(body.fact_refs),
             )
+            if native_scope_updates_enabled(task):
+                fact_query = fact_query.where(
+                    func.coalesce(s.facts.c.assignment_ref["scope_revision"].astext, "1")
+                    == str(challenge.get("scope_revision", 1))
+                )
+            facts = set((await conn.execute(fact_query)).scalars())
             if facts != set(body.fact_refs):
                 raise HTTPException(403, "Fact evidence is outside this challenge")
             round_id = verification_round(task, challenge)
@@ -235,14 +238,19 @@ class FlagBoardService(ChallengeBoardService):
 
     async def value(self, tid, cid, candidate_id, identity):
         async with self.repo.engine.connect() as conn:
-            _, member = await self._task_access(conn, tid, identity)
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            task, member = await self._task_access(conn, tid, identity)
             candidate = await self._candidate(conn, tid, candidate_id)
             if candidate["challenge_id"] != str(cid):
                 raise HTTPException(404, "Flag candidate not found")
             allowed = identity.kind == "user" or (member is not None and member["role"] == "lead")
             if identity.kind == "agent" and not allowed:
-                await self._authority(conn, tid, cid, identity)
+                _, challenge, _ = await self._authority(conn, tid, cid, identity)
                 allowed = candidate["data"]["author_id"] == identity.agent_id
+                if native_scope_updates_enabled(task):
+                    allowed = allowed and candidate["verification_round"] == verification_round(
+                        task, challenge
+                    )
             if not allowed:
                 raise HTTPException(403, "Protected Flag value access denied")
             return {
@@ -969,7 +977,7 @@ class FlagBoardService(ChallengeBoardService):
     async def board(self, tid, cid, identity):
         async with self.repo.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
-            task, challenge, _ = await self._authority(conn, tid, cid, identity)
+            task, challenge, snapshot = await self._authority(conn, tid, cid, identity)
             self._v1(task)
             round_id = verification_round(task, challenge)
             candidates = list(
@@ -996,6 +1004,11 @@ class FlagBoardService(ChallengeBoardService):
                     )
                 ).scalars()
             )
+        if snapshot and native_scope_updates_enabled(task):
+            candidates = [value for value in candidates if value["verification_round"] == round_id]
+            submissions = [
+                value for value in submissions if value["verification_round"] == round_id
+            ]
         progress = {"correct_count": None, "total_count": None, "score": None}
         for value in submissions:
             if value["verification_round"] == round_id and value["progress_applied"]:

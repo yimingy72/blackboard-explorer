@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
+from bbx_contracts.challenge_board import native_scope_updates_enabled
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from fastapi import HTTPException
 from sqlalchemy import insert, or_, select, update
@@ -160,7 +161,7 @@ class NativeWorkers:
             },
         )
 
-    async def _drain(self, conn, tid, assignment, binding, challenge):
+    async def _drain(self, conn, tid, assignment, binding, challenge, *, changed_scope=False):
         bid, epoch = binding["id"], assignment["epoch"]
         close_id = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{epoch}:{bid}"))
         close = await self._enqueue(conn, tid, close_id, {"kind": "close", "binding_id": bid})
@@ -245,6 +246,23 @@ class NativeWorkers:
             .where(s.tasks.c.id == tid)
             .values(ctf_control={**control, "native_worker_active": active})
         )
+        if changed_scope and challenge["work_status"] == "blocked":
+            if challenge["owner_id"] != member["id"]:
+                raise HTTPException(409, "Original challenge owner changed before scope drain")
+            await self.ctf._board_event(
+                conn,
+                tid,
+                "system",
+                "ctf.challenge.updated",
+                _id(assignment["assignment_ref"], "scope-drained"),
+                _id(assignment["assignment_ref"], challenge["scope_revision"], "scope-drained"),
+                {
+                    **challenge,
+                    "owner_id": None,
+                    "work_status": "pending",
+                    "revision": challenge["revision"] + 1,
+                },
+            )
         await self.ctf._emit(conn, tid, "native_worker.released", "system", assignment)
 
     @staticmethod
@@ -277,8 +295,18 @@ class NativeWorkers:
                 raise HTTPException(409, "Original Worker epoch changed")
             challenge = await self.ctf._challenge(conn, tid, assignment["work_id"])
             binding = await row(conn, s.runner_bindings, tid, assignment["binding_id"])
-            if challenge["work_status"] in {"cancelled", "completed"}:
-                await self._drain(conn, tid, assignment, binding, challenge)
+            changed_scope = native_scope_updates_enabled(task) and (
+                challenge.get("scope_revision", 1) != assignment["scope_revision"]
+            )
+            if changed_scope and (
+                challenge["scope_revision"] != assignment["scope_revision"] + 1
+                or challenge["work_status"] not in {"blocked", "cancelled", "completed"}
+            ):
+                raise HTTPException(409, "Original Assignment scope transition is unresolved")
+            if challenge["work_status"] in {"cancelled", "completed"} or changed_scope:
+                await self._drain(
+                    conn, tid, assignment, binding, challenge, changed_scope=changed_scope
+                )
             elif allow_new:
                 await self._input(conn, tid, assignment, binding)
         task = await row(conn, s.tasks, tid)

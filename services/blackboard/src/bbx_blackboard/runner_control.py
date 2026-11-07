@@ -686,6 +686,9 @@ class RunnerControl:
             else:
                 message = await row(conn, s.ctf_messages, tid, payload.input_id)
                 business = binding["business"]
+                task_lead = (
+                    binding["binding"]["agent_id"] == "lead" and business["challenge_id"] is None
+                )
                 if (
                     message["recipient_id"] != binding["binding"]["agent_id"]
                     or message["purpose"] != business["purpose"]
@@ -694,7 +697,10 @@ class RunnerControl:
                     or message["status"] not in {"queued", "leased"}
                     or message["claim_turn_id"] not in {None, business["turn_id"]}
                     or message["claim_generation"] not in {None, business["generation"]}
-                    or message["challenge_id"] not in {None, business["challenge_id"]}
+                    or (
+                        not task_lead
+                        and message["challenge_id"] not in {None, business["challenge_id"]}
+                    )
                 ):
                     raise HTTPException(403, "Input does not match its original mailbox claim")
                 proof = {
