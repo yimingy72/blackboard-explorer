@@ -211,12 +211,25 @@ class NativeRunnerController:
                 await asyncio.gather(watcher, return_exceptions=True)
 
     @staticmethod
-    def _worker_ids(operation):
-        return tuple(sorted(operation["data"].get("worker_binding_ids", ())))
+    def _credential_scope(operation):
+        data = operation["data"]
+        return (
+            data.get("binding_id"),
+            data.get("pause_state"),
+            tuple(sorted(data.get("worker_binding_ids", ()))),
+        )
+
+    @staticmethod
+    def _material_changed(scope, published, control_only):
+        return (
+            published is None
+            or scope[:2] != published[:2]
+            or (not control_only and scope[2] != published[2])
+        )
 
     async def _drive(self, tid, operation, tenant_key, idle):
         last_rotation = 0.0
-        published_workers = ()
+        published_scope = None
         control_only = operation["state"] == "held"
         while not self.closed:
             self.current()
@@ -343,7 +356,9 @@ class NativeRunnerController:
                 if (
                     not operation["data"].get("credentials_issued")
                     or now - last_rotation >= 20
-                    or (not control_only and self._worker_ids(operation) != published_workers)
+                    or self._material_changed(
+                        self._credential_scope(operation), published_scope, control_only
+                    )
                 ):
                     material = await self.action(
                         tid,
@@ -355,7 +370,8 @@ class NativeRunnerController:
                     latest = await self.view(tid)
                     if self.stopping(latest):
                         raise BootstrapStopped("Native credential publication was stopped")
-                    if self._worker_ids(latest) != self._worker_ids(operation):
+                    scope = self._credential_scope(operation)
+                    if self._credential_scope(latest) != scope:
                         continue
                     control_only = material.get("control_only", False)
                     retained = material.get("retain_binding_ids", ())
@@ -371,11 +387,16 @@ class NativeRunnerController:
                         ),
                     )
                     last_rotation = asyncio.get_running_loop().time()
-                    if not control_only:
-                        published_workers = self._worker_ids(operation)
-                if not control_only or operation["data"].get("worker_spec") is not None:
+                    published_scope = scope
+                if (
+                    not control_only
+                    or operation["data"].get("worker_spec") is not None
+                    or operation["data"].get("pause_state") in {"draining", "resuming"}
+                ):
                     operation.update(await self.action(tid, operation, "activate"))
-                if not control_only and self._worker_ids(operation) != published_workers:
+                if self._material_changed(
+                    self._credential_scope(operation), published_scope, control_only
+                ):
                     continue
                 await idle()
             except BootstrapStopped:

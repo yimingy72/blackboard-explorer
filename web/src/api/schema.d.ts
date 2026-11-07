@@ -1535,6 +1535,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User Pause Status */
+        get: operations["user_pause_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_get"];
+        put?: never;
+        /** User Pause */
+        post: operations["user_pause_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** User Resume */
+        post: operations["user_resume_api_tasks__task_id__ctf_runtime_runner_bootstrap_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/runtime/runner-gateway/bindings/{binding_id}/credentials": {
         parameters: {
             query?: never;
@@ -5235,6 +5270,41 @@ export interface components {
              */
             protocol: "bbx.task-runner.v1";
             sdk_model: components["schemas"]["EffectiveRunnerModel"];
+        };
+        /** NativePauseRequest */
+        NativePauseRequest: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativePauseStatus */
+        NativePauseStatus: {
+            /** Blocker */
+            blocker?: string | null;
+            /** Pause Id */
+            pause_id?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "draining" | "paused" | "resuming" | "resumed" | "stopping" | "stopped";
+        };
+        /** NativeResumeRequest */
+        NativeResumeRequest: {
+            /** Instruction */
+            instruction?: string | null;
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
         };
         /** NativeRunnerAction */
         NativeRunnerAction: {
@@ -10993,6 +11063,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_pause_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_pause_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativePauseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_resume_api_tasks__task_id__ctf_runtime_runner_bootstrap_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
                 };
             };
             /** @description Validation Error */

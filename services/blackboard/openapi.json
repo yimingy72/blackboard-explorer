@@ -5972,6 +5972,101 @@
         "title": "NativeModelSelection",
         "type": "object"
       },
+      "NativePauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "NativePauseRequest",
+        "type": "object"
+      },
+      "NativePauseStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "blocker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocker"
+          },
+          "pause_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Id"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "draining",
+              "paused",
+              "resuming",
+              "resumed",
+              "stopping",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "NativePauseStatus",
+        "type": "object"
+      },
+      "NativeResumeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "instruction": {
+            "anyOf": [
+              {
+                "maxLength": 1500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "pause_id": {
+            "format": "uuid",
+            "title": "Pause Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "pause_id"
+        ],
+        "title": "NativeResumeRequest",
+        "type": "object"
+      },
       "NativeRunnerAction": {
         "additionalProperties": false,
         "properties": {
@@ -17315,6 +17410,153 @@
           }
         },
         "summary": "Claim Bootstrap",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/pause": {
+      "get": {
+        "operationId": "user_pause_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativePauseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Pause Status",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      },
+      "post": {
+        "operationId": "user_pause_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativePauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativePauseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Pause",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/resume": {
+      "post": {
+        "operationId": "user_resume_api_tasks__task_id__ctf_runtime_runner_bootstrap_resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativePauseStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Resume",
         "tags": [
           "native-runner-bootstrap"
         ]

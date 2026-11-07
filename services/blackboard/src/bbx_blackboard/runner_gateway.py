@@ -18,6 +18,7 @@ from bbx_contracts.runner import (
     runner_json_text,
     runner_payload_digest,
 )
+from bbx_contracts.runner_bootstrap import native_pause_state
 from bbx_contracts.sandbox_tools import SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
@@ -109,6 +110,8 @@ class RunnerGateway:
         if identity.expires_at <= datetime.now(UTC).timestamp():
             raise HTTPException(401, "Gateway capability expired")
         task = await self.control._task(conn, tid, live=True)
+        if not metadata and native_pause_state(task) == "resuming":
+            raise HTTPException(409, "Replacement Runner session is not ready")
         if task["ctf_control"].get("failure_hold"):
             raise HTTPException(409, "Task admission is paused")
         if not metadata and (

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from bbx_blackboard.auth import Principal
+from bbx_blackboard.auth import Principal, issue_user_token
 from bbx_blackboard.challenge_board import ChallengeBoardService
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.flag_board import FlagBoardService
@@ -55,9 +55,13 @@ from test_runner_control_integration import (
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("revise_scope", [False, True], ids=["withdraw", "scope_revision"])
+@pytest.mark.parametrize(
+    ("revise_scope", "manual_pause"),
+    [(False, False), (True, False), (False, True)],
+    ids=["withdraw", "scope_revision", "manual_pause"],
+)
 async def test_native_worker_claim_evidence_and_original_drain(
-    ctf, ctf_url, monkeypatch, revise_scope
+    ctf, ctf_url, monkeypatch, revise_scope, manual_pause
 ):
     ctf.objects = Objects()
     tid = await ctf.create_task(
@@ -88,7 +92,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
             await native._lead(conn, tid, {"operation_id": operation_id})
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             published = task["ctf_control"]["business_tools"]
-            if not revise_scope:
+            if not revise_scope and not manual_pause:
                 published = {
                     **published,
                     "revision": 2,
@@ -220,6 +224,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
                     observation=observed,
                     sandbox_host={
                         "ready": True,
+                        "context": {"execution_context_id": "a" * 64},
                         "report_key_hash": hashlib.sha256(
                             b"synthetic-scope-report-key"
                         ).hexdigest(),
@@ -489,6 +494,280 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 worker["business"]["generation"],
                 "completed",
             )
+        if manual_pause:
+            prefix = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
+            user = {
+                "Authorization": "Bearer " + issue_user_token(app.state.settings, "fixture-owner")
+            }
+            original_bootstrap = {
+                "protocol": "bbx.task-runner.v1",
+                "fence": owner["fence"],
+                "control_url": deployment["runner_blackboard_url"]
+                + f"/api/tasks/{tid}/runner-control",
+                "model_proxy_url": deployment["runner_model_proxy_url"],
+                "mcp_gateway_url": f"http://scripted-mcp.invalid/api/tasks/{tid}/mcp",
+                "control_credential_ref": "control",
+                "credential_file": "/var/run/bbx/credentials.json",
+                "journal_root": "/journal",
+                "mcp_metadata_timeout_ms": 15000,
+            }
+            original_input = {
+                "id": str(uuid4()),
+                "filename": "original.txt",
+                "size": 12,
+                "path": "/workspace/shared/inputs/original.txt",
+                "uri": "inputs/original.txt",
+                "sha256": "a" * 64,
+            }
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                task_control = (
+                    await conn.execute(select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid))
+                ).scalar_one()
+                await conn.execute(
+                    update(s.tasks)
+                    .where(s.tasks.c.id == tid)
+                    .values(
+                        domain_context="Original authorized context",
+                        ctf_control={
+                            **task_control,
+                            "completion_requirements": "Original criteria",
+                        },
+                        initial_attachments=[original_input],
+                    )
+                )
+                resource = await native._get(conn, tid)
+                await conn.execute(
+                    update(s.task_runner_resources)
+                    .where(s.task_runner_resources.c.task_id == tid)
+                    .values(
+                        data={
+                            **resource["data"],
+                            "bootstrap": original_bootstrap,
+                            "credentials_issued": True,
+                        }
+                    )
+                )
+                await conn.execute(
+                    insert(s.native_task_budgets).values(
+                        task_id=tid,
+                        accounting_source_id="fixture",
+                        key_name="original-task-key",
+                        key_fingerprint="original-fingerprint",
+                        key_ciphertext="original-secret-reference",
+                        native_resource_id="original-key-id",
+                        publication_state="ready",
+                        config={"threshold_usd": "1.00"},
+                        status_snapshot={"used_high_water_usd": "0.10"},
+                        created_at=stamp,
+                    )
+                )
+
+            async def budget_row(conn, task_id):
+                return (
+                    (
+                        await conn.execute(
+                            select(s.native_task_budgets).where(
+                                s.native_task_budgets.c.task_id == task_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+
+            monkeypatch.setattr(gateway.native, "_budget", budget_row)
+            amount = {"used": "0.05", "exceeded": False}
+            budget_status = {
+                "budgets": [
+                    {
+                        "apiKeyName": "original-task-key",
+                        "name": "task-usd",
+                        "limit": {"unit": "USD", "amount": "1.00"},
+                        "usage": amount,
+                        "window": {"durationMs": None, "expired": False},
+                        "onBudgetExceeded": "Block",
+                    }
+                ]
+            }
+            readback = AsyncMock(return_value=budget_status)
+            monkeypatch.setattr(gateway.native.admin, "budget", readback)
+            before = await commands()
+            pause_request = {"request_id": str(uuid4())}
+            assert (
+                await http.post(prefix + "/pause", headers=SERVICE, json=pause_request)
+            ).status_code == 403
+            response = await http.post(prefix + "/pause", headers=user, json=pause_request)
+            assert response.status_code == 200, response.text
+            paused = response.json()
+            assert set(paused) == {"pause_id", "state", "blocker"} and paused["state"] == "draining"
+            assert (
+                await http.post(prefix + "/pause", headers=user, json=pause_request)
+            ).json() == paused
+            with pytest.raises(HTTPException, match="stopped"):
+                await gateway.catalog(tid, actor.runtime_context.identity)
+            control_only = await act("renew")
+            assert control_only["control_only"] and set(control_only["credentials"]) == {"control"}
+            closing = await commands()
+            assert all(json.loads(c["payload_json"])["kind"] == "close" for c in closing)
+            assert len(closing) == 2
+            for original, current_sdk, previous in (
+                (lead["binding"], lead_sdk, lead_cursor),
+                (binding, sdk, journal),
+            ):
+                old_bid = original["binding_id"]
+                inputs = [
+                    p["input_id"]
+                    for command in before
+                    if (p := json.loads(command["payload_json"]))["kind"] == "input"
+                    and p["binding_id"] == old_bid
+                ]
+                tail = cursor(previous, "paused-tail-" + old_bid, advance=max(1, len(inputs)))
+                applied = [
+                    {"input_id": iid, "entry_id": "entry-" + iid, "seq": previous["seq"] + n}
+                    for n, iid in enumerate(inputs, 1)
+                ]
+                receipt = confirmation(owner, original, previous, tail, applied)
+                receipt["sdk_session_id"] = current_sdk
+                await confirm(http, tid, owner, original, receipt)
+                close = next(
+                    c for c in closing if json.loads(c["payload_json"])["binding_id"] == old_bid
+                )
+                await acknowledge(
+                    http,
+                    tid,
+                    owner,
+                    close,
+                    "closed",
+                    binding_id=old_bid,
+                    sdk_session_id=current_sdk,
+                    sdk_idle=True,
+                    journal_confirmed=True,
+                    cursor=tail,
+                )
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                await conn.execute(
+                    update(s.sandbox_command_records)
+                    .where(s.sandbox_command_records.c.task_id == tid)
+                    .values(
+                        data={
+                            "receipt": "foreground_terminal",
+                            "scope_state": "sealed",
+                            "stdout": "known result",
+                        }
+                    )
+                )
+            await act("activate")
+            waiting = (await http.get(prefix + "/pause", headers=user)).json()
+            assert (
+                waiting["state"] == "draining" and waiting["blocker"] == "original_call_unresolved"
+            )
+            resume_request = {"request_id": str(uuid4()), "pause_id": paused["pause_id"]}
+            assert (
+                await http.post(prefix + "/resume", headers=user, json=resume_request)
+            ).status_code == 409
+            late = await http.post(
+                f"/api/tasks/{tid}/sandbox-host/calls/{unknown_id.removeprefix('tool:')}/result",
+                headers={"x-bbx-sandbox-report": "synthetic-scope-report-key"},
+                json={"result": {"content": [{"type": "text", "text": "Original final output"}]}},
+            )
+            assert late.status_code == 200, late.text
+            await act("activate")
+            assert (await http.get(prefix + "/pause", headers=user)).json()["state"] == "paused"
+            assert (
+                await http.post(prefix + "/resume", headers=user, json=resume_request)
+            ).status_code == 409
+            amount["used"] = "0.20"
+            response = await http.post(prefix + "/resume", headers=user, json=resume_request)
+            assert response.status_code == 200, response.text
+            assert response.json()["state"] == "resuming"
+            assert (
+                await http.post(prefix + "/resume", headers=user, json=resume_request)
+            ).json() == response.json()
+            assert all(call.args == ("original-task-key",) for call in readback.await_args_list)
+            pending = await commands()
+            assert len(pending) == 1
+            replacement = json.loads(pending[0]["payload_json"])["spec"]
+            new_lead = replacement["binding"]
+            assert new_lead["binding_id"] != lead_id
+            assert replacement["model_credential_ref"] == "native-model-" + new_lead["binding_id"]
+            fresh = await act("renew")
+            assert fresh["bootstrap"] == original_bootstrap
+            assert replacement["model_credential_ref"] in fresh["credentials"]
+            await prepared(new_lead, pending[0], "resumed-lead")
+            resumed = await act("activate")
+            assert resumed["data"]["pause_state"] == "resumed"
+            new_worker = resumed["data"]["worker_binding_ids"][0]
+            assert new_worker != bid
+            async with ctf.repo.engine.connect() as conn:
+                task = (
+                    (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid)))
+                    .mappings()
+                    .one()
+                )
+                continued = task["ctf_control"]["native_worker_active"]["member-1"]
+                assert continued["previous_assignment_id"] == binding["assignment_ref"]
+                assert continued["assignment_ref"] != binding["assignment_ref"] and continued[
+                    "work_id"
+                ] == str(cid)
+                assert continued["priority"] == 0 and continued["epoch"] == epoch
+                budget = await budget_row(conn, tid)
+                assert (
+                    budget["key_fingerprint"] == "original-fingerprint"
+                    and budget["native_resource_id"] == "original-key-id"
+                )
+                assert (
+                    budget["config"]["threshold_usd"] == "1.00"
+                    and budget["status_snapshot"]["used_high_water_usd"] == "0.20"
+                )
+                sent = (
+                    (
+                        await conn.execute(
+                            select(s.runner_commands.c.payload_json).where(
+                                s.runner_commands.c.task_id == tid,
+                                s.runner_commands.c.binding_id == new_lead["binding_id"],
+                                s.runner_commands.c.kind == "input",
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert len(sent) == 1
+                continued_input = json.loads(json.loads(sent[0])["content"])
+                assert (
+                    continued_input["task_context"]["goal"]
+                    == "Resolve two self-contained challenges"
+                )
+                assert continued_input["previous_binding_id"] == lead_id
+                assert (
+                    continued_input["task_context"]["domain_context"]
+                    == "Original authorized context"
+                )
+                assert (
+                    continued_input["task_context"]["completion_requirements"]
+                    == "Original criteria"
+                )
+                assert continued_input["task_context"]["initial_input_metadata"] == [original_input]
+                assert (
+                    await conn.execute(
+                        select(func.count())
+                        .select_from(s.ctf_messages)
+                        .where(s.ctf_messages.c.task_id == tid, s.ctf_messages.c.deferred.is_(True))
+                    )
+                ).scalar_one() >= 1
+            stop = await http.post(f"/api/tasks/{tid}/stop", headers=SERVICE)
+            assert stop.status_code == 200, stop.text
+            assert (await http.get(prefix + "/pause", headers=user)).json()["state"] == "stopping"
+            assert (
+                await http.post(
+                    prefix + "/resume",
+                    headers=user,
+                    json={**resume_request, "request_id": str(uuid4())},
+                )
+            ).status_code == 409
+            return
         flags = FlagBoardService(ctf, app.state.settings.agent_token_secret.get_secret_value())
         host = f"/api/tasks/{tid}/sandbox-host"
         headers = {"x-bbx-sandbox-report": "synthetic-scope-report-key"}

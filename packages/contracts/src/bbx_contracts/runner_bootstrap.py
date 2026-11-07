@@ -30,6 +30,26 @@ class NativeRunnerLaunch(ContractModel):
     exchange_rate: FrozenExchangeRate
 
 
+def native_pause_state(task):
+    return ((task.get("ctf_control") or {}).get("native_pause") or {}).get("state")
+
+
+class NativePauseRequest(ContractModel):
+    request_id: UUID
+
+
+class NativeResumeRequest(ContractModel):
+    request_id: UUID
+    pause_id: UUID
+    instruction: str | None = Field(default=None, min_length=1, max_length=1500)
+
+
+class NativePauseStatus(ContractModel):
+    pause_id: UUID | None = None
+    state: Literal["running", "draining", "paused", "resuming", "resumed", "stopping", "stopped"]
+    blocker: str | None = None
+
+
 class NativeRunnerClaim(ContractModel):
     controller_id: RunnerId
     controller_fence: int = Field(ge=1)

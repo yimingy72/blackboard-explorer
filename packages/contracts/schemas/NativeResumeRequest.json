@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "pause_id": {
+      "format": "uuid",
+      "title": "Pause Id",
+      "type": "string"
+    },
+    "instruction": {
+      "anyOf": [
+        {
+          "maxLength": 1500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Instruction"
+    }
+  },
+  "required": [
+    "request_id",
+    "pause_id"
+  ],
+  "title": "NativeResumeRequest",
+  "type": "object"
+}

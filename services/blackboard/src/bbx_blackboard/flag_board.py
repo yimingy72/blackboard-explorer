@@ -24,6 +24,7 @@ from bbx_contracts.challenge_board import (
     native_scope_updates_enabled,
 )
 from bbx_contracts.models import KnowledgeAssignment
+from bbx_contracts.runner_bootstrap import native_pause_state
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -449,6 +450,7 @@ class FlagBoardService(ChallengeBoardService):
                 return {"submission": saved, "send_allowed": False}
             if (
                 task["ctf_control"].get("failure_hold")
+                or native_pause_state(task) in {"draining", "paused", "resuming"}
                 or task["ctf_control"].get("replacement", {}).get("phase", "ready") != "ready"
             ):
                 return {"submission": submission, "send_allowed": False}

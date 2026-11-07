@@ -13,6 +13,80 @@ async function project(h, records) {
   await rename(next, h.config.credential_file);
 }
 
+test("a resumed Lead uses a new native session without replaying the closed Lead", { timeout: 15000 }, async (t) => {
+  let runner;
+  let running;
+  t.after(async () => { await runner?.stop(); await running; });
+  const h = await fixture(t, ["old-lead", "new-lead"]);
+  const oldSpec = h.spec("old-lead");
+  const newSpec = h.spec("new-lead");
+  oldSpec.binding.agent_id = newSpec.binding.agent_id = "lead";
+  newSpec.binding.generation = oldSpec.binding.generation + 1;
+  oldSpec.model_credential_ref = "native-model-lead";
+  oldSpec.mcp_credential_ref = "native-mcp-lead";
+  newSpec.model_credential_ref = "native-model-new-lead";
+  newSpec.mcp_credential_ref = "native-mcp-new-lead";
+  const oldMount = { control: h.credentials.control,
+    [oldSpec.model_credential_ref]: h.credentials["model-old-lead"],
+    [oldSpec.mcp_credential_ref]: h.credentials["mcp-old-lead"] };
+  await project(h, oldMount);
+  h.state.useTools = true;
+  const credentials = new MountedCredentials(h.config.credential_file, "task");
+  runner = new TaskRunner(h.config, new HttpPlatform(h.config, credentials), credentials);
+  running = runner.run();
+  const original = { kind: "prepare", spec: oldSpec };
+  const prepare = h.command(original);
+  const prepared = await waitFor(() => h.state.receipts.find((r) => r.request_id === prepare.request_id && r.status === "prepared"), "original Lead prepared");
+  const oldInput = { kind: "input", binding_id: "old-lead", input_id: "original-input", content: "Run the original tool once.", mode: "follow_up" };
+  const input = h.command(oldInput);
+  await waitFor(() => h.state.receipts.some((r) => r.request_id === input.request_id && r.status === "applied"), "original input applied");
+  await waitFor(() => h.state.toolCalls.length === 1
+    && h.state.modelReceipts.filter((r) => r.model_outcome === "completed").length === 2
+    && runner.sessions.get("old-lead")?.jobs.size === 0, "original Lead tool and answer settled");
+  const confirmed = h.state.journal.get("old-lead").cursor;
+  runner.sessions.get("old-lead").session.sessionManager.appendCustomEntry("test.pause-tail", { complete: true });
+  const close = h.command({ kind: "close", binding_id: "old-lead" });
+  const closed = await waitFor(() => h.state.receipts.find((r) => r.request_id === close.request_id && r.status === "closed"), "original Lead closed");
+  assert.equal(closed.sdk_session_id, prepared.sdk_session_id);
+  assert.equal(closed.journal_confirmed, true);
+  assert.equal(closed.sdk_idle, true);
+  assert.equal(closed.pending_confirmation, null);
+  assert.ok(closed.cursor.offset > confirmed.offset, "close confirms the original native journal tail");
+  assert.ok(h.state.confirmations.some((r) => r.binding.binding_id === "old-lead"
+    && r.sdk_session_id === prepared.sdk_session_id && r.cursor.hash === closed.cursor.hash));
+  const oldPath = join(h.config.journal_root, "old-lead", "session.jsonl");
+  const oldJournal = await readFile(oldPath);
+
+  const resumed = h.command({ kind: "prepare", spec: newSpec });
+  await waitFor(() => runner.preparingSlots.has("new-lead"), "new Lead waiting for its own projected references");
+  await assert.rejects(access(join(h.config.journal_root, "new-lead")), { code: "ENOENT" });
+  assert.equal(h.state.connections.filter((r) => r.bindingId === "new-lead").length, 0);
+  await project(h, { control: h.credentials.control,
+    [newSpec.model_credential_ref]: h.credentials["model-new-lead"],
+    [newSpec.mcp_credential_ref]: h.credentials["mcp-new-lead"] });
+  const replacement = await waitFor(() => h.state.receipts.find((r) => r.request_id === resumed.request_id && r.status === "prepared"), "new Lead prepared");
+  assert.notEqual(replacement.sdk_session_id, prepared.sdk_session_id);
+  assert.deepEqual(replacement.fence, prepared.fence);
+  h.command(original, prepare.request_id);
+  h.command(oldInput, input.request_id);
+  await waitFor(() => [prepare, input].every((command) => h.state.receipts.some((r) => r.request_id === command.request_id
+    && r.status === "rejected" && r.error_code === "binding_unavailable")), "closed Lead refuses old commands");
+  assert.equal(h.state.modelCalls.length, 2, "prepare and old command retries cannot start a model call");
+  assert.equal(h.state.toolCalls.length, 1);
+
+  h.state.useTools = false;
+  const resumeText = "Continue from the current board with this new input.";
+  h.command({ kind: "input", binding_id: "new-lead", input_id: "explicit-resume", content: resumeText, mode: "follow_up" });
+  await waitFor(() => h.state.modelReceipts.filter((r) => r.model_outcome === "completed").length === 3, "explicit input reaches only the new Lead");
+  const calls = h.state.modelCalls.filter((r) => r.bindingId === "new-lead");
+  assert.equal(calls.length, 1);
+  assert.ok(JSON.stringify(calls[0].body.messages).includes(resumeText));
+  assert.ok(!JSON.stringify(calls[0].body.messages).includes(oldInput.content));
+  assert.equal(h.state.toolCalls.length, 1);
+  assert.deepEqual(await readFile(oldPath), oldJournal);
+  h.assertClean();
+});
+
 test("a new binding waits for its projected credentials under a renewable lease", { timeout: 15000 }, async (t) => {
   const h = await fixture(t, ["existing", "late"]);
   h.state.enableRenewals = true;

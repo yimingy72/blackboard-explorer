@@ -13,6 +13,7 @@ from uuid import UUID
 
 import jwt
 from bbx_contracts.runner import RunnerFence
+from bbx_contracts.runner_bootstrap import native_pause_state
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException, Request
@@ -186,7 +187,7 @@ async def validate_runtime_context(conn, tid, context):
     ):
         raise HTTPException(403, "Runtime business context is no longer authorized")
     task = await control._task(conn, tid, live=True)
-    if task["ctf_control"].get("failure_hold"):
+    if task["ctf_control"].get("failure_hold") or native_pause_state(task) == "resuming":
         raise HTTPException(409, "Task admission is paused")
     return binding
 

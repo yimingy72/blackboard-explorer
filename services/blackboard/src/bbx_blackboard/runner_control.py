@@ -23,6 +23,7 @@ from bbx_contracts.runner import (
     runner_json_text,
     runner_payload_digest,
 )
+from bbx_contracts.runner_bootstrap import native_pause_state
 from bbx_contracts.runner_control import (
     RunnerBindingRegistration,
     RunnerCommandSubmission,
@@ -89,6 +90,7 @@ class RunnerControl:
             task["deleting"]
             or task["ctf_control"].get("native_stop_requested")
             or (task["ctf_control"].get("native_budget_hold") and not allow_held)
+            or (native_pause_state(task) in {"draining", "paused"} and not allow_held)
             or task["status"] in TERMINAL
             or task["ctf_control"]["phase"]
             in {"closing", "failure_hold", "failed", "stopped", "finished"}
@@ -865,7 +867,12 @@ class RunnerControl:
                 )
                 if not closing:
                     task = await self._task(conn, tid, live=True, allow_held=True)
-                held = closing or bool(task["ctf_control"].get("native_budget_hold"))
+                pause = native_pause_state(task)
+                held = (
+                    closing
+                    or bool(task["ctf_control"].get("native_budget_hold"))
+                    or pause in {"draining", "paused"}
+                )
                 owner = await self._identity(conn, tid, identity)
                 self._owner_live(owner)
                 recheck_at = min(owner["expires_at"], owner["hard_deadline"])
@@ -997,6 +1004,7 @@ class RunnerControl:
                                     ),
                                     and_(
                                         s.runner_commands.c.kind == "input",
+                                        literal(pause != "resuming"),
                                         s.runner_commands.c.status.in_(["queued", "accepted"]),
                                         s.runner_bindings.c.status.in_(["registered", "prepared"]),
                                         s.runner_bindings.c.owner_epoch == owner["epoch"],
@@ -1129,7 +1137,7 @@ class RunnerControl:
                 "sdk_session_id": body.sdk_session_id,
                 "cursor": cursor,
             }
-            if not live:
+            if not live and not await self._paused_journal_tail(conn, tid, owner, value):
                 known = (
                     await conn.execute(
                         select(s.runner_receipts.c.body_text).where(
@@ -1264,6 +1272,59 @@ class RunnerControl:
             return await self._receipt(
                 conn, tid, owner["epoch"], "journal", body.request_id, text, sha, receipt, bid
             )
+
+    async def _paused_journal_tail(self, conn, tid, owner, binding):
+        task = await self._task(conn, tid)
+        control = task["ctf_control"]
+        if (
+            native_pause_state(task) != "draining"
+            or task["status"] != "running"
+            or task["deleting"]
+            or control.get("native_stop_requested")
+            or control.get("native_budget_hold")
+            or control.get("failure_hold")
+            or control.get("phase") != "running"
+            or binding["status"] != "closing"
+            or not binding["sdk_session_id"]
+            or not binding["cursor"]
+            or binding["owner_epoch"] != owner["epoch"]
+        ):
+            return False
+        try:
+            self._owner_live(owner)
+        except HTTPException:
+            return False
+        resource = (
+            (
+                await conn.execute(
+                    select(s.task_runner_resources).where(
+                        s.task_runner_resources.c.task_id == tid,
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if not resource or resource["desired"] != "active":
+            return False
+        snapshot = resource["data"].get("pause_snapshot", {})
+        if (
+            snapshot.get("pause_id") != control["native_pause"]["pause_id"]
+            or snapshot.get("owner_epoch") != owner["epoch"]
+            or snapshot.get("runner_pod_uid") != owner["pod_uid"]
+            or binding["id"] not in snapshot.get("binding_ids", [])
+        ):
+            return False
+        close_id = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{owner['epoch']}:{binding['id']}"))
+        close = (
+            await conn.execute(
+                select(s.runner_commands.c.status).where(
+                    s.runner_commands.c.task_id == tid,
+                    s.runner_commands.c.id == command_key(owner["epoch"], close_id),
+                )
+            )
+        ).scalar_one_or_none()
+        return close == "queued"
 
     async def _check_message(self, conn, tid, command):
         proof = command["message_proof"]

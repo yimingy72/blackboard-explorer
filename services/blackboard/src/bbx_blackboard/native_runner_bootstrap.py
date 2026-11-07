@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -19,17 +20,22 @@ from bbx_contracts.runner import (
 from bbx_contracts.runner_bootstrap import (
     RUNTIME_FENCE_SEQUENCE,
     RUNTIME_LOCK_KEY,
+    NativePauseRequest,
+    NativePauseStatus,
+    NativeResumeRequest,
     NativeRunnerAction,
     NativeRunnerClaim,
     NativeRunnerLaunch,
+    native_pause_state,
 )
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
 
-from bbx_blackboard.auth import require_service
+from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
+from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
@@ -78,6 +84,7 @@ class NativeRunnerBootstrap:
 
         self.retirement = NativeResourceRetirement(self)
         self.workers = NativeWorkers(self)
+        self.pause_control = NativePause(self)
 
     async def _get(self, conn, tid):
         found = (
@@ -502,7 +509,9 @@ class NativeRunnerBootstrap:
 
     async def _lead(self, conn, tid, record):
         member = await row(conn, s.ctf_members, tid, "lead")
-        turn_id = identity_id(record["operation_id"], "lead-turn")
+        turn_id = record.get("data", {}).get("lead_turn_id") or identity_id(
+            record["operation_id"], "lead-turn"
+        )
         if member["current_turn_id"] is not None:
             turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
             if (
@@ -637,7 +646,9 @@ class NativeRunnerBootstrap:
                 data = dict(record["data"])
                 if ready and not stopping:
                     await self._lead(conn, tid, record)
-                    data["lead_turn_id"] = identity_id(record["operation_id"], "lead-turn")
+                    data.setdefault(
+                        "lead_turn_id", identity_id(record["operation_id"], "lead-turn")
+                    )
                 state = "stopping" if stopping else record["state"]
                 if not ready and data.get("credentials_issued"):
                     state = "unknown"
@@ -896,14 +907,13 @@ class NativeRunnerBootstrap:
                 .where(s.runner_owners.c.task_id == tid, s.runner_owners.c.epoch == owner["epoch"])
                 .values(expires_at=expires)
             )
-            token_expiry = runner_credential_expiry(dict(owner))
+            owner = {**owner, "expires_at": expires}
+            token_expiry = runner_credential_expiry(owner)
             control = {
                 "audience": "runner-control",
                 "task_id": str(tid),
                 "expires_at": token_expiry,
-                "token": issue_runner_control_token(
-                    self.settings, dict(owner), expires_at=token_expiry
-                ),
+                "token": issue_runner_control_token(self.settings, owner, expires_at=token_expiry),
             }
             await self._set(
                 conn,
@@ -934,7 +944,7 @@ class NativeRunnerBootstrap:
             ):
                 raise HTTPException(409, "Native environment revision changed")
             data = dict(record["data"])
-            held = self._held(task)
+            held = self._held(task) or native_pause_state(task) in {"draining", "paused"}
             if not held and data.get("worker_spec") and data.get("bootstrap"):
                 owner = await self.control._current_owner(conn, tid)
                 try:
@@ -1079,7 +1089,7 @@ class NativeRunnerBootstrap:
         )
         async with self.repo.engine.begin() as conn:
             current, task = await self._checked(conn, tid, body, live=True)
-            if self._held(task):
+            if self._held(task) or native_pause_state(task) in {"draining", "paused"}:
                 raise HTTPException(409, "Task admission is held")
             owner = await self.control._current_owner(conn, tid)
             if (
@@ -1087,7 +1097,10 @@ class NativeRunnerBootstrap:
                 or owner["pod_uid"] != current["observation"]["runner"]["pod_uid"]
             ):
                 raise HTTPException(409, "Native credential publication owner changed")
-            await self.control._binding(conn, tid, current["data"]["binding_id"], owner, live=True)
+            lead = await self.control._binding(
+                conn, tid, current["data"]["binding_id"], owner, live=True
+            )
+            lead_spec = json.loads(lead["payload_json"])["spec"]
             bootstrap = {
                 "protocol": PROTOCOL,
                 "fence": fence(owner),
@@ -1113,8 +1126,8 @@ class NativeRunnerBootstrap:
                     "expires_at": expires,
                     "token": issue_runner_control_token(self.settings, owner, expires_at=expires),
                 },
-                "native-model-lead": scoped["model"],
-                "native-mcp-lead": scoped["mcp"],
+                lead_spec["model_credential_ref"]: scoped["model"],
+                lead_spec["mcp_credential_ref"]: scoped["mcp"],
             }
             retained = []
             for assignment in task["ctf_control"].get("native_worker_active", {}).values():
@@ -1155,6 +1168,9 @@ class NativeRunnerBootstrap:
     async def _activate(self, tid, body):
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
+            if native_pause_state(task) in {"draining", "paused"}:
+                await self.pause_control.progress(conn, tid, record, task)
+                return {**self._public(await self._get(conn, tid)), "control_only": True}
             data = dict(record["data"])
             held = self._held(task)
             if held and not data.get("worker_spec"):
@@ -1189,12 +1205,16 @@ class NativeRunnerBootstrap:
                 return self._public(record)
             first = not data.get("activated")
             if first:
+                control = {**task["ctf_control"], "phase": "running"}
+                if native_pause_state(task) == "resuming":
+                    control["native_pause"] = {**control["native_pause"], "state": "resumed"}
+                    data["pause_state"] = "resumed"
                 await conn.execute(
                     update(s.tasks)
                     .where(s.tasks.c.id == tid)
                     .values(
                         status="running",
-                        ctf_control={**task["ctf_control"], "phase": "running"},
+                        ctf_control=control,
                         started_at=task["started_at"] or instant(),
                         run_started=True,
                     )
@@ -1281,6 +1301,30 @@ async def bootstrap_status(request: Request, response: Response, task_id: UUID):
     require_service(request)
     response.headers["Cache-Control"] = "no-store"
     return await service(request).view(task_id)
+
+
+def _user_pause(request: Request, response: Response):
+    if require_user_or_service(request).kind != "user":
+        raise HTTPException(403, "Manual pause and continuation require a user token")
+    response.headers["Cache-Control"] = "no-store"
+    return service(request).pause_control
+
+
+@router.get(PREFIX + "/pause", response_model=NativePauseStatus)
+async def user_pause_status(request: Request, response: Response, task_id: UUID):
+    return await _user_pause(request, response).status(task_id)
+
+
+@router.post(PREFIX + "/pause", response_model=NativePauseStatus)
+async def user_pause(request: Request, response: Response, task_id: UUID, body: NativePauseRequest):
+    return await _user_pause(request, response).pause(task_id, body)
+
+
+@router.post(PREFIX + "/resume", response_model=NativePauseStatus)
+async def user_resume(
+    request: Request, response: Response, task_id: UUID, body: NativeResumeRequest
+):
+    return await _user_pause(request, response).resume(task_id, body)
 
 
 @router.post(PREFIX + "/claim")
