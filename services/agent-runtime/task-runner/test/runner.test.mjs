@@ -1,11 +1,95 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { decodeCommand, digest, jsonText } from "../src/protocol.mjs";
 import { HttpPlatform, MountedCredentials } from "../src/platform.mjs";
 import { TaskRunner } from "../src/runner.mjs";
 import { deferred, fixture, waitFor } from "./support.mjs";
+
+async function project(h, records) {
+  const next = `${h.config.credential_file}.next`;
+  await writeFile(next, JSON.stringify(records));
+  await rename(next, h.config.credential_file);
+}
+
+test("a new binding waits for its projected credentials under a renewable lease", { timeout: 15000 }, async (t) => {
+  const h = await fixture(t, ["existing", "late"]);
+  h.state.enableRenewals = true;
+  const records = { ...h.credentials };
+  delete records["model-late"]; delete records["mcp-late"];
+  await project(h, records);
+  const credentials = new MountedCredentials(h.config.credential_file, "task");
+  const runner = new TaskRunner(h.config, new HttpPlatform(h.config, credentials), credentials);
+  const running = runner.run();
+  t.after(async () => { await runner.stop(); await running; });
+  h.command({ kind: "prepare", spec: h.spec("existing") });
+  const payload = { kind: "prepare", spec: h.spec("late") };
+  const late = h.command(payload);
+  const waiting = await waitFor(() => runner.preparingSlots.get("late"), "late binding acquired");
+  const initialExpiry = waiting.lease.lease_expires_at;
+  await waitFor(() => runner.sessions.has("existing"), "existing session prepared");
+  h.command({ kind: "input", binding_id: "existing", input_id: "existing-input", content: "Continue.", mode: "follow_up" });
+  await waitFor(() => h.state.modelCalls.some((call) => call.bindingId === "existing"), "existing session continues");
+  records["model-late"] = h.credentials["model-late"];
+  await project(h, records);
+  await waitFor(() => Date.now() / 1000 > initialExpiry + 0.1, "wait crosses the original lease", 6500);
+  assert.ok(waiting.lease.lease_expires_at > initialExpiry);
+  assert.equal(waiting.sdkSessionId, undefined);
+  await assert.rejects(access(join(h.config.journal_root, "late")), { code: "ENOENT" });
+  assert.equal(h.state.connections.filter((item) => item.bindingId === "late").length, 0);
+
+  await project(h, h.credentials);
+  await waitFor(() => h.state.receipts.some((r) => r.request_id === late.request_id && r.status === "prepared"), "projected binding prepared");
+  h.command(payload, late.request_id);
+  await waitFor(() => h.state.receipts.filter((r) => r.request_id === late.request_id && r.status === "prepared").length === 2, "same prepare receipt replayed");
+  assert.equal(h.state.leases.filter((lease) => lease.binding.binding_id === "late").length, 1);
+  assert.equal(h.state.connections.filter((item) => item.bindingId === "late").length, 1);
+  h.assertClean();
+});
+
+test("prepare rejects conflicting or expired mounts and stops in-flight work before SDK creation", { timeout: 15000 }, async (t) => {
+  const ids = ["closing", "conflict", "expired", "aborting", "shutdown"];
+  const h = await fixture(t, ids);
+  h.state.enableRenewals = true;
+  const records = { ...h.credentials, "mcp-conflict": { ...h.credentials["mcp-conflict"], binding_id: "different" } };
+  for (const id of ["closing", "expired"]) delete records[`mcp-${id}`];
+  delete records["model-conflict"];
+  await project(h, records);
+  const credentials = new MountedCredentials(h.config.credential_file, "task");
+  const runner = new TaskRunner(h.config, new HttpPlatform(h.config, credentials), credentials);
+  const running = runner.run();
+  t.after(async () => { await runner.stop(); await running; });
+  const closing = h.command({ kind: "prepare", spec: h.spec("closing") });
+  const conflict = h.command({ kind: "prepare", spec: h.spec("conflict") });
+  const expired = h.command({ kind: "prepare", spec: h.spec("expired") });
+  const rejected = (command) => h.state.receipts.some((r) => r.request_id === command.request_id && r.status === "rejected");
+  await waitFor(() => runner.preparingSlots.has("closing") && runner.preparingSlots.has("expired"), "bindings wait on projection");
+  h.state.enableRenewals = false;
+  await waitFor(() => rejected(conflict), "conflict is rejected even while another reference is missing", 1500);
+  const close = h.command({ kind: "close", binding_id: "closing" });
+  const closed = await waitFor(() => h.state.receipts.find((r) => r.request_id === close.request_id && r.status === "closed"), "close cancels projection wait", 1500);
+  assert.equal(closed.journal_confirmed, false);
+  await waitFor(() => rejected(closing) && rejected(expired), "closed and expired prepares are rejected", 6500);
+
+  const abortGate = deferred(), shutdownGate = deferred();
+  h.state.acquireGates = new Map([["aborting", abortGate], ["shutdown", shutdownGate]]);
+  const aborting = h.command({ kind: "prepare", spec: h.spec("aborting") });
+  await waitFor(() => h.state.leases.some((lease) => lease.binding.binding_id === "aborting"), "acquire is in flight");
+  h.command({ kind: "abort", binding_id: "aborting" });
+  await waitFor(() => runner.abortedBindings.has("aborting"), "abort marks the binding");
+  abortGate.resolve();
+  await waitFor(() => rejected(aborting), "late acquire cannot create an aborted slot");
+  h.command({ kind: "prepare", spec: h.spec("shutdown") });
+  await waitFor(() => h.state.leases.some((lease) => lease.binding.binding_id === "shutdown"), "shutdown acquire is in flight");
+  await runner.stop();
+  await running;
+  shutdownGate.resolve();
+  assert.equal(h.state.connections.length, 0);
+  assert.equal(runner.preparingSlots.size, 0);
+  for (const id of ids) await assert.rejects(access(join(h.config.journal_root, id)), { code: "ENOENT" });
+  h.assertClean();
+});
 
 test("trusted MCP aliases reject missing declarations, ambiguous catalogs and foreign name lookalikes", async (t) => {
   const ids = ["missing", "keys", "duplicate", "allowed", "ambiguous", "foreign", "raw"];

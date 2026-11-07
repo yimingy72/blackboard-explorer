@@ -187,6 +187,48 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     assert json_value(sent[-1][1]["data"]["runner-bootstrap.json"]) == bootstrap
     assert sent[-1][1]["data"]["ca.pem"] == before["ca.pem"]
 
+    old_mcp = {
+        "audience": "mcp",
+        "task_id": observation["task_id"],
+        "binding_id": "draining",
+        "expires_at": 4102444800,
+        "token": "original-scoped-mcp",
+    }
+    old_records = {
+        **renewed,
+        "native-mcp-draining": old_mcp,
+        "native-model-draining": {**old_mcp, "audience": "model", "expires_at": -1},
+        "native-mcp-unrelated": {**old_mcp, "binding_id": "unrelated"},
+    }
+    secret["data"] = {
+        **sent[-1][1]["data"],
+        "credentials.json": base64.b64encode(json.dumps(old_records).encode()).decode(),
+    }
+    replacement = {
+        **renewed,
+        "native-mcp-replacement": {**old_mcp, "binding_id": "replacement", "token": "new-b"},
+    }
+    await adapter.publish_mount(
+        observation, bootstrap, replacement, retain_binding_ids=["draining", "not-mounted"]
+    )
+    assert json_value(sent[-1][1]["data"]["credentials.json"]) == {
+        **replacement,
+        "native-mcp-draining": old_mcp,
+    }
+    with pytest.raises(ResourceUnknown, match="cannot be issued again"):
+        await adapter.publish_mount(
+            observation,
+            bootstrap,
+            {**renewed, "native-mcp-draining": {**old_mcp, "token": "new-draining-token"}},
+            retain_binding_ids=["draining"],
+        )
+    old_records["native-mcp-draining"] = {**old_mcp, "binding_id": "wrong-binding"}
+    secret["data"]["credentials.json"] = base64.b64encode(json.dumps(old_records).encode()).decode()
+    with pytest.raises(ResourceUnknown, match="credential identity changed"):
+        await adapter.publish_mount(
+            observation, bootstrap, renewed, retain_binding_ids=["draining"]
+        )
+
 
 def json_value(value):
     import json

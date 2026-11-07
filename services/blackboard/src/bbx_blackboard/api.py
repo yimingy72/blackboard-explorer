@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import anyio
-from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract
+from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract, native_dispatch_enabled
 from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate, resolve_ctf_options
 from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
 from bbx_contracts.models import (
@@ -683,6 +683,9 @@ def create_app(
                 task = await _task(request, tid)
                 mode = task.get("mode", "blackboard")
                 request.state.task_mode = mode
+                request.state.native_worker_dispatch = mode == "ctf" and native_dispatch_enabled(
+                    task
+                )
                 request.state.business_contract = business_contract(task)
                 suffix = (match[2] or "") if match else "/evidence"
                 if identity.kind == "agent" and identity.mode != mode:

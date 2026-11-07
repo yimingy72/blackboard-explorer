@@ -95,6 +95,8 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
 @router.post("/runtime/{operation}")
 async def runtime(request: Request, task_id: UUID, operation: str, body: dict[str, Any]) -> Any:
     require_service(request)
+    if getattr(request.state, "native_worker_dispatch", False) and operation != "lookup_artifact":
+        raise HTTPException(409, "Native Workers require the original Runner control path")
     if operation == "start" and body:
         raise HTTPException(422, "Legacy start does not accept Runner capability assertions")
     if getattr(request.state, "business_contract", BOARD_LEGACY) != BOARD_LEGACY and operation in {

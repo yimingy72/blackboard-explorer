@@ -3553,7 +3553,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.native_worker.assigned" | "ctf.native_worker.released" | "ctf.native_worker.stopped" | "ctf.native_worker.cleanup_changed" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
             /** Version */
             version: number;
         };

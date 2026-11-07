@@ -584,6 +584,13 @@ class CtfService(
         from bbx_contracts.ctf import CtfTaskSpec
 
         spec = CtfTaskSpec.model_validate(spec)
+        native_workers = (
+            business_contract == BOARD_CONTRACT and spec.ctf_options.dispatch_mode == "automatic"
+        )
+        if native_workers:
+            require(
+                1 <= spec.ctf_options.max_teammates <= 20, "Native Tasks allow 1 to 20 Worker seats"
+            )
         require(
             business_contract in {BOARD_LEGACY, BOARD_CONTRACT}, "Unsupported business contract"
         )
@@ -613,7 +620,8 @@ class CtfService(
         )
         if business_contract == BOARD_CONTRACT:
             fields["ctf_control"].update(
-                business_contract=BOARD_CONTRACT, business_tools=business_manifest()
+                business_contract=BOARD_CONTRACT,
+                business_tools=business_manifest(automatic=native_workers),
             )
         async with self.repo.engine.begin() as conn:
             if input_group_id is not None:
@@ -676,6 +684,16 @@ class CtfService(
                 ],
             )
             await self._member(conn, tid, "lead", "Lead", str(uuid4()), "lead")
+            if native_workers:
+                for index in range(1, spec.ctf_options.max_teammates + 1):
+                    await self._member(
+                        conn,
+                        tid,
+                        f"member-{index}",
+                        f"Worker {index}",
+                        str(uuid5(NAMESPACE_URL, f"native-worker-seat:{tid}:{index}")),
+                        "teammate",
+                    )
             for body in initial_input_parts(fields):
                 await self._message(conn, tid, "user", "lead", body, str(uuid4()), "instruction")
         return tid
@@ -2827,7 +2845,11 @@ class CtfService(
 
     async def finish_turn(self, tid, agent_id, turn_id, generation, end_reason, answer=""):
         async with self.repo.engine.begin() as conn:
-            await self._task(conn, tid)
+            task = await self._task(conn, tid)
+            if agent_id in task["ctf_control"].get("native_worker_active", {}):
+                raise HTTPException(
+                    409, "Native Worker settlement requires its original close proof"
+                )
             turn = await row(conn, s.ctf_turns, tid, str(turn_id))
             require(
                 turn["agent_id"] == agent_id and turn["generation"] == generation,

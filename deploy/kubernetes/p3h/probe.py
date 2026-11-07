@@ -93,8 +93,8 @@ async def forward(service, local, remote, *, namespace=SYSTEM, kind="service", d
         await asyncio.gather(*drains, return_exceptions=True)
 
 
-def native_gateway(document, files):
-    labels = {"bbx.dev/owner": "p3h", "bbx.dev/component": "native-mcp-gateway"}
+def native_gateway(document, files, *, name=SERVICE, owner="p3h"):
+    labels = {"bbx.dev/owner": owner, "bbx.dev/component": "native-mcp-gateway"}
 
     def apply(kind, name, *, api="v1", **value):
         raw = kubectl("get", kind, name, "-n", SYSTEM, "--ignore-not-found", "-o", "json")
@@ -114,13 +114,13 @@ def native_gateway(document, files):
     contents = {**files, "native.json": json.dumps(document).encode()}
     secret = apply(
         "Secret",
-        SERVICE,
+        name,
         type="Opaque",
         data={k: base64.b64encode(v).decode() for k, v in contents.items()},
     )
     pod = apply(
         "Pod",
-        SERVICE,
+        name,
         spec={
             "restartPolicy": "Never",
             "automountServiceAccountToken": False,
@@ -141,14 +141,14 @@ def native_gateway(document, files):
                 }
             ],
             "volumes": [
-                {"name": "config", "secret": {"secretName": SERVICE}},
+                {"name": "config", "secret": {"secretName": name}},
                 {"name": "state", "emptyDir": {}},
             ],
         },
     )
     service = apply(
         "Service",
-        SERVICE,
+        name,
         spec={
             "selector": labels,
             "ports": [
@@ -160,7 +160,13 @@ def native_gateway(document, files):
     return {"secret_uid": secret, "pod_uid": pod, "service_uid": service}
 
 
-async def main(candidate, resume, stop_only=False, fresh=False, retire_only=False):
+async def main(candidate, resume, stop_only=False, fresh=False, retire_only=False, *, workers=None):
+    if workers is not None and (STATE != workers.state or fresh or retire_only):
+        raise RuntimeError("P4a must use its own private fixture state")
+    prefix = "p4a" if workers is not None else "p3h"
+    service_name = f"bbx-{prefix}-gateway"
+    gateway_dns = f"{service_name}.{SYSTEM}.svc.cluster.local"
+    context = kubectl("config", "current-context").strip()
     for directory in reversed(
         [
             "packages/contracts/src",
@@ -233,7 +239,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             raise RuntimeError("Original attempt exists; reconcile with --resume")
         state = {
             "id": uuid4().hex,
-            "source_id": "bbx-p3h-" + uuid4().hex,
+            "source_id": f"bbx-{prefix}-" + uuid4().hex,
             "ports": {
                 p: free_port()
                 for p in ["bb", "tls", "provider", "proxy", "server", "ingress", "admin", "llm"]
@@ -256,7 +262,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 "run",
                 "--rm",
                 "--name",
-                "bbx-p3h-host-address",
+                f"bbx-{prefix}-host-address",
                 "--network",
                 "none",
                 "--add-host",
@@ -268,7 +274,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             ],
             text=True,
         ).strip()
-        shared["certificates"](directory, state["host_ip"], dns_names=(DNS,))
+        shared["certificates"](directory, state["host_ip"], dns_names=(gateway_dns,))
         private_json(state_path, state)
     ports = state["ports"]
     ip = state["host_ip"]
@@ -279,7 +285,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
     else:
         pg = d.containers.run(
             "pgvector/pgvector:pg16",
-            name="bbx-p3h-pg-" + state["id"][:8],
+            name=f"bbx-{prefix}-pg-" + state["id"][:8],
             environment={
                 "POSTGRES_USER": "p3h",
                 "POSTGRES_PASSWORD": state["pg_password"],
@@ -351,10 +357,10 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             native_gateway_accounting_source_id=state["source_id"],
             native_gateway_admin_url=f"http://127.0.0.1:{ports['admin']}",
             native_gateway_data_url=llm,
-            native_gateway_catalog_revision="p3h-synthetic-catalog-v1",
+            native_gateway_catalog_revision=f"{prefix}-synthetic-catalog-v1",
             runner_mcp_signing_key=SecretStr((directory / "mcp-key.pem").read_text()),
             runner_mcp_backend_token=SecretStr(state["backend_key"]),
-            native_mcp_gateway_url=f"https://{DNS}:3000",
+            native_mcp_gateway_url=f"https://{gateway_dns}:3000",
             native_mcp_backend_url=f"http://{ip}:{ports['bb']}",
             native_mcp_jwks_file="/probe/jwks.json",
             native_mcp_backend_token_file="/probe/backend-token",
@@ -381,7 +387,11 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             body = await request.json()
             names = {v["function"]["name"] for v in body.get("tools", [])}
             index = sum(m.get("role") == "tool" for m in body["messages"])
-            tool = tool_plan[index] if index < len(tool_plan) else None
+            tool = (
+                await workers.tool(body, names)
+                if workers is not None
+                else (tool_plan[index] if index < len(tool_plan) else None)
+            )
             if tool and tool[0] not in names:
                 raise RuntimeError("Canonical Sandbox tool is missing")
             sends.append(tool[0] if tool else "answer")
@@ -393,7 +403,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                         "tool_calls": [
                             {
                                 "index": 0,
-                                "id": f"p3h-tool-{index}",
+                                "id": f"{prefix}-tool-{index}",
                                 "type": "function",
                                 "function": {"name": tool[0], "arguments": json.dumps(tool[1])},
                             }
@@ -422,7 +432,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                         "data: "
                         + json.dumps(
                             {
-                                "id": "synthetic-p3h",
+                                "id": f"synthetic-{prefix}",
                                 "model": "bounded-fake",
                                 "object": "chat.completion.chunk",
                                 "created": 1,
@@ -452,18 +462,21 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 ca,
                 f"127.0.0.1:{ports['ingress']}",
                 input_state=KUBE_STATE,
-                owner="p3h",
-                server_image="bbx-p3h-server-g7:20261107",
+                owner=prefix,
+                server_image=f"bbx-{prefix}-server-g7:20261107",
                 environment_revision=images["environment_revision"],
             )
             await stack.enter_async_context(forward("bbx-p3f-server", ports["server"], 80))
             await stack.enter_async_context(forward("bbx-p3f-ingress", ports["ingress"], 80))
             stage = "native gateway in cluster"
-            load = runpy.run_path(str(HERE / "load_images.py"), run_name="p3h_native_image")["load"]
-            subprocess.run(
-                ["docker", "tag", NATIVE_IMAGE, NATIVE_TAG], check=True, capture_output=True
-            )
-            await asyncio.to_thread(load, NATIVE_TAG, NATIVE_IMAGE.split("@", 1)[1])
+            if workers is None:
+                load = runpy.run_path(str(HERE / "load_images.py"), run_name="p3h_native_image")[
+                    "load"
+                ]
+                subprocess.run(
+                    ["docker", "tag", NATIVE_IMAGE, NATIVE_TAG], check=True, capture_output=True
+                )
+                await asyncio.to_thread(load, NATIVE_TAG, NATIVE_IMAGE.split("@", 1)[1])
             gateway = {
                 "config": {
                     "adminAddr": "0.0.0.0:15000",
@@ -527,15 +540,26 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     "leaf.pem": leaf.read_bytes(),
                     "leaf-key.pem": key.read_bytes(),
                 },
+                name=service_name,
+                owner=prefix,
             )
             kubectl(
-                "-n", SYSTEM, "wait", "--for=condition=Ready", "pod/" + SERVICE, "--timeout=90s"
+                "-n",
+                SYSTEM,
+                "wait",
+                "--for=condition=Ready",
+                "pod/" + service_name,
+                "--timeout=90s",
             )
             await stack.enter_async_context(
-                forward(SERVICE, ports["admin"], 15000, diagnostics=evidence["forward_diagnostics"])
+                forward(
+                    service_name, ports["admin"], 15000, diagnostics=evidence["forward_diagnostics"]
+                )
             )
             await stack.enter_async_context(
-                forward(SERVICE, ports["llm"], 4000, diagnostics=evidence["forward_diagnostics"])
+                forward(
+                    service_name, ports["llm"], 4000, diagnostics=evidence["forward_diagnostics"]
+                )
             )
             native = app.state.runner_gateway.native
             await native.admin.close()
@@ -584,14 +608,18 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 "source_id": state["source_id"],
                 "cluster_uid": cluster["cluster_uid"],
                 "kubeconfig": str(CONFIG),
-                "context": "kind-bbx-p3f-k8s",
+                "context": context,
                 "storage_class": "standard",
                 "system_namespace": SYSTEM,
                 "ca_file": str(ca),
                 "environment_revision": images["environment_revision"],
-                "runner_image": images["images"]["bbx-p3h-runner:20261107"]["reference"],
-                "sandbox_image": images["images"]["bbx-p3g-sandbox:20261107"]["reference"],
-                "sandbox_host_image": images["images"]["bbx-p3h-sandbox-host:20261107"][
+                "runner_image": images["images"][f"bbx-{prefix}-runner:20261107"]["reference"],
+                "sandbox_image": images["images"][
+                    "bbx-p4a-sandbox:20261107"
+                    if workers is not None
+                    else "bbx-p3g-sandbox:20261107"
+                ]["reference"],
+                "sandbox_host_image": images["images"][f"bbx-{prefix}-sandbox-host:20261107"][
                     "reference"
                 ],
                 "runner_profile": "node-sandbox-host-v1",
@@ -709,7 +737,9 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                         "mode": "ctf",
                         "goal": "Run the local Sandbox receipt only",
                         "budget": {"max_cost": "1", "max_minutes": 8},
-                        "ctf_options": {"max_teammates": 1},
+                        "ctf_options": {"max_teammates": 1}
+                        if workers is None
+                        else {"max_teammates": 2, "dispatch_mode": "automatic"},
                         "agent_profile": profile_name,
                     },
                     profile_version=profile["version"],
@@ -931,7 +961,11 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     return None
 
                 cmd = None
-                if not stop_only:
+                if workers is not None and not stop_only:
+                    stage = "P4a Worker overlap and original Assignment replacement"
+                    await workers.verify(tid, app, engine, wait, evidence)
+                    completed = all(evidence["checks"].values())
+                elif not stop_only:
                     bootstrap, cmd = await wait(ready, 240)
                     output = cmd["data"]["stdout"]
                     assert "p3h-command uid=10000" in output and "p3h-file" in output

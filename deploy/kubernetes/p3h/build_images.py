@@ -18,7 +18,7 @@ TAGS = {
 }
 
 
-def main(candidate):
+def main(candidate, *, tags=TAGS, sandbox_tag="bbx-p3g-sandbox:20261107"):
     owned_cluster()
     if candidate == Path(__file__).resolve().parents[3] or not (candidate / "uv.lock").is_file():
         raise RuntimeError("A clean reviewed candidate is required")
@@ -96,7 +96,7 @@ def main(candidate):
         ("runner", runner),
         ("server", KUBE_STATE / "server-context"),
     ]:
-        tag = TAGS[role]
+        tag = tags[role]
         with (STATE / f"build-{role}.log").open("w") as log:
             subprocess.run(
                 ["docker", "build", "--platform", "linux/amd64", "-t", tag, str(path)],
@@ -110,9 +110,9 @@ def main(candidate):
         loader["load"](tag, digest)
         images[tag] = {"digest": digest, "reference": tag.rsplit(":", 1)[0] + "@" + digest}
     inherited = json.loads((KUBE_STATE / "built-images.json").read_text())
-    sandbox = "bbx-p3g-sandbox:20261107"
+    sandbox = sandbox_tag
     digest = inherited["images"][sandbox]
-    images[sandbox] = {"digest": digest, "reference": "bbx-p3g-sandbox@" + digest}
+    images[sandbox] = {"digest": digest, "reference": sandbox.rsplit(":", 1)[0] + "@" + digest}
     identity = json.loads((KUBE_STATE / "server-context/identity.json").read_text())
     receipt = {
         "candidate": str(candidate),

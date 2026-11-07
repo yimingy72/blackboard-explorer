@@ -71,18 +71,21 @@ export class TaskRunner {
     const payload = command.payload;
     if (payload.kind === "prepare") {
       const id = payload.spec.binding.binding_id;
-      if (this.closedBindings.has(id)) throw new Error("The binding is closed");
+      this.controller.signal.throwIfAborted();
+      if (this.closedBindings.has(id) || this.abortedBindings.has(id)) throw new Error("The binding is closed");
       let slot = this.sessions.get(id);
       let preparing = this.preparing.get(id);
       if (!slot && !preparing) {
         preparing = (async () => {
-          const lease = await this.platform.acquire(command);
+          const lease = await this.platform.acquire(command, this.controller.signal);
           const marker = this.closedBindings.get(id);
           if (marker) {
             marker.identity = { binding: payload.spec.binding, request_id: lease.request_id, sdk_session_id: lease.sdk_session_id ?? null };
             marker.summary = { ...marker.summary, sdk_session_id: lease.sdk_session_id ?? null, cursor: lease.cursor ?? null };
             throw new Error("The binding was closed during prepare");
           }
+          this.controller.signal.throwIfAborted();
+          if (this.abortedBindings.has(id)) throw new Error("The binding was aborted during prepare");
           const slot = new RunnerSession(this.config, payload.spec, command.payload_digest, lease, this.platform, this.credentials,
             (slot, cursor) => this.applications(slot, cursor));
           this.preparingSlots.set(id, slot);
@@ -158,7 +161,10 @@ export class TaskRunner {
       this.enqueue(this.receipt(command, "rejected", { binding_id: payload.binding_id, error_code: "binding_unavailable" }));
       return;
     }
-    if (payload.kind === "abort") this.abortedBindings.add(payload.binding_id);
+    if (payload.kind === "abort") {
+      this.abortedBindings.add(payload.binding_id);
+      this.preparingSlots.get(payload.binding_id)?.stop();
+    }
     const slot = this.sessions.get(payload.binding_id) ?? await this.preparing.get(payload.binding_id);
     if (!slot) {
       this.enqueue(this.receipt(command, "rejected", { binding_id: payload.binding_id, error_code: "binding_unavailable" }));
@@ -234,6 +240,7 @@ export class TaskRunner {
   }
   async stop() {
     this.controller.abort();
+    for (const slot of this.preparingSlots.values()) slot.stop();
     for (const slot of this.sessions.values()) await slot.abort().catch(() => {});
   }
 }

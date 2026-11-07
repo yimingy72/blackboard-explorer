@@ -3,9 +3,11 @@
 from uuid import UUID
 
 from bbx_contracts.challenge_board import (
+    DISPATCH_TOOL,
     AnnouncementReadRequest,
     AnnouncementRequest,
     BoardChallengeRequest,
+    BoardDispatchChallengeRequest,
     BoardFinishRequest,
     BoardPageRequest,
     ChallengeFactRequest,
@@ -23,6 +25,7 @@ from bbx_blackboard.task_board import TaskBoardService
 MUTATIONS = {
     "board_publish_announcement",
     "board_create_challenge",
+    DISPATCH_TOOL,
     "board_finish_task",
     "board_post_fact",
     "board_post_intent",
@@ -55,6 +58,8 @@ class BusinessTools:
                 return await self.tasks.publish_announcement(task_id, identity, arguments)
             if operation == "board_create_challenge":
                 return await self.tasks.create_challenge(task_id, identity, arguments)
+            if operation == DISPATCH_TOOL:
+                return await self.tasks.dispatch_challenge(task_id, identity, arguments)
             if operation == "board_finish_task":
                 parsed = BoardFinishRequest.model_validate(arguments)
                 return await self.tasks.finish(
@@ -109,6 +114,7 @@ def schemas():
         "board_challenges": BoardPageRequest,
         "board_publish_announcement": AnnouncementRequest,
         "board_create_challenge": BoardChallengeRequest,
+        DISPATCH_TOOL: BoardDispatchChallengeRequest,
         "board_finish_task": BoardFinishRequest,
         "board_post_fact": ChallengeFactRequest,
         "board_post_intent": ChallengeIntentRequest,

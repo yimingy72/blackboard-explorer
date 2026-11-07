@@ -217,6 +217,7 @@ timeout_seconds=3
         "KUBECONFIG": str(CONFIG),
         "BBX_POSTRENDER_KUBECTL": str(KUBECTL),
         "BBX_POSTRENDER_KUBECONFIG": str(CONFIG),
+        "BBX_POSTRENDER_CONTEXT": kubectl("config", "current-context").strip(),
         "HELM_CACHE_HOME": str(STATE / "helm-cache"),
         "HELM_CONFIG_HOME": str(STATE / "helm-config"),
         "HELM_DATA_HOME": str(STATE / "helm-data"),

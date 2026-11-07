@@ -170,11 +170,10 @@ class RunnerGateway:
 
     async def catalog(self, tid, identity):
         async with self.repo.engine.connect() as conn:
-            _, _, binding = await self._scope(conn, tid, identity, metadata=True)
+            task, _, binding = await self._scope(conn, tid, identity, metadata=True)
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
-            from bbx_contracts.challenge_board import business_manifest
-
-            allowed = set(business_manifest()["roles"][member["role"]]) | set(SANDBOX_TOOLS)
+            roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
+            allowed = set(roles.get(member["role"], [])) | set(SANDBOX_TOOLS)
             declared = set(json.loads(binding["payload_json"])["spec"]["allowed_tools"])
             return sorted(allowed & declared)
 
@@ -268,12 +267,12 @@ class RunnerGateway:
                         "result_digest": None,
                     }
                 return self._permit(call)
-            from bbx_contracts.challenge_board import business_manifest
-
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+            task = await self.control._task(conn, tid, live=True)
+            roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
             spec = json.loads(binding["payload_json"])["spec"]
             if invocation.tool_name not in spec["allowed_tools"] or invocation.tool_name not in {
-                *business_manifest()["roles"][member["role"]],
+                *roles.get(member["role"], []),
                 *SANDBOX_TOOLS,
             }:
                 raise HTTPException(403, "Tool is not published for this role")

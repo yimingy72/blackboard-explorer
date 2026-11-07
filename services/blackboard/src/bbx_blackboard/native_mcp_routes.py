@@ -128,6 +128,7 @@ class NativeMCPRoutes:
                 raise HTTPException(409, "mcp_route_retirement_is_final")
             return
         config = self.configuration()
+        task = await row(conn, s.tasks, tid)
         resource = (
             (
                 await conn.execute(
@@ -155,6 +156,7 @@ class NativeMCPRoutes:
             config["jwks_file"],
             config["backend_token_file"],
             sandbox=sandbox,
+            business_roles=task["ctf_control"].get("business_tools", {}).get("roles", {}),
         )
         source_hash = hashlib.sha256(config["source"].encode()).hexdigest()[:16]
         value["name"] = f"bbx-mcp-{source_hash}-{tid}"

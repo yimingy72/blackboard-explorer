@@ -1,21 +1,44 @@
 import { readFile } from "node:fs/promises";
 import { PROTOCOL, digest, safeUrl, sameValue, validate } from "./protocol.mjs";
 
+const pendingCredential = () => Object.assign(new Error("The scoped credential has not been projected"), { code: "credential_pending" });
+
 /** The mount contains only this task's scoped credentials, never a platform service key. */
 export class MountedCredentials {
   constructor(path, taskId) { this.path = path; this.taskId = taskId; }
-  async resolve(reference, audience, bindingId = null) {
-    const records = JSON.parse(await readFile(this.path, "utf8"));
+  async #read() {
+    let text;
+    try { text = await readFile(this.path, "utf8"); }
+    catch (error) { if (error.code === "ENOENT") throw pendingCredential(); throw error; }
+    let records;
+    try { records = JSON.parse(text); }
+    catch { throw new Error("The credential mount is invalid"); }
     if (!records || typeof records !== "object" || Array.isArray(records)
         || Object.values(records).some((item) => !item || !["runner-control", "model", "mcp"].includes(item.audience)
           || item.task_id !== this.taskId)) throw new Error("The credential mount must contain only this task's scoped identities");
+    return records;
+  }
+  #token(records, reference, audience, bindingId) {
+    if (!["runner-control", "model", "mcp"].includes(audience)) throw new Error("The scoped credential is unavailable");
+    if (!Object.hasOwn(records, reference)) return undefined;
     const credential = records[reference];
-    if (!["runner-control", "model", "mcp"].includes(audience) || !credential
-        || credential.audience !== audience || credential.task_id !== this.taskId
+    if (credential.audience !== audience || credential.task_id !== this.taskId
         || (credential.binding_id ?? null) !== bindingId || typeof credential.expires_at !== "number"
         || !Number.isFinite(credential.expires_at) || credential.expires_at <= Date.now() / 1000
         || typeof credential.token !== "string" || !credential.token) throw new Error("The scoped credential is unavailable");
     return credential.token;
+  }
+  async resolve(reference, audience, bindingId = null) {
+    const token = this.#token(await this.#read(), reference, audience, bindingId);
+    if (token === undefined) throw pendingCredential();
+    return token;
+  }
+  async requireBinding(spec) {
+    const records = await this.#read();
+    const id = spec.binding.binding_id;
+    const model = this.#token(records, spec.model_credential_ref, "model", id);
+    const mcp = this.#token(records, spec.mcp_credential_ref, "mcp", id);
+    if (model === undefined || mcp === undefined) throw pendingCredential();
   }
 }
 
@@ -52,12 +75,12 @@ export class HttpPlatform {
     if (ack.request_id !== receipt.request_id || ack.status !== receipt.status
         || ack.receipt_digest !== digest(JSON.stringify(receipt))) throw new Error("Command acknowledgement did not match");
   }
-  async acquire(command) {
+  async acquire(command, signal) {
     const body = { protocol: PROTOCOL, request_id: command.request_id, payload_digest: command.payload_digest,
       fence: command.fence, binding: command.payload.spec.binding };
     validate("SessionLeaseRequest", body);
     const receipt = validate("SessionLeaseReceipt", await this.request(this.control,
-      `/bindings/${body.binding.binding_id}/acquire`, { body }));
+      `/bindings/${body.binding.binding_id}/acquire`, { body, signal }));
     if (receipt.request_id !== body.request_id || receipt.binding_id !== body.binding.binding_id
         || !sameValue(receipt.binding, body.binding)
         || !sameValue(receipt.fence, body.fence)) throw new Error("Session lease identity did not match");

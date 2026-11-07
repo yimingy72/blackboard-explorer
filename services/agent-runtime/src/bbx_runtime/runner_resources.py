@@ -1167,7 +1167,9 @@ class RunnerResources:
                     await process.wait()
         raise ResourceUnknown("The original Sandbox host readiness is unresolved")
 
-    async def publish_mount(self, observation, bootstrap, credentials, *, control_only=False):
+    async def publish_mount(
+        self, observation, bootstrap, credentials, *, control_only=False, retain_binding_ids=()
+    ):
         namespace, labels = self._scope(observation)
         await self._cluster()
         pod = self._owned(
@@ -1233,6 +1235,41 @@ class RunnerResources:
             ).decode()
             await self._kubectl("replace", "-f", "-", body=secret)
             return
+        if retain_binding_ids:
+            if not isinstance(retain_binding_ids, (list, tuple)) or any(
+                not isinstance(bid, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", bid)
+                for bid in retain_binding_ids
+            ):
+                raise ResourceUnknown("Invalid retained Runner binding identities")
+            try:
+                existing = self._scoped_credentials(
+                    json.loads(base64.b64decode(secret["data"]["credentials.json"], validate=True))
+                    if "credentials.json" in secret.get("data", {})
+                    else {},
+                    labels["bbx.dev/task-id"],
+                )
+            except (KeyError, ValueError, UnicodeError):
+                raise ResourceUnknown("The original credential mount is unavailable") from None
+            credentials = dict(credentials)
+            for bid in retain_binding_ids:
+                for audience in ("model", "mcp"):
+                    ref = f"native-{audience}-{bid}"
+                    if ref in credentials:
+                        raise ResourceUnknown("A draining credential cannot be issued again")
+                    previous = existing.get(ref)
+                    if previous is None:
+                        continue
+                    if (
+                        previous.get("binding_id") != bid
+                        or previous.get("audience") != audience
+                        or type(previous.get("expires_at")) is not int
+                        or not isinstance(previous.get("token"), str)
+                        or not previous["token"]
+                    ):
+                        raise ResourceUnknown("The original draining credential identity changed")
+                    if previous["expires_at"] > time.time():
+                        credentials[ref] = previous
         ca = Path(self.config["ca_file"]).read_text() if self.config.get("ca_file") else ""
         secret["data"] = {
             key: base64.b64encode(value.encode()).decode()

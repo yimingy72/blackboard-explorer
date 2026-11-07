@@ -32,7 +32,17 @@ def business_contract(task) -> str:
     )
 
 
-def business_manifest() -> dict:
+DISPATCH_TOOL = "board_dispatch_challenge"
+
+
+def native_dispatch_enabled(task) -> bool:
+    manifest = (task.get("ctf_control") or {}).get("business_tools", {})
+    return manifest.get("revision") == 2 and DISPATCH_TOOL in manifest.get("roles", {}).get(
+        "lead", []
+    )
+
+
+def business_manifest(*, automatic=False) -> dict:
     common = [
         "board_read",
         "board_search",
@@ -43,13 +53,14 @@ def business_manifest() -> dict:
     ]
     return {
         "contract": BOARD_CONTRACT,
-        "revision": 1,
+        "revision": 2 if automatic else 1,
         "transport": "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}",
         "roles": {
             "lead": [
                 *common,
                 "board_publish_announcement",
                 "board_create_challenge",
+                *([DISPATCH_TOOL] if automatic else []),
                 "board_submit_flag",
                 "board_finish_task",
             ],
@@ -147,6 +158,21 @@ class BoardChallengeRequest(ContractModel):
     external_id: str | None = None
     connection: str | None = None
     requirements: str | None = None
+
+
+class BoardDispatchChallengeRequest(ContractModel):
+    request_id: UUID
+    challenge_id: UUID
+    expected_revision: int = Field(ge=1)
+    action: Literal["ready", "withdraw"]
+    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    priority: int = Field(default=1, ge=0, le=3, strict=True)
+
+    @model_validator(mode="after")
+    def explicit_readiness(self):
+        if (self.action == "ready") != (self.readiness is not None):
+            raise ValueError("Ready requires an explicit material state; withdraw does not")
+        return self
 
 
 class FlagCandidateRequest(ContractModel):

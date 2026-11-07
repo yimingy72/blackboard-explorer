@@ -76,6 +76,7 @@ export async function fixture(t, ids = ["one"]) {
         if (url.pathname.endsWith("/acquire")) {
           validate("SessionLeaseRequest", body);
           state.leases.push(body);
+          if (state.acquireGates?.has(bindingId)) await state.acquireGates.get(bindingId).promise;
           const previous = state.journal.get(bindingId);
           const grant = { protocol: PROTOCOL, confirmed: true, request_id: body.request_id, fence,
             binding_id: bindingId, binding: body.binding, lease_expires_at: state.enableRenewals ? Math.floor(Date.now() / 1000) + 4 : 4102444800,
@@ -222,6 +223,7 @@ export async function fixture(t, ids = ["one"]) {
   }
   t.after(async () => {
     state.appliedGate.resolve(); state.toolBarrier?.resolve(); state.toolsListGate?.resolve();
+    for (const gate of state.acquireGates?.values() ?? []) gate.resolve();
     let failure;
     for (const actor of state.actors) {
       try { await stop(actor); }

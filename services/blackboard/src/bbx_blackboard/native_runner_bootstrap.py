@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from bbx_contracts.challenge_board import native_dispatch_enabled
 from bbx_contracts.ctf import render_ctf_prompt, resolve_ctf_model
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.runner import (
@@ -22,11 +23,14 @@ from bbx_contracts.runner_bootstrap import (
     NativeRunnerClaim,
     NativeRunnerLaunch,
 )
+from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
 
 from bbx_blackboard.auth import require_service
+from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
+from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
 from bbx_blackboard.runner_control import OWNER_SECONDS, fence, row
@@ -44,6 +48,28 @@ def identity_id(operation, purpose):
     return str(uuid5(NAMESPACE_URL, "native-runner:" + operation + ":" + purpose))
 
 
+def effective_role_model(profile, role_name, published):
+    role = resolve_ctf_model(profile, role_name)
+    model = dict(published)
+    thinking = "off" if role.reasoning_effort == "none" else role.reasoning_effort
+    if thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        raise HTTPException(409, "Native bootstrap requires explicit supported role thinking")
+    output = effective_max_output_tokens(role)
+    if (
+        output > model["max_output_tokens"]
+        or (role.context_window and role.context_window > model["context_window"])
+        or (role.supports_vision and "image" not in model["input"])
+    ):
+        raise HTTPException(409, "Frozen role exceeds native SDK model capabilities")
+    model.update(
+        thinking_level=thinking,
+        max_output_tokens=output,
+        context_window=role.context_window or model["context_window"],
+        input=["text", "image"] if role.supports_vision else ["text"],
+    )
+    return EffectiveRunnerModel.model_validate(model).model_dump(mode="json")
+
+
 class NativeRunnerBootstrap:
     def __init__(self, gateway):
         self.gateway, self.repo, self.control = gateway, gateway.repo, gateway.control
@@ -51,6 +77,7 @@ class NativeRunnerBootstrap:
         from bbx_blackboard.native_resource_retirement import NativeResourceRetirement
 
         self.retirement = NativeResourceRetirement(self)
+        self.workers = NativeWorkers(self)
 
     async def _get(self, conn, tid):
         found = (
@@ -186,6 +213,11 @@ class NativeRunnerBootstrap:
                 return self._public(old)
             if task["status"] not in {"created", "provisioning"}:
                 raise HTTPException(409, "Only an unstarted V1 Task can bootstrap")
+            if (
+                native_dispatch_enabled(task)
+                and not 1 <= task["ctf_options"]["max_teammates"] <= 20
+            ):
+                raise HTTPException(422, "Native Tasks allow 1 to 20 Worker seats")
             started = instant()
             remaining = task["budget"]["max_minutes"] * 60 - task["active_seconds"]
             if task["active_since"]:
@@ -275,6 +307,13 @@ class NativeRunnerBootstrap:
             if record is None:
                 raise HTTPException(404, "Native Runner bootstrap is not registered")
             task = await self.control._task(conn, tid)
+            if (
+                native_dispatch_enabled(task)
+                and config.get("runner_profile") != "node-sandbox-host-v1"
+            ):
+                raise HTTPException(
+                    409, "Native Worker dispatch requires the original Sandbox host profile"
+                )
             if task["deleting"] and record["config"] is None:
                 raise HTTPException(
                     409, "An unclaimed deleting Task cannot acquire native resources"
@@ -802,6 +841,7 @@ class NativeRunnerBootstrap:
                     turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
                     if turn["status"] == "running":
                         await self.ctf._settle(conn, tid, member, turn, "stopped", "")
+                await self.workers.finish_after_task_exit(conn, tid)
         if task["ctf_control"].get("phase") == "closing":
             await self.ctf.finalize_close(tid, True)
         async with self.repo.engine.begin() as conn:
@@ -895,6 +935,14 @@ class NativeRunnerBootstrap:
                 raise HTTPException(409, "Native environment revision changed")
             data = dict(record["data"])
             held = self._held(task)
+            if not held and data.get("worker_spec") and data.get("bootstrap"):
+                owner = await self.control._current_owner(conn, tid)
+                try:
+                    await self.control._binding(conn, tid, data["binding_id"], owner, live=True)
+                except HTTPException as error:
+                    if error.status_code not in {403, 404, 409}:
+                        raise
+                    held = True
         if held:
             return await self._control_material(tid, body)
         if not data.get("owner_epoch"):
@@ -949,31 +997,34 @@ class NativeRunnerBootstrap:
                 task["agent_profile"], task["agent_profile_version"]
             )
             profile = ctf_profile(document)
-            role = resolve_ctf_model(profile, "lead")
-            model = dict(selected["sdk_model"])
-            thinking = "off" if role.reasoning_effort == "none" else role.reasoning_effort
-            if thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
-                raise HTTPException(
-                    409, "Native bootstrap requires explicit supported role thinking"
-                )
-            output = effective_max_output_tokens(role)
-            if (
-                output > model["max_output_tokens"]
-                or (role.context_window and role.context_window > model["context_window"])
-                or (role.supports_vision and "image" not in model["input"])
-            ):
-                raise HTTPException(409, "Frozen role exceeds native SDK model capabilities")
-            model.update(
-                thinking_level=thinking,
-                max_output_tokens=output,
-                context_window=role.context_window or model["context_window"],
-                input=["text", "image"] if role.supports_vision else ["text"],
-            )
-            model = EffectiveRunnerModel.model_validate(model).model_dump(mode="json")
+            model = effective_role_model(profile, "lead", selected["sdk_model"])
+            worker_spec = None
+            if native_dispatch_enabled(task):
+                worker_tools = [
+                    *task["ctf_control"]["business_tools"]["roles"]["teammate"],
+                    *SANDBOX_TOOLS,
+                ]
+                worker_spec = {
+                    "model": effective_role_model(profile, "teammate", selected["sdk_model"]),
+                    "allowed_tools": worker_tools,
+                    "instructions": {
+                        f"member-{n}": render_ctf_prompt(
+                            profile,
+                            "teammate",
+                            member_name=f"Worker {n}",
+                            member_id=f"member-{n}",
+                            task_id=str(tid),
+                            agent_workspace=f"/workspace/agents/member-{n}",
+                            shared_workspace="/workspace/shared",
+                            allowed_tool_names=", ".join(worker_tools),
+                        )
+                        + "\nUse only your current challenge Assignment. "
+                        "Record useful results as facts on its board."
+                        for n in range(1, task["ctf_options"]["max_teammates"] + 1)
+                    },
+                }
             tools = task["ctf_control"]["business_tools"]["roles"]["lead"]
             if record["config"].get("runner_profile") == "node-sandbox-host-v1":
-                from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
-
                 async with self.repo.engine.connect() as conn:
                     await self.gateway.sandbox.require_ready(conn, tid)
                 tools = [*tools, *SANDBOX_TOOLS]
@@ -1014,6 +1065,11 @@ class NativeRunnerBootstrap:
                     **current["data"],
                     "owner_epoch": owner["epoch"],
                     "binding_id": binding["id"],
+                    **(
+                        {"worker_spec": worker_spec, "worker_binding_ids": []}
+                        if worker_spec
+                        else {}
+                    ),
                 }
                 await self._set(conn, tid, data=data)
         else:
@@ -1022,7 +1078,9 @@ class NativeRunnerBootstrap:
             tid, data["binding_id"], runner_json_text({"expected_epoch": owner["epoch"]}).encode()
         )
         async with self.repo.engine.begin() as conn:
-            current, _ = await self._checked(conn, tid, body, live=True)
+            current, task = await self._checked(conn, tid, body, live=True)
+            if self._held(task):
+                raise HTTPException(409, "Task admission is held")
             owner = await self.control._current_owner(conn, tid)
             if (
                 owner["epoch"] != current["data"]["owner_epoch"]
@@ -1058,6 +1116,21 @@ class NativeRunnerBootstrap:
                 "native-model-lead": scoped["model"],
                 "native-mcp-lead": scoped["mcp"],
             }
+            retained = []
+            for assignment in task["ctf_control"].get("native_worker_active", {}).values():
+                bid = assignment["binding_id"]
+                if assignment["epoch"] != owner["epoch"]:
+                    raise HTTPException(409, "Original native Worker credential owner changed")
+                try:
+                    await self.control._binding(conn, tid, bid, owner, live=True)
+                except HTTPException as error:
+                    if error.status_code not in {403, 404, 409}:
+                        raise
+                    retained.append(bid)
+                    continue
+                worker = issue_gateway_credentials(self.settings, owner, bid, "teammate")
+                credentials["native-model-" + bid] = worker["model"]
+                credentials["native-mcp-" + bid] = worker["mcp"]
             data = {
                 **current["data"],
                 "bootstrap": bootstrap,
@@ -1075,22 +1148,47 @@ class NativeRunnerBootstrap:
             return {
                 "bootstrap": bootstrap,
                 "credentials": credentials,
+                "retain_binding_ids": retained,
                 "status": self._public(await self._get(conn, tid)),
             }
 
     async def _activate(self, tid, body):
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
-            if self._held(task):
+            data = dict(record["data"])
+            held = self._held(task)
+            if held and not data.get("worker_spec"):
                 return {**self._public(record), "control_only": True}
             owner = await self.control._current_owner(conn, tid)
-            binding = await self.control._binding(
-                conn, tid, record["data"]["binding_id"], owner, live=True
-            )
+            if (
+                owner["epoch"] != data.get("owner_epoch")
+                or owner["pod_uid"] != record["observation"]["runner"]["pod_uid"]
+            ):
+                raise HTTPException(409, "Original native Runner owner changed")
+            if held:
+                workers = await self.workers.reconcile(
+                    conn, tid, task, record, owner, allow_new=False
+                )
+                if workers != data.get("worker_binding_ids"):
+                    await self._set(conn, tid, data={**data, "worker_binding_ids": workers})
+                return {**self._public(await self._get(conn, tid)), "control_only": True}
+            try:
+                binding = await self.control._binding(
+                    conn, tid, data["binding_id"], owner, live=True
+                )
+            except HTTPException as error:
+                if not data.get("worker_spec") or error.status_code not in {403, 404, 409}:
+                    raise
+                workers = await self.workers.reconcile(
+                    conn, tid, task, record, owner, allow_new=False
+                )
+                if workers != data.get("worker_binding_ids"):
+                    await self._set(conn, tid, data={**data, "worker_binding_ids": workers})
+                return {**self._public(await self._get(conn, tid)), "control_only": True}
             if binding["status"] != "prepared" or not binding["sdk_session_id"]:
                 return self._public(record)
-            data = dict(record["data"])
-            if not data.get("activated"):
+            first = not data.get("activated")
+            if first:
                 await conn.execute(
                     update(s.tasks)
                     .where(s.tasks.c.id == tid)
@@ -1101,6 +1199,23 @@ class NativeRunnerBootstrap:
                         run_started=True,
                     )
                 )
+                data.update(activated=True, sdk_session_id=binding["sdk_session_id"])
+            if data.get("worker_spec"):
+                task = await row(conn, s.tasks, tid)
+                budget = await self.gateway.native._budget(conn, tid)
+                allow_new = (
+                    budget["publication_state"] == "ready"
+                    and not budget["hold_reason"]
+                    and task["status"] == "running"
+                    and task["ctf_control"]["phase"] == "running"
+                    and self._resources_ready(record["observation"])
+                    and record["sandbox_host"].get("ready")
+                )
+                data["worker_binding_ids"] = await self.workers.reconcile(
+                    conn, tid, task, record, owner, allow_new=allow_new
+                )
+            if first or data.get("worker_spec"):
+                owner = await self.control._current_owner(conn, tid)
                 messages = (
                     (
                         await conn.execute(
@@ -1137,7 +1252,7 @@ class NativeRunnerBootstrap:
                         payload,
                         runner_payload_digest(payload),
                     )
-                data.update(activated=True, sdk_session_id=binding["sdk_session_id"])
+            if data != record["data"]:
                 await self._set(conn, tid, data=data, state="ready")
             return self._public(await self._get(conn, tid))
 

@@ -9,7 +9,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
+from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract, native_dispatch_enabled
 from bbx_contracts.runner import (
     PROTOCOL,
     CommandReceipt,
@@ -177,6 +177,17 @@ class RunnerControl:
                 or data.get("tombstone")
             ):
                 raise HTTPException(403, "Current Assignment is unavailable")
+        if business.get("native_assignment_id"):
+            task = await row(conn, s.tasks, tid)
+            assignment = task["ctf_control"].get("native_worker_active", {}).get(member["id"], {})
+            if (
+                assignment.get("assignment_ref") != business["native_assignment_id"]
+                or assignment.get("work_id") != business["challenge_id"]
+                or assignment.get("turn_id") != business["turn_id"]
+                or assignment.get("generation") != business["generation"]
+                or assignment.get("epoch") != value["owner_epoch"]
+            ):
+                raise HTTPException(403, "Original native Assignment changed")
         return member, turn
 
     async def _binding(self, conn, tid, bid, owner, *, live=False, permit=False):
@@ -234,6 +245,26 @@ class RunnerControl:
                 )
             )
         return existing or response
+
+    async def native_worker_cleanup_changed(self, conn, tid, bid):
+        task = await row(conn, s.tasks, tid)
+        active = task["ctf_control"].get("native_worker_active", {})
+        if not any(value["binding_id"] == bid for value in active.values()):
+            return
+        written = await self.repo.append(
+            conn,
+            tid,
+            [
+                {
+                    "type": "ctf.native_worker.cleanup_changed",
+                    "actor": "system",
+                    "object_id": bid,
+                    "payload": {"binding_id": bid},
+                    "addressed_to": None,
+                }
+            ],
+        )
+        await self.repo.notify(tid, written[-1]["version"], connection=conn)
 
     async def _prior(self, conn, tid, epoch, kind, request_id, sha):
         previous = (
@@ -374,150 +405,160 @@ class RunnerControl:
             return {**owner, **patch}
 
     async def register_binding(self, tid, raw):
-        body, _, sha = decode(RunnerBindingRegistration, raw)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task(conn, tid, live=True)
-            owner = await self._current_owner(conn, tid)
-            if body.expected_epoch != owner["epoch"]:
-                raise HTTPException(409, "Runner owner epoch changed")
-            original = (
-                (
-                    await conn.execute(
-                        select(s.runner_bindings).where(
-                            s.runner_bindings.c.task_id == tid,
-                            s.runner_bindings.c.registration_id == str(body.request_id),
-                        )
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if original:
-                if original["registration_digest"] != sha:
-                    raise HTTPException(409, "Binding registration bytes conflict")
-                return dict(original)
-            member = await row(conn, s.ctf_members, tid, body.agent_id)
-            if member["current_turn_id"] is None:
-                raise HTTPException(403, "Business turn mapping is not ready")
-            if member["role"] not in {"lead", "teammate"}:
-                raise HTTPException(403, "Runner role is not ready")
-            if (member["role"] == "teammate") != (body.challenge_id is not None):
-                raise HTTPException(403, "Worker requires its current challenge Assignment")
-            if (
+            return await self._register_binding(conn, tid, raw)
+
+    async def _register_binding(self, conn, tid, raw, *, assignment=None):
+        body, _, sha = decode(RunnerBindingRegistration, raw)
+        task = await self._task(conn, tid, live=True)
+        owner = await self._current_owner(conn, tid)
+        if body.agent_id != "lead" and native_dispatch_enabled(task):
+            current = task["ctf_control"].get("native_worker_active", {}).get(body.agent_id)
+            if not assignment or current != assignment:
+                raise HTTPException(403, "Native Worker binding requires its original Assignment")
+        if body.expected_epoch != owner["epoch"]:
+            raise HTTPException(409, "Runner owner epoch changed")
+        original = (
+            (
                 await conn.execute(
-                    select(s.sandbox_command_records.c.id)
-                    .where(
-                        s.sandbox_command_records.c.task_id == tid,
-                        s.sandbox_command_records.c.agent_id == body.agent_id,
-                        s.sandbox_command_records.c.data["scope_state"].astext != "sealed",
-                    )
-                    .limit(1)
-                )
-            ).first():
-                raise HTTPException(409, "Original Sandbox Assignment cleanup is not confirmed")
-            if (
-                await conn.execute(
-                    select(s.runner_calls.c.id)
-                    .where(
-                        s.runner_calls.c.task_id == tid,
-                        s.runner_calls.c.provider_key == "sandbox",
-                        s.runner_calls.c.state.in_(["dispatched", "unknown"]),
-                        s.runner_calls.c.data["binding"]["agent_id"].astext == body.agent_id,
-                    )
-                    .limit(1)
-                )
-            ).first():
-                raise HTTPException(409, "Original Sandbox tool outcome remains unknown")
-            cid = str(body.challenge_id) if body.challenge_id else None
-            scope_revision = None
-            if cid:
-                challenge = await row(conn, s.ctf_challenges, tid, cid)
-                scope_revision = challenge["data"].get("scope_revision", 1)
-            prior_bindings = (
-                (
-                    await conn.execute(
-                        select(s.runner_bindings.c.binding).where(
-                            s.runner_bindings.c.task_id == tid,
-                            s.runner_bindings.c.binding["agent_id"].astext == body.agent_id,
-                        )
+                    select(s.runner_bindings).where(
+                        s.runner_bindings.c.task_id == tid,
+                        s.runner_bindings.c.registration_id == str(body.request_id),
                     )
                 )
-                .scalars()
-                .all()
             )
-            if any(
-                (
-                    await conn.execute(
-                        select(s.runner_bindings.c.id).where(
-                            s.runner_bindings.c.task_id == tid,
-                            s.runner_bindings.c.binding["agent_id"].astext == body.agent_id,
-                            s.runner_bindings.c.status.in_(["registered", "prepared", "closing"]),
-                        )
+            .mappings()
+            .first()
+        )
+        if original:
+            if original["registration_digest"] != sha:
+                raise HTTPException(409, "Binding registration bytes conflict")
+            return dict(original)
+        member = await row(conn, s.ctf_members, tid, body.agent_id)
+        if member["current_turn_id"] is None:
+            raise HTTPException(403, "Business turn mapping is not ready")
+        if member["role"] not in {"lead", "teammate"}:
+            raise HTTPException(403, "Runner role is not ready")
+        if (member["role"] == "teammate") != (body.challenge_id is not None):
+            raise HTTPException(403, "Worker requires its current challenge Assignment")
+        if (
+            await conn.execute(
+                select(s.sandbox_command_records.c.id)
+                .where(
+                    s.sandbox_command_records.c.task_id == tid,
+                    s.sandbox_command_records.c.agent_id == body.agent_id,
+                    s.sandbox_command_records.c.data["scope_state"].astext != "sealed",
+                )
+                .limit(1)
+            )
+        ).first():
+            raise HTTPException(409, "Original Sandbox Assignment cleanup is not confirmed")
+        if (
+            await conn.execute(
+                select(s.runner_calls.c.id)
+                .where(
+                    s.runner_calls.c.task_id == tid,
+                    s.runner_calls.c.provider_key == "sandbox",
+                    s.runner_calls.c.state.in_(["dispatched", "unknown"]),
+                    s.runner_calls.c.data["binding"]["agent_id"].astext == body.agent_id,
+                )
+                .limit(1)
+            )
+        ).first():
+            raise HTTPException(409, "Original Sandbox tool outcome remains unknown")
+        cid = str(body.challenge_id) if body.challenge_id else None
+        scope_revision = None
+        if cid:
+            challenge = await row(conn, s.ctf_challenges, tid, cid)
+            scope_revision = challenge["data"].get("scope_revision", 1)
+        prior_bindings = (
+            (
+                await conn.execute(
+                    select(s.runner_bindings.c.binding).where(
+                        s.runner_bindings.c.task_id == tid,
+                        s.runner_bindings.c.binding["agent_id"].astext == body.agent_id,
                     )
-                ).all()
-            ):
-                raise HTTPException(409, "Member already has a live Runner binding")
-            bid = str(uuid5(NAMESPACE_URL, f"runner-binding:{tid}:{body.request_id}"))
-            binding = RunnerBinding(
-                business_contract=BOARD_CONTRACT,
-                binding_id=bid,
-                platform_session_id=str(uuid4()),
-                agent_id=body.agent_id,
-                generation=max((x["generation"] for x in prior_bindings), default=0) + 1,
-                journal_generation=str(uuid4()),
-                assignment_ref=(
-                    str(
-                        uuid5(
-                            NAMESPACE_URL,
-                            f"assignment:{tid}:{cid}:{scope_revision}:{body.agent_id}",
-                        )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(
+            (
+                await conn.execute(
+                    select(s.runner_bindings.c.id).where(
+                        s.runner_bindings.c.task_id == tid,
+                        s.runner_bindings.c.binding["agent_id"].astext == body.agent_id,
+                        s.runner_bindings.c.status.in_(["registered", "prepared", "closing"]),
                     )
-                    if cid
-                    else None
+                )
+            ).all()
+        ):
+            raise HTTPException(409, "Member already has a live Runner binding")
+        bid = str(uuid5(NAMESPACE_URL, f"runner-binding:{tid}:{body.request_id}"))
+        binding = RunnerBinding(
+            business_contract=BOARD_CONTRACT,
+            binding_id=bid,
+            platform_session_id=str(uuid4()),
+            agent_id=body.agent_id,
+            generation=max((x["generation"] for x in prior_bindings), default=0) + 1,
+            journal_generation=str(uuid4()),
+            assignment_ref=(
+                assignment["assignment_ref"]
+                if assignment
+                else str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"assignment:{tid}:{cid}:{scope_revision}:{body.agent_id}",
+                    )
+                )
+                if cid
+                else None
+            ),
+        ).model_dump(mode="json")
+        spec = SessionSpec.model_validate(
+            {
+                "binding": binding,
+                **body.model_dump(
+                    exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
                 ),
-            ).model_dump(mode="json")
-            spec = SessionSpec.model_validate(
-                {
-                    "binding": binding,
-                    **body.model_dump(
-                        exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
-                    ),
-                    "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
-                }
-            )
-            payload = runner_json_text({"kind": "prepare", "spec": spec.model_dump(mode="json")})
-            value = dict(
-                task_id=tid,
-                id=bid,
-                owner_epoch=owner["epoch"],
-                registration_id=str(body.request_id),
-                registration_digest=sha,
-                binding=binding,
-                business={
-                    "turn_id": member["current_turn_id"],
-                    "generation": member["generation"],
-                    "purpose": "execution",
-                    "challenge_id": cid,
-                    "scope_revision": scope_revision,
-                },
-                prepare_request_id=str(uuid5(NAMESPACE_URL, f"runner-prepare:{bid}")),
-                payload_json=payload,
-                payload_digest=runner_payload_digest(payload),
-                status="registered",
-                sdk_session_id=None,
-                cursor=None,
-                permit_expires_at=None,
-                permit_revision=0,
-                prompt_revision=body.prompt_revision,
-                instructions=body.instructions,
-            )
-            await self._mapping(conn, tid, value)
-            await conn.execute(insert(s.runner_bindings).values(**value))
-            await self._enqueue(
-                conn, tid, owner, value["prepare_request_id"], payload, value["payload_digest"]
-            )
-            return value
+                "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
+            }
+        )
+        payload = runner_json_text({"kind": "prepare", "spec": spec.model_dump(mode="json")})
+        value = dict(
+            task_id=tid,
+            id=bid,
+            owner_epoch=owner["epoch"],
+            registration_id=str(body.request_id),
+            registration_digest=sha,
+            binding=binding,
+            business={
+                "turn_id": member["current_turn_id"],
+                "generation": member["generation"],
+                "purpose": "execution",
+                "challenge_id": cid,
+                "scope_revision": scope_revision,
+                **({"native_assignment_id": assignment["assignment_ref"]} if assignment else {}),
+            },
+            prepare_request_id=str(uuid5(NAMESPACE_URL, f"runner-prepare:{bid}")),
+            payload_json=payload,
+            payload_digest=runner_payload_digest(payload),
+            status="registered",
+            sdk_session_id=None,
+            cursor=None,
+            permit_expires_at=None,
+            permit_revision=0,
+            prompt_revision=body.prompt_revision,
+            instructions=body.instructions,
+        )
+        await self._mapping(conn, tid, value)
+        await conn.execute(insert(s.runner_bindings).values(**value))
+        await self._enqueue(
+            conn, tid, owner, value["prepare_request_id"], payload, value["payload_digest"]
+        )
+        return value
 
     async def attach(self, tid, bid, raw):
         body, _, _ = decode(RunnerOwnerUpdate, raw)
@@ -829,6 +870,7 @@ class RunnerControl:
                                 s.runner_bindings.c.id,
                                 s.runner_bindings.c.binding,
                                 s.runner_bindings.c.business,
+                                s.runner_bindings.c.owner_epoch,
                                 s.runner_bindings.c.status,
                                 s.runner_bindings.c.prepare_request_id,
                                 s.runner_bindings.c.sdk_session_id,
@@ -1364,7 +1406,26 @@ class RunnerControl:
                 "status": body.status,
                 "receipt_digest": sha,
             }
-            return await self._receipt(
+            wake = False
+            if (
+                value
+                and value["business"].get("native_assignment_id")
+                and command["kind"] == "close"
+                and body.status == "closed"
+                and body.sdk_idle is True
+                and not body.pending_confirmation
+                and (body.journal_confirmed or value["permit_revision"] == 0)
+            ):
+                key = f"{owner['epoch']}:command:{request_id}:{sha}"
+                wake = (
+                    await conn.execute(
+                        select(s.runner_receipts.c.id).where(
+                            s.runner_receipts.c.task_id == tid,
+                            s.runner_receipts.c.id == key,
+                        )
+                    )
+                ).first() is None
+            result = await self._receipt(
                 conn,
                 tid,
                 owner["epoch"],
@@ -1376,6 +1437,9 @@ class RunnerControl:
                 command["binding_id"],
                 late=not live,
             )
+            if wake:
+                await self.native_worker_cleanup_changed(conn, tid, command["binding_id"])
+            return result
 
     async def journal_state(self, tid, bid, identity):
         async with self.repo.engine.connect() as conn:

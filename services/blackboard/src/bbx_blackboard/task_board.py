@@ -4,13 +4,15 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.challenge_board import (
+    DISPATCH_TOOL,
     AnnouncementRequest,
     BoardChallengeRequest,
+    BoardDispatchChallengeRequest,
     business_manifest,
 )
 from bbx_contracts.ctf import CtfChallenge, CtfVerification
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.challenge_board import ChallengeBoardService, knowledge_event_scope
@@ -186,6 +188,92 @@ class TaskBoardService(ChallengeBoardService):
                 hashed,
                 value,
                 extra={"challenge_id": value["id"]},
+            )
+
+    async def dispatch_challenge(self, tid, identity, request):
+        body = BoardDispatchChallengeRequest.model_validate(request)
+        aid = self._agent(identity, tid)
+        if identity.runtime_context is None:
+            raise HTTPException(403, "Native Runner context required for dispatch")
+        hashed = digest({"operation": DISPATCH_TOOL, **body.model_dump(mode="json")})
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task, _ = await self._task_access(conn, tid, identity, write=True, lead=True)
+            control = dict(task["ctf_control"])
+            if DISPATCH_TOOL not in control.get("business_tools", {}).get("roles", {}).get(
+                "lead", []
+            ):
+                raise HTTPException(403, "Native dispatch is not published for this Task")
+            if previous := await prior(conn, tid, aid, body.request_id, hashed):
+                return previous
+            resources = (
+                (
+                    await conn.execute(
+                        select(
+                            s.task_runner_resources.c.config, s.task_runner_resources.c.data
+                        ).where(s.task_runner_resources.c.task_id == tid)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if (
+                not resources
+                or (resources["config"] or {}).get("runner_profile") != "node-sandbox-host-v1"
+                or not resources["data"].get("worker_spec")
+            ):
+                raise HTTPException(409, "Original native Worker environment is unavailable")
+            cid = str(body.challenge_id)
+            challenge = await self.ctf._challenge(conn, tid, cid)
+            self.ctf._revision(challenge, body.expected_revision)
+            if challenge["tombstone"] or challenge["work_status"] in {"completed", "cancelled"}:
+                raise HTTPException(409, "Closed challenges cannot be dispatched or reopened")
+            queue = dict(control.get("native_worker_ready", {}))
+            value = {**challenge, "revision": challenge["revision"] + 1}
+            if body.action == "ready":
+                if challenge["owner_id"] is not None or challenge["work_status"] != "pending":
+                    raise HTTPException(409, "Only unassigned challenges can change readiness")
+                if body.readiness == "no_external_materials" and (
+                    not (challenge.get("description") or "").strip()
+                    or any(challenge.get(name) for name in ("external_id", "connection", "target"))
+                ):
+                    raise HTTPException(
+                        409, "A self-contained challenge with no external target is required"
+                    )
+                old = queue.get(cid)
+                if not old:
+                    control["native_worker_ready_sequence"] = (
+                        control.get("native_worker_ready_sequence", 0) + 1
+                    )
+                queue[cid] = {
+                    "readiness": body.readiness,
+                    "priority": body.priority,
+                    "sequence": old["sequence"] if old else control["native_worker_ready_sequence"],
+                    "scope_revision": challenge.get("scope_revision", 1),
+                }
+                status = "ready" if body.readiness == "no_external_materials" else "materials_wait"
+            else:
+                queue.pop(cid, None)
+                value["work_status"] = "cancelled"
+                status = "draining" if challenge["owner_id"] else "cancelled"
+            await conn.execute(
+                update(s.tasks)
+                .where(s.tasks.c.id == tid)
+                .values(ctf_control={**control, "native_worker_ready": queue})
+            )
+            await self.ctf._board_event(
+                conn, tid, aid, "ctf.challenge.updated", body.request_id, hashed, value
+            )
+            return await emit(
+                self.repo,
+                conn,
+                tid,
+                aid,
+                "board.request.linked",
+                body.request_id,
+                hashed,
+                {"challenge": value, "dispatch_status": status},
+                extra={"challenge_id": cid},
             )
 
     async def finish(self, tid, identity, request_id: UUID, conclusion):

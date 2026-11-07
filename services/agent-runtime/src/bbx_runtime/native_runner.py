@@ -130,6 +130,30 @@ class NativeRunnerController:
             )
         )
 
+    async def _watch_worker_events(self, tid, wake):
+        since = 0
+        while not self.closed:
+            try:
+                async for event in self.service.stream(tid, since):
+                    since = max(since, event["version"])
+                    if event["type"] in {
+                        "ctf.challenge.created",
+                        "ctf.challenge.updated",
+                        "board.flag.receipt",
+                        "ctf.message.posted",
+                        "ctf.native_worker.assigned",
+                        "ctf.native_worker.released",
+                        "ctf.native_worker.stopped",
+                        "ctf.native_worker.cleanup_changed",
+                    }:
+                        wake.set()
+            except RemoteError as error:
+                if error.status in {401, 403, 404}:
+                    return
+            except (httpx.HTTPError, ValueError):
+                pass
+            await asyncio.sleep(1)
+
     async def _task(self, tid):
         self.current()
         initial = await self.view(tid)
@@ -165,7 +189,34 @@ class NativeRunnerController:
                 self.current()
                 await asyncio.sleep(5)
         tenant_key = operation.pop("tenant_key")
+        wake = asyncio.Event()
+        watcher = None
+
+        async def idle():
+            nonlocal watcher
+            if operation["data"].get("worker_spec") is not None and watcher is None:
+                watcher = asyncio.create_task(self._watch_worker_events(tid, wake))
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=3)
+            except TimeoutError:
+                pass
+            finally:
+                wake.clear()
+
+        try:
+            await self._drive(tid, operation, tenant_key, idle)
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+    @staticmethod
+    def _worker_ids(operation):
+        return tuple(sorted(operation["data"].get("worker_binding_ids", ())))
+
+    async def _drive(self, tid, operation, tenant_key, idle):
         last_rotation = 0.0
+        published_workers = ()
         control_only = operation["state"] == "held"
         while not self.closed:
             self.current()
@@ -289,7 +340,11 @@ class NativeRunnerController:
                 ].get("sandbox_host_ready"):
                     await self._prepare_sandbox_host(tid, operation, tenant_key)
                 now = asyncio.get_running_loop().time()
-                if not operation["data"].get("credentials_issued") or now - last_rotation >= 20:
+                if (
+                    not operation["data"].get("credentials_issued")
+                    or now - last_rotation >= 20
+                    or (not control_only and self._worker_ids(operation) != published_workers)
+                ):
                     material = await self.action(
                         tid,
                         operation,
@@ -300,6 +355,10 @@ class NativeRunnerController:
                     latest = await self.view(tid)
                     if self.stopping(latest):
                         raise BootstrapStopped("Native credential publication was stopped")
+                    if self._worker_ids(latest) != self._worker_ids(operation):
+                        continue
+                    control_only = material.get("control_only", False)
+                    retained = material.get("retain_binding_ids", ())
                     await self.guarded(
                         tid,
                         operation,
@@ -307,16 +366,18 @@ class NativeRunnerController:
                             operation["observation"],
                             material["bootstrap"],
                             material["credentials"],
-                            control_only=material.get("control_only", False),
+                            control_only=control_only,
+                            **({"retain_binding_ids": retained} if retained else {}),
                         ),
                     )
                     last_rotation = asyncio.get_running_loop().time()
-                    control_only = material.get("control_only", False)
-                if control_only:
-                    await asyncio.sleep(3)
+                    if not control_only:
+                        published_workers = self._worker_ids(operation)
+                if not control_only or operation["data"].get("worker_spec") is not None:
+                    operation.update(await self.action(tid, operation, "activate"))
+                if not control_only and self._worker_ids(operation) != published_workers:
                     continue
-                operation.update(await self.action(tid, operation, "activate"))
-                await asyncio.sleep(3)
+                await idle()
             except BootstrapStopped:
                 operation.update(await self.action(tid, operation, "stop"))
             except ResourceUnknown:

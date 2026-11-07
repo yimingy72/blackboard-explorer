@@ -6,13 +6,14 @@ import asyncio
 import hashlib
 import json
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.challenge_board import (
     BOARD_CONTRACT,
     ChallengeFactRequest,
     ChallengeIntentRequest,
     business_contract,
+    native_dispatch_enabled,
 )
 from bbx_contracts.models import Fact, Intent, KnowledgeAssignment
 from fastapi import HTTPException
@@ -27,6 +28,17 @@ from bbx_blackboard.store.repository import row
 
 
 def current_assignment(task, challenge, member):
+    if member["role"] != "lead" and native_dispatch_enabled(task):
+        snapshot = task["ctf_control"].get("native_worker_active", {}).get(member["id"], {})
+        if (
+            snapshot.get("work_id") != challenge["id"]
+            or snapshot.get("scope_revision") != challenge.get("scope_revision", 1)
+            or snapshot.get("turn_id") != member["current_turn_id"]
+            or snapshot.get("generation") != member["generation"]
+            or challenge["work_status"] != "in_progress"
+        ):
+            raise HTTPException(403, "Current native Worker Assignment is unavailable")
+        return snapshot
     if (
         member["role"] == "lead"
         or business_contract(task) == BOARD_CONTRACT
@@ -130,6 +142,8 @@ class ChallengeBoardService:
             raise HTTPException(409, "Task is deleting")
         if identity.kind in {"user", "service"} and not write:
             return task, None
+        if write and native_dispatch_enabled(task) and identity.runtime_context is None:
+            raise HTTPException(403, "Native Runner context is required for this Task")
         aid = self._agent(identity, tid)
         member = (
             (
@@ -178,6 +192,8 @@ class ChallengeBoardService:
             raise HTTPException(404, "Challenge not found")
         if identity.kind in {"user", "service"} and not write:
             return task, challenge, None
+        if write and native_dispatch_enabled(task) and identity.runtime_context is None:
+            raise HTTPException(403, "Native Runner context is required for this Task")
         aid = self._agent(identity, tid)
         member = (
             (
@@ -221,9 +237,52 @@ class ChallengeBoardService:
         return task, challenge, snapshot
 
     async def _evidence(self, conn, tid, cid, aid, task, data):
-        uris = []
+        uris, native_refs = [], {}
+        assignment = (
+            task["ctf_control"].get("native_worker_active", {}).get(aid)
+            if native_dispatch_enabled(task)
+            else None
+        )
         for evidence in data["evidence"]:
             uri = evidence.get("uri")
+            call_id = evidence.get("call_id")
+            if not uri and assignment and evidence["type"] == "command_output" and call_id:
+                commands, calls = s.sandbox_command_records, s.runner_calls
+                if any(evidence.get(key) is not None for key in ("path", "size", "sha256")):
+                    raise HTTPException(422, "Command evidence references the saved result only")
+                original = (
+                    await conn.execute(
+                        select(commands.c.id)
+                        .join(
+                            calls,
+                            (calls.c.task_id == commands.c.task_id)
+                            & (calls.c.binding_id == commands.c.binding_id),
+                        )
+                        .where(
+                            commands.c.task_id == tid,
+                            commands.c.id == call_id,
+                            commands.c.agent_id == aid,
+                            commands.c.challenge_id == cid,
+                            commands.c.assignment_id == assignment["assignment_ref"],
+                            commands.c.binding_id == assignment["binding_id"],
+                            commands.c.epoch == assignment["epoch"],
+                            commands.c.state.in_(["completed", "failed"]),
+                            commands.c.data["receipt"].astext == "foreground_terminal",
+                            commands.c.execution_id.is_not(None),
+                            commands.c.exit_code.is_not(None),
+                            calls.c.id == "tool:" + call_id,
+                            calls.c.provider_key == "sandbox",
+                            calls.c.state == "completed",
+                            calls.c.data["tool_name"].astext == "exec_command",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if not original:
+                    raise HTTPException(
+                        403, "Command evidence is outside the original Assignment or unconfirmed"
+                    )
+                native_refs[call_id] = {"id": call_id, "agent_id": aid}
+                continue
             if not uri:
                 raise RuleViolation("evidence_missing", "证据尚未持久化，请先登记材料。")
             initial = next(
@@ -269,9 +328,11 @@ class ChallengeBoardService:
                         "evidence_metadata_conflict", "证据元数据与登记材料不一致。"
                     )
             uris.append(uri)
-        return list(dict.fromkeys(uris))
+        return list(dict.fromkeys(uris)), native_refs
 
     async def _objects_exist(self, uris):
+        if not uris:
+            return
         if self.ctf.objects is None:
             raise RuleViolation("evidence_missing", "证据存储不可用。")
         try:
@@ -332,7 +393,7 @@ class ChallengeBoardService:
                 if previous:
                     return self._response(previous)
                 self.ctf._revision(challenge, body["expected_revision"])
-                uris = await self._evidence(conn, tid, cid, aid, task, body)
+                uris, _ = await self._evidence(conn, tid, cid, aid, task, body)
             # Registered objects are immutable; external I/O must not hold the Task lock.
             await self._objects_exist(uris)
         async with self.repo.engine.begin() as conn:
@@ -348,7 +409,9 @@ class ChallengeBoardService:
                 agent_id=aid,
                 generation=identity.generation,
                 turn_id=identity.turn_id,
-                epoch=task["ctf_control"]["epoch"],
+                epoch=snapshot.get("epoch", task["ctf_control"]["epoch"])
+                if snapshot
+                else task["ctf_control"]["epoch"],
                 owner_id=challenge.get("owner_id"),
                 scope_revision=challenge.get("scope_revision", 1),
                 assignment_id=snapshot.get("assignment_ref") if snapshot else None,
@@ -373,10 +436,11 @@ class ChallengeBoardService:
                         raise RuleViolation("invalid_reference", "意图不在当前题目范围内。")
                     if state.intents[iid]["status"] == "closed":
                         raise RuleViolation("intent_closed", "意图已关闭，请刷新题内知识。")
-                await self._evidence(conn, tid, cid, aid, task, data)
+                _, native_refs = await self._evidence(conn, tid, cid, aid, task, data)
                 state.tool_calls = await self.repo.tool_call_refs(
                     conn, tid, [item["call_id"] for item in data["evidence"] if item.get("call_id")]
                 )
+                state.tool_calls.update(native_refs)
                 planned = fact_events(
                     state,
                     aid,
@@ -396,6 +460,26 @@ class ChallengeBoardService:
                     request_hash=digest,
                 )
             saved = await self.repo.append(conn, tid, planned)
+            if kind == "fact" and snapshot and native_dispatch_enabled(task):
+                fact_id = saved[0]["object_id"]
+                await self.ctf._message(
+                    conn,
+                    tid,
+                    "system",
+                    "lead",
+                    json.dumps(
+                        {
+                            "challenge_id": str(cid),
+                            "challenge_revision": challenge["revision"],
+                            "assignment_id": snapshot["assignment_ref"],
+                            "fact_id": fact_id,
+                            "instruction": "A Worker recorded a fact. Read the challenge board.",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    str(uuid5(NAMESPACE_URL, f"native-worker-fact:{tid}:{fact_id}")),
+                    "message",
+                )
             await self.repo.notify(tid, saved[-1]["version"], connection=conn)
             return self._response(saved)
 

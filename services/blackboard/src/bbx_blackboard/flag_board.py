@@ -117,7 +117,9 @@ class FlagBoardService(ChallengeBoardService):
             agent_id=identity.agent_id,
             generation=identity.generation,
             turn_id=identity.turn_id,
-            epoch=task["ctf_control"]["epoch"],
+            epoch=snapshot.get("epoch", task["ctf_control"]["epoch"])
+            if snapshot
+            else task["ctf_control"]["epoch"],
             owner_id=challenge.get("owner_id"),
             scope_revision=challenge.get("scope_revision", 1),
             assignment_id=snapshot.get("assignment_ref") if snapshot else None,

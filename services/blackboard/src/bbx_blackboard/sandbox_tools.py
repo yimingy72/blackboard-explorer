@@ -653,6 +653,9 @@ class SandboxTools:
                     command["binding_id"],
                     {"scope_state": "sealed", "scope_id": scope_id},
                 )
+                await self.gateway.control.native_worker_cleanup_changed(
+                    conn, tid, command["binding_id"]
+                )
             elif event != "scope_unknown":
                 raise HTTPException(422, "Invalid Assignment cleanup callback")
             return {"saved": True}

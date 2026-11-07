@@ -18,7 +18,7 @@ converted = subprocess.run(
         "--kubeconfig",
         str(config),
         "--context",
-        "kind-bbx-p3f-k8s",
+        os.environ.get("BBX_POSTRENDER_CONTEXT", "kind-bbx-p3f-k8s"),
         "create",
         "--dry-run=client",
         "-f",

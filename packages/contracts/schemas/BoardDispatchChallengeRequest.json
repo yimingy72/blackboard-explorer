@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "action": {
+      "enum": [
+        "ready",
+        "withdraw"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "readiness": {
+      "anyOf": [
+        {
+          "enum": [
+            "no_external_materials",
+            "materials_pending"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Readiness"
+    },
+    "priority": {
+      "default": 1,
+      "maximum": 3,
+      "minimum": 0,
+      "title": "Priority",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "challenge_id",
+    "expected_revision",
+    "action"
+  ],
+  "title": "BoardDispatchChallengeRequest",
+  "type": "object"
+}

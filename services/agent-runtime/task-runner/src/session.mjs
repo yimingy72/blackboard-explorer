@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { createAssistantMessageEventStream, getCurrentSystemMessage, InMemoryCredentialStore, normalizeContext } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { McpClient, StreamableHttpTransport, toLlmContent } from "@earendil-works/pi-mcp";
@@ -8,6 +9,7 @@ import { IncrementalJournal, openNativeJournal } from "./journal.mjs";
 import { PROTOCOL, digest, jsonText, safeUrl, sameFence, sameValue, validate } from "./protocol.mjs";
 
 const BASE_PROMPT = "Use the published bbx_role instructions and only the declared tools.";
+const CREDENTIAL_PROJECTION_WAIT_MS = 120000;
 
 export class RunnerSession {
   constructor(config, spec, specDigest, lease, platform, credentials, onApplied) {
@@ -88,6 +90,20 @@ export class RunnerSession {
     if (!model.input.includes("text") || new Set(model.input).size !== model.input.length
         || (!model.reasoning && model.thinking_level !== "off") || (model.thinking_budgets && Object.keys(model.thinking_budgets).length)
         || model.thinking_level_map?.[model.thinking_level] === null) throw Object.assign(new Error("The effective model settings are unsupported by this route"), { code: "unsupported_model" });
+    // A running Runner can receive a new binding before its Secret projection arrives.
+    const projectionDeadline = performance.now() + CREDENTIAL_PROJECTION_WAIT_MS;
+    for (;;) {
+      this.assertLease();
+      try {
+        await this.credentials.requireBinding(this.spec);
+        this.assertLease();
+        break;
+      } catch (error) {
+        const remaining = projectionDeadline - performance.now();
+        if (error.code !== "credential_pending" || remaining <= 0) throw error;
+        await delay(Math.min(100, remaining), undefined, { signal: this.stopController.signal });
+      }
+    }
     const directory = join(this.config.journal_root, this.binding.binding_id);
     const agentDir = join(directory, "agent");
     await mkdir(agentDir, { recursive: true, mode: 0o700 });

@@ -8,7 +8,14 @@ from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 
 
 def business_mcp_route(
-    task_id, backend_origin, gateway_origin, jwks_file, backend_token_file, *, sandbox=None
+    task_id,
+    backend_origin,
+    gateway_origin,
+    jwks_file,
+    backend_token_file,
+    *,
+    sandbox=None,
+    business_roles=None,
 ):
     tid = str(UUID(str(task_id)))
     path = f"/api/tasks/{tid}/mcp"
@@ -32,7 +39,9 @@ def business_mcp_route(
                     + json.dumps(role)
                     + " && mcp.tool.name in "
                     + json.dumps(names)
-                    for role, names in business_manifest()["roles"].items()
+                    for role, names in (
+                        business_manifest()["roles"] if business_roles is None else business_roles
+                    ).items()
                 ]
             },
         },
