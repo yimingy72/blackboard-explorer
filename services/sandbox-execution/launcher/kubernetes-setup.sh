@@ -32,19 +32,23 @@ except OSError:
     raise SystemExit("Unsafe workspace .tmp; low-identity preparation refused") from None
 PY
 test "$(cat /proc/sys/net/ipv4/ip_forward)" = 1
-ip netns add worker-a
-ip link add bbx-host type veth peer name bbx-peer
-ip link set bbx-peer netns worker-a
-ip addr add 198.19.1.1/30 dev bbx-host
-ip link set bbx-host up
-ip -n worker-a addr add 198.19.1.2/30 dev bbx-peer
-ip -n worker-a link set bbx-peer up
-ip -n worker-a link set lo up
-ip -n worker-a route add default via 198.19.1.1
-iptables -I INPUT 1 -i bbx-host -j DROP
-iptables -I INPUT 1 -i bbx-host -p tcp --dport 18081 -j ACCEPT
-iptables -I INPUT 1 -i bbx-host ! -s 198.19.1.2/32 -j DROP
-iptables -I FORWARD 1 -i bbx-host -j ACCEPT
-iptables -I FORWARD 1 -i bbx-host ! -s 198.19.1.2/32 -j DROP
-iptables -I FORWARD 1 -o bbx-host -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -t nat -A POSTROUTING -s 198.19.1.2/32 ! -d 198.19.1.0/30 -j MASQUERADE
+if [ -f /opt/bbx/control/assignment-network-v1 ]; then
+    /usr/bin/python3 -I /opt/bbx/control/assignment-network.py init
+else
+    ip netns add worker-a
+    ip link add bbx-host type veth peer name bbx-peer
+    ip link set bbx-peer netns worker-a
+    ip addr add 198.19.1.1/30 dev bbx-host
+    ip link set bbx-host up
+    ip -n worker-a addr add 198.19.1.2/30 dev bbx-peer
+    ip -n worker-a link set bbx-peer up
+    ip -n worker-a link set lo up
+    ip -n worker-a route add default via 198.19.1.1
+    iptables -I INPUT 1 -i bbx-host -j DROP
+    iptables -I INPUT 1 -i bbx-host -p tcp --dport 18081 -j ACCEPT
+    iptables -I INPUT 1 -i bbx-host ! -s 198.19.1.2/32 -j DROP
+    iptables -I FORWARD 1 -i bbx-host -j ACCEPT
+    iptables -I FORWARD 1 -i bbx-host ! -s 198.19.1.2/32 -j DROP
+    iptables -I FORWARD 1 -o bbx-host -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables -t nat -A POSTROUTING -s 198.19.1.2/32 ! -d 198.19.1.0/30 -j MASQUERADE
+fi

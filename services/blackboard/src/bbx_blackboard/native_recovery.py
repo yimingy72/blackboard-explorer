@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
+from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
 from bbx_blackboard.runner_gateway import cancel_admitted
 from bbx_blackboard.store import schema as s
 
@@ -467,6 +468,9 @@ class NativeRecovery:
         if not incident.get("exit_proof"):
             return None, "original_exit_unconfirmed"
         epoch = incident["original_epoch"]
+        record = await self.bootstrap._get(conn, tid)
+        if record and epoch_capture_pending(record, epoch):
+            return None, "original_traffic_unconfirmed"
         # Exact Sandbox exit proves the old scopes cannot run; command results still need receipts.
         if not incident.get("execution_context_id"):
             return None, "original_scope_unconfirmed"
@@ -550,6 +554,7 @@ class NativeRecovery:
                     "original_exit_unconfirmed",
                     "journal_writer_unconfirmed",
                     "original_journal_unconfirmed",
+                    "original_traffic_unconfirmed",
                     "replacement_resources_unconfirmed",
                 }:
                     raise HTTPException(422, "Invalid recovery blocker")
@@ -841,6 +846,14 @@ class NativeRecovery:
                 ),
                 "journal_subdir": proof["work_copy"]["directory"],
                 "recovery_history": [*data.get("recovery_history", []), archived],
+                **(
+                    {
+                        "traffic_profile": record["request"]["traffic_profile"],
+                        "network_scopes": network_scopes(record),
+                    }
+                    if opted_in(record)
+                    else {}
+                ),
                 "continuation": continuation,
                 "lead_turn_id": continuation["lead_turn_id"],
                 "worker_spec": data["worker_spec"],

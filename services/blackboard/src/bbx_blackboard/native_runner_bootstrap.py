@@ -46,6 +46,7 @@ from bbx_blackboard.native_budget_increase import increase_budget
 from bbx_blackboard.native_helpers import NativeHelpers
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
+from bbx_blackboard.native_traffic import PROFILE, capture_targets, lost_captures, opted_in
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
@@ -276,7 +277,7 @@ class NativeRunnerBootstrap:
                 tenant_key_hash=hashlib.sha256(key.encode()).hexdigest(),
                 tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
                 observation={},
-                data={},
+                data=({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 last_error=None,
                 next_check_at=started,
                 created_at=started,
@@ -333,6 +334,23 @@ class NativeRunnerBootstrap:
             raise HTTPException(422, "Native journal writer lock requires the Sandbox host profile")
         if any("@sha256:" not in value[key] for key in ("runner_image", "sandbox_image")):
             raise HTTPException(422, "Native resource images require immutable digests")
+        traffic_keys = {"traffic_targets", "traffic_target_namespace", "traffic_sandbox_image"}
+        if traffic_keys & value.keys():
+            try:
+                if (
+                    not traffic_keys <= value.keys()
+                    or value.get("runner_profile") != "node-sandbox-host-v1"
+                    or not re.fullmatch(
+                        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value["traffic_target_namespace"]
+                    )
+                    or not re.fullmatch(
+                        r"[^@]+@sha256:[0-9a-f]{64}", value["traffic_sandbox_image"]
+                    )
+                    or capture_targets(value["traffic_targets"]) != value["traffic_targets"]
+                ):
+                    raise ValueError("Invalid capture deployment")
+            except (TypeError, ValueError) as error:
+                raise HTTPException(422, "Trusted native capture deployment is invalid") from error
         return value
 
     async def claim(self, tid, raw):
@@ -344,6 +362,10 @@ class NativeRunnerBootstrap:
             if record is None:
                 raise HTTPException(404, "Native Runner bootstrap is not registered")
             task = await self.control._task(conn, tid)
+            if opted_in(record) and "traffic_targets" not in config:
+                raise HTTPException(
+                    409, "Original Task requires the frozen native capture deployment"
+                )
             if (
                 native_dispatch_enabled(task)
                 and config.get("runner_profile") != "node-sandbox-host-v1"
@@ -866,7 +888,17 @@ class NativeRunnerBootstrap:
             record, task = await self._checked(conn, tid, body)
             if record["state"] in {"exited", "stopped"}:
                 return self._public(record)
-            await self._set(conn, tid, desired="stopped", state="stopping")
+            data = record["data"]
+            if opted_in(record) and not data.get("traffic_preseal_until"):
+                requested_at = (task.get("ctf_conclusion") or {}).get("requested_at")
+                first_stop = datetime.fromisoformat(requested_at) if requested_at else instant()
+                data = {
+                    **data,
+                    "traffic_preseal_until": min(
+                        first_stop + timedelta(seconds=20), record["hard_deadline"]
+                    ).isoformat(),
+                }
+            await self._set(conn, tid, desired="stopped", state="stopping", data=data)
             await conn.execute(
                 update(s.tasks)
                 .where(s.tasks.c.id == tid)
@@ -974,6 +1006,7 @@ class NativeRunnerBootstrap:
                     **record["data"],
                     "exit_confirmed": True,
                     "exit_reason": "not_dispatched" if never_dispatched else "terminated",
+                    **({"network_scopes": lost_captures(record)} if opted_in(record) else {}),
                 }
                 await self._set(conn, tid, state="exited", data=data, last_error=None)
                 if record["sandbox_host"]:

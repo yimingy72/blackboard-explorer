@@ -57,7 +57,14 @@ async def create_query(
     objects, _, run, manifest = await _manifest(request, task_id, body.run)
     try:
         await cache(request).check(body.display_filter)
-        query = cache(request).create(task_id, run, body.display_filter, body.agent_id, objects)
+        query = cache(request).create(
+            task_id,
+            run,
+            body.display_filter,
+            body.agent_id,
+            objects,
+            source_id=body.source_id,
+        )
         await cache(request).refresh(query, manifest.native if manifest else [], retry=True)
         return query.view()
     except (NativeUnavailable, NativeFilterError) as error:

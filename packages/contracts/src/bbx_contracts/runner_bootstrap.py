@@ -31,6 +31,7 @@ class NativeRunnerLaunch(ContractModel):
     exchange_rate: FrozenExchangeRate
     helper_foreground: bool = False
     helper_background: bool = False
+    traffic_profile: Literal["binding-pcap-v1"] | None = None
 
 
 def native_pause_state(task):

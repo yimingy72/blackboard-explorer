@@ -9,6 +9,7 @@ from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from fastapi import HTTPException
 from sqlalchemy import insert, or_, select, update
 
+from bbx_blackboard.native_traffic import binding_capture_pending
 from bbx_blackboard.runner_control import command_key, row
 from bbx_blackboard.store import schema as s
 
@@ -242,6 +243,9 @@ class NativeWorkers:
 
     async def close_proven(self, conn, tid, binding):
         bid, epoch = binding["id"], binding["owner_epoch"]
+        record = await self.bootstrap._get(conn, tid)
+        if record and binding_capture_pending(record, bid):
+            return False
         if binding["status"] != "closed":
             return False
         close_id = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{epoch}:{bid}"))

@@ -7054,6 +7054,18 @@
             "format": "uuid",
             "title": "Request Id",
             "type": "string"
+          },
+          "traffic_profile": {
+            "anyOf": [
+              {
+                "const": "binding-pcap-v1",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traffic Profile"
           }
         },
         "required": [
@@ -10782,6 +10794,122 @@
         "title": "ToolUnknownSubmission",
         "type": "object"
       },
+      "TrafficBindingScope": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "binding_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "discarded_tail_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Discarded Tail Bytes",
+            "type": "integer"
+          },
+          "dropped_packets": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropped Packets"
+          },
+          "epoch": {
+            "minimum": 1.0,
+            "title": "Epoch",
+            "type": "integer"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "host_ifindex": {
+            "minimum": 1.0,
+            "title": "Host Ifindex",
+            "type": "integer"
+          },
+          "interface": {
+            "maxLength": 15,
+            "minLength": 1,
+            "title": "Interface",
+            "type": "string"
+          },
+          "ipv4": {
+            "maxLength": 15,
+            "title": "Ipv4",
+            "type": "string"
+          },
+          "netns_inode": {
+            "pattern": "^[1-9][0-9]{0,19}$",
+            "title": "Netns Inode",
+            "type": "string"
+          },
+          "parent_agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Agent Id"
+          },
+          "role": {
+            "enum": [
+              "lead",
+              "worker",
+              "helper"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "sandbox_pod_uid": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Sandbox Pod Uid",
+            "type": "string"
+          },
+          "snaplen": {
+            "const": 512,
+            "default": 512,
+            "title": "Snaplen",
+            "type": "integer"
+          },
+          "truncated_packets": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Truncated Packets",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "binding_id",
+          "assignment_id",
+          "generation",
+          "epoch",
+          "role",
+          "sandbox_pod_uid",
+          "ipv4",
+          "interface",
+          "netns_inode",
+          "host_ifindex"
+        ],
+        "title": "TrafficBindingScope",
+        "type": "object"
+      },
       "TrafficCapture": {
         "additionalProperties": false,
         "properties": {
@@ -10991,6 +11119,31 @@
             "title": "Has More",
             "type": "boolean"
           },
+          "native_bound": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Bound"
+          },
+          "native_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TrafficNativeSourceRef"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Sources"
+          },
           "next_after": {
             "anyOf": [
               {
@@ -11149,6 +11302,16 @@
             "title": "Packet Count",
             "type": "integer"
           },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficBindingScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source_id": {
             "pattern": "^[a-zA-Z0-9_-]{1,80}$",
             "title": "Source Id",
@@ -11254,6 +11417,16 @@
             "title": "Revision",
             "type": "string"
           },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficBindingScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source_id": {
             "pattern": "^[a-zA-Z0-9_-]{1,80}$",
             "title": "Source Id",
@@ -11332,6 +11505,16 @@
               }
             ],
             "title": "Foreground"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficBindingScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_id": {
             "pattern": "^[a-zA-Z0-9_-]{1,80}$",
@@ -11430,6 +11613,18 @@
               }
             ],
             "title": "Run"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
           }
         },
         "title": "TrafficNativeQueryRequest",
@@ -11530,6 +11725,79 @@
           "display_filter"
         ],
         "title": "TrafficNativeQueryView",
+        "type": "object"
+      },
+      "TrafficNativeSourceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "available_bytes": {
+            "minimum": 0.0,
+            "title": "Available Bytes",
+            "type": "integer"
+          },
+          "complete": {
+            "default": false,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "last_packet_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Packet At"
+          },
+          "packet_count": {
+            "minimum": 0.0,
+            "title": "Packet Count",
+            "type": "integer"
+          },
+          "revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Revision",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrafficBindingScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_id": {
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "revision",
+          "available_bytes",
+          "packet_count"
+        ],
+        "title": "TrafficNativeSourceRef",
         "type": "object"
       },
       "TrafficObservation": {
@@ -21758,6 +22026,247 @@
           }
         },
         "summary": "Host Claim",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/network": {
+      "get": {
+        "operationId": "network_scopes_api_tasks__task_id__sandbox_host_network_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Network Scopes",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/bytes": {
+      "post": {
+        "operationId": "network_bytes_api_tasks__task_id__sandbox_host_network__source_id__bytes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Network Bytes",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/observe": {
+      "post": {
+        "operationId": "network_observe_api_tasks__task_id__sandbox_host_network__source_id__observe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Network Observe",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/permit": {
+      "post": {
+        "operationId": "network_permit_api_tasks__task_id__sandbox_host_network__source_id__permit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Network Permit",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/seal": {
+      "post": {
+        "operationId": "network_seal_api_tasks__task_id__sandbox_host_network__source_id__seal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Network Seal",
         "tags": [
           "sandbox-commands"
         ]

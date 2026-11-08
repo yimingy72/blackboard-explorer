@@ -111,6 +111,7 @@ class SandboxToolClaim(ContractModel):
     invocation: ToolInvocation
     name: str
     arguments: dict
+    network_grant_revision: int | None = Field(default=None, ge=1, strict=True)
 
 
 class SandboxHostEvent(ContractModel):

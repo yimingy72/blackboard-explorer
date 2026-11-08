@@ -173,12 +173,31 @@ class TrafficNativeKeylogPart(ContractModel):
     sha256: TrafficDigest
 
 
+class TrafficBindingScope(ContractModel):
+    binding_id: TrafficId
+    assignment_id: TrafficId
+    generation: int = Field(ge=1)
+    epoch: int = Field(ge=1)
+    role: Literal["lead", "worker", "helper"]
+    parent_agent_id: str | None = Field(default=None, max_length=160)
+    sandbox_pod_uid: TrafficId
+    ipv4: str = Field(max_length=15)
+    interface: str = Field(min_length=1, max_length=15)
+    netns_inode: str = Field(pattern=r"^[1-9][0-9]{0,19}$")
+    host_ifindex: int = Field(ge=1)
+    snaplen: Literal[512] = 512
+    truncated_packets: int = Field(default=0, ge=0)
+    discarded_tail_bytes: int = Field(default=0, ge=0)
+    dropped_packets: int | None = Field(default=None, ge=0)
+
+
 class TrafficNativeSourceIndex(ContractModel):
     schema_version: Literal[1] = 1
     task_id: UUID
     run: int = Field(ge=1)
     source_id: TrafficId
     agent_id: str | None = Field(default=None, min_length=1, max_length=160)
+    scope: TrafficBindingScope | None = Field(default=None, exclude_if=lambda value: value is None)
     complete: bool = False
     error: str | None = None
     packet_count: int = Field(default=0, ge=0)
@@ -226,6 +245,7 @@ class TrafficNativeSourceIndex(ContractModel):
 class TrafficNativeSourceRef(ContractModel):
     source_id: TrafficId
     agent_id: str | None = Field(default=None, min_length=1, max_length=160)
+    scope: TrafficBindingScope | None = Field(default=None, exclude_if=lambda value: value is None)
     revision: TrafficDigest
     available_bytes: int = Field(ge=0)
     packet_count: int = Field(ge=0)
@@ -383,6 +403,7 @@ class TrafficManifest(TrafficCapture):
     chunks: list[TrafficChunk] = Field(default_factory=list, max_length=100000)
     files: list[TrafficFile] = Field(default_factory=list, max_length=10000)
     native: list[TrafficNativeSourceRef] = Field(default_factory=list, max_length=256)
+    native_bound: bool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def valid_index(self) -> TrafficManifest:
@@ -420,17 +441,23 @@ class TrafficListResponse(ContractModel):
     next_after: int | None = Field(default=None, ge=0)
     has_more: bool = False
     files: list[TrafficFile] = Field(default_factory=list)
+    native_bound: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    native_sources: list[TrafficNativeSourceRef] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TrafficNativeQueryRequest(ContractModel):
     run: int | None = Field(default=None, ge=1)
     agent_id: str | None = Field(default=None, min_length=1, max_length=160)
+    source_id: TrafficId | None = None
     display_filter: str = Field(default="", max_length=4096)
 
 
 class TrafficNativeCoverage(ContractModel):
     source_id: TrafficId
     agent_id: str | None = None
+    scope: TrafficBindingScope | None = Field(default=None, exclude_if=lambda value: value is None)
     packet_count: int = Field(ge=0)
     available_bytes: int = Field(ge=0)
     complete: bool
@@ -458,6 +485,7 @@ class TrafficNativePacket(ContractModel):
     source_id: TrafficId
     source_number: int = Field(ge=1)
     agent_id: str | None = None
+    scope: TrafficBindingScope | None = Field(default=None, exclude_if=lambda value: value is None)
     attribution: Literal["exact", "shared", "unknown"]
     columns: list[str]
     background: str | None = None
@@ -484,6 +512,7 @@ class TrafficNativeFrameDetail(ContractModel):
     source_id: TrafficId
     source_number: int = Field(ge=1)
     agent_id: str | None = None
+    scope: TrafficBindingScope | None = Field(default=None, exclude_if=lambda value: value is None)
     revision: str
     columns: list[str]
     layers: list[TrafficPacketNode]

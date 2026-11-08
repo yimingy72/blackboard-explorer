@@ -8,9 +8,11 @@ RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -static /tmp/launcher.c /tmp/assignme
 
 FROM ${TOOL_IMAGE}
 USER root
+ARG ASSIGNMENT_NETWORK_V1=0
 COPY --from=official /execd /opt/bbx/control/execd
 COPY --from=launcher-build /tmp/launcher /opt/bbx/control/launcher
-COPY --chmod=0555 launcher/kubernetes-setup.sh /opt/bbx/control/kubernetes-setup.sh
+COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py /opt/bbx/control/
+RUN case "$ASSIGNMENT_NETWORK_V1" in 0) ;; 1) install -m 0444 /dev/null /opt/bbx/control/assignment-network-v1 ;; *) exit 1 ;; esac
 COPY src/bbx_sandbox_execution /opt/bbx/control/python/bbx_sandbox_execution
 RUN groupadd --gid 10000 bbx-solver \
     && useradd --uid 10000 --gid 10000 --no-create-home --home-dir /workspace --shell /bin/bash bbx-solver \

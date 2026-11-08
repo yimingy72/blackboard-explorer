@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import json
 import re
 from collections import OrderedDict
@@ -24,9 +25,13 @@ from bbx_contracts.traffic import (
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import TypeAdapter
+from sqlalchemy import select
 
 from bbx_blackboard.auth import require_user_or_service
 from bbx_blackboard.input_groups import download_headers
+from bbx_blackboard.native import NativeAnalysisCache, object_bytes
+from bbx_blackboard.native_traffic import PART_LIMIT, capture_manifest, opted_in
+from bbx_blackboard.store import schema as s
 
 router = APIRouter(prefix="/api/tasks/{task_id}/traffic", tags=["traffic"])
 _MAX_JSON = 8 * 1024 * 1024
@@ -84,6 +89,22 @@ async def _manifest(
     if objects is None:
         raise _unavailable()
     try:
+        engine = getattr(request.app.state, "engine", None)
+        if task.get("mode") == "ctf" and engine is not None:
+            async with engine.connect() as conn:
+                record = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == task_id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+            if opted_in(record):
+                return objects, root, number, capture_manifest(record, task_id, number)
         if not await objects.exists(root + "manifest.json"):
             return objects, root, number, None
         manifest = TrafficManifest.model_validate(await _json(objects, root + "manifest.json"))
@@ -280,6 +301,12 @@ async def list_traffic(
         else None,
         has_more=has_more,
         files=[item for item in manifest.files if agent_id is None or item.agent_id == agent_id],
+        native_bound=manifest.native_bound,
+        native_sources=(
+            [ref for ref in manifest.native if agent_id is None or ref.agent_id == agent_id]
+            if manifest.native_bound
+            else None
+        ),
     )
 
 
@@ -338,10 +365,32 @@ async def traffic_record(
 async def traffic_file(
     request: Request, task_id: UUID, file_id: FileId, run: Run = None
 ) -> StreamingResponse:
-    objects, root, _, manifest = await _manifest(request, task_id, run)
+    objects, root, number, manifest = await _manifest(request, task_id, run)
     item = next((item for item in manifest.files if item.id == file_id), None) if manifest else None
-    if item is None:
+    if item is None or manifest is None:
         raise HTTPException(404, "Traffic file not found")
+    if manifest.native_bound:
+        # Bound sources are one sealed classic-PCAP part. Pin and hash it before serving bytes.
+        try:
+            ref = next(ref for ref in manifest.native if ref.source_id == item.source_id)
+            index = await NativeAnalysisCache._source_index(objects, task_id, number, ref)
+            [part] = index.parts
+            data = await object_bytes(
+                objects, root + f"native/{ref.source_id}/parts/{part.id}.bin", PART_LIMIT
+            )
+            if len(data) != item.size_bytes or hashlib.sha256(data).hexdigest() != part.id:
+                raise ValueError("Original capture bytes do not match the sealed file")
+        except Exception as exc:
+            raise _unavailable() from exc
+        return StreamingResponse(
+            iter([data]),
+            media_type=item.content_type,
+            headers={
+                **download_headers(item.name),
+                "Cache-Control": "no-store",
+                "Content-Length": str(item.size_bytes),
+            },
+        )
     key = root + f"pcap/{item.id}"
     source = None
     try:

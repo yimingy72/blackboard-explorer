@@ -29,6 +29,8 @@ from opensandbox.transport import RetryPolicy
 
 CLEANUP_GRACE_SECONDS = 120
 SANDBOX_HOST_PROFILE = "node-sandbox-host-v1"
+TRAFFIC_PROFILE = "binding-pcap-v1"
+TRAFFIC_CONFIG_FIELDS = {"traffic_targets", "traffic_target_namespace", "traffic_sandbox_image"}
 SANDBOX_HOST_SECRET = "bbx-sandbox-host"
 SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
 SANDBOX_HOST_PORT = 8766
@@ -82,6 +84,40 @@ class RunnerResources:
             ipaddress.IPv4Address(network["ipv4"])
             if self.config.get("sandbox_host_execd_origin"):
                 self._execd_origin(self.config["sandbox_host_execd_origin"])
+        traffic = TRAFFIC_CONFIG_FIELDS & self.config.keys()
+        if traffic:
+            targets = self.config.get("traffic_targets")
+            if (
+                not self.sandbox_host
+                or traffic != TRAFFIC_CONFIG_FIELDS
+                or not isinstance(targets, list)
+                or not 1 <= len(targets) <= 8
+            ):
+                raise ValueError("Trusted Assignment traffic deployment is incomplete")
+            self._name(self.config["traffic_target_namespace"])
+            addresses = set()
+            for target in targets:
+                if not isinstance(target, dict) or set(target) != {"ipv4", "port"}:
+                    raise ValueError("Invalid Assignment network target")
+                address = ipaddress.IPv4Address(target["ipv4"])
+                pair = (address, target["port"])
+                if (
+                    str(address) != target["ipv4"]
+                    or address in ipaddress.IPv4Network("198.19.0.0/16")
+                    or address.is_loopback
+                    or address.is_multicast
+                    or address.is_link_local
+                    or address.is_unspecified
+                    or address.is_reserved
+                    or type(target["port"]) is not int
+                    or not 1 <= target["port"] <= 65535
+                    or pair in addresses
+                ):
+                    raise ValueError("Invalid Assignment network target")
+                addresses.add(pair)
+            if self.config["traffic_sandbox_image"] == self.config["sandbox_image"]:
+                raise ValueError("Assignment traffic requires its distinct trusted Sandbox image")
+            images.append("traffic_sandbox_image")
         for key in images:
             if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.config.get(key, "")):
                 raise ValueError("Resource images must use trusted immutable digests")
@@ -278,6 +314,75 @@ class RunnerResources:
             "bbx-create-op": str(UUID(operation_id or operation["operation_id"])),
         }
 
+    def traffic_enabled(self, operation):
+        enabled = operation.get("data", {}).get("traffic_profile") == TRAFFIC_PROFILE
+        if enabled and not TRAFFIC_CONFIG_FIELDS <= self.config.keys():
+            raise ResourceUnknown("The trusted Assignment traffic deployment is unavailable")
+        return enabled
+
+    def _sandbox_image(self, operation):
+        return self.config[
+            "traffic_sandbox_image" if self.traffic_enabled(operation) else "sandbox_image"
+        ]
+
+    async def _traffic_policy(self, namespace):
+        target_namespace = self.config["traffic_target_namespace"]
+        if target_namespace in {
+            namespace,
+            "kube-system",
+            "default",
+            "kube-public",
+            "kube-node-lease",
+        }:
+            raise ResourceUnknown("Assignment traffic targets require an isolated namespace")
+        targets = self.config["traffic_targets"]
+        selected = json.loads(
+            await self._kubectl(
+                "get",
+                "pods",
+                "-n",
+                target_namespace,
+                "-l",
+                "bbx.dev/traffic-target=allowed",
+                "-o",
+                "json",
+            )
+        )["items"]
+        for item in targets:
+            matched = [
+                pod for pod in selected if pod.get("status", {}).get("podIP") == item["ipv4"]
+            ]
+            if (
+                len(matched) != 1
+                or matched[0]["spec"].get("hostNetwork")
+                or matched[0]["metadata"].get("deletionTimestamp")
+                or not any(
+                    c["type"] == "Ready" and c["status"] == "True"
+                    for c in matched[0].get("status", {}).get("conditions", [])
+                )
+            ):
+                raise ResourceUnknown(
+                    "An original isolated Assignment traffic target is unavailable"
+                )
+        return {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": target_namespace,
+                        "k8s:bbx.dev/traffic-target": "allowed",
+                    }
+                }
+            ],
+            "toPorts": [
+                {
+                    "ports": [
+                        {"port": str(port), "protocol": "TCP"}
+                        for port in sorted({t["port"] for t in targets})
+                    ]
+                }
+            ],
+        }
+
     async def _wait_pod(self, namespace, cr_uid, old_uid=None):
         deadline = time.monotonic() + 150
         while time.monotonic() < deadline:
@@ -413,6 +518,25 @@ class RunnerResources:
         )
         policy["apiVersion"] = "cilium.io/v2"
         await self._ensure(policy, labels)
+        if self.traffic_enabled(operation):
+            target = self._document(
+                "CiliumNetworkPolicy",
+                "bbx-binding-traffic",
+                labels,
+                namespace,
+                spec={
+                    # Runner and recovery verifier have explicit component labels.
+                    # The official Sandbox has no component label, checked on observation.
+                    "endpointSelector": {
+                        "matchExpressions": [
+                            {"key": "bbx.dev/component", "operator": "DoesNotExist"}
+                        ]
+                    },
+                    "egress": [await self._traffic_policy(namespace)],
+                },
+            )
+            target["apiVersion"] = "cilium.io/v2"
+            await self._ensure(target, labels)
         allowed = self.config.get("runner_control_egress", [])
         runner_policy = self._document(
             "CiliumNetworkPolicy",
@@ -538,7 +662,7 @@ class RunnerResources:
                     await AdapterFactory(connection)
                     .create_sandbox_service()
                     .create_sandbox(
-                        spec=SandboxImageSpec(image=self.config["sandbox_image"]),
+                        spec=SandboxImageSpec(image=self._sandbox_image(operation)),
                         env={},
                         extensions={},
                         network_policy=None,
@@ -586,7 +710,7 @@ class RunnerResources:
         pod = await self._wait_pod(
             namespace, cr["metadata"]["uid"], observed.get("sandbox", {}).get("pod_uid")
         )
-        environment_revision = self._sandbox_spec(pod)
+        environment_revision = self._sandbox_spec(pod, operation)
         mount = await self._ensure(
             self._document(
                 "Secret",
@@ -739,12 +863,16 @@ class RunnerResources:
             },
         }
 
-    def _sandbox_spec(self, pod):
+    def _sandbox_spec(self, pod, operation):
         self._pod_projection(pod)
         main = next(c for c in pod["spec"]["containers"] if c["name"] == "sandbox")
         env = {entry["name"]: entry for entry in main.get("env", [])}
         if (
-            main["image"] != self.config["sandbox_image"]
+            main["image"] != self._sandbox_image(operation)
+            or (
+                self.traffic_enabled(operation)
+                and "bbx.dev/component" in pod["metadata"].get("labels", {})
+            )
             or len(env) != len(main.get("env", []))
             or env.get("BBX_ENVIRONMENT_REVISION", {}).get("value")
             != self.config["environment_revision"]
@@ -1122,7 +1250,7 @@ class RunnerResources:
             )
             or not self._same_process(self._pod_projection(pod), original)
             or self._pod_projection(pod)["terminated"]
-            or self._sandbox_spec(pod) != original["environment_revision"]
+            or self._sandbox_spec(pod, operation) != original["environment_revision"]
         ):
             raise ResourceUnknown("The original Sandbox Pod identity changed")
         secret = self._owned(
@@ -1189,6 +1317,11 @@ class RunnerResources:
             "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
             "environment_revision": observed["sandbox"]["environment_revision"],
             "network": self.config["sandbox_network"],
+            **(
+                {"traffic_targets": self.config["traffic_targets"]}
+                if self.traffic_enabled(operation)
+                else {}
+            ),
             "ca_file": SANDBOX_HOST_MOUNT + "/ca.pem",
         }
         fields = set(expected) | {
@@ -1522,7 +1655,7 @@ class RunnerResources:
                     raise ResourceUnknown("The original Sandbox Pod is ambiguous")
                 if children:
                     pod = children[0]
-                    revision = self._sandbox_spec(pod)
+                    revision = self._sandbox_spec(pod, operation)
                     projection = self._pod_projection(pod)
                     for key in ("pod_uid", "container_id"):
                         if prior.get("sandbox", {}).get(key) and prior["sandbox"][
@@ -2267,6 +2400,8 @@ class RunnerResources:
             ("CiliumNetworkPolicy", "bbx-task"),
             ("CiliumNetworkPolicy", "bbx-runner-control"),
         }
+        if self.traffic_enabled(operation):
+            allowed.add(("CiliumNetworkPolicy", "bbx-binding-traffic"))
         original = {observed["namespace_uid"]}
         for value in observed.values():
             if isinstance(value, dict):

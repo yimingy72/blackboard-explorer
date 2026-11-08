@@ -74,6 +74,19 @@
       "default": false,
       "title": "Helper Background",
       "type": "boolean"
+    },
+    "traffic_profile": {
+      "anyOf": [
+        {
+          "const": "binding-pcap-v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Traffic Profile"
     }
   },
   "required": [

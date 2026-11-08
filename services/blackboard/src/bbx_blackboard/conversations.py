@@ -884,6 +884,9 @@ class Conversations:
             )
 
     async def purge(self, tid: UUID, objects: Any) -> dict[str, bool]:
+        from bbx_blackboard.native_traffic import close_archive_for_purge, traffic_purge_guard
+
+        protect_archive = False
         async with self.repo.engine.begin() as conn:
             try:
                 await self.repo.lock(conn, tid)
@@ -960,7 +963,13 @@ class Conversations:
                 ).first()
                 if unresolved:
                     raise HTTPException(409, "Original Runner calls still require reconciliation")
+                if retired:
+                    protect_archive = await close_archive_for_purge(conn, native_resources)
             await require_settled_progress(conn, tid)
+        async with traffic_purge_guard(self.repo, tid, protect=protect_archive):
+            return await self._purge_material(tid, objects)
+
+    async def _purge_material(self, tid: UUID, objects: Any) -> dict[str, bool]:
         for prefix in (
             f"evidence/{tid}/",
             f"toolcalls/{tid}/",

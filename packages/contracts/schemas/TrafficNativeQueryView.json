@@ -1,5 +1,123 @@
 {
   "$defs": {
+    "TrafficBindingScope": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "assignment_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Assignment Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "epoch": {
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "role": {
+          "enum": [
+            "lead",
+            "worker",
+            "helper"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Agent Id"
+        },
+        "sandbox_pod_uid": {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "title": "Sandbox Pod Uid",
+          "type": "string"
+        },
+        "ipv4": {
+          "maxLength": 15,
+          "title": "Ipv4",
+          "type": "string"
+        },
+        "interface": {
+          "maxLength": 15,
+          "minLength": 1,
+          "title": "Interface",
+          "type": "string"
+        },
+        "netns_inode": {
+          "pattern": "^[1-9][0-9]{0,19}$",
+          "title": "Netns Inode",
+          "type": "string"
+        },
+        "host_ifindex": {
+          "minimum": 1,
+          "title": "Host Ifindex",
+          "type": "integer"
+        },
+        "snaplen": {
+          "const": 512,
+          "default": 512,
+          "title": "Snaplen",
+          "type": "integer"
+        },
+        "truncated_packets": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Truncated Packets",
+          "type": "integer"
+        },
+        "discarded_tail_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Discarded Tail Bytes",
+          "type": "integer"
+        },
+        "dropped_packets": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dropped Packets"
+        }
+      },
+      "required": [
+        "binding_id",
+        "assignment_id",
+        "generation",
+        "epoch",
+        "role",
+        "sandbox_pod_uid",
+        "ipv4",
+        "interface",
+        "netns_inode",
+        "host_ifindex"
+      ],
+      "title": "TrafficBindingScope",
+      "type": "object"
+    },
     "TrafficNativeCoverage": {
       "additionalProperties": false,
       "properties": {
@@ -19,6 +137,17 @@
           ],
           "default": null,
           "title": "Agent Id"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrafficBindingScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "packet_count": {
           "minimum": 0,

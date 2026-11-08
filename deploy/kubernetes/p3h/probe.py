@@ -219,7 +219,9 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             raise RuntimeError("Import escaped the reviewed candidate")
     owned_cluster()
     cluster = json.loads((KUBE_STATE / "cluster-identity.json").read_text())
-    images = json.loads((STATE / "build-source.json").read_text())
+    images = json.loads(
+        (STATE / getattr(workers, "build_source_name", "build-source.json")).read_text()
+    )
     directory = STATE / getattr(workers, "result_directory", "joint")
     directory.mkdir(mode=0o700, exist_ok=True)
     state_path = directory / "private-state.json"
@@ -367,7 +369,9 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             native_mcp_backend_token_file="/probe/backend-token",
             sandbox_tenant_resolver_token=SecretStr(state["resolver_key"]),
         )
-        app = create_app(cfg, engine=engine, objects=Objects())
+        make_objects = getattr(workers, "objects", None)
+        objects = await make_objects() if make_objects is not None else Objects()
+        app = create_app(cfg, engine=engine, objects=objects)
         tool_plan = [
             ("write_file", {"path": "/workspace/p3h-proof.txt", "content": "p3h-file\n"}),
             ("read_file", {"path": "/workspace/p3h-proof.txt", "limit": 1024}),

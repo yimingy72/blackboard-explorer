@@ -235,6 +235,19 @@
       "additionalProperties": true,
       "title": "Arguments",
       "type": "object"
+    },
+    "network_grant_revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Network Grant Revision"
     }
   },
   "required": [

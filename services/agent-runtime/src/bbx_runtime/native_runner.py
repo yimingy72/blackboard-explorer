@@ -16,7 +16,12 @@ from bbx_contracts.runner_bootstrap import retirement_manifest_digest
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 from bbx_runtime.runner_proxy import RunnerModelProxy
-from bbx_runtime.runner_resources import ResourceUnknown, RunnerResources
+from bbx_runtime.runner_resources import (
+    TRAFFIC_CONFIG_FIELDS,
+    TRAFFIC_PROFILE,
+    ResourceUnknown,
+    RunnerResources,
+)
 from bbx_runtime.scheduler.lock import RuntimeLock
 from bbx_runtime.settings import NativeRunnerSettings
 
@@ -174,7 +179,12 @@ class NativeRunnerController:
                         "controller_fence": self.instance.fence,
                         "controller_pid": self.instance.backend_pid,
                         "controller_started_at": self.instance.backend_started_at.isoformat(),
-                        "resource_config": self.config,
+                        "resource_config": {
+                            key: value
+                            for key, value in self.config.items()
+                            if key not in TRAFFIC_CONFIG_FIELDS
+                            or initial.get("data", {}).get("traffic_profile") == TRAFFIC_PROFILE
+                        },
                         "retirement_single_apiserver": self.retirement_authority,
                     },
                 )
@@ -228,11 +238,23 @@ class NativeRunnerController:
             or (not control_only and scope[2] != published[2])
         )
 
+    @staticmethod
+    def _traffic_pending(operation):
+        data = operation["data"]
+        original = operation["observation"].get("sandbox", {}).get("pod_uid")
+        return data.get("traffic_profile") == TRAFFIC_PROFILE and any(
+            entry["state"] != "archived" and entry["scope"]["sandbox_pod_uid"] == original
+            for entry in data.get("network_scopes", {}).values()
+        )
+
     async def _recover_original(self, tid, operation, tenant_key):
         incident = operation["data"]["recovery"]
         identity = {"incident_id": incident["incident_id"]}
         blocker = "journal_writer_unconfirmed"
         try:
+            if self._traffic_pending(operation):
+                blocker = "original_traffic_unconfirmed"
+                raise ResourceUnknown("The original capture archive is unresolved")
             node = await self.guarded(tid, operation, self.resources.recovery_volumes(operation))
             if not incident.get("exit_proof"):
                 blocker = "original_exit_unconfirmed"
@@ -354,6 +376,15 @@ class NativeRunnerController:
                     continue
                 if self.stopping(operation):
                     operation.update(await self.action(tid, operation, "stop"))
+                    cutoff = operation["data"].get("traffic_preseal_until")
+                    if cutoff and self._traffic_pending(operation):
+                        remaining = (
+                            datetime.fromisoformat(cutoff) - datetime.now(UTC)
+                        ).total_seconds()
+                        if remaining > 0:
+                            # The independent original Host owns object I/O; stop polls state only.
+                            await asyncio.sleep(min(remaining, 0.75))
+                            continue
                     if operation["data"].get("recovery", {}).get("exit_proof"):
                         incident = operation["data"]["recovery"]
 

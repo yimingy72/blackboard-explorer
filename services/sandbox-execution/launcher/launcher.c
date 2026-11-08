@@ -4,15 +4,18 @@
 #include <grp.h>
 #include <limits.h>
 #include <linux/capability.h>
+#include <net/if.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "assignment_scope.h"
@@ -48,6 +51,51 @@ static int control_directory(const char *path) {
     return fd;
 }
 
+static unsigned long long process_ticks(pid_t pid);
+
+static int network_gate(char **argv, int namespace_fd) {
+    int directory = control_directory("/var/lib/bbx/control/networks");
+    int lock = openat(directory, "lock", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (lock < 0 || flock(lock, LOCK_EX)) fail("lock original Assignment network");
+    char name[96];
+    if (snprintf(name, sizeof(name), "%s.gate", argv[1]) >= (int)sizeof(name)) {
+        errno = EPERM;
+        fail("invalid Assignment network gate");
+    }
+    char revoked[96];
+    if (snprintf(revoked, sizeof(revoked), "%s.revoked", argv[1]) >= (int)sizeof(revoked) ||
+        faccessat(directory, revoked, F_OK, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) {
+        errno = EPERM;
+        fail("original Assignment network is revoked");
+    }
+    int fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat evidence, namespace;
+    if (fd < 0 || fstat(fd, &evidence) || !S_ISREG(evidence.st_mode) ||
+        evidence.st_uid || evidence.st_nlink != 1 || (evidence.st_mode & 0077) ||
+        fstat(namespace_fd, &namespace)) fail("read original Assignment network gate");
+    FILE *file = fdopen(fd, "r");
+    char scope[81], network[81], address[16], interface[IFNAMSIZ], extra;
+    unsigned int ifindex, capture_pid;
+    unsigned long long inode, dev, until, capture_ticks;
+    struct timespec now;
+    if (!file || fscanf(file, "%80s %80s %15s %llu %llu %llu %15s %u %u %llu %c",
+        scope, network, address, &dev, &inode, &until, interface, &ifindex,
+        &capture_pid, &capture_ticks, &extra) != 10 ||
+        !ifindex || if_nametoindex(interface) != ifindex || !capture_ticks ||
+        capture_pid > INT_MAX || process_ticks((pid_t)capture_pid) != capture_ticks ||
+        strcmp(scope, argv[10]) || strcmp(network, argv[3]) || strcmp(address, argv[4]) ||
+        dev != (unsigned long long)namespace.st_dev ||
+        inode != (unsigned long long)namespace.st_ino ||
+        clock_gettime(CLOCK_BOOTTIME, &now) ||
+        until <= (unsigned long long)now.tv_sec * 1000 + (unsigned long long)now.tv_nsec / 1000000) {
+        errno = EPERM;
+        fail("original Assignment network is unconfirmed or fenced");
+    }
+    fclose(file);
+    close(directory);
+    return lock;
+}
+
 static void close_extra_fds(void) {
     if (syscall(SYS_close_range, 3U, UINT_MAX, 0U) == 0) return;
     if (errno != ENOSYS && errno != EINVAL) fail("close inherited descriptors");
@@ -56,17 +104,20 @@ static void close_extra_fds(void) {
     for (rlim_t fd = 3; fd < limit.rlim_cur; fd++) close((int)fd);
 }
 
-static unsigned long long start_ticks(void) {
-    char line[4096];
-    FILE *source = fopen("/proc/self/stat", "re");
-    if (!source || !fgets(line, sizeof(line), source)) fail("read process identity");
+static unsigned long long process_ticks(pid_t pid) {
+    char line[4096], path[64];
+    if (pid <= 0 || snprintf(path, sizeof(path), "/proc/%d/stat", pid) >= (int)sizeof(path)) return 0;
+    FILE *source = fopen(path, "re");
+    if (!source) return 0;
+    char *read = fgets(line, sizeof(line), source);
     fclose(source);
+    if (!read) return 0;
     char *cursor = strrchr(line, ')');
-    if (!cursor) { errno = EINVAL; fail("parse process identity"); }
+    if (!cursor || cursor[1] != ' ' || cursor[2] == 'Z' || cursor[2] == 'X') return 0;
     cursor += 2;
     for (int field = 3; field < 22; field++) {
         cursor = strchr(cursor, ' ');
-        if (!cursor) { errno = EINVAL; fail("parse process identity"); }
+        if (!cursor) return 0;
         cursor++;
     }
     return strtoull(cursor, NULL, 10);
@@ -194,12 +245,21 @@ int main(int argc, char **argv) {
         errno = EPERM;
         fail("assignment scope is required; legacy launch refused");
     }
+    int marker = access("/opt/bbx/control/assignment-network-v1", F_OK) == 0;
+    if (marker && (argc != 15 || strcmp(argv[9], "basic") || strcmp(argv[6], "-") ||
+        strcmp(argv[7], "-"))) {
+        errno = EPERM;
+        fail("the Assignment network profile requires its original basic cgroup scope");
+    }
     int directory = control_directory("/run/netns");
     int namespace_fd = openat(directory, argv[1], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (namespace_fd < 0 || setns(namespace_fd, CLONE_NEWNET)) fail("enter assignment network");
+    if (namespace_fd < 0) fail("open original Assignment network");
+    int network_lock = marker ? network_gate(argv, namespace_fd) : -1;
+    if (setns(namespace_fd, CLONE_NEWNET)) fail("enter assignment network");
     close(namespace_fd);
     close(directory);
     if (argc == 15 && bbx_scope_join(argv[10], argv[11], argv[12], argv[13], argv[14])) fail("join original assignment cgroup");
+    if (network_lock >= 0) close(network_lock);
     close_extra_fds();
 
     directory = control_directory(CONTROL_DIR);
@@ -213,7 +273,8 @@ int main(int argc, char **argv) {
     close(directory);
     struct stat namespace_info;
     if (stat("/proc/self/ns/net", &namespace_info)) fail("read network identity");
-    unsigned long long ticks = start_ticks();
+    unsigned long long ticks = process_ticks(getpid());
+    if (!ticks) fail("read process identity");
     int raw = !strcmp(argv[9], "net-raw");
     drop_identity(raw);
     if (chdir(argv[5])) fail("enter solver directory");

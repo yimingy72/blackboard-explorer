@@ -30,6 +30,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from bbx_blackboard.auth import require_task_reader
 from bbx_blackboard.gateway_auth import require_gateway_identity
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
+from bbx_blackboard.native_traffic import (
+    PART_LIMIT,
+    CaptureReady,
+    CaptureSeal,
+    NativeTraffic,
+    opted_in,
+)
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.runner_gateway import decode
 from bbx_blackboard.store import schema as s
@@ -42,6 +49,7 @@ def now():
 class SandboxTools:
     def __init__(self, gateway):
         self.gateway, self.repo = gateway, gateway.repo
+        self.traffic = NativeTraffic(self)
 
     async def resource(self, conn, tid):
         found = (
@@ -130,6 +138,11 @@ class SandboxTools:
             "operation_id": resource["operation_id"],
             "runner_pod_uid": observed.get("runner", {}).get("pod_uid"),
             "network": resource["config"]["sandbox_network"],
+            **(
+                {"traffic_targets": resource["config"]["traffic_targets"]}
+                if opted_in(resource)
+                else {}
+            ),
             "blackboard_url": resource["config"]["runner_blackboard_url"],
             "hard_deadline": resource["hard_deadline"].isoformat(),
         }
@@ -198,6 +211,8 @@ class SandboxTools:
             or context["runner_pod_uid"] != original_pod
         ):
             raise HTTPException(403, "Runner owner does not match the original Sandbox host")
+        if entry := self.traffic.binding(resource, runner_binding["id"]):
+            return entry["binding"]
         member = await row(conn, s.ctf_members, tid, runner_binding["binding"]["agent_id"])
         business = runner_binding["business"]
         assignment = runner_binding["binding"].get("assignment_ref") or str(
@@ -271,7 +286,14 @@ class SandboxTools:
     async def dispatch_claim(self, conn, tid, call, owner, runner_binding, arguments):
         binding = await self.binding(conn, tid, runner_binding, owner)
         args = dict(arguments)
-        data = {**call["data"], "sandbox_binding": binding}
+        network = None
+        if call["data"]["tool_name"] == "exec_command":
+            binding, network = await self.traffic.allocate(conn, tid, binding, runner_binding)
+        data = {
+            **call["data"],
+            "sandbox_binding": binding,
+            **({"network_source_id": network["scope"]["source_id"]} if network else {}),
+        }
         if call["data"]["tool_name"] == "exec_command":
             remaining = int((owner["hard_deadline"] - now()).total_seconds())
             if binding["role"] == "helper":
@@ -290,32 +312,14 @@ class SandboxTools:
                 command_id=call["data"]["invocation_id"],
                 invocation_id=call["data"]["invocation_id"],
             )
-            await conn.execute(
-                insert(s.sandbox_command_records).values(
-                    task_id=tid,
-                    id=call["data"]["invocation_id"],
-                    binding_id=runner_binding["id"],
-                    agent_id=binding["agent_id"],
-                    role=binding["role"],
-                    challenge_id=UUID(binding["challenge_id"]) if binding["challenge_id"] else None,
-                    assignment_id=binding["assignment_id"],
-                    generation=binding["generation"],
-                    epoch=binding["epoch"],
-                    state="dispatched",
-                    created_at=now(),
-                    data={
-                        "binding": binding,
-                        "background": args.get("background", False),
-                        "cwd": args.get("cwd", "/workspace"),
-                        "stdout": "",
-                        "stderr": "",
-                        "stdout_bytes": 0,
-                        "stderr_bytes": 0,
-                        "output_truncated": False,
-                        "scope_state": "active",
-                    },
-                )
-            )
+            options = {
+                "background": args.get("background", False),
+                "cwd": args.get("cwd", "/workspace"),
+            }
+            if network:
+                data["command_options"] = options
+            else:
+                await self._record_command(conn, tid, call, runner_binding, binding, options)
         elif call["data"]["tool_name"] in {
             "execution_status",
             "execution_output",
@@ -329,12 +333,55 @@ class SandboxTools:
             .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])
             .values(data=data)
         )
-        return {"binding": binding, "arguments": args}
+        return {
+            "binding": binding,
+            "arguments": args,
+            **({"network": network} if network else {}),
+        }
+
+    @staticmethod
+    async def _record_command(conn, tid, call, runner_binding, binding, options):
+        await conn.execute(
+            insert(s.sandbox_command_records).values(
+                task_id=tid,
+                id=call["data"]["invocation_id"],
+                binding_id=runner_binding["id"],
+                agent_id=binding["agent_id"],
+                role=binding["role"],
+                challenge_id=UUID(binding["challenge_id"]) if binding["challenge_id"] else None,
+                assignment_id=binding["assignment_id"],
+                generation=binding["generation"],
+                epoch=binding["epoch"],
+                state="dispatched",
+                created_at=now(),
+                data={
+                    "binding": binding,
+                    **options,
+                    "stdout": "",
+                    "stderr": "",
+                    "stdout_bytes": 0,
+                    "stderr_bytes": 0,
+                    "output_truncated": False,
+                    "scope_state": "active",
+                },
+            )
+        )
 
     @staticmethod
     def _host_epoch_floor(resource):
         history = resource["data"].get("recovery_history", [])
         return history[-1]["replacement_epoch"] if history else 0
+
+    async def settle_unsent(self, conn, tid, call):
+        await self.gateway._save_tool_result(
+            conn,
+            tid,
+            call,
+            {
+                "content": [{"type": "text", "text": "The original command was not sent."}],
+                "isError": True,
+            },
+        )
 
     async def event(self, tid, invocation_id, key, event, payload):
         async with self.repo.engine.begin() as conn:
@@ -361,6 +408,13 @@ class SandboxTools:
             if event != "unknown" and call["data"].get("sdk_admitted") is not True:
                 raise HTTPException(403, "Original SDK dispatch was not admitted")
             if call["state"] == "completed":
+                return {"saved": True}
+            if (
+                event == "unknown"
+                and call["data"].get("network_source_id")
+                and call["data"].get("sdk_admitted") is not True
+            ):
+                await self.settle_unsent(conn, tid, call)
                 return {"saved": True}
             command_id = (
                 invocation_id if name == "exec_command" else call["data"].get("sandbox_command_id")
@@ -823,7 +877,7 @@ async def host_admit(request: Request, task_id: UUID):
     body, key = await _host_body(request, SandboxToolClaim, 2 * 1024 * 1024)
     async with service.repo.engine.begin() as conn:
         await service.repo.lock(conn, task_id)
-        await service.host(conn, task_id, key)
+        resource, _ = await service.host(conn, task_id, key)
         call, owner, runner_binding = await service.gateway._tool(
             conn, task_id, identity, body.invocation
         )
@@ -837,6 +891,22 @@ async def host_admit(request: Request, task_id: UUID):
             or call["data"]["authorized_wait_until_ms"] <= int(now().timestamp() * 1000)
         ):
             raise HTTPException(409, "Original Sandbox dispatch has no current SDK admission")
+        if opted_in(resource) and call["data"]["tool_name"] == "exec_command":
+            entry = service.traffic.binding(resource, runner_binding["id"])
+            grant = (entry or {}).get("grant", {})
+            if (
+                not entry
+                or entry["state"] != "ready"
+                or entry.get("loss")
+                or entry["scope"]["source_id"] != call["data"].get("network_source_id")
+                or body.network_grant_revision is None
+                or grant.get("grant_revision") != body.network_grant_revision
+                or grant.get("authority_until_ms", 0) <= int(now().timestamp() * 1000)
+            ):
+                raise HTTPException(409, "Original Sandbox command lacks its current capture grant")
+            await service._record_command(
+                conn, task_id, call, runner_binding, current, call["data"]["command_options"]
+            )
         await conn.execute(
             update(s.runner_calls)
             .where(s.runner_calls.c.task_id == task_id, s.runner_calls.c.id == call["id"])
@@ -925,3 +995,45 @@ async def scope_claim(request: Request, task_id: UUID, command_id: str):
 async def scope_event(request: Request, task_id: UUID, command_id: str):
     body, key = await _host_body(request, SandboxHostEvent, 32768)
     return await _tools(request).scope_event(task_id, command_id, key, body.event, body.payload)
+
+
+_NETWORK = "/api/tasks/{task_id}/sandbox-host/network"
+
+
+@router.get(_NETWORK)
+async def network_scopes(request: Request, task_id: UUID):
+    return await _tools(request).traffic.list(task_id, _report_key(request))
+
+
+@router.post(_NETWORK + "/{source_id}/observe")
+async def network_observe(request: Request, task_id: UUID, source_id: str):
+    body, key = await _host_body(request, CaptureReady, 4096)
+    return await _tools(request).traffic.observe(task_id, key, source_id, body)
+
+
+@router.post(_NETWORK + "/{source_id}/permit")
+async def network_permit(request: Request, task_id: UUID, source_id: str):
+    return await _tools(request).traffic.permit(task_id, _report_key(request), source_id)
+
+
+@router.post(_NETWORK + "/{source_id}/seal")
+async def network_seal(request: Request, task_id: UUID, source_id: str):
+    body, key = await _host_body(request, CaptureSeal, 4096)
+    return await _tools(request).traffic.seal(task_id, key, source_id, body)
+
+
+@router.post(_NETWORK + "/{source_id}/bytes")
+async def network_bytes(request: Request, task_id: UUID, source_id: str):
+    service = _tools(request)
+    key = _report_key(request)
+    async with service.repo.engine.connect() as conn:
+        await service.host(conn, task_id, key)
+    objects = request.app.state.objects
+    if objects is None:
+        raise HTTPException(503, "Original capture storage is unavailable")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > PART_LIMIT:
+            raise HTTPException(413, "Original capture exceeds its sealed byte bound")
+        data.extend(chunk)
+    return await service.traffic.upload(task_id, key, source_id, bytes(data), objects)

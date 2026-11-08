@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import hmac
+import ipaddress
 import json
 import os
 import ssl
@@ -27,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
+from bbx_runtime.sandbox_network import SEAL_FIELDS, ready_identity, root_network, sealed_bytes
 from bbx_runtime.sandbox_tools import BoundedExecdLogTransport, assignment_control, dispatch
 
 request_scope: ContextVar[tuple[str, str]] = ContextVar("bbx_sandbox_mcp_scope")
@@ -64,6 +66,8 @@ class SandboxMCP:
         self.manager = StreamableHTTPSessionManager(self.server, json_response=True, stateless=True)
         self.http: httpx.AsyncClient
         self.sandbox = None
+        self.network_locks: dict[str, asyncio.Lock] = {}
+        self.acknowledged_networks: set[str] = set()
         self.app = Starlette(
             routes=[Route("/ready", self.health), Mount("/mcp", app=self.handle)],
             lifespan=self.run,
@@ -107,6 +111,9 @@ class SandboxMCP:
                 claimed = True
                 binding = AssignmentBinding(**claim["binding"])
                 self.check_binding(binding)
+                network = claim.get("network")
+                if self.config.get("traffic_targets") and name == "exec_command" and not network:
+                    raise ValueError("An original per-Assignment network is required")
                 sandbox = self.sandbox
                 if sandbox is None:
                     raise ValueError("Original Sandbox is unavailable")
@@ -114,9 +121,23 @@ class SandboxMCP:
                 async def admit():
                     if datetime.fromisoformat(self.config["hard_deadline"]) <= datetime.now(UTC):
                         return False
-                    result = await self.control(
-                        "POST", "admit", body, authorization=authorization, sdk=sdk
-                    )
+                    if network:
+                        source = self.network_scope(network, binding)
+                        if network["scope"]["binding_id"] != invocation.binding.binding_id:
+                            raise ValueError("Original Sandbox binding changed")
+                        async with self.network_locks.setdefault(source, asyncio.Lock()):
+                            revision = await self.grant(sandbox, network, prepare=True)
+                            result = await self.control(
+                                "POST",
+                                "admit",
+                                {**body, "network_grant_revision": revision},
+                                authorization=authorization,
+                                sdk=sdk,
+                            )
+                    else:
+                        result = await self.control(
+                            "POST", "admit", body, authorization=authorization, sdk=sdk
+                        )
                     return result.get("admitted") is True
 
                 async def persist(event, payload):
@@ -176,22 +197,167 @@ class SandboxMCP:
             "pod_uid": self.config["sandbox_pod_uid"],
             "environment_revision": self.config["environment_revision"],
             "execution_context_id": self.config["execution_context_id"],
-            **self.config["network"],
+            **(self.config["network"] if not self.config.get("traffic_targets") else {}),
         }
         if any(getattr(binding, key) != value for key, value in expected.items()):
             raise ValueError("Original Task execution binding changed")
 
-    async def control(self, method, path, body=None, *, authorization=None, sdk=None):
+    def network_scope(self, item, binding):
+        scope = item["scope"]
+        source = scope["source_id"]
+        ordinal = int(scope["host_interface"][2:], 16)
+        if (
+            self.config.get("traffic_targets") != scope["targets"]
+            or item["binding"] != json.loads(binding.scope_request()[1])
+            or scope["task_id"] != binding.task_id
+            or scope["agent_id"] != binding.agent_id
+            or scope["role"] != binding.role
+            or scope.get("parent_agent_id") != binding.parent_agent_id
+            or scope["assignment_id"] != binding.assignment_id
+            or scope["generation"] != binding.generation
+            or scope["epoch"] != binding.epoch
+            or scope["sandbox_id"] != binding.sandbox_id
+            or scope["sandbox_pod_uid"] != binding.pod_uid
+            or scope["runner_pod_uid"] != self.config["runner_pod_uid"]
+            or scope["execution_context_id"] != binding.execution_context_id
+            or scope["namespace"] != binding.namespace
+            or scope["ipv4"] != binding.ipv4
+            or scope["host_ipv4"] != str(ipaddress.IPv4Address(binding.ipv4) - 1)
+            or scope["host_interface"] != f"bv{ordinal:03x}"
+        ):
+            raise ValueError("Original Sandbox traffic scope changed")
+        return source
+
+    async def grant(self, sandbox, item, *, prepare=False):
+        scope, binding = item["scope"], AssignmentBinding(**item["binding"])
+        source = self.network_scope(item, binding)
+        path = f"network/{source}"
+        if prepare and item.get("prepare_allowed"):
+            await root_network(
+                sandbox,
+                "prepare",
+                source,
+                {
+                    "source_id": source,
+                    "ordinal": int(scope["host_interface"][2:], 16),
+                    "namespace": binding.namespace,
+                    "network_identity": binding.network_identity,
+                    "ipv4": binding.ipv4,
+                    "targets": scope["targets"],
+                    "scope_id": binding.scope_request()[0],
+                },
+            )
+        observed = await root_network(sandbox, "read", source)
+        if prepare:
+            for _ in range(8):
+                if observed.get("capture_ready"):
+                    break
+                await asyncio.sleep(0.1)
+                observed = await root_network(sandbox, "read", source)
+        if not observed.get("capture_ready"):
+            raise ValueError("Original Sandbox capture is not listening")
+        identity = ready_identity(observed)
+        if item.get("ready") is None:
+            await self.control("POST", path + "/observe", identity)
+        elif item["ready"] != identity:
+            raise ValueError("Original capture process changed")
+        permit = await self.control("POST", path + "/permit", {})
+        installed = await root_network(
+            sandbox, "renew", source, {**permit, "boot_ms": observed["boot_ms"]}
+        )
+        if (
+            permit["source_id"] != source
+            or installed.get("grant_revision") != permit["grant_revision"]
+            or not installed.get("gate_live")
+            or ready_identity(installed) != identity
+        ):
+            raise ValueError("Original Sandbox kernel grant was not installed")
+        return permit["grant_revision"]
+
+    async def archive_network(self, sandbox, item, source):
+        path = f"network/{source}"
+        if not item.get("retire"):
+            await self.grant(sandbox, item)
+            return
+        fenced = await root_network(sandbox, "fence", source)
+        if fenced["state"] not in {"fenced", "sealed", "acked"}:
+            raise ValueError("Original Sandbox network fence is unconfirmed")
+        if not item.get("can_seal"):
+            if item.get("ready") is None and fenced.get("capture_ready"):
+                # A root prepare may have succeeded even if its first Host receipt was lost.
+                await self.control("POST", path + "/observe", ready_identity(fenced))
+            return
+        observed = await root_network(sandbox, "seal", source)
+        if observed.get("state") not in {"sealed", "acked"}:
+            raise ValueError("Original capture has no sealed bytes")
+        original = {
+            **{k: observed[k] for k in SEAL_FIELDS if k in observed},
+            **ready_identity(observed),
+        }
+        if not item["archive_confirmed"]:
+            await self.control("POST", path + "/seal", original)
+            data = await sealed_bytes(sandbox, source, original)
+            response = await self.control("POST", path + "/bytes", raw=data)
+            if response.get("archive_confirmed") is not True:
+                raise ValueError("Original archive acknowledgement is missing")
+        await root_network(sandbox, "ack", source, {"sha256": original["sha256"]})
+        self.acknowledged_networks.add(source)
+
+    async def networks(self):
+        sandbox = self.sandbox
+        if sandbox is None:
+            return
+        grants = asyncio.Semaphore(8)
+        archives = asyncio.Semaphore(3)
+        work: dict[str, asyncio.Task] = {}
+
+        async def reconcile(item, source):
+            try:
+                limit = archives if item.get("retire") else grants
+                async with limit, self.network_locks.setdefault(source, asyncio.Lock()):
+                    await self.archive_network(sandbox, item, source)
+            except Exception:
+                # No capture, permit or archive result is inferred from missing evidence.
+                return
+
+        try:
+            while True:
+                try:
+                    batch = await self.control("GET", "network")
+                    for item in batch["scopes"]:
+                        try:
+                            binding = AssignmentBinding(**item["binding"])
+                            self.check_binding(binding)
+                            source = self.network_scope(item, binding)
+                            if source not in work and source not in self.acknowledged_networks:
+                                task = asyncio.create_task(reconcile(item, source))
+                                work[source] = task
+                                task.add_done_callback(lambda _, key=source: work.pop(key, None))
+                        except (ValueError, KeyError, TypeError):
+                            continue
+                except (httpx.HTTPError, ValueError, KeyError):
+                    pass
+                await asyncio.sleep(1.5)
+        finally:
+            pending = list(work.values())
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def control(self, method, path, body=None, *, authorization=None, sdk=None, raw=None):
         headers = {"x-bbx-sandbox-report": self.config["report_key"]}
         if authorization:
             headers["authorization"] = authorization
         if sdk:
             headers["x-bbx-sdk-session-id"] = sdk
+        if raw is not None:
+            headers["content-type"] = "application/octet-stream"
         response = await self.http.request(
             method,
             f"{self.config['blackboard_url'].rstrip('/')}/api/tasks/{self.config['task_id']}/sandbox-host/{path}",
             headers=headers,
             json=body,
+            content=raw,
         )
         response.raise_for_status()
         return response.json()
@@ -304,13 +470,16 @@ class SandboxMCP:
                 }:
                     raise ValueError("Original Sandbox execution context changed")
                 self.ready = True
-                cleanup = asyncio.create_task(self.scopes())
+                cleanup = [asyncio.create_task(self.scopes())]
+                if self.config.get("traffic_targets"):
+                    cleanup.append(asyncio.create_task(self.networks()))
                 try:
                     yield
                 finally:
                     self.ready = False
-                    cleanup.cancel()
-                    await asyncio.gather(cleanup, return_exceptions=True)
+                    for job in cleanup:
+                        job.cancel()
+                    await asyncio.gather(*cleanup, return_exceptions=True)
             finally:
                 await self.sandbox.close()
 

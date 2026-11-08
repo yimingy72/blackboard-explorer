@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { trafficApi } from './traffic';
 import { ApiError } from './client';
 
-export function useTrafficNative(taskId: string, run: number, agentId: string, expression: string, enabled: boolean, live: boolean) {
+export function useTrafficNative(taskId: string, run: number, agentId: string, expression: string, enabled: boolean, live: boolean, sourceId?: string) {
   const seen = useRef<string | null>(null);
   const created = useQuery({
-    queryKey: ['traffic-native-open', taskId, run, agentId, expression],
-    queryFn: ({ signal }) => trafficApi.openNativeQuery(taskId, run, agentId, expression, signal),
+    queryKey: ['traffic-native-open', taskId, run, agentId, expression, sourceId],
+    queryFn: ({ signal }) => trafficApi.openNativeQuery(taskId, run, agentId, expression, signal, sourceId),
     enabled, retry: false, staleTime: 30000, gcTime: 60000, refetchOnWindowFocus: false,
   });
   const progress = useQuery({

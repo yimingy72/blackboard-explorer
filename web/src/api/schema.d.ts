@@ -2523,6 +2523,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/sandbox-host/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Network Scopes */
+        get: operations["network_scopes_api_tasks__task_id__sandbox_host_network_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/bytes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Bytes */
+        post: operations["network_bytes_api_tasks__task_id__sandbox_host_network__source_id__bytes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/observe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Observe */
+        post: operations["network_observe_api_tasks__task_id__sandbox_host_network__source_id__observe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/permit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Permit */
+        post: operations["network_permit_api_tasks__task_id__sandbox_host_network__source_id__permit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Seal */
+        post: operations["network_seal_api_tasks__task_id__sandbox_host_network__source_id__seal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/sandbox-host/scopes": {
         parameters: {
             query?: never;
@@ -5813,6 +5898,8 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
+            /** Traffic Profile */
+            traffic_profile?: "binding-pcap-v1" | null;
         };
         /** NativeTransportObservation */
         NativeTransportObservation: {
@@ -7287,6 +7374,52 @@ export interface components {
              */
             protocol: "bbx.task-runner.v1";
         };
+        /** TrafficBindingScope */
+        TrafficBindingScope: {
+            /** Assignment Id */
+            assignment_id: string;
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Discarded Tail Bytes
+             * @default 0
+             */
+            discarded_tail_bytes: number;
+            /** Dropped Packets */
+            dropped_packets?: number | null;
+            /** Epoch */
+            epoch: number;
+            /** Generation */
+            generation: number;
+            /** Host Ifindex */
+            host_ifindex: number;
+            /** Interface */
+            interface: string;
+            /** Ipv4 */
+            ipv4: string;
+            /** Netns Inode */
+            netns_inode: string;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "lead" | "worker" | "helper";
+            /** Sandbox Pod Uid */
+            sandbox_pod_uid: string;
+            /**
+             * Snaplen
+             * @default 512
+             * @constant
+             */
+            snaplen: 512;
+            /**
+             * Truncated Packets
+             * @default 0
+             */
+            truncated_packets: number;
+        };
         /** TrafficCapture */
         TrafficCapture: {
             /**
@@ -7381,6 +7514,10 @@ export interface components {
              * @default false
              */
             has_more: boolean;
+            /** Native Bound */
+            native_bound?: boolean | null;
+            /** Native Sources */
+            native_sources?: components["schemas"]["TrafficNativeSourceRef"][] | null;
             /** Next After */
             next_after?: number | null;
             /** Next Before */
@@ -7451,6 +7588,7 @@ export interface components {
             error?: string | null;
             /** Packet Count */
             packet_count: number;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
         };
@@ -7481,6 +7619,7 @@ export interface components {
             layers: components["schemas"]["TrafficPacketNode"][];
             /** Revision */
             revision: string;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
             /** Source Number */
@@ -7506,6 +7645,7 @@ export interface components {
             columns: string[];
             /** Foreground */
             foreground?: string | null;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
             /** Source Number */
@@ -7538,6 +7678,8 @@ export interface components {
             display_filter: string;
             /** Run */
             run?: number | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** TrafficNativeQueryView */
         TrafficNativeQueryView: {
@@ -7580,6 +7722,27 @@ export interface components {
              * @enum {string}
              */
             status: "building" | "ready" | "partial" | "error";
+        };
+        /** TrafficNativeSourceRef */
+        TrafficNativeSourceRef: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Available Bytes */
+            available_bytes: number;
+            /**
+             * Complete
+             * @default false
+             */
+            complete: boolean;
+            /** Last Packet At */
+            last_packet_at?: string | null;
+            /** Packet Count */
+            packet_count: number;
+            /** Revision */
+            revision: string;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
+            /** Source Id */
+            source_id: string;
         };
         /** TrafficObservation */
         TrafficObservation: {
@@ -13591,6 +13754,165 @@ export interface operations {
             header?: never;
             path: {
                 task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_scopes_api_tasks__task_id__sandbox_host_network_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_bytes_api_tasks__task_id__sandbox_host_network__source_id__bytes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_observe_api_tasks__task_id__sandbox_host_network__source_id__observe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_permit_api_tasks__task_id__sandbox_host_network__source_id__permit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_seal_api_tasks__task_id__sandbox_host_network__source_id__seal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
             };
             cookie?: never;
         };
