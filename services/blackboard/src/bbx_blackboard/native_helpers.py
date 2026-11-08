@@ -1,11 +1,23 @@
-"""Task-locked one-shot foreground delegation; Pi owns the child SDK."""
+"""Task-locked native delegation; Pi owns the foreground and supervised child SDKs."""
 
 import json
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
-from bbx_contracts.runner import PROTOCOL, ToolInvocation, runner_json_text, runner_payload_digest
-from bbx_contracts.runner_bootstrap import HelperGoal, native_pause_state
+from bbx_contracts.runner import (
+    BACKGROUND_HELPER_TOOLS,
+    PROTOCOL,
+    InputPayload,
+    ToolInvocation,
+    runner_json_text,
+    runner_payload_digest,
+)
+from bbx_contracts.runner_bootstrap import (
+    HelperGoal,
+    HelperTarget,
+    native_pause_state,
+    native_resume_pending,
+)
 from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -18,6 +30,7 @@ from bbx_blackboard.runner_gateway import decode, exact_json
 from bbx_blackboard.store import schema as s
 
 DELEGATE = "delegate_helper"
+DELEGATE_BACKGROUND, BACKGROUND_STATUS, CANCEL = BACKGROUND_HELPER_TOOLS
 
 
 def identity_id(*parts):
@@ -36,22 +49,69 @@ class NativeHelpers:
 
     def _status(self, call, child=None):
         data = call["data"]
+        background = data.get("background")
         result = {
             "invocation_id": data["invocation_id"],
             "deadline_ms": data["authorized_wait_until_ms"],
             **{key: data[key] for key in ("child_id", "binding_id", "reason") if key in data},
         }
+        if background:
+            result["child_deadline_ms"] = background["deadline_ms"]
         if call["state"] == "completed":
             permit = self.gateway._permit(call)
-            return {
-                **result,
-                "state": "unavailable" if data.get("reason") else "saved",
-                "result_json": permit["result_json"],
-                "result_digest": permit["result_digest"],
-            }
+            result.update(
+                state="unavailable" if data.get("reason") else "saved",
+                result_json=permit["result_json"],
+                result_digest=permit["result_digest"],
+            )
+            if background and background.get("accepted"):
+                result["state"] = "accepted"
+                if background.get("outcome_digest"):
+                    result.update(
+                        background_state="finished",
+                        outcome_digest=background["outcome_digest"],
+                        outcome_json=self.gateway.cipher.decrypt(
+                            background["outcome_ciphertext"].encode()
+                        ).decode(),
+                        delivery=background["delivery"],
+                    )
+                else:
+                    result["background_state"] = (
+                        "unknown"
+                        if not child or background.get("unknown")
+                        else "draining"
+                        if child["state"] == "draining"
+                        else "scheduled"
+                    )
+            return result
         if call["state"] in {"unknown", "not_sent"}:
             return {**result, "state": "unknown"}
         return {**result, "state": child["state"] if child else "unknown"}
+
+    async def _status_with_delivery(self, conn, tid, call, child):
+        status = self._status(call, child)
+        if status.get("background_state") == "scheduled" and child:
+            binding = await row(conn, s.runner_bindings, tid, child["binding_id"])
+            if binding["status"] == "prepared" and binding["sdk_session_id"]:
+                status["background_state"] = "running"
+        if status.get("delivery") == "queued":
+            notice = call["data"]["background"]["notice_id"]
+            table = s.runner_commands
+            applied = (
+                await conn.execute(
+                    select(table.c.id).where(
+                        table.c.task_id == tid,
+                        table.c.owner_epoch == call["owner_epoch"],
+                        table.c.binding_id == call["binding_id"],
+                        table.c.input_id == notice,
+                        table.c.status == "applied",
+                        table.c.native_proof.is_not(None),
+                    )
+                )
+            ).first()
+            if applied:
+                status["delivery"] = "applied"
+        return status
 
     @staticmethod
     def _child(task, call):
@@ -75,28 +135,32 @@ class NativeHelpers:
         )
         await self.repo.notify(tid, 0, connection=conn)
 
-    async def _parent(self, conn, tid, bid, identity, raw):
+    async def _parent(self, conn, tid, bid, identity, raw, *, expected=None):
         invocation, _ = decode(ToolInvocation, raw, 262144)
-        if invocation.tool_name != DELEGATE or invocation.binding.binding_id != bid:
+        names = {expected} if expected else {DELEGATE, DELEGATE_BACKGROUND}
+        if invocation.tool_name not in names or invocation.binding.binding_id != bid:
             raise HTTPException(403, "Original helper delegation identity required")
         call, owner, parent = await self.gateway._tool(conn, tid, identity, invocation)
         task = await row(conn, s.tasks, tid)
         resource = await self.bootstrap._get(conn, tid)
         spec = json.loads(parent["payload_json"])["spec"]
+        capability = (
+            "helper_foreground" if invocation.tool_name == DELEGATE else "helper_background"
+        )
         if (
             not resource
-            or not resource["request"].get("helper_foreground")
+            or not resource["request"].get(capability)
             or resource["state"] != "ready"
             or self.bootstrap._stopping(task, resource)
             or not resource["sandbox_host"].get("ready")
             or not resource["data"].get("activated")
-            or not resource["data"].get("worker_spec", {}).get("helper_foreground")
-            or not spec.get("helper_foreground")
+            or not resource["data"].get("worker_spec", {}).get(capability)
+            or not spec.get(capability)
             or parent["status"] != "prepared"
             or not parent["business"].get("native_assignment_id")
         ):
-            raise HTTPException(403, "Foreground helper is not enabled for this Worker")
-        if call and call["provider_key"] != "helper":
+            raise HTTPException(403, "This helper capability is not enabled for the Worker")
+        if call and call["provider_key"] != ("helper_control" if expected else "helper"):
             raise HTTPException(409, "Original tool invocation is not a helper delegation")
         return invocation, call, owner, parent, task, resource, spec
 
@@ -124,11 +188,12 @@ class NativeHelpers:
             budget = await self.gateway.native._budget(conn, tid)
             if budget["publication_state"] != "ready" or budget["hold_reason"]:
                 raise HTTPException(409, "Native Task budget is held")
+            now = datetime.now(UTC).timestamp()
             deadline = int(
                 min(
                     owner["hard_deadline"].timestamp(),
                     identity.expires_at,
-                    datetime.now(UTC).timestamp() + 60,
+                    now + 60,
                 )
                 * 1000
             )
@@ -141,10 +206,14 @@ class NativeHelpers:
                 "journal": invocation.journal.model_dump(mode="json"),
                 "assistant_entry_id": invocation.assistant_entry_id,
                 "tool_call_id": invocation.tool_call_id,
-                "tool_name": DELEGATE,
+                "tool_name": invocation.tool_name,
                 "arguments_digest": invocation.arguments_digest,
                 "authorized_wait_until_ms": deadline,
             }
+            if invocation.tool_name == DELEGATE_BACKGROUND:
+                data["background"] = {
+                    "deadline_ms": int(min(owner["hard_deadline"].timestamp(), now + 180) * 1000)
+                }
             call = dict(
                 task_id=tid,
                 id="tool:" + invocation.invocation_id,
@@ -232,8 +301,11 @@ class NativeHelpers:
             "parent_assignment_id": business["native_assignment_id"],
             "parent_turn_id": business["turn_id"],
             "parent_generation": business["generation"],
-            "deadline_ms": data["authorized_wait_until_ms"],
+            "deadline_ms": data.get("background", {}).get(
+                "deadline_ms", data["authorized_wait_until_ms"]
+            ),
             "state": "reserved",
+            **({"mode": "background"} if data.get("background") else {}),
         }
         await self._set_child(conn, tid, task, child)
         turn = {
@@ -315,7 +387,9 @@ class NativeHelpers:
             budget = await self.gateway.native._budget(conn, tid)
             if budget["publication_state"] != "ready" or budget["hold_reason"]:
                 raise HTTPException(409, "Native Task budget is held")
-            if child["deadline_ms"] // 1000 <= int(datetime.now(UTC).timestamp()):
+            if min(child["deadline_ms"], call["data"]["authorized_wait_until_ms"]) // 1000 <= int(
+                datetime.now(UTC).timestamp()
+            ):
                 raise HTTPException(409, "Original helper deadline has elapsed")
             binding = await self.control._binding(conn, tid, child["binding_id"], owner, live=True)
             command = await row(
@@ -367,15 +441,156 @@ class NativeHelpers:
     async def status(self, tid, bid, iid, identity):
         async with self.repo.engine.connect() as conn:
             _, call, _, child = await self._owned(conn, tid, bid, iid, identity)
-            return self._status(call, child)
+            return await self._status_with_delivery(conn, tid, call, child)
+
+    async def accept(self, tid, bid, iid, identity, body):
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            owner, call, task, child = await self._owned(conn, tid, bid, iid, identity)
+            background = call["data"].get("background")
+            if (
+                not background
+                or body.child_id != call["data"].get("child_id")
+                or body.binding_id != call["data"].get("binding_id")
+            ):
+                raise HTTPException(409, "Original background helper claim changed")
+            binding = await row(conn, s.runner_bindings, tid, body.binding_id)
+            if (
+                binding["payload_digest"] != body.payload_digest
+                or binding["owner_epoch"] != owner["epoch"]
+            ):
+                raise HTTPException(409, "Original background helper prepare changed")
+            if background.get("accepted"):
+                return self._status(call, child)
+            await self.control._identity(conn, tid, identity, live=True)
+            await self.control._binding(conn, tid, bid, owner, live=True, permit=True)
+            resource = await self.bootstrap._get(conn, tid)
+            budget = await self.gateway.native._budget(conn, tid)
+            if (
+                not child
+                or child["state"] != "launch_claimed"
+                or call["state"] != "dispatched"
+                or binding["status"] != "registered"
+                or binding["permit_revision"] != 0
+                or not resource
+                or self.bootstrap._stopping(task, resource)
+                or self.bootstrap._held(task)
+                or budget["publication_state"] != "ready"
+                or budget["hold_reason"]
+                or call["data"]["authorized_wait_until_ms"]
+                <= int(datetime.now(UTC).timestamp() * 1000)
+            ):
+                raise HTTPException(409, "Background helper cannot accept this launch")
+            await self.control._binding(conn, tid, body.binding_id, owner, live=True)
+            call = {
+                **call,
+                "data": {**call["data"], "background": {**background, "accepted": True}},
+            }
+            await self.gateway._save_tool_result(
+                conn,
+                tid,
+                call,
+                _text_result(
+                    {
+                        "state": "accepted",
+                        "child_run_id": child["child_id"],
+                        "deadline_ms": child["deadline_ms"],
+                    }
+                ),
+            )
+            return self._status(await row(conn, s.runner_calls, tid, call["id"]), child)
+
+    async def parent_tool(self, tid, bid, identity, raw, name):
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            invocation, prior, owner, parent, task, _, _ = await self._parent(
+                conn, tid, bid, identity, raw, expected=name
+            )
+            if prior:
+                permit = self.gateway._permit(prior)
+                return _tool_result_receipt(permit)
+            try:
+                target = HelperTarget.model_validate(exact_json(invocation.arguments_json))
+            except (ValueError, ValidationError) as error:
+                raise HTTPException(422, "Invalid background helper target") from error
+            table = s.runner_calls
+            original = (
+                (
+                    await conn.execute(
+                        select(table).where(
+                            table.c.task_id == tid,
+                            table.c.owner_epoch == owner["epoch"],
+                            table.c.binding_id == bid,
+                            table.c.provider_key == "helper",
+                            table.c.data["child_id"].astext == target.child_run_id,
+                            table.c.data["background"].is_not(None),
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if not original or not original["data"].get("background"):
+                raise HTTPException(403, "Original background helper is outside this Assignment")
+            child = self._child(task, original)
+            if name == CANCEL:
+                if child:
+                    await self._drain(conn, tid, task, owner, child)
+                value = {
+                    "child_run_id": target.child_run_id,
+                    "state": "cancellation_requested" if child else "already_inactive",
+                }
+            else:
+                value = await self._status_with_delivery(conn, tid, original, child)
+                value = {
+                    key: value[key]
+                    for key in ("background_state", "outcome_json", "delivery")
+                    if key in value
+                } | {"child_run_id": target.child_run_id, "state": value["state"]}
+            data = {
+                "invocation_id": invocation.invocation_id,
+                "binding": parent["binding"],
+                "sdk_session_id": invocation.sdk_session_id,
+                "assistant_entry_id": invocation.assistant_entry_id,
+                "tool_call_id": invocation.tool_call_id,
+                "tool_name": name,
+                "arguments_digest": invocation.arguments_digest,
+                "authorized_wait_until_ms": 0,
+            }
+            call = dict(
+                task_id=tid,
+                id="tool:" + invocation.invocation_id,
+                binding_id=bid,
+                owner_epoch=owner["epoch"],
+                kind="tool",
+                state="admitted",
+                provider_key="helper_control",
+                concurrency_active=False,
+                data=data,
+                created_at=datetime.now(UTC),
+            )
+            await conn.execute(insert(table).values(**call))
+            await self.gateway._save_tool_result(conn, tid, call, _text_result(value))
+            permit = self.gateway._permit(await row(conn, table, tid, call["id"]))
+            return _tool_result_receipt(permit)
 
     async def report(self, tid, bid, iid, identity, action, body=None):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             owner, call, task, child = await self._owned(conn, tid, bid, iid, identity)
-            if not child or call["state"] == "completed":
+            background = call["data"].get("background", {})
+            accepted = background.get("accepted")
+            if (
+                not child
+                or (call["state"] == "completed" and not accepted)
+                or background.get("outcome_digest")
+            ):
                 return self._status(call, child)
-            if action in {"terminal", "result"} and call["state"] not in {"dispatched", "unknown"}:
+            if (
+                action in {"terminal", "result"}
+                and not accepted
+                and call["state"] not in {"dispatched", "unknown"}
+            ):
                 raise HTTPException(409, "Original helper launch was not dispatched")
             if action == "terminal":
                 assert body is not None
@@ -503,8 +718,16 @@ class NativeHelpers:
             bid = child["binding_id"]
             binding = await row(conn, s.runner_bindings, tid, bid)
             call = await row(conn, s.runner_calls, tid, "tool:" + child["invocation_id"])
+            background = call["data"].get("background", {})
             if child["state"] != "draining":
                 try:
+                    if (
+                        background
+                        and not background.get("accepted")
+                        and call["data"]["authorized_wait_until_ms"]
+                        <= int(datetime.now(UTC).timestamp() * 1000)
+                    ):
+                        raise HTTPException(409, "Background launch acceptance expired")
                     if native_pause_state(task) in {"draining", "paused"} or self.bootstrap._held(
                         task
                     ):
@@ -520,12 +743,25 @@ class NativeHelpers:
                     await self._drain(conn, tid, task, owner, child)
                 else:
                     continue
-            if (
-                call["state"] == "dispatched"
-                and child["deadline_ms"] <= int(datetime.now(UTC).timestamp() * 1000)
-                and not (call["data"].get("terminal") and call["data"].get("candidate_result"))
-            ):
-                call = await self._patch_call(conn, tid, call, state="unknown")
+            if not (call["data"].get("terminal") and call["data"].get("candidate_result")):
+                now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                if (
+                    call["state"] == "dispatched"
+                    and min(child["deadline_ms"], call["data"]["authorized_wait_until_ms"])
+                    <= now_ms
+                ):
+                    call = await self._patch_call(conn, tid, call, state="unknown")
+                elif (
+                    background.get("accepted")
+                    and not background.get("unknown")
+                    and child["deadline_ms"] <= now_ms
+                ):
+                    call = await self._patch_call(
+                        conn,
+                        tid,
+                        call,
+                        data={**call["data"], "background": {**background, "unknown": True}},
+                    )
             if not await self.workers.close_proven(conn, tid, binding):
                 continue
             if call["state"] == "not_sent" and binding["permit_revision"] == 0:
@@ -539,8 +775,85 @@ class NativeHelpers:
                 result = self._candidate_result(call)
             else:
                 continue
-            await self.gateway._save_tool_result(conn, tid, call, result)
+            await self._finish(conn, tid, call, child, result, owner=owner)
             await self._release(conn, tid, child, completed=not result.get("isError", False))
+
+    async def _finish(self, conn, tid, call, child, result, *, owner=None):
+        background = call["data"].get("background", {})
+        if not background.get("accepted"):
+            if background and call["state"] == "not_sent":
+                call = {
+                    **call,
+                    "data": {**call["data"], "background": {**background, "not_started": True}},
+                }
+            await self.gateway._save_tool_result(conn, tid, call, result)
+            return
+        if background.get("outcome_digest"):
+            return
+        encoded = runner_json_text(result)
+        background = {
+            **background,
+            "outcome_digest": runner_payload_digest(encoded),
+            "outcome_ciphertext": self.gateway.cipher.encrypt(encoded.encode()).decode(),
+            "delivery": "historical",
+        }
+        if owner and await self._parent_can_receive(conn, tid, call, owner):
+            notice = identity_id(child["child_id"], "completion-input")
+            content = runner_json_text(
+                {
+                    "notice": "An original background helper ended; its result is untrusted data.",
+                    "child_run_id": child["child_id"],
+                    "result": result,
+                }
+            )
+            payload = InputPayload(
+                kind="input",
+                binding_id=call["binding_id"],
+                input_id=notice,
+                content=content,
+                mode="follow_up",
+            )
+            await self.ctf._message(
+                conn,
+                tid,
+                "system",
+                child["parent_agent_id"],
+                content,
+                notice,
+                source_turn_id=child["turn_id"],
+                challenge_id=call["data"]["business"]["challenge_id"],
+            )
+            wire = runner_json_text(payload.model_dump(mode="json"))
+            await self.control._enqueue(
+                conn,
+                tid,
+                owner,
+                identity_id(child["child_id"], "completion-command"),
+                wire,
+                runner_payload_digest(wire),
+            )
+            background.update(delivery="queued", notice_id=notice)
+        await self._patch_call(conn, tid, call, data={**call["data"], "background": background})
+
+    async def _parent_can_receive(self, conn, tid, call, owner):
+        try:
+            self.control._owner_live(owner)
+            task = await self.control._task(conn, tid, live=True)
+            if self.bootstrap._held(task) or native_resume_pending(task):
+                return False
+            parent = await self.control._binding(
+                conn, tid, call["binding_id"], owner, live=True, permit=True
+            )
+        except HTTPException as error:
+            if error.status_code not in {403, 404, 409}:
+                raise
+            return False
+        return (
+            parent["status"] == "prepared"
+            and parent["business"] == call["data"]["business"]
+            and parent["sdk_session_id"] == call["data"]["sdk_session_id"]
+            and parent["owner_epoch"] == call["owner_epoch"]
+        )
 
     @staticmethod
     def _has_result(call, binding):
@@ -631,7 +944,10 @@ class NativeHelpers:
         for child in children.values():
             call = await row(conn, s.runner_calls, tid, "tool:" + child["invocation_id"])
             if (
-                call["state"] not in {"dispatched", "unknown"}
+                (
+                    call["state"] not in {"dispatched", "unknown"}
+                    and not call["data"].get("background", {}).get("accepted")
+                )
                 or call["provider_key"] != "helper"
                 or call["owner_epoch"] != original_epoch
                 or call["binding_id"] != child["parent_binding_id"]
@@ -646,7 +962,22 @@ class NativeHelpers:
                 and await self._child_effects_known(conn, tid, binding["id"], incident=physical)
             ):
                 # Only settle the original parent ledger; recovery owns the frozen seat snapshot.
-                await self.gateway._save_tool_result(conn, tid, call, self._candidate_result(call))
+                await self._finish(conn, tid, call, child, self._candidate_result(call))
+
+    async def unresolved_background(self, conn, tid, children):
+        for child in children.values():
+            if child.get("mode") != "background":
+                continue
+            call = await row(conn, s.runner_calls, tid, "tool:" + child["invocation_id"])
+            background = call["data"].get("background", {})
+            if background.get("outcome_digest") or background.get("not_started"):
+                continue
+            if call["state"] == "not_sent":
+                binding = await row(conn, s.runner_bindings, tid, child["binding_id"])
+                if binding["permit_revision"] == 0 and not background.get("accepted"):
+                    continue
+            return True
+        return False
 
     def _candidate_result(self, call):
         return json.loads(self.gateway.cipher.decrypt(call["data"]["candidate_result"].encode()))
@@ -679,6 +1010,23 @@ class NativeHelpers:
         task = await row(conn, s.tasks, tid)
         for child in active_helpers(task).values():
             await self._release(conn, tid, child)
+
+
+def _tool_result_receipt(permit):
+    return {
+        key: permit[key]
+        for key in (
+            "protocol",
+            "confirmed",
+            "invocation_id",
+            "result_json",
+            "result_digest",
+        )
+    }
+
+
+def _text_result(value):
+    return {"content": [{"type": "text", "text": runner_json_text(value)}]}
 
 
 def identity_id_for_close(tid, epoch, bid):

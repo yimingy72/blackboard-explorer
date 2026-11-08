@@ -35,6 +35,7 @@ export class RunnerSession {
   }
   assertLease() {
     this.stopController.signal.throwIfAborted();
+    this.assertParent?.();
     if (this.expired || this.lease.lease_expires_at <= Date.now() / 1000 ||
         (this.spec?.helper_child && this.spec.helper_child.deadline_ms <= Date.now())) {
       this.expired = true;
@@ -158,8 +159,9 @@ export class RunnerSession {
   async initialize() {
     if (this.spec.helper_child) throw new Error("A helper can only open through its claimed plugin launch");
     const plan = await this.prepareSession();
-    const paths = this.spec.helper_foreground ? await this.helpers.parentPaths() : [];
-    if (paths.length) plan.customTools.push(this.helpers.tool(this));
+    const paths = this.spec.helper_foreground || this.spec.helper_background ? await this.helpers.parentPaths() : [];
+    if (paths.length) plan.customTools.push(...(this.spec.helper_foreground ? [this.helpers.tool(this)] : []),
+      ...(this.spec.helper_background ? this.helpers.backgroundTools(this) : []));
     const resourceLoader = new DefaultResourceLoader({ cwd: plan.cwd, agentDir: plan.agentDir,
       settingsManager: plan.settingsManager, noExtensions: true, noSkills: true, noContextFiles: true,
       noPromptTemplates: true, noThemes: true, projectTrusted: false, additionalExtensionPaths: paths,

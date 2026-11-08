@@ -471,6 +471,10 @@ class NativeRecovery:
         if not incident.get("execution_context_id"):
             return None, "original_scope_unconfirmed"
         await self.bootstrap.helpers.reconcile_frozen(conn, tid, task, incident)
+        if await self.bootstrap.helpers.unresolved_background(
+            conn, tid, incident.get("helpers", {})
+        ):
+            return None, "original_background_helper_unresolved"
         if reason := await self._effects(conn, tid, incident):
             return None, reason
         table = s.runner_bindings

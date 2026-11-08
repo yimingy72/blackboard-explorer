@@ -162,7 +162,13 @@ class NativeMCPRoutes:
             config["jwks_file"],
             config["backend_token_file"],
             sandbox=sandbox,
-            helper_foreground=bool(resource and resource["request"].get("helper_foreground")),
+            helper_foreground=bool(
+                resource
+                and (
+                    resource["request"].get("helper_foreground")
+                    or resource["request"].get("helper_background")
+                )
+            ),
             business_roles=task["ctf_control"].get("business_tools", {}).get("roles", {}),
         )
         source_hash = hashlib.sha256(config["source"].encode()).hexdigest()[:16]

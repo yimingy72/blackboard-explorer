@@ -69,6 +69,11 @@
       "default": false,
       "title": "Helper Foreground",
       "type": "boolean"
+    },
+    "helper_background": {
+      "default": false,
+      "title": "Helper Background",
+      "type": "boolean"
     }
   },
   "required": [

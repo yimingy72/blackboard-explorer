@@ -127,10 +127,10 @@ export class HttpPlatform {
   helper(slot, invocation, action, body, signal) {
     const bindingId = slot.binding.binding_id;
     const base = `/bindings/${bindingId}/helpers`;
-    if (action === "reserve" || action === "launch") {
+    if (["reserve", "launch", "model-status", "model-cancel"].includes(action)) {
       validate("ToolInvocation", invocation);
-      return this.request(this.control, action === "reserve" ? `${base}/reserve` :
-        `${base}/${invocation.invocation_id}/launch`, {
+      const path = action === "launch" ? `${invocation.invocation_id}/launch` : action.replace(/^model-/, "");
+      return this.request(this.control, `${base}/${path}`, {
         body: invocation, signal, audience: "mcp", credentials: slot.credentials,
         reference: slot.spec.mcp_credential_ref, bindingId,
       });

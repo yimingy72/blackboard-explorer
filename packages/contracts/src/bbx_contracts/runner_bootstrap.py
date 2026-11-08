@@ -30,6 +30,7 @@ class NativeRunnerLaunch(ContractModel):
     model_alias: str = Field(min_length=1, max_length=512)
     exchange_rate: FrozenExchangeRate
     helper_foreground: bool = False
+    helper_background: bool = False
 
 
 def native_pause_state(task):
@@ -128,7 +129,9 @@ class HelperGoal(ContractModel):
 
 
 class HelperStatus(ContractModel):
-    state: Literal["reserved", "launch_claimed", "draining", "saved", "unavailable", "unknown"]
+    state: Literal[
+        "reserved", "launch_claimed", "accepted", "draining", "saved", "unavailable", "unknown"
+    ]
     invocation_id: Digest
     child_id: RunnerId | None = None
     binding_id: RunnerId | None = None
@@ -136,6 +139,23 @@ class HelperStatus(ContractModel):
     reason: str | None = None
     result_json: str | None = None
     result_digest: Digest | None = None
+    child_deadline_ms: int | None = Field(default=None, ge=1, le=9007199254740991)
+    background_state: Literal["scheduled", "running", "draining", "finished", "unknown"] | None = (
+        None
+    )
+    outcome_json: str | None = None
+    outcome_digest: Digest | None = None
+    delivery: Literal["queued", "historical", "applied"] | None = None
+
+
+class HelperAccepted(ContractModel):
+    child_id: RunnerId
+    binding_id: RunnerId
+    payload_digest: Digest
+
+
+class HelperTarget(ContractModel):
+    child_run_id: RunnerId
 
 
 class HelperLaunch(HelperStatus):

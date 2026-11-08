@@ -222,6 +222,10 @@ class NativePause:
         return pause
 
     async def _blocker(self, conn, tid, task, snapshot):
+        if await self.bootstrap.helpers.unresolved_background(
+            conn, tid, snapshot.get("helpers", {})
+        ):
+            return "original_background_helper_unresolved"
         hold_id = snapshot.get("budget_hold_id")
         if self.bootstrap._held(task) and not (hold_id and threshold_hold_id(task) == hold_id):
             return "budget_or_failure_hold"

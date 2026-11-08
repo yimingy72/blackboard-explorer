@@ -4098,9 +4098,54 @@
         "title": "HeartbeatRequest",
         "type": "object"
       },
+      "HelperAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "child_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Child Id",
+            "type": "string"
+          },
+          "payload_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "child_id",
+          "binding_id",
+          "payload_digest"
+        ],
+        "title": "HelperAccepted",
+        "type": "object"
+      },
       "HelperLaunch": {
         "additionalProperties": false,
         "properties": {
+          "background_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scheduled",
+                  "running",
+                  "draining",
+                  "finished",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background State"
+          },
           "binding_id": {
             "anyOf": [
               {
@@ -4112,6 +4157,19 @@
               }
             ],
             "title": "Binding Id"
+          },
+          "child_deadline_ms": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Deadline Ms"
           },
           "child_id": {
             "anyOf": [
@@ -4158,6 +4216,22 @@
             ],
             "title": "Deadline Ms"
           },
+          "delivery": {
+            "anyOf": [
+              {
+                "enum": [
+                  "queued",
+                  "historical",
+                  "applied"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery"
+          },
           "invocation_id": {
             "pattern": "^[a-f0-9]{64}$",
             "title": "Invocation Id",
@@ -4167,6 +4241,29 @@
             "default": false,
             "title": "Launch Allowed",
             "type": "boolean"
+          },
+          "outcome_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Digest"
+          },
+          "outcome_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Json"
           },
           "reason": {
             "anyOf": [
@@ -4206,6 +4303,7 @@
             "enum": [
               "reserved",
               "launch_claimed",
+              "accepted",
               "draining",
               "saved",
               "unavailable",
@@ -4241,6 +4339,24 @@
       "HelperStatus": {
         "additionalProperties": false,
         "properties": {
+          "background_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scheduled",
+                  "running",
+                  "draining",
+                  "finished",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background State"
+          },
           "binding_id": {
             "anyOf": [
               {
@@ -4252,6 +4368,19 @@
               }
             ],
             "title": "Binding Id"
+          },
+          "child_deadline_ms": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Deadline Ms"
           },
           "child_id": {
             "anyOf": [
@@ -4276,10 +4405,49 @@
             ],
             "title": "Deadline Ms"
           },
+          "delivery": {
+            "anyOf": [
+              {
+                "enum": [
+                  "queued",
+                  "historical",
+                  "applied"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery"
+          },
           "invocation_id": {
             "pattern": "^[a-f0-9]{64}$",
             "title": "Invocation Id",
             "type": "string"
+          },
+          "outcome_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Digest"
+          },
+          "outcome_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Json"
           },
           "reason": {
             "anyOf": [
@@ -4319,6 +4487,7 @@
             "enum": [
               "reserved",
               "launch_claimed",
+              "accepted",
               "draining",
               "saved",
               "unavailable",
@@ -6864,6 +7033,11 @@
         "properties": {
           "exchange_rate": {
             "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+          },
+          "helper_background": {
+            "default": false,
+            "title": "Helper Background",
+            "type": "boolean"
           },
           "helper_foreground": {
             "default": false,
@@ -20077,6 +20251,68 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/cancel": {
+      "post": {
+        "operationId": "cancel_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolInvocation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResultReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Background Helper",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/reserve": {
       "post": {
         "operationId": "reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post",
@@ -20139,6 +20375,68 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/status": {
+      "post": {
+        "operationId": "background_helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers_status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolInvocation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolResultReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Background Helper Status",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}": {
       "get": {
         "operationId": "helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get",
@@ -20195,6 +20493,77 @@
           }
         },
         "summary": "Helper Status",
+        "tags": [
+          "runner-control"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/accepted": {
+      "post": {
+        "operationId": "accept_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__accepted_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HelperAccepted"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelperStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Background Helper",
         "tags": [
           "runner-control"
         ]

@@ -148,6 +148,7 @@ class NativeWorkers:
             ).encode(),
             assignment=assignment,
             helper_foreground=worker_spec.get("helper_foreground", False),
+            helper_background=worker_spec.get("helper_background", False),
         )
         if registered["id"] != binding_id:
             raise HTTPException(409, "Native Worker binding identity changed")

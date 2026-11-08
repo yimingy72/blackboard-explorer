@@ -6,9 +6,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { RunnerSession } from "./session.mjs";
 import { freezeSession } from "./model-boundary.mjs";
-import { PROTOCOL, decodeCommand, digest, sameFence, sameValue } from "./protocol.mjs";
+import { PROTOCOL, decodeCommand, digest, sameFence, sameValue, validate } from "./protocol.mjs";
 
 const name = "delegate_helper";
+const backgroundName = "delegate_helper_background";
+const statusName = "background_helper_status";
+const cancelName = "cancel_helper";
 const agent = "bbx-helper";
 const tools = new Set(["read_file", "exec_command"]);
 const self = fileURLToPath(import.meta.url);
@@ -73,12 +76,14 @@ export async function prepareChildSessionHost(run, signal) {
   };
   try {
     active.throwIfAborted();
+    launch.assertParent?.();
     const lease = await launch.platform.acquire(launch.command, active);
     active.throwIfAborted();
     if (lease.sdk_session_id != null || lease.cursor != null) throw new Error("A helper cannot attach an existing session");
     const spec = launch.command.payload.spec;
     slot = launch.slot = new RunnerSession(launch.config, spec, launch.command.payload_digest,
       lease, launch.platform, launch.credentials);
+    slot.assertParent = launch.assertParent;
     const stop = () => slot.stop();
     active.addEventListener("abort", stop, { once: true });
     const plan = await slot.prepareSession();
@@ -184,42 +189,76 @@ export class ForegroundHelpers {
     this.active = new Map();
   }
   parentPaths() {
-    if (this.config.helper_foreground !== true) throw new Error("The Task has no trusted foreground helper profile");
+    if (this.config.helper_foreground !== true && this.config.helper_background !== true)
+      throw new Error("The Task has no trusted helper profile");
     return this.paths ??= pluginPaths(this.config);
   }
   checkParentTools(parent) {
-    const expected = [...parent.toolNames.keys(), name].sort();
+    const expected = [...parent.toolNames.keys(), ...(parent.spec.helper_foreground ? [name] : []),
+      ...(parent.spec.helper_background ? [backgroundName, statusName, cancelName] : [])].sort();
     if (parent.session.getActiveToolNames().sort().join("\0") !== expected.join("\0"))
       throw new Error("The Worker exposed tools outside its frozen helper contract");
   }
-  tool(parent) {
-    return { name, label: "Delegate one foreground helper",
-      description: "Use a spare seat for one local goal; runs in the foreground for at most 60 seconds.",
+  tool(parent, background = false) {
+    const toolName = background ? backgroundName : name;
+    return { name: toolName, label: background ? "Delegate one supervised background helper" : "Delegate one foreground helper",
+      description: background ?
+        "Register one helper for a local goal. It can continue in this Task Runner after your response, for up to 180 seconds." :
+        "Use a spare seat for one local goal; runs in the foreground for at most 60 seconds.",
       parameters: { type: "object", additionalProperties: false, required: ["goal", "expected_output"],
         properties: { goal: { type: "string", minLength: 1, maxLength: 2000 },
           input_refs: { type: "array", maxItems: 8, items: { type: "string" } },
           expected_output: { type: "string", minLength: 1, maxLength: 1000 } } },
-      execute: (callId, args, signal) => this.execute(parent, callId, args, signal) };
+      execute: (callId, args, signal) => this.execute(parent, callId, args, signal, toolName) };
   }
-  async execute(parent, callId, args, toolSignal) {
+  backgroundTools(parent) {
+    return [this.tool(parent, true), ...[statusName, cancelName].map((toolName) => ({
+      name: toolName, label: toolName === statusName ? "Read original background helper status" : "Request original helper cancellation",
+      description: toolName === statusName ? "Read the confirmed status or saved result of your original helper." :
+        "Request cancellation of your original helper. This does not confirm that it has stopped.",
+      parameters: { type: "object", additionalProperties: false, required: ["child_run_id"],
+        properties: { child_run_id: { type: "string" } } },
+      execute: (callId, args, signal) => this.execute(parent, callId, args, signal, toolName),
+    }))];
+  }
+  readResult(parent, invocation, receipt) {
+    if (typeof receipt.result_json !== "string" || digest(receipt.result_json) !== receipt.result_digest)
+      throw new Error("Original helper result is unresolved");
+    const result = JSON.parse(receipt.result_json);
+    if (!Array.isArray(result.content) || result.content.some((item) => item?.type !== "text" || typeof item.text !== "string"))
+      throw new Error("Invalid saved helper result");
+    parent.assertActive();
+    parent.unresolvedInvocations.delete(invocation.invocation_id);
+    return { content: result.content, details: { invocation_id: invocation.invocation_id, bbx_is_error: result.isError === true } };
+  }
+  async execute(parent, callId, args, toolSignal, toolName = name) {
     this.checkParentTools(parent);
-    const invocation = await parent.toolInvocation(name, callId, args, toolSignal);
+    const invocation = await parent.toolInvocation(toolName, callId, args, toolSignal);
     parent.unresolvedInvocations.add(invocation.invocation_id);
-    try { return await this.runClaim(parent, callId, invocation, toolSignal); }
+    try {
+      if (toolName === statusName || toolName === cancelName) {
+        const action = toolName === statusName ? "model-status" : "model-cancel";
+        const request = () => this.platform.helper(parent, invocation, action, undefined, toolSignal);
+        let receipt;
+        try { receipt = await request(); }
+        catch (error) {
+          if (toolSignal?.aborted || (error.status && error.status < 500)) throw error;
+          receipt = await request();
+        }
+        validate("ToolResultReceipt", receipt);
+        if (receipt.invocation_id !== invocation.invocation_id) throw new Error("Helper tool receipt changed invocation");
+        return this.readResult(parent, invocation, receipt);
+      }
+      return await this.runClaim(parent, callId, invocation, toolSignal, toolName === backgroundName);
+    }
     catch (error) { freezeSession(parent.session); throw error; }
   }
-  async runClaim(parent, callId, invocation, toolSignal) {
+  async runClaim(parent, callId, invocation, toolSignal, background) {
     const send = (action, body, signal) => this.platform.helper(parent, invocation, action, body, signal);
     const read = (status) => {
-      if (!["saved", "unavailable"].includes(status.state) ||
-          status.invocation_id !== invocation.invocation_id || typeof status.result_json !== "string" ||
-          digest(status.result_json) !== status.result_digest) throw new Error("Original helper result is unresolved");
-      const result = JSON.parse(status.result_json);
-      if (!Array.isArray(result.content) || result.content.some((item) => item?.type !== "text" || typeof item.text !== "string"))
-        throw new Error("Invalid saved helper result");
-      parent.assertActive();
-      parent.unresolvedInvocations.delete(invocation.invocation_id);
-      return { content: result.content, details: { invocation_id: invocation.invocation_id, bbx_is_error: result.isError === true } };
+      if (![background ? "accepted" : "saved", "unavailable"].includes(status.state) ||
+          status.invocation_id !== invocation.invocation_id) throw new Error("Original helper result is unresolved");
+      return this.readResult(parent, invocation, status);
     };
     const parentSignal = AbortSignal.any([parent.stopController.signal, ...(toolSignal ? [toolSignal] : [])]);
     let reserved;
@@ -233,22 +272,32 @@ export class ForegroundHelpers {
     if (grant.launch_allowed !== true) return read(grant);
     const command = decodeCommand(grant.command);
     const spec = command.payload.spec;
-    if (grant.invocation_id !== invocation.invocation_id || !sameFence(command.fence, this.config.fence) ||
-        command.payload.kind !== "prepare" || spec?.helper_foreground || !spec?.helper_child ||
+    const deadline = background ? grant.child_deadline_ms : grant.deadline_ms;
+    if (this.stopping || grant.invocation_id !== invocation.invocation_id || !sameFence(command.fence, this.config.fence) ||
+        command.payload.kind !== "prepare" || spec?.helper_foreground || spec?.helper_background || !spec?.helper_child ||
+        (spec.helper_child.mode ?? "foreground") !== (background ? "background" : "foreground") ||
         spec.helper_child.parent_binding_id !== parent.binding.binding_id ||
         spec.helper_child.child_id !== grant.child_id || spec.binding.binding_id !== grant.binding_id ||
-        spec.binding.binding_id === parent.binding.binding_id || spec.helper_child.deadline_ms !== grant.deadline_ms ||
+        spec.binding.binding_id === parent.binding.binding_id || spec.helper_child.deadline_ms !== deadline ||
         !spec.allowed_tools.every((tool) => tools.has(tool) && parent.toolNames.has(tool)) ||
         !sameValue(spec.model, parent.spec.model) ||
         this.active.has(grant.binding_id)) throw new Error("The helper launch grant did not match its parent");
-    const remaining = grant.deadline_ms - Date.now();
-    if (!Number.isSafeInteger(grant.deadline_ms) || remaining <= 0 || remaining > 60000)
+    const now = Date.now();
+    const remaining = deadline - now;
+    const parentRemaining = grant.deadline_ms - now;
+    if (!Number.isSafeInteger(deadline) || remaining <= 0 || remaining > (background ? 180000 : 60000) ||
+        !Number.isSafeInteger(grant.deadline_ms) || parentRemaining <= 0 || parentRemaining > 60000)
       throw new Error("The helper launch deadline is invalid");
     const controller = new AbortController();
-    const active = AbortSignal.any([controller.signal, parentSignal, AbortSignal.timeout(remaining)]);
+    const active = AbortSignal.any([controller.signal, background ? parent.stopController.signal : parentSignal,
+      AbortSignal.timeout(remaining)]);
     const launch = { config: this.config, platform: this.platform, parent, invocation, command,
       credentials: new ChildCredentials(spec, this.config, grant.credentials),
-      done: deferred(), controller, signal: active };
+      done: deferred(), controller, signal: active, background };
+    if (background) launch.assertParent = () => {
+      try { parent.assertActive(); }
+      catch (error) { controller.abort(); throw error; }
+    };
     this.active.set(grant.binding_id, launch);
     const cancel = () => {
       launch.slot?.stop();
@@ -256,12 +305,30 @@ export class ForegroundHelpers {
     };
     active.addEventListener("abort", cancel, { once: true });
     try {
+      parentSignal.throwIfAborted();
       active.throwIfAborted();
       const plugin = parent.session.getToolDefinition("subagent");
       if (!plugin) throw new Error("The required plugin tool is unavailable");
-      launch.pluginWork = launches.run(launch, () => Promise.resolve(plugin.execute(callId, {
-        agent, task: spec.instructions, context: "fresh", async: false, artifacts: false,
-      }, active, undefined, parent.session.extensionRunner.createToolContext(callId, undefined))));
+      let accepted;
+      if (background) {
+        const handoff = AbortSignal.any([parentSignal, AbortSignal.timeout(parentRemaining)]);
+        const proof = { child_id: grant.child_id, binding_id: grant.binding_id, payload_digest: command.payload_digest };
+        let status;
+        try { status = await send("accepted", proof, handoff); }
+        catch { status = await send("status", undefined, handoff); }
+        if (status.state !== "accepted" || status.child_id !== grant.child_id || status.binding_id !== grant.binding_id)
+          throw new Error("The original background helper acceptance is unconfirmed");
+        accepted = read(status);
+        active.throwIfAborted();
+        launch.assertParent();
+      }
+      const toolContext = parent.session.extensionRunner.createToolContext(callId, undefined);
+      launch.pluginWork = Promise.resolve().then(() => {
+        active.throwIfAborted();
+        return launches.run(launch, () => plugin.execute(callId, {
+          agent, task: spec.instructions, context: "fresh", async: false, artifacts: false,
+        }, active, undefined, toolContext));
+      });
       const pluginFinished = () => {
         if (!launch.started) { launch.credentials.clear(); launch.done.resolve(); }
       };
@@ -277,8 +344,16 @@ export class ForegroundHelpers {
         catch { return send("status"); }
       };
       launch.resultWork = launch.pluginWork.then(save, () => save({
-        isError: true, content: [{ type: "text", text: "The foreground helper ended without a successful result." }],
+        isError: true, content: [{ type: "text", text: "The helper ended without a successful result." }],
       }));
+      if (background) {
+        const cleanup = () => active.removeEventListener("abort", cancel);
+        void launch.resultWork.then(cleanup, () => {
+          if (!launch.summary) controller.abort();
+          cleanup();
+        });
+        return accepted;
+      }
       let status = await bounded(launch.resultWork, active);
       while (!["saved", "unavailable", "unknown"].includes(status.state)) {
         await delay(100, undefined, { signal: active });
@@ -291,7 +366,7 @@ export class ForegroundHelpers {
       controller.abort();
       throw error;
     } finally {
-      active.removeEventListener("abort", cancel);
+      if (!background || !launch.resultWork) active.removeEventListener("abort", cancel);
       if (!launch.pluginWork) {
         if (active.aborted) cancel();
         launch.credentials.clear();
@@ -300,13 +375,23 @@ export class ForegroundHelpers {
     }
   }
   renewal(bindingId) { return this.active.get(bindingId)?.slot; }
+  supervise() {
+    for (const launch of this.active.values()) {
+      if (launch.localEnded || launch.signal.aborted || !launch.assertParent) continue;
+      try { launch.assertParent(); } catch { /* Cancels the original background child. */ }
+    }
+  }
   async closeBinding(bindingId) {
     const launch = this.active.get(bindingId);
     if (!launch) return undefined;
     if (!launch.localEnded) launch.controller.abort();
     await launch.done.promise;
+    if (launch.background) await Promise.allSettled([launch.pluginWork, launch.resultWork]);
+    if (!launch.summary) {
+      if (!launch.background) this.active.delete(bindingId);
+      throw new Error("The original helper exit is unresolved");
+    }
     this.active.delete(bindingId);
-    if (!launch.summary) throw new Error("The original helper exit is unresolved");
     return launch.summary;
   }
   async stopParent(bindingId) {
@@ -319,5 +404,12 @@ export class ForegroundHelpers {
       if (child.parent.binding.binding_id === bindingId) child.controller.abort();
     }
   }
-  stopAll() { for (const child of this.active.values()) child.controller.abort(); }
+  async stopAll() {
+    this.stopping = true;
+    const children = [...this.active.values()];
+    for (const child of children) if (!child.localEnded) child.controller.abort();
+    const background = children.filter((child) => child.background);
+    await Promise.allSettled(background.flatMap((child) => [child.done.promise, child.pluginWork, child.resultWork]));
+    return background.every((child) => Boolean(child.summary));
+  }
 }

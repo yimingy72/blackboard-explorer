@@ -10,6 +10,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.native_gateway import GatewayCredentialsRequest
 from bbx_contracts.runner import (
+    BACKGROUND_HELPER_TOOLS,
     MAX_MODEL_METADATA_BYTES,
     PROTOCOL,
     ToolInvocation,
@@ -265,7 +266,7 @@ class RunnerGateway:
 
     async def admit_tool(self, tid, identity, raw):
         invocation, _ = decode(ToolInvocation, raw, 2 * 1024 * 1024)
-        if invocation.tool_name == "delegate_helper":
+        if invocation.tool_name in {"delegate_helper", *BACKGROUND_HELPER_TOOLS}:
             raise HTTPException(403, "Helper delegation requires the local Runner control route")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)

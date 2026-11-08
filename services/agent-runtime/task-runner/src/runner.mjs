@@ -75,6 +75,8 @@ export class TaskRunner {
       if (payload.spec.helper_child) throw new Error("The plugin owns helper preparation");
       if (payload.spec.helper_foreground && this.config.helper_foreground !== true)
         throw new Error("The Task has no trusted foreground helper profile");
+      if (payload.spec.helper_background && this.config.helper_background !== true)
+        throw new Error("The Task has no trusted background helper profile");
       const id = payload.spec.binding.binding_id;
       this.controller.signal.throwIfAborted();
       if (this.closedBindings.has(id) || this.abortedBindings.has(id)) throw new Error("The binding is closed");
@@ -128,8 +130,9 @@ export class TaskRunner {
       return;
     }
     if (payload.kind === "shutdown") {
-      await this.stop();
-      this.enqueue(this.receipt(command, "closed"));
+      const known = await this.stop();
+      this.enqueue(known ? this.receipt(command, "closed") :
+        this.receipt(command, "rejected", { error_code: "boundary_frozen" }));
       return;
     }
     if (payload.kind === "close") {
@@ -210,13 +213,14 @@ export class TaskRunner {
     }
   }
   async run() {
-    if (this.config.helper_foreground === true) await this.helpers.parentPaths();
+    if (this.config.helper_foreground === true || this.config.helper_background === true) await this.helpers.parentPaths();
     const flusher = (async () => {
       while (!this.controller.signal.aborted) { await this.flushReceipts(); await pause(50); }
     })();
     try {
       while (!this.controller.signal.aborted) {
         try {
+          this.helpers.supervise();
           const batch = await this.platform.poll(this.afterSeq, this.controller.signal);
           for (const receipt of batch.lease_renewals ?? []) {
             if (!sameFence(receipt.fence, this.config.fence)) throw Object.assign(new Error("Lease renewal fence did not match"), { code: "invalid_protocol" });
@@ -236,6 +240,7 @@ export class TaskRunner {
               catch (error) { throw Object.assign(error, { code: "invalid_protocol" }); }
             }
           }
+          this.helpers.supervise();
           for (const command of batch.commands) {
             this.dispatch(command);
             this.afterSeq = Math.max(this.afterSeq, command.command_seq);
@@ -252,10 +257,13 @@ export class TaskRunner {
       await Promise.allSettled([...this.sessions.values()].map((slot) => slot.close()));
     }
   }
-  async stop() {
-    this.controller.abort();
-    this.helpers.stopAll();
-    for (const slot of this.preparingSlots.values()) slot.stop();
-    for (const slot of this.sessions.values()) await slot.abort().catch(() => {});
+  stop() {
+    return this.stopping ??= (async () => {
+      this.controller.abort();
+      const children = this.helpers.stopAll();
+      for (const slot of this.preparingSlots.values()) slot.stop();
+      for (const slot of this.sessions.values()) await slot.abort().catch(() => {});
+      return children;
+    })();
   }
 }

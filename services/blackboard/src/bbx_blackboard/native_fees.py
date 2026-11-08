@@ -19,6 +19,7 @@ from bbx_contracts.native_gateway import (
     NativeTransportObservation,
 )
 from bbx_contracts.runner import (
+    BACKGROUND_HELPER_TOOLS,
     PROTOCOL,
     EffectiveRunnerModel,
     ModelAttemptRequest,
@@ -424,8 +425,11 @@ class NativeFees:
             ):
                 raise HTTPException(403, "Model request exceeds the frozen role output settings")
             allowed_tools = set(spec["allowed_tools"])
-            if spec.get("helper_foreground") and binding["business"].get("native_assignment_id"):
-                allowed_tools.add("delegate_helper")
+            if binding["business"].get("native_assignment_id"):
+                if spec.get("helper_foreground"):
+                    allowed_tools.add("delegate_helper")
+                if spec.get("helper_background"):
+                    allowed_tools.update(BACKGROUND_HELPER_TOOLS)
             for tool in wire.get("tools", []):
                 if (
                     not isinstance(tool, dict)

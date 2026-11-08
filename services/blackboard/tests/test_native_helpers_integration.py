@@ -12,6 +12,7 @@ from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
+from bbx_contracts.runner import PROTOCOL, ToolResultReceipt
 from runner_gateway_support import invocation
 from sqlalchemy import insert, update
 from test_board_flags_integration import Objects
@@ -38,8 +39,13 @@ from test_runner_control_integration import (
 pytestmark = pytest.mark.integration
 
 
-async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, monkeypatch):
+@pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
+async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
+    ctf, monkeypatch, background
+):
     ctf.objects = Objects()
+    capability = "helper_background" if background else "helper_foreground"
+    delegate = "delegate_helper_background" if background else "delegate_helper"
     tid = await ctf.create_task(
         {
             "mode": "ctf",
@@ -110,13 +116,13 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
             owner_row = await gateway.control._current_owner(conn, tid)
             old_lead = await row(conn, s.runner_bindings, tid, lead_bid)
             assert (
-                not {"helper_foreground", "helper_child"}
+                not {"helper_foreground", "helper_background", "helper_child"}
                 & json.loads(old_lead["payload_json"])["spec"].keys()
             )
             spec = {
                 "model": registration(owner)["model"],
                 "allowed_tools": ["exec_command", "read_file"],
-                "helper_foreground": True,
+                capability: True,
                 "instructions": {"member-1": "Worker", "member-2": "Worker"},
             }
             await conn.execute(
@@ -125,7 +131,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
                     operation_id=op,
                     request_id=op,
                     request_digest="helper-fixture",
-                    request={"helper_foreground": True},
+                    request={capability: True},
                     config={**config(), "journal_writer_lock": True},
                     controller_generation=1,
                     revision=1,
@@ -238,7 +244,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
         async def reserve(suffix):
             body = invocation(
                 parent,
-                "delegate_helper",
+                delegate,
                 {
                     "goal": "Check one local observation",
                     "expected_output": "A short answer",
@@ -298,6 +304,51 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
         launch = allowed[0]
         spec = json.loads(launch["command"]["payload_json"])["spec"]
         assert spec["helper_child"]["parent_binding_id"] == parent_bid
+        assert "helper_background" not in spec
+        accepted = None
+        if background:
+            assert spec["helper_child"]["mode"] == "background"
+            assert (
+                launch["deadline_ms"]
+                < launch["child_deadline_ms"]
+                == spec["helper_child"]["deadline_ms"]
+            )
+            cmd = launch["command"]
+            denied_lease = await http.post(
+                control(tid) + f"/bindings/{reserved['binding_id']}/acquire",
+                headers=auth(owner),
+                json={
+                    "protocol": PROTOCOL,
+                    "request_id": cmd["request_id"],
+                    "payload_digest": cmd["payload_digest"],
+                    "fence": cmd["fence"],
+                    "binding": spec["binding"],
+                },
+            )
+            assert denied_lease.status_code == 409 and "not accepted" in denied_lease.text
+            acceptance = {
+                "child_id": reserved["child_id"],
+                "binding_id": reserved["binding_id"],
+                "payload_digest": cmd["payload_digest"],
+            }
+            accepted_http = await http.post(
+                path + "/accepted", headers=auth(owner), json=acceptance
+            )
+            assert accepted_http.status_code == 200, accepted_http.text
+            accepted = accepted_http.json()
+            assert accepted["state"] == "accepted" and accepted["background_state"] == "scheduled"
+            assert (
+                await http.post(path + "/accepted", headers=auth(owner), json=acceptance)
+            ).json() == accepted
+            async with ctf.repo.engine.connect() as conn:
+                assert not await gateway._count(
+                    conn,
+                    s.runner_calls.c.task_id == tid,
+                    s.runner_calls.c.binding_id == parent_bid,
+                    gateway._unresolved(),
+                )
+        else:
+            assert "mode" not in spec["helper_child"]
         assert set(spec["allowed_tools"]) == {"exec_command", "read_file"}
         assert "Current description" in spec["instructions"] and not spec.get("helper_foreground")
         assert spec["model"] == json.loads(parent_command["payload_json"])["spec"]["model"]
@@ -306,7 +357,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
         child_headers = {"Authorization": "Bearer " + child_mcp}
         assert (
             launch["credentials"][spec["mcp_credential_ref"]]["expires_at"]
-            <= launch["deadline_ms"] // 1000
+            <= (launch["child_deadline_ms"] if background else launch["deadline_ms"]) // 1000
         )
         child_admit = control(tid) + f"/bindings/{reserved['binding_id']}/tools/admit"
         for name, args in (
@@ -330,6 +381,200 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(ctf, m
             )
         ).status_code == 403
         assert "credentials" not in (await http.get(path, headers=auth(owner))).json()
+        if background:
+            assert accepted is not None
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                task = await row(conn, s.tasks, tid)
+                children = task["ctf_control"]["native_helpers_active"]
+                assert await native.helpers.unresolved_background(conn, tid, children)
+                resource = await native._get(conn, tid)
+                assert resource
+                savepoint = await conn.begin_nested()
+                await native.pause_control._start(
+                    conn, tid, task, resource, owner_row, str(uuid4())
+                )
+                held = await row(conn, s.tasks, tid)
+                paused = await native._get(conn, tid)
+                assert paused
+                assert (
+                    await native.pause_control._blocker(
+                        conn, tid, held, paused["data"]["pause_snapshot"]
+                    )
+                    == "original_background_helper_unresolved"
+                )
+                await savepoint.rollback()
+            target = {"child_run_id": reserved["child_id"]}
+
+            async def parent_tool(name, suffix):
+                action = "cancel" if name == "cancel_helper" else "status"
+                value = invocation(parent, name, target, suffix)
+                reply = await http.post(base + "/" + action, headers=headers, json=value)
+                assert reply.status_code == 200, reply.text
+                saved = ToolResultReceipt.model_validate(reply.json())
+                assert saved.invocation_id == value["invocation_id"]
+                return saved
+
+            running = await parent_tool("background_helper_status", "running")
+            assert (
+                json.loads(json.loads(running.result_json)["content"][0]["text"])[
+                    "background_state"
+                ]
+                == "running"
+            )
+            cancel = await parent_tool("cancel_helper", "cancel")
+            assert (
+                json.loads(json.loads(cancel.result_json)["content"][0]["text"])["state"]
+                == "cancellation_requested"
+            )
+            assert await parent_tool("cancel_helper", "cancel") == cancel
+            close = next(
+                cmd
+                for cmd, payload in await commands()
+                if payload.get("kind") == "close"
+                and payload["binding_id"] == reserved["binding_id"]
+            )
+            terminal = {
+                "child_id": reserved["child_id"],
+                "binding_id": reserved["binding_id"],
+                "plugin_run_id": "plugin-run",
+                "sdk_session_id": child["sdk"],
+                "cursor": child["journal"],
+                "sdk_idle": True,
+                "disposed": True,
+                "journal_confirmed": True,
+            }
+            term = await http.post(path + "/terminal", headers=auth(owner), json=terminal)
+            assert term.status_code == 200, term.text
+            await acknowledge(
+                http,
+                tid,
+                owner,
+                close,
+                "closed",
+                binding_id=reserved["binding_id"],
+                sdk_session_id=child["sdk"],
+                cursor=child["journal"],
+                journal_confirmed=True,
+                sdk_idle=True,
+            )
+            result = {
+                "result_json": json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "Original child cancelled"}],
+                        "isError": True,
+                    }
+                )
+            }
+            final = await http.post(path + "/result", headers=auth(owner), json=result)
+            assert final.status_code == 200, final.text
+            finished = final.json()
+            assert (
+                finished["state"] == "accepted"
+                and finished["result_json"] == accepted["result_json"]
+            )
+            assert finished["background_state"] == "finished" and finished["delivery"] == "queued"
+            assert "Original child cancelled" in finished["outcome_json"]
+            assert (
+                await http.post(path + "/result", headers=auth(owner), json=result)
+            ).json() == finished
+            [notice] = [
+                payload
+                for _, payload in await commands()
+                if payload.get("kind") == "input"
+                and "Original child cancelled" in payload["content"]
+            ]
+            assert notice["binding_id"] == parent_bid and notice["mode"] == "follow_up"
+            next_cursor = cursor(parent["journal"], "background-result")
+            await confirm(
+                http,
+                tid,
+                owner,
+                parent["binding"],
+                {
+                    **confirmation(
+                        owner,
+                        parent["binding"],
+                        parent["journal"],
+                        next_cursor,
+                        [
+                            {
+                                "input_id": notice["input_id"],
+                                "entry_id": next_cursor["leaf_id"],
+                                "seq": next_cursor["seq"],
+                            }
+                        ],
+                    ),
+                    "sdk_session_id": parent["sdk"],
+                },
+            )
+            assert (await http.get(path, headers=auth(owner))).json()["delivery"] == "applied"
+            async with ctf.repo.engine.connect() as conn:
+                task = await row(conn, s.tasks, tid)
+                assert not task["ctf_control"]["native_helpers_active"]
+                assert (
+                    task["ctf_control"]["native_worker_active"]["member-1"]["binding_id"]
+                    == parent_bid
+                )
+            parent["journal"] = next_cursor
+            late_body, late_child = await reserve("late-while-frozen")
+            late_path = base + "/" + late_body["invocation_id"]
+            late_grant = await http.post(late_path + "/launch", headers=headers, json=late_body)
+            assert late_grant.status_code == 200, late_grant.text
+            late_command = late_grant.json()["command"]
+            late_accept = await http.post(
+                late_path + "/accepted",
+                headers=auth(owner),
+                json={
+                    "child_id": late_child["child_id"],
+                    "binding_id": late_child["binding_id"],
+                    "payload_digest": late_command["payload_digest"],
+                },
+            )
+            assert late_accept.status_code == 200, late_accept.text
+            late_sdk = await prepared(late_command, "late-child", helper=True)
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                task = await row(conn, s.tasks, tid)
+                resource = await native._get(conn, tid)
+                assert resource
+                data = await native_recovery.capture(
+                    native.repo, conn, tid, resource, task, "native_resource_unknown", stamp
+                )
+                await native._set(conn, tid, data=data, state="frozen")
+                frozen_children = data["recovery"]["helpers"]
+            terminal.update(
+                child_id=late_child["child_id"],
+                binding_id=late_child["binding_id"],
+                sdk_session_id=late_sdk["sdk"],
+                cursor=late_sdk["journal"],
+            )
+            assert (
+                await http.post(late_path + "/terminal", headers=auth(owner), json=terminal)
+            ).status_code == 200
+            late_result = await http.post(late_path + "/result", headers=auth(owner), json=result)
+            assert late_result.status_code == 200 and late_result.json()["outcome_json"] is None
+            async with ctf.repo.engine.begin() as conn:
+                await ctf.repo.lock(conn, tid)
+                task = await row(conn, s.tasks, tid)
+                assert await native.helpers.unresolved_background(conn, tid, frozen_children)
+                assert task["ctf_control"]["native_helpers_active"] == frozen_children
+                incident = {
+                    **data["recovery"],
+                    "exit_proof": {
+                        "runner_terminated": True,
+                        "sandbox_terminated": True,
+                        "pvcs_retained": True,
+                    },
+                }
+                await native.helpers.reconcile_frozen(conn, tid, task, incident)
+                assert not await native.helpers.unresolved_background(conn, tid, frozen_children)
+                current = await row(conn, s.tasks, tid)
+                assert current["ctf_control"]["native_helpers_active"] == frozen_children
+            late_status = (await http.get(late_path, headers=auth(owner))).json()
+            assert late_status["delivery"] == "historical"
+            assert late_status["result_json"] == late_accept.json()["result_json"]
+            return
         async with ctf.repo.engine.begin() as conn:
             await ctf.repo.lock(conn, tid)
             task = await row(conn, s.tasks, tid)

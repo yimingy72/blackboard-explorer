@@ -2098,6 +2098,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Background Helper */
+        post: operations["cancel_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/reserve": {
         parameters: {
             query?: never;
@@ -2115,6 +2132,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Background Helper Status */
+        post: operations["background_helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers_status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}": {
         parameters: {
             query?: never;
@@ -2126,6 +2160,23 @@ export interface paths {
         get: operations["helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/accepted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Background Helper */
+        post: operations["accept_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__accepted_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4654,10 +4705,23 @@ export interface components {
              */
             usage_known: boolean;
         };
+        /** HelperAccepted */
+        HelperAccepted: {
+            /** Binding Id */
+            binding_id: string;
+            /** Child Id */
+            child_id: string;
+            /** Payload Digest */
+            payload_digest: string;
+        };
         /** HelperLaunch */
         HelperLaunch: {
+            /** Background State */
+            background_state?: ("scheduled" | "running" | "draining" | "finished" | "unknown") | null;
             /** Binding Id */
             binding_id?: string | null;
+            /** Child Deadline Ms */
+            child_deadline_ms?: number | null;
             /** Child Id */
             child_id?: string | null;
             command?: components["schemas"]["RunnerCommand"] | null;
@@ -4667,6 +4731,8 @@ export interface components {
             } | null;
             /** Deadline Ms */
             deadline_ms?: number | null;
+            /** Delivery */
+            delivery?: ("queued" | "historical" | "applied") | null;
             /** Invocation Id */
             invocation_id: string;
             /**
@@ -4674,6 +4740,10 @@ export interface components {
              * @default false
              */
             launch_allowed: boolean;
+            /** Outcome Digest */
+            outcome_digest?: string | null;
+            /** Outcome Json */
+            outcome_json?: string | null;
             /** Reason */
             reason?: string | null;
             /** Result Digest */
@@ -4684,7 +4754,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "reserved" | "launch_claimed" | "draining" | "saved" | "unavailable" | "unknown";
+            state: "reserved" | "launch_claimed" | "accepted" | "draining" | "saved" | "unavailable" | "unknown";
         };
         /** HelperResult */
         HelperResult: {
@@ -4693,14 +4763,24 @@ export interface components {
         };
         /** HelperStatus */
         HelperStatus: {
+            /** Background State */
+            background_state?: ("scheduled" | "running" | "draining" | "finished" | "unknown") | null;
             /** Binding Id */
             binding_id?: string | null;
+            /** Child Deadline Ms */
+            child_deadline_ms?: number | null;
             /** Child Id */
             child_id?: string | null;
             /** Deadline Ms */
             deadline_ms?: number | null;
+            /** Delivery */
+            delivery?: ("queued" | "historical" | "applied") | null;
             /** Invocation Id */
             invocation_id: string;
+            /** Outcome Digest */
+            outcome_digest?: string | null;
+            /** Outcome Json */
+            outcome_json?: string | null;
             /** Reason */
             reason?: string | null;
             /** Result Digest */
@@ -4711,7 +4791,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "reserved" | "launch_claimed" | "draining" | "saved" | "unavailable" | "unknown";
+            state: "reserved" | "launch_claimed" | "accepted" | "draining" | "saved" | "unavailable" | "unknown";
         };
         /** HelperTerminal */
         HelperTerminal: {
@@ -5716,6 +5796,11 @@ export interface components {
         /** NativeRunnerLaunch */
         NativeRunnerLaunch: {
             exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /**
+             * Helper Background
+             * @default false
+             */
+            helper_background: boolean;
             /**
              * Helper Foreground
              * @default false
@@ -12665,6 +12750,42 @@ export interface operations {
             };
         };
     };
+    cancel_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post: {
         parameters: {
             query?: never;
@@ -12701,6 +12822,42 @@ export interface operations {
             };
         };
     };
+    background_helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers_status_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get: {
         parameters: {
             query?: never;
@@ -12713,6 +12870,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__accepted_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperAccepted"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -241,8 +241,10 @@ class NativeRunnerBootstrap:
                 )
             ).first():
                 raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
-            if body.helper_foreground and not native_dispatch_enabled(task):
-                raise HTTPException(422, "Foreground helpers require native Worker dispatch")
+            if (body.helper_foreground or body.helper_background) and not native_dispatch_enabled(
+                task
+            ):
+                raise HTTPException(422, "Helpers require native Worker dispatch")
             if (
                 native_dispatch_enabled(task)
                 and not 1 <= task["ctf_options"]["max_teammates"] <= 20
@@ -1189,6 +1191,11 @@ class NativeRunnerBootstrap:
                         if record["request"].get("helper_foreground")
                         else {}
                     ),
+                    **(
+                        {"helper_background": True}
+                        if record["request"].get("helper_background")
+                        else {}
+                    ),
                     "instructions": {
                         f"member-{n}": render_ctf_prompt(
                             profile,
@@ -1287,6 +1294,11 @@ class NativeRunnerBootstrap:
                 **(
                     {"helper_foreground": True}
                     if current["request"].get("helper_foreground")
+                    else {}
+                ),
+                **(
+                    {"helper_background": True}
+                    if current["request"].get("helper_background")
                     else {}
                 ),
             }

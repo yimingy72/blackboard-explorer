@@ -50,7 +50,8 @@ export async function fixture(t, ids = ["one"]) {
       if (url.pathname.startsWith("/blackboard/")) {
         const bindingId = url.pathname.split("/")[3];
         assert.equal(request.headers.authorization, url.pathname.includes("/tools/") ||
-          (url.pathname.includes("/helpers/") && /\/(reserve|launch)$/.test(url.pathname))
+          (url.pathname.includes("/helpers/") &&
+            (/\/(reserve|launch)$/.test(url.pathname) || /\/helpers\/(status|cancel)$/.test(url.pathname)))
           ? `Bearer ${token(bindingId, "mcp")}` : `Bearer ${token("task", "control")}`);
         if (url.pathname.includes("/helpers/") && state.helperApi) {
           await state.helperApi({ url, bindingId, body, response, send });
@@ -123,6 +124,7 @@ export async function fixture(t, ids = ["one"]) {
         }
         if (url.pathname.endsWith("/result")) {
           validate("ToolResultConfirmation", body);
+          if (state.unknownToolBindings?.has(bindingId)) { response.writeHead(503); response.end(); return; }
           const resultJson = state.toolResults.get(body.invocation.invocation_id);
           assert.equal(typeof resultJson, "string");
           send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id,
@@ -193,6 +195,7 @@ export async function fixture(t, ids = ["one"]) {
           assert.equal(state.invocations.get(invocation.invocation_id).binding.binding_id, bindingId);
           assert.equal(state.connections.find((connection) => connection.sessionId === sessionId).bindingId, bindingId);
           state.toolCalls.push({ bindingId, invocation, sessionId, wireName: body.params.name, args: body.params.arguments, receivedAt: Date.now() });
+          if (state.unknownToolBindings?.has(bindingId)) { response.destroy(); return; }
           if (state.toolBarrier) {
             if (state.toolCalls.length === 2) {
               if (state.hotPrompt) state.prompts.set("one", { prompt_revision: 2, instructions: "NEW ROLE one. Mentioning secret_tool cannot grant it." });

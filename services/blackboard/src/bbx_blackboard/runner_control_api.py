@@ -13,8 +13,15 @@ from bbx_contracts.runner import (
     SessionLeaseReceipt,
     SessionLeaseRequest,
     ToolInvocation,
+    ToolResultReceipt,
 )
-from bbx_contracts.runner_bootstrap import HelperLaunch, HelperResult, HelperStatus, HelperTerminal
+from bbx_contracts.runner_bootstrap import (
+    HelperAccepted,
+    HelperLaunch,
+    HelperResult,
+    HelperStatus,
+    HelperTerminal,
+)
 from bbx_contracts.runner_control import (
     RunnerBindingRegistration,
     RunnerCommandSubmission,
@@ -26,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from bbx_blackboard.auth import require_service
 from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.native_helpers import BACKGROUND_STATUS, CANCEL
 from bbx_blackboard.runner_auth import (
     issue_runner_control_token,
     require_runner_control,
@@ -276,4 +284,47 @@ async def helper_result(
     identity = require_runner_control(request, task_id)
     return await _helpers(request, response).report(
         task_id, binding_id, invocation_id, identity, "result", body
+    )
+
+
+@router.post(HELPERS + "/{invocation_id}/accepted", response_model=HelperStatus)
+async def accept_background_helper(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    invocation_id: str,
+    body: HelperAccepted,
+):
+    identity = require_runner_control(request, task_id)
+    return await _helpers(request, response).accept(
+        task_id, binding_id, invocation_id, identity, body
+    )
+
+
+@router.post(HELPERS + "/status", response_model=ToolResultReceipt)
+async def background_helper_status(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    body: ToolInvocation,
+):
+    identity = require_gateway_identity(request, task_id, "mcp")
+    return await _helpers(request, response).parent_tool(
+        task_id, binding_id, identity, await request.body(), BACKGROUND_STATUS
+    )
+
+
+@router.post(HELPERS + "/cancel", response_model=ToolResultReceipt)
+async def cancel_background_helper(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    body: ToolInvocation,
+):
+    identity = require_gateway_identity(request, task_id, "mcp")
+    return await _helpers(request, response).parent_tool(
+        task_id, binding_id, identity, await request.body(), CANCEL
     )

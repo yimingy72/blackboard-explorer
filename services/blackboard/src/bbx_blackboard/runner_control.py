@@ -464,7 +464,15 @@ class RunnerControl:
             return await self._register_binding(conn, tid, raw)
 
     async def _register_binding(
-        self, conn, tid, raw, *, assignment=None, helper=None, helper_foreground=False
+        self,
+        conn,
+        tid,
+        raw,
+        *,
+        assignment=None,
+        helper=None,
+        helper_foreground=False,
+        helper_background=False,
     ):
         body, _, sha = decode(RunnerBindingRegistration, raw)
         task = await self._task(conn, tid, live=True)
@@ -600,12 +608,16 @@ class RunnerControl:
                 ),
                 "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
                 **({"helper_foreground": True} if helper_foreground else {}),
+                **({"helper_background": True} if helper_background else {}),
                 **(
                     {
                         "helper_child": {
                             "child_id": helper["child_id"],
                             "parent_binding_id": helper["parent_binding_id"],
                             "deadline_ms": helper["deadline_ms"],
+                            **(
+                                {"mode": "background"} if helper.get("mode") == "background" else {}
+                            ),
                         }
                     }
                     if helper
@@ -615,12 +627,17 @@ class RunnerControl:
         )
         omitted = {
             key
-            for key, enabled in (("helper_child", helper), ("helper_foreground", helper_foreground))
+            for key, enabled in (
+                ("helper_child", helper),
+                ("helper_foreground", helper_foreground),
+                ("helper_background", helper_background),
+            )
             if not enabled
         }
-        payload = runner_json_text(
-            {"kind": "prepare", "spec": spec.model_dump(mode="json", exclude=omitted)}
-        )
+        wire_spec = spec.model_dump(mode="json", exclude=omitted)
+        if helper and not helper.get("mode"):
+            wire_spec["helper_child"].pop("mode")
+        payload = runner_json_text({"kind": "prepare", "spec": wire_spec})
         value = dict(
             task_id=tid,
             id=bid,
@@ -930,6 +947,12 @@ class RunnerControl:
                 )
                 if child.get("state") != "launch_claimed":
                     raise HTTPException(409, "Helper launch was not claimed")
+                if child.get("mode") == "background":
+                    call = await row(conn, s.runner_calls, tid, "tool:" + child["invocation_id"])
+                    if call["state"] != "completed" or not call["data"].get("background", {}).get(
+                        "accepted"
+                    ):
+                        raise HTTPException(409, "Background helper launch is not accepted")
             command = await row(
                 conn, s.runner_commands, tid, command_key(owner["epoch"], body.request_id)
             )

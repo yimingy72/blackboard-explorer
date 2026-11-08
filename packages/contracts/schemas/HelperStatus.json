@@ -5,6 +5,7 @@
       "enum": [
         "reserved",
         "launch_claimed",
+        "accepted",
         "draining",
         "saved",
         "unavailable",
@@ -92,6 +93,81 @@
       ],
       "default": null,
       "title": "Result Digest"
+    },
+    "child_deadline_ms": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Child Deadline Ms"
+    },
+    "background_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "scheduled",
+            "running",
+            "draining",
+            "finished",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Background State"
+    },
+    "outcome_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome Json"
+    },
+    "outcome_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome Digest"
+    },
+    "delivery": {
+      "anyOf": [
+        {
+          "enum": [
+            "queued",
+            "historical",
+            "applied"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivery"
     }
   },
   "required": [

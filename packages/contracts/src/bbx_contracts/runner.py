@@ -79,10 +79,18 @@ class EffectiveRunnerModel(ContractModel):
         return self
 
 
+BACKGROUND_HELPER_TOOLS = (
+    "delegate_helper_background",
+    "background_helper_status",
+    "cancel_helper",
+)
+
+
 class HelperChild(ContractModel):
     child_id: RunnerId
     parent_binding_id: RunnerId
     deadline_ms: int = Field(ge=1, le=9007199254740991)
+    mode: Literal["background"] | None = None
 
 
 class SessionSpec(ContractModel):
@@ -96,11 +104,12 @@ class SessionSpec(ContractModel):
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
     helper_foreground: bool = False
+    helper_background: bool = False
     helper_child: HelperChild | None = None
 
     @model_validator(mode="after")
     def exact_tool_aliases(self):
-        if self.helper_child and self.helper_foreground:
+        if self.helper_child and (self.helper_foreground or self.helper_background):
             raise ValueError("Helpers cannot delegate")
         if len(set(self.allowed_tools)) != len(self.allowed_tools):
             raise ValueError("Declared tools must be distinct")
@@ -411,6 +420,7 @@ class RunnerBootstrap(ContractModel):
     journal_root: str
     mcp_metadata_timeout_ms: int = Field(default=15000, ge=50, le=30000)
     helper_foreground: bool = False
+    helper_background: bool = False
 
 
 class RunnerSchemaBundle(ContractModel):

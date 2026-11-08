@@ -127,3 +127,11 @@ Task 停止后旧能力也不能重新授权模型/工具，有限关闭控制�
 退出必须来自原 PodUID/containerID 的正终止观察；kill ACK、TTL、404、route撤销与 RWO 均不作为退出证明。
 已退出待域 finalize 会跨重启继续补偿；未知保留原身份、key与PVC，不释放席位。
 本片保 Namespace、journal/workspace PVC，最终 Task purge还需要受信资源回收/持久归属移交，不能丢唯一 UID账。
+
+## P4h 受监督的后台 helper
+
+已在可信 Task 启动时启用 `helper_background` 的主 Worker 可委派一个后台 helper，查询该原子状态或请求取消；不启用前台配置就不会发布前台委派工具。受理写入原父工具账本后立即返回，受监督的子会话沿既有插件宿主在同一 Runner 内运行，不随父普通模型回合结束而取消。官方 detached daemon、后台 Sandbox 命令和通用插件工具仍关闭。
+
+子会话保留独立 SDK、journal、短执行身份和 30 秒运行许可，许可由原 Runner 轮询续期。子总期限在登记时固定，最多 180 秒且不超过原 Task 硬截止；父关闭、冻结或 Task 停止会撤销原子新调用。已确认子终态和作用域后，控制面以确定的 follow-up 输入投递给仍有效的原父；未确认执行不会重放或转交给新父。
+
+`npm test` 包含父先结束、子先完成时的 follow-up 顺序和父冻结后的真实子收尾。私有集群复跑见 [P4h 探针说明](../../../deploy/kubernetes/p4h/README.md)。

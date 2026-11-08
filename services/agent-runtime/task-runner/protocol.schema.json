@@ -358,6 +358,19 @@
           "minimum": 1,
           "title": "Deadline Ms",
           "type": "integer"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "background",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
         }
       },
       "required": [
@@ -1066,6 +1079,11 @@
           "default": false,
           "title": "Helper Foreground",
           "type": "boolean"
+        },
+        "helper_background": {
+          "default": false,
+          "title": "Helper Background",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1391,6 +1409,11 @@
         "helper_foreground": {
           "default": false,
           "title": "Helper Foreground",
+          "type": "boolean"
+        },
+        "helper_background": {
+          "default": false,
+          "title": "Helper Background",
           "type": "boolean"
         },
         "helper_child": {
