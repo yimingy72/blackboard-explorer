@@ -17,7 +17,7 @@ export default function NewTaskPage() {
     const navigate = useNavigate();
     const location = useLocation();
     const nextKey = useRef(2);
-    const [mode, setMode] = useState<'blackboard' | 'ctf'>('blackboard');
+    const [selectedMode, setMode] = useState<'blackboard' | 'ctf'>('blackboard');
     const [maxTeammates, setMaxTeammates] = useState('4');
     const [completionRequirements, setCompletionRequirements] = useState('');
     const [goal, setGoal] = useState('');
@@ -63,13 +63,19 @@ export default function NewTaskPage() {
                 void group.current?.then((id) => api.deleteInputGroup(id)).catch(() => { });
         };
     }, []);
-    const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels, refetchOnWindowFocus: true });
-    const providers = useQuery({ queryKey: ['platform-providers'], queryFn: api.listProviders });
+    const capabilities = useQuery({ queryKey: ['task-creation-capabilities'], queryFn: api.taskCreationCapabilities });
+    const nativeDeployment = capabilities.data?.mode === 'native-ctf';
+    const nativeEnvironment = capabilities.data?.native_ctf;
+    const creationBlocked = !capabilities.isSuccess || nativeDeployment && !nativeEnvironment;
+    const mode = nativeDeployment ? 'ctf' : selectedMode;
+    const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels, enabled: capabilities.isSuccess && !nativeDeployment, refetchOnWindowFocus: true });
+    const providers = useQuery({ queryKey: ['platform-providers'], queryFn: api.listProviders, enabled: capabilities.isSuccess && !nativeDeployment });
     const selectedModel = models.data?.find((item) => item.name === modelId);
     const provider = providers.data?.find((item) => item.id === selectedModel?.config.provider);
     const efforts = reasoningOptions(provider, selectedModel?.config.model ?? '');
     const currencyLabel = '人民币元';
-    const unauthorized = models.error instanceof ApiError && models.error.status === 401;
+    const authError = capabilities.error ?? models.error;
+    const unauthorized = authError instanceof ApiError && authError.status === 401;
     useEffect(() => {
         if (!modelId && models.data?.length)
             setModelId(models.data.find((item) => item.is_default && item.enabled)?.name ?? models.data.find((item) => item.enabled)?.name ?? '');
@@ -86,7 +92,7 @@ export default function NewTaskPage() {
     }
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (pending || uploadsBusy)
+        if (pending || uploadsBusy || (!submitted.current && creationBlocked))
             return;
         setFormError('');
         if (uploadsInvalid) {
@@ -107,11 +113,18 @@ export default function NewTaskPage() {
                 setFormError(mode === 'ctf' ? '预算金额和时长必须大于 0，队友数必须是非负整数。' : '预算金额必须大于 0，时长和并发数必须是正整数。');
                 return;
             }
-            if (!selectedModel || !selectedModel.enabled) {
+            const executionModel = nativeEnvironment
+                ? { name: nativeEnvironment.model_id, version: nativeEnvironment.model_version }
+                : selectedModel;
+            if (!executionModel || (!nativeDeployment && !selectedModel?.enabled)) {
                 setFormError('请选择可用的平台模型。');
                 return;
             }
-            if (reasoningEffort && (!provider?.supports_reasoning_effort || !['none', ...efforts].includes(reasoningEffort))) {
+            if (nativeDeployment && (inputIds.length || agents > 20 || agents < 1)) {
+                setFormError(inputIds.length ? '此环境不支持附件，请返回后新建任务。' : '原生 CTF 需要 1 至 20 个 Worker 席位。');
+                return;
+            }
+            if (!nativeDeployment && reasoningEffort && (!provider?.supports_reasoning_effort || !['none', ...efforts].includes(reasoningEffort))) {
                 setFormError('所选模型不支持当前推理强度，请重新选择。');
                 return;
             }
@@ -122,21 +135,22 @@ export default function NewTaskPage() {
                 name: name.trim() || null,
                 goal: goal.trim(),
                 domain_context: context.trim() || null,
-                model_id: selectedModel.name,
-                model_version: selectedModel.version,
-                egress_allowlist: [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
+                model_id: executionModel.name,
+                model_version: executionModel.version,
+                egress_allowlist: nativeDeployment ? [] : [...new Set(allowlist.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))],
             };
             input = mode === 'ctf' ? {
                 ...common, mode: 'ctf', agent_profile: 'ctf',
                 completion_requirements: completionRequirements.trim() || null,
                 budget: { max_cost: maxCost, max_minutes: minutes },
                 ctf_options: { max_teammates: agents },
+                ...(nativeEnvironment && { native_environment: { id: nativeEnvironment.id, revision: nativeEnvironment.revision, publication_stamp: nativeEnvironment.publication_stamp } }),
             } : {
                 ...common, agent_profile: 'default',
                 acceptance: descriptions.map((desc, index) => ({ id: `A${index + 1}`, desc })),
                 budget: { max_cost: maxCost, max_minutes: minutes, max_concurrent_agents: agents },
             };
-            if (reasoningEffort)
+            if (!nativeDeployment && reasoningEffort)
                 input.reasoning_effort = reasoningEffort;
         }
         setPending(true);
@@ -165,6 +179,8 @@ export default function NewTaskPage() {
                 return;
             if (!uncertain && cause instanceof ApiError && [404, 410].includes(cause.status))
                 setGroupExpired(true);
+            if (!uncertain && nativeDeployment && cause instanceof ApiError && cause.status === 409)
+                void capabilities.refetch();
             setLocked(Boolean(uncertain));
             setFormError(uncertain ? '创建结果未确认。请重试同一请求，不会重复创建任务。' : cause instanceof ApiError ? cause.message : '任务创建失败，请稍后重试。');
         }
@@ -174,8 +190,13 @@ export default function NewTaskPage() {
         }
     }
     return <div className={styles.page}>
-      <header className={styles.heading}><div className={styles.headingIdentity}><Button type="text" icon={<ArrowLeftOutlined />} aria-label="返回任务" onClick={() => navigate('/tasks')} /><h1>创建任务</h1></div><div className={styles.modePicker}><Segmented disabled={pending || locked} aria-label="协作模式" value={mode} options={[{ label: '黑板探索', value: 'blackboard' }, { label: 'CTF 团队', value: 'ctf' }]} onChange={(value) => setMode(value as typeof mode)} /></div></header>
-      <form onSubmit={submit} className={styles.form} aria-busy={pending}>
+      <header className={styles.heading}><div className={styles.headingIdentity}><Button type="text" icon={<ArrowLeftOutlined />} aria-label="返回任务" onClick={() => navigate('/tasks')} /><h1>创建任务</h1></div>{capabilities.isSuccess && <div className={styles.modePicker}>{nativeDeployment ? <span>原生 CTF 团队</span> : <Segmented disabled={pending || locked} aria-label="协作模式" value={mode} options={[{ label: '黑板探索', value: 'blackboard' }, { label: 'CTF 团队', value: 'ctf' }]} onChange={(value) => setMode(value as typeof mode)} />}</div>}</header>
+      {creationBlocked && !locked && <Alert
+        type={capabilities.isPending ? 'info' : 'warning'}
+        title={capabilities.isPending ? '正在读取创建选项' : capabilities.isError ? '无法读取创建选项' : '当前没有已发布的原生 CTF 环境'}
+        action={!capabilities.isPending && <Button size="small" onClick={() => void capabilities.refetch()}>刷新</Button>}
+      />}
+      {(!creationBlocked || locked) && <form onSubmit={submit} className={styles.form} aria-busy={pending}>
         <Form component={false} layout="vertical" disabled={pending || locked}>
           <div className={styles.layout}>
             <section className={styles.editor} aria-label="任务内容">
@@ -183,24 +204,29 @@ export default function NewTaskPage() {
               <Form.Item label="任务目标" htmlFor="goal" required><Input.TextArea id="goal" autoSize={{ minRows: 4, maxRows: 10 }} value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="描述要解决的问题、范围和预期结果" required /></Form.Item>
               <Form.Item label="领域背景" htmlFor="domain-context"><Input.TextArea id="domain-context" autoSize={{ minRows: 2, maxRows: 6 }} value={context} onChange={(event) => setContext(event.target.value)} placeholder="已知信息、资料范围或执行边界（可选）" /></Form.Item>
               {mode === 'ctf' ? <Form.Item label="完成要求" htmlFor="completion-requirements"><Input.TextArea id="completion-requirements" autoSize={{ minRows: 3, maxRows: 8 }} value={completionRequirements} onChange={(event) => setCompletionRequirements(event.target.value)} placeholder="需要完成的题目、证据或交付内容" /></Form.Item> : <section className={styles.acceptance} aria-label="验收条件"><h2>验收条件</h2>{acceptance.map((item, index) => <div className={styles.acceptanceRow} key={item.key}><span>A{index + 1}</span><Input.TextArea aria-label={`验收条件 ${index + 1}`} id={`acceptance-${item.key}`} autoSize={{ minRows: 1, maxRows: 5 }} value={item.desc} onChange={(event) => updateAcceptance(item.key, event.target.value)} placeholder="说明如何判断这一项已完成" required /><Button type="text" icon={<DeleteOutlined />} aria-label={`删除验收条件 ${index + 1}`} disabled={pending || locked || acceptance.length === 1} onClick={() => setAcceptance((items) => items.filter((entry) => entry.key !== item.key))} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={addAcceptance}>添加验收条件</Button></section>}
-              <section className={styles.attachments} aria-label="初始附件"><TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked} onStatus={attachmentsStatus} /></section>
+              {nativeDeployment ? <p className={controls.hint}>此环境暂不支持初始附件。</p> : <section className={styles.attachments} aria-label="初始附件"><TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked} onStatus={attachmentsStatus} /></section>}
             </section>
             <aside className={styles.sidebar} aria-label="任务设置"><h2>运行设置</h2>
+              {nativeEnvironment && <Alert type="info" title={nativeEnvironment.label} description="此环境使用管理员配置的 IPv4 TCP 目标。已封存的逐 Agent 流量可在任务内查看。" />}
               <Form.Item label={`金额上限（${currencyLabel}）`} htmlFor="max-cost" required><Input id="max-cost" type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required prefix="¥" /></Form.Item>
               <div className={styles.settingsGrid}><Form.Item label="时长上限（分钟）" htmlFor="max-minutes" required><Input id="max-minutes" type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required /></Form.Item>
-              {mode === 'ctf' ? <Form.Item label="队友上限（不含 Lead）" htmlFor="max-teammates"><Input id="max-teammates" type="number" min="0" step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required /></Form.Item> : <Form.Item label="并发 Agent 上限" htmlFor="max-agents" required><Input id="max-agents" type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required /></Form.Item>}</div>
+              {mode === 'ctf' ? <Form.Item label="队友上限（不含 Lead）" htmlFor="max-teammates"><Input id="max-teammates" type="number" min={nativeDeployment ? 1 : 0} max={nativeDeployment ? 20 : undefined} step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required /></Form.Item> : <Form.Item label="并发 Agent 上限" htmlFor="max-agents" required><Input id="max-agents" type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required /></Form.Item>}</div>
+              {nativeDeployment
+                ? <Form.Item label="已发布模型"><span>{nativeEnvironment?.model_id} · 版本 {nativeEnvironment?.model_version}</span></Form.Item>
+                : <>
               <Form.Item label={<span className={styles.modelHeading}>模型<Button type="text" size="small" icon={<ReloadOutlined />} aria-label="刷新模型" loading={models.isFetching} onClick={()=>{void models.refetch();void providers.refetch();}} /></span>} htmlFor="model" required><Select id="model" aria-label="平台模型" value={modelId || undefined} placeholder="选择模型" loading={models.isLoading} options={models.data?.filter((item) => item.enabled).map((item) => ({ value: item.name, label: item.label + (item.is_default ? ' · 默认' : '') })) ?? []} onChange={(value) => { setModelId(value); setReasoningEffort(''); }} /></Form.Item>
               {provider?.supports_reasoning_effort && <Form.Item label={mode === 'ctf' ? '默认推理强度' : '推理强度'} htmlFor="reasoning-effort"><Select id="reasoning-effort" aria-label="推理强度" value={reasoningEffort} onChange={setReasoningEffort} options={[{ value: '', label: `沿用模型配置（${selectedModel?.config.reasoning_effort === 'none' || selectedModel?.config.reasoning_effort === 'off' ? '不传参数' : selectedModel?.config.reasoning_effort}）` }, { value: 'none', label: '模型默认（不传参数）' }, ...efforts.map((value) => ({ value, label: value }))]} /></Form.Item>}
               {provider && !provider.supports_reasoning_effort && <p className={controls.hint}>该连接方式使用模型默认思考设置。</p>}
               {(models.isError || providers.isError) && !unauthorized && <Alert type="error" title="模型选项读取失败" action={<Button size="small" onClick={() => { void models.refetch(); void providers.refetch(); }}>重试</Button>} />}
               {!models.isLoading && !models.isError && !models.data?.some((item) => item.enabled) && <Alert type="warning" title="当前没有可用模型" description="在新标签配置模型，返回后刷新模型列表。" action={<Button href="/profiles?section=models" target="_blank" rel="noopener noreferrer">添加模型</Button>} />}
+                </>}
               {mode === 'blackboard' && <Form.Item label={<Checkbox checked={progressEnabled} onChange={event => setProgressEnabled(event.target.checked)}>自动整理成果树</Checkbox>}><Input prefix="额外 ¥" suffix="独立上限" type="number" aria-label="创建任务成果整理上限" min="0.01" step="any" value={progressCap} disabled={!progressEnabled || pending || locked} onChange={event => setProgressCap(event.target.value)} /><span className={controls.hint}>独立于求解预算，触顶不影响探索。</span></Form.Item>}
-              <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />
-              <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
+              {!nativeDeployment && <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />}
+              <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !nativeDeployment && !models.data?.some((item) => item.enabled))}>创建任务</Button></div></footer>
             </aside>
           </div>
 
         </Form>
-      </form>
+      </form>}
     </div>;
 }

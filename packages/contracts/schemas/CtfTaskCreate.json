@@ -76,6 +76,33 @@
       },
       "title": "CtfOptions",
       "type": "object"
+    },
+    "NativeCtfEnvironmentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "publication_stamp": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Publication Stamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "publication_stamp"
+      ],
+      "title": "NativeCtfEnvironmentRef",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -146,6 +173,17 @@
       },
       "title": "Egress Allowlist",
       "type": "array"
+    },
+    "native_environment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NativeCtfEnvironmentRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "input_group_id": {
       "anyOf": [

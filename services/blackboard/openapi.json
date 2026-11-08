@@ -2250,6 +2250,16 @@
             ],
             "title": "Name"
           },
+          "native_environment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeCtfEnvironmentRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_version": {
             "anyOf": [
               {
@@ -6242,6 +6252,77 @@
         "title": "NativeBudgetPrepare",
         "type": "object"
       },
+      "NativeCtfEnvironment": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "integer"
+          },
+          "publication_stamp": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Publication Stamp",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "publication_stamp",
+          "label",
+          "model_id",
+          "model_version"
+        ],
+        "title": "NativeCtfEnvironment",
+        "type": "object"
+      },
+      "NativeCtfEnvironmentRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "publication_stamp": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Publication Stamp",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "publication_stamp"
+        ],
+        "title": "NativeCtfEnvironmentRef",
+        "type": "object"
+      },
       "NativeFeeView": {
         "additionalProperties": false,
         "properties": {
@@ -10223,6 +10304,34 @@
           "agent_profile_version"
         ],
         "title": "TaskCreated",
+        "type": "object"
+      },
+      "TaskCreationCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "legacy",
+              "native-ctf"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "native_ctf": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeCtfEnvironment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "TaskCreationCapabilities",
         "type": "object"
       },
       "TaskPage": {
@@ -14359,6 +14468,27 @@
         "summary": "Update Worker",
         "tags": [
           "settings"
+        ]
+      }
+    },
+    "/api/task-creation-capabilities": {
+      "get": {
+        "operationId": "task_creation_capabilities_api_task_creation_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCreationCapabilities"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Task Creation Capabilities",
+        "tags": [
+          "tasks"
         ]
       }
     },

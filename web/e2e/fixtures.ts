@@ -229,6 +229,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     const method = request.method();
     if (path === '/api/login' && method === 'POST') return json(route, { username: 'tester' });
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
+    if (path === '/api/task-creation-capabilities' && method === 'GET') return json(route, { mode: 'legacy', native_ctf: null });
     if (/^\/api\/tasks\/[^/]+\/progress\/settings$/.test(path) && method === 'PUT') {
       const body = request.postDataJSON() as { enabled: boolean; max_cost: string };
       return json(route, { enabled: body.enabled, status: 'idle', overview: '', nodes: [], revision: 0, source_version: 0, desired_source_version: 0, published_version: 0, run_number: 1, updated_at: null, error: null, budget: { max_cost: body.max_cost, spent: '0', reserved: '0', unknown: '0' } });

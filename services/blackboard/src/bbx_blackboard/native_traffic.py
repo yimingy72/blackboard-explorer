@@ -20,7 +20,7 @@ from bbx_contracts.traffic import (
     TrafficNativeSourceRef,
 )
 from fastapi import HTTPException
-from pydantic import Field, IPvAnyAddress, field_validator, model_validator
+from pydantic import Field, model_validator
 from sqlalchemy import select, text, update
 
 from bbx_blackboard.native import NativeUnavailable, object_bytes
@@ -71,26 +71,6 @@ def lost_captures(record):
     }
 
 
-class CaptureTarget(ContractModel):
-    ipv4: IPvAnyAddress
-    port: int = Field(ge=1, le=65535, strict=True)
-
-    @field_validator("ipv4")
-    @classmethod
-    def numeric_target(cls, value):
-        if (
-            not isinstance(value, ipaddress.IPv4Address)
-            or value.is_loopback
-            or value.is_unspecified
-            or value.is_multicast
-            or value.is_link_local
-            or value in ipaddress.IPv4Network("198.19.0.0/16")
-            or value == ipaddress.IPv4Address("255.255.255.255")
-        ):
-            raise ValueError("Native capture target is not an eligible IPv4 destination")
-        return value
-
-
 class CaptureReady(ContractModel):
     netns_inode: str = Field(pattern=r"^[1-9][0-9]{0,19}$")
     host_ifindex: int = Field(ge=1, le=2**31 - 1, strict=True)
@@ -122,15 +102,6 @@ class CaptureSeal(CaptureReady):
         if not self.complete and not self.error:
             raise ValueError("Partial capture requires its observed coverage gap")
         return self
-
-
-def capture_targets(raw):
-    if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
-        raise ValueError("Native capture needs 1 to 8 fixed IPv4 TCP destinations")
-    values = [CaptureTarget.model_validate(item).model_dump(mode="json") for item in raw]
-    if len({(item["ipv4"], item["port"]) for item in values}) != len(values):
-        raise ValueError("Native capture destinations must be distinct")
-    return values
 
 
 def pcap_counts(data):

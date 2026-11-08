@@ -23,6 +23,7 @@ from pydantic import (
 from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
 from .providers import reasoning_efforts
+from .runner_bootstrap import NativeCtfEnvironmentRef
 
 CtfRole = Literal["lead", "teammate"]
 CTF_BOARD_RESULT_MAX_BYTES = 16000
@@ -248,6 +249,9 @@ class CtfTaskSpec(ContractModel):
 
 
 class CtfTaskCreate(CtfTaskSpec):
+    native_environment: NativeCtfEnvironmentRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
     public_input_ids: list[UUID] | None = Field(default=None, max_length=20)

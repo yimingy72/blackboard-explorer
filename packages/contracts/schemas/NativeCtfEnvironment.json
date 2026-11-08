@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "publication_stamp": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Publication Stamp",
+      "type": "string"
+    },
+    "label": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "model_version": {
+      "title": "Model Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "revision",
+    "publication_stamp",
+    "label",
+    "model_id",
+    "model_version"
+  ],
+  "title": "NativeCtfEnvironment",
+  "type": "object"
+}

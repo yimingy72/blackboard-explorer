@@ -536,6 +536,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/task-creation-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Creation Capabilities */
+        get: operations["task_creation_capabilities_api_task_creation_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/task-input-groups": {
         parameters: {
             query?: never;
@@ -4097,6 +4114,7 @@ export interface components {
             model_version?: number | null;
             /** Name */
             name?: string | null;
+            native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
             /** Public Input Ids */
@@ -5595,6 +5613,30 @@ export interface components {
             expected_epoch: number;
             /** Selected Models */
             selected_models: string[];
+        };
+        /** NativeCtfEnvironment */
+        NativeCtfEnvironment: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Model Id */
+            model_id: string;
+            /** Model Version */
+            model_version: number;
+            /** Publication Stamp */
+            publication_stamp: string;
+            /** Revision */
+            revision: number;
+        };
+        /** NativeCtfEnvironmentRef */
+        NativeCtfEnvironmentRef: {
+            /** Id */
+            id: string;
+            /** Publication Stamp */
+            publication_stamp: string;
+            /** Revision */
+            revision: number;
         };
         /** NativeFeeView */
         NativeFeeView: {
@@ -7148,6 +7190,15 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** TaskCreationCapabilities */
+        TaskCreationCapabilities: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "legacy" | "native-ctf";
+            native_ctf?: components["schemas"]["NativeCtfEnvironment"] | null;
         };
         /** TaskPage */
         TaskPage: {
@@ -9221,6 +9272,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_creation_capabilities_api_task_creation_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskCreationCapabilities"];
                 };
             };
         };

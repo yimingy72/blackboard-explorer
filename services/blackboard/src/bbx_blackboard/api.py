@@ -14,8 +14,19 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import anyio
-from bbx_contracts.challenge_board import BOARD_LEGACY, business_contract, native_dispatch_enabled
-from bbx_contracts.ctf import CtfAgentProfile, CtfEvent, CtfTaskCreate, resolve_ctf_options
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_LEGACY,
+    business_contract,
+    native_dispatch_enabled,
+)
+from bbx_contracts.ctf import (
+    CtfAgentProfile,
+    CtfEvent,
+    CtfTaskCreate,
+    resolve_ctf_model,
+    resolve_ctf_options,
+)
 from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
 from bbx_contracts.models import (
     AgentProfile,
@@ -29,6 +40,8 @@ from bbx_contracts.models import (
     TaskSpec,
     TaskStatus,
 )
+from bbx_contracts.runner import runner_json_text, runner_payload_digest
+from bbx_contracts.runner_bootstrap import NativeRunnerLaunch, TaskCreationCapabilities
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -63,7 +76,12 @@ from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key
 from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.native import NativeAnalysisCache
 from bbx_blackboard.native_api import router as native_router
-from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap
+from bbx_blackboard.native_ctf_publication import (
+    NativeCtfPublication,
+    PublicationState,
+    load_publication,
+)
+from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap, native_role_thinking
 from bbx_blackboard.native_runner_bootstrap import router as native_runner_bootstrap_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
@@ -545,6 +563,8 @@ def create_app(
     async def lifespan(app: FastAPI):
         own_engine = app.state.engine is None
         own_dispatcher = app.state.dispatcher is None
+        if app.state.native_ctf_publication.publication is None:
+            app.state.native_ctf_publication = load_publication(settings)
         if own_engine:
             app.state.engine = create_async_engine(settings.database_url, pool_pre_ping=True)
         if app.state.objects is None:
@@ -607,6 +627,9 @@ def create_app(
     app.include_router(traffic_router)
     app.include_router(native_router)
     app.state.settings = settings
+    app.state.native_ctf_publication = PublicationState(
+        exclusive=settings.native_ctf_publication_file is not None
+    )
     app.state.engine = engine
     app.state.objects = objects
     app.state.dispatcher = dispatcher
@@ -856,58 +879,161 @@ def create_app(
         response.delete_cookie(COOKIE_NAME, path="/api")
         return {"ok": True}
 
+    async def resolve_ctf_creation(
+        request: Request, body: CtfTaskCreate | None, publication: NativeCtfPublication | None
+    ) -> CtfAgentProfile:
+        profiles = _profiles(request)
+        platform = request.app.state.platform_store
+        if publication is not None:
+            bootstrap = request.app.state.native_runner_bootstrap
+            if bootstrap is None or request.app.state.objects is None:
+                raise HTTPException(503, "原生 CTF 控制服务或对象存储不可用")
+            bootstrap.require_launch_configuration()
+            row = await profiles.get("ctf", publication.ctf_profile_version)
+        else:
+            assert body is not None
+            row = await profiles.get(body.agent_profile, body.profile_version)
+        profile = ctf_profile(row)
+        require_ctf_tool_capabilities(profile)
+        if publication is not None:
+            selected = await platform.get("models", publication.model.id, publication.model.version)
+        else:
+            assert body is not None
+            model_name = body.model_id or await platform.default_model_name()
+            if not model_name:
+                raise HTTPException(422, "请先选择模型，或在模型配置中设置默认模型")
+            selected = await platform.get("models", model_name, body.model_version)
+        if not selected["enabled"]:
+            raise HTTPException(422, "Selected model is disabled")
+        model = platform.public(selected)["config"]
+        if body is not None and body.reasoning_effort is not None:
+            model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
+        try:
+            profile = CtfAgentProfile.model_validate(
+                {**profile.model_dump(mode="json"), "model": model}
+            )
+            if publication is not None:
+                for role in ("lead", "teammate"):
+                    native_role_thinking(resolve_ctf_model(profile, role).reasoning_effort)
+        except ValueError as error:
+            raise HTTPException(
+                422, "Selected model is incompatible with the CTF role run options"
+            ) from error
+        return profile
+
+    @app.get(
+        "/api/task-creation-capabilities",
+        response_model=TaskCreationCapabilities,
+        tags=["tasks"],
+    )
+    async def task_creation_capabilities(
+        request: Request, response: Response
+    ) -> TaskCreationCapabilities:
+        require_user_or_service(request)
+        response.headers["Cache-Control"] = "no-store"
+        state: PublicationState = request.app.state.native_ctf_publication
+        publication = state.publication
+        if publication is None:
+            return state.capabilities()
+        try:
+            await resolve_ctf_creation(request, None, publication)
+        except (HTTPException, ValueError):
+            return state.capabilities(available=False)
+        return state.capabilities()
+
     @app.post("/api/tasks", response_model=TaskCreated, tags=["tasks"])
     async def create_task(request: Request, body: TaskCreateBody | CtfTaskCreate) -> TaskCreated:
         identity = require_user_or_service(request)
+        # Optional native_environment is omitted when absent, preserving the legacy request hash.
         digest = request_hash(body.model_dump())
+        state: PublicationState = request.app.state.native_ctf_publication
         if body.input_group_id is not None:
             store: InputGroups = request.app.state.input_groups
             if store is None:
                 raise HTTPException(503, "Blackboard is starting")
             prior = await store.prior_task(body.input_group_id, owner_key(identity), digest)
             if prior is not None:
-                if isinstance(body, CtfTaskCreate) and prior["status"] in {
-                    "created",
-                    "provisioning",
-                }:
+                if (
+                    isinstance(body, CtfTaskCreate)
+                    and business_contract(prior) == BOARD_LEGACY
+                    and not state.exclusive
+                    and prior["status"] in {"created", "provisioning"}
+                ):
                     await request.app.state.ctf_service.provision(prior["id"])
                 return TaskCreated(
                     id=prior["id"],
                     agent_profile=prior["agent_profile"],
                     agent_profile_version=prior["agent_profile_version"],
                 )
+        native_queue = None
+        publication = state.publication if state.exclusive else None
+        if state.exclusive:
+            if publication is None:
+                raise HTTPException(503, "当前部署没有可用的原生 CTF 环境")
+            if not isinstance(body, CtfTaskCreate) or body.native_environment is None:
+                raise HTTPException(409, "当前部署只支持使用已发布环境创建原生 CTF 任务")
+            if (
+                body.native_environment.id,
+                body.native_environment.revision,
+                body.native_environment.publication_stamp,
+            ) != (publication.id, publication.revision, state.stamp):
+                raise HTTPException(409, "所选原生 CTF 环境或版本已变化")
+            if body.input_group_id is None:
+                raise HTTPException(422, "原生 CTF 任务需要一个本人空附件组")
+            if body.input_file_ids or body.public_input_ids:
+                raise HTTPException(422, "原生 CTF 任务目前不支持附件")
+            if (
+                body.agent_profile != "ctf"
+                or body.profile_version not in (None, publication.ctf_profile_version)
+                or body.reasoning_effort is not None
+                or body.egress_allowlist
+                or body.ctf_options.model_fields_set - {"dispatch_mode", "max_teammates"}
+                or (body.model_id, body.model_version)
+                != (publication.model.id, publication.model.version)
+                or (
+                    "dispatch_mode" in body.ctf_options.model_fields_set
+                    and body.ctf_options.dispatch_mode != "automatic"
+                )
+            ):
+                raise HTTPException(422, "该原生 CTF 环境要求已发布的模型、配置和自动派工")
+            publication.validate_budget(body.budget.max_cost)
+            bootstrap = request.app.state.native_runner_bootstrap
+            if bootstrap is None:
+                raise HTTPException(503, "原生 CTF 控制服务不可用")
+            launch = NativeRunnerLaunch(
+                request_id=body.input_group_id,
+                model_alias=publication.model.gateway_alias,
+                exchange_rate=publication.exchange_rate,
+                traffic_profile="binding-pcap-v1",
+            )
+            launch_digest = runner_payload_digest(runner_json_text(launch.model_dump(mode="json")))
+            frozen_publication = publication.frozen()
+
+            async def queue_native(conn, tid):
+                await bootstrap.repo.lock(conn, tid)
+                await bootstrap.queue_locked(
+                    conn, tid, launch, launch_digest, publication=frozen_publication
+                )
+
+            native_queue = queue_native
+        elif isinstance(body, CtfTaskCreate) and body.native_environment is not None:
+            raise HTTPException(409, "当前部署未发布原生 CTF 环境")
+
         if isinstance(body, CtfTaskCreate):
-            profiles = _profiles(request)
-            row = await profiles.get(body.agent_profile, body.profile_version)
-            profile = ctf_profile(row)
-            require_ctf_tool_capabilities(profile)
-            platform = request.app.state.platform_store
-            model_name = body.model_id or await platform.default_model_name()
-            if not model_name:
-                raise HTTPException(422, "请先选择模型，或在模型配置中设置默认模型")
-            selected = await platform.get("models", model_name, body.model_version)
-            if not selected["enabled"]:
-                raise HTTPException(422, "Selected model is disabled")
-            model = platform.public(selected)["config"]
-            if body.reasoning_effort is not None:
-                model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
+            profile = await resolve_ctf_creation(request, body, publication)
             try:
-                profile = CtfAgentProfile.model_validate(
-                    {**profile.model_dump(mode="json"), "model": model}
-                )
-            except ValueError as error:
-                raise HTTPException(
-                    422, "Selected model is incompatible with the CTF role run options"
-                ) from error
-            try:
-                profile.options = resolve_ctf_options(
-                    profile,
-                    body.ctf_options.model_dump(exclude_unset=True),
-                    inherit_model_window=True,
-                )
+                requested_options = body.ctf_options.model_dump(exclude_unset=True)
+                if publication:
+                    requested_options["dispatch_mode"] = "automatic"
+                options = resolve_ctf_options(profile, requested_options, inherit_model_window=True)
+                if publication and not 1 <= options.max_teammates <= 20:
+                    raise ValueError("原生 CTF 任务需要 1 至 20 个 Worker 席位")
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
-            row = await profiles.create("ctf-task-settings", profile, identity.name)
+            if publication is None:
+                profile.options = options
+            # Native dispatch uses the Task's board contract, not the legacy role tool catalog.
+            row = await _profiles(request).create("ctf-task-settings", profile, identity.name)
             spec = body.model_dump(
                 exclude={
                     "input_group_id",
@@ -917,13 +1043,19 @@ def create_app(
                     "model_version",
                     "profile_version",
                     "reasoning_effort",
+                    "native_environment",
                 }
             )
             spec["agent_profile"] = row["name"]
-            spec["ctf_options"] = profile.options.model_dump()
+            spec["ctf_options"] = options.model_dump()
             tid = await request.app.state.ctf_service.create_task(
                 spec,
                 profile_version=row["version"],
+                **(
+                    {"business_contract": BOARD_CONTRACT, "native_queue": native_queue}
+                    if native_queue is not None
+                    else {}
+                ),
                 **(
                     {
                         "input_group_id": body.input_group_id,
@@ -941,7 +1073,7 @@ def create_app(
                 ),
             )
             task = await _task(request, tid)
-            if task["status"] in {"created", "provisioning"}:
+            if native_queue is None and task["status"] in {"created", "provisioning"}:
                 await request.app.state.ctf_service.provision(tid)
             return TaskCreated(
                 id=tid,
@@ -1255,6 +1387,11 @@ def create_app(
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
         task = await _task(request, task_id)
+        if (
+            request.app.state.native_ctf_publication.exclusive
+            and business_contract(task) == BOARD_LEGACY
+        ):
+            raise HTTPException(409, "专用原生 CTF 部署不能恢复旧版任务")
         if task.get("mode") == "ctf":
             await request.app.state.ctf_service.resume(
                 task_id,
@@ -1297,6 +1434,11 @@ def create_app(
     async def start_task(request: Request, task_id: UUID) -> StatusResult:
         require_user_or_service(request)
         task = await _task(request, task_id)
+        if request.app.state.native_ctf_publication.exclusive:
+            if business_contract(task) == BOARD_LEGACY:
+                raise HTTPException(409, "专用原生 CTF 部署不能启动旧版任务")
+            if task["status"] == "provisioning":
+                return StatusResult(status="provisioning")
         if task.get("mode") == "ctf":
             if task["status"] in {"created", "provisioning"}:
                 await request.app.state.ctf_service.provision(task_id)

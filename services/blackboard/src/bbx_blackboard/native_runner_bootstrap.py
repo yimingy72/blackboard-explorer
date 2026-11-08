@@ -19,6 +19,7 @@ from bbx_contracts.runner import (
     runner_payload_digest,
 )
 from bbx_contracts.runner_bootstrap import (
+    BINDING_CAPTURE_CONFIG_FIELDS,
     RUNTIME_FENCE_SEQUENCE,
     RUNTIME_LOCK_KEY,
     NativeBudgetIncreaseRequest,
@@ -32,8 +33,10 @@ from bbx_contracts.runner_bootstrap import (
     NativeRunnerAction,
     NativeRunnerClaim,
     NativeRunnerLaunch,
+    management_document_digest,
     native_pause_state,
     native_recovery_frozen,
+    validate_binding_capture_deployment,
 )
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -46,7 +49,7 @@ from bbx_blackboard.native_budget_increase import increase_budget
 from bbx_blackboard.native_helpers import NativeHelpers
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
-from bbx_blackboard.native_traffic import PROFILE, capture_targets, lost_captures, opted_in
+from bbx_blackboard.native_traffic import PROFILE, lost_captures, opted_in
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
@@ -65,12 +68,17 @@ def identity_id(operation, purpose):
     return str(uuid5(NAMESPACE_URL, "native-runner:" + operation + ":" + purpose))
 
 
+def native_role_thinking(reasoning_effort):
+    thinking = "off" if reasoning_effort == "none" else reasoning_effort
+    if thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        raise HTTPException(409, "Native bootstrap requires explicit supported role thinking")
+    return thinking
+
+
 def effective_role_model(profile, role_name, published):
     role = resolve_ctf_model(profile, role_name)
     model = dict(published)
-    thinking = "off" if role.reasoning_effort == "none" else role.reasoning_effort
-    if thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
-        raise HTTPException(409, "Native bootstrap requires explicit supported role thinking")
+    thinking = native_role_thinking(role.reasoning_effort)
     output = effective_max_output_tokens(role)
     if (
         output > model["max_output_tokens"]
@@ -218,81 +226,89 @@ class NativeRunnerBootstrap:
         )
         return result
 
-    async def launch(self, tid, raw):
-        body, digest = decode(NativeRunnerLaunch, raw, 262144)
-        if body.exchange_rate.observed_at.tzinfo is None:
-            raise HTTPException(422, "Frozen exchange rate requires a timezone")
+    def require_launch_configuration(self):
         if not self.settings.sandbox_tenant_resolver_token.get_secret_value():
             raise HTTPException(503, "Sandbox tenant resolver is unavailable")
         self.gateway.native._configured()
         self.gateway.routes.configuration()
+
+    async def launch(self, tid, raw):
+        body, digest = decode(NativeRunnerLaunch, raw, 262144)
+        self.require_launch_configuration()
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            task = await self.control._task(conn, tid, live=True)
-            old = await self._get(conn, tid)
-            if old:
-                if old["request_digest"] != digest:
-                    raise HTTPException(409, "Native Runner launch request changed")
-                return self._public(old)
-            if task["status"] not in {"created", "provisioning"}:
-                raise HTTPException(409, "Only an unstarted V1 Task can bootstrap")
-            if (
-                await conn.execute(
-                    select(s.runner_owners.c.epoch).where(s.runner_owners.c.task_id == tid).limit(1)
-                )
-            ).first():
-                raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
-            if (body.helper_foreground or body.helper_background) and not native_dispatch_enabled(
-                task
-            ):
-                raise HTTPException(422, "Helpers require native Worker dispatch")
-            if (
-                native_dispatch_enabled(task)
-                and not 1 <= task["ctf_options"]["max_teammates"] <= 20
-            ):
-                raise HTTPException(422, "Native Tasks allow 1 to 20 Worker seats")
-            started = instant()
-            remaining = task["budget"]["max_minutes"] * 60 - task["active_seconds"]
-            if task["active_since"]:
-                remaining -= max(0, (started - task["active_since"]).total_seconds())
-            if remaining <= 0:
-                raise HTTPException(409, "Task hard deadline has expired")
-            key = "bbx-sandbox-" + secrets.token_urlsafe(32)
-            operation = identity_id(str(tid), str(body.request_id))
-            value = dict(
-                task_id=tid,
-                operation_id=operation,
-                request_id=str(body.request_id),
-                request_digest=digest,
-                request=body.model_dump(mode="json"),
-                config=None,
-                controller_id=None,
-                controller_generation=0,
-                revision=1,
-                namespace="bbx-task-" + str(tid),
-                state="queued",
-                desired="active",
-                hard_deadline=started + timedelta(seconds=remaining),
-                sandbox_create_claimed=False,
-                tenant_key_hash=hashlib.sha256(key.encode()).hexdigest(),
-                tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
-                observation={},
-                data=({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
-                last_error=None,
-                next_check_at=started,
-                created_at=started,
-            )
-            await conn.execute(insert(s.task_runner_resources).values(**value))
+            return await self.queue_locked(conn, tid, body, digest)
+
+    async def queue_locked(self, conn, tid, body, digest, *, publication=None):
+        if body.exchange_rate.observed_at.tzinfo is None:
+            raise HTTPException(422, "Frozen exchange rate requires a timezone")
+        task = await self.control._task(conn, tid, live=True)
+        old = await self._get(conn, tid)
+        if old:
+            if old["request_digest"] != digest:
+                raise HTTPException(409, "Native Runner launch request changed")
+            return self._public(old)
+        if task["status"] not in {"created", "provisioning"}:
+            raise HTTPException(409, "Only an unstarted V1 Task can bootstrap")
+        if (
             await conn.execute(
-                update(s.tasks)
-                .where(s.tasks.c.id == tid)
-                .values(
-                    status="provisioning",
-                    active_since=task["active_since"] or started,
-                    ctf_control={**task["ctf_control"], "phase": "provisioning"},
-                )
+                select(s.runner_owners.c.epoch).where(s.runner_owners.c.task_id == tid).limit(1)
             )
-            return self._public(value)
+        ).first():
+            raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
+        if (body.helper_foreground or body.helper_background) and not native_dispatch_enabled(task):
+            raise HTTPException(422, "Helpers require native Worker dispatch")
+        if native_dispatch_enabled(task) and not 1 <= task["ctf_options"]["max_teammates"] <= 20:
+            raise HTTPException(422, "Native Tasks allow 1 to 20 Worker seats")
+        started = instant()
+        remaining = task["budget"]["max_minutes"] * 60 - task["active_seconds"]
+        if task["active_since"]:
+            remaining -= max(0, (started - task["active_since"]).total_seconds())
+        if remaining <= 0:
+            raise HTTPException(409, "Task hard deadline has expired")
+        try:
+            deadline = started + timedelta(seconds=remaining)
+        except OverflowError as error:
+            raise HTTPException(422, "Task duration exceeds the native deadline range") from error
+        key = "bbx-sandbox-" + secrets.token_urlsafe(32)
+        operation = identity_id(str(tid), str(body.request_id))
+        value = dict(
+            task_id=tid,
+            operation_id=operation,
+            request_id=str(body.request_id),
+            request_digest=digest,
+            request={
+                **body.model_dump(mode="json"),
+                **({"publication": publication} if publication is not None else {}),
+            },
+            config=None,
+            controller_id=None,
+            controller_generation=0,
+            revision=1,
+            namespace="bbx-task-" + str(tid),
+            state="queued",
+            desired="active",
+            hard_deadline=deadline,
+            sandbox_create_claimed=False,
+            tenant_key_hash=hashlib.sha256(key.encode()).hexdigest(),
+            tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
+            observation={},
+            data=({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
+            last_error=None,
+            next_check_at=started,
+            created_at=started,
+        )
+        await conn.execute(insert(s.task_runner_resources).values(**value))
+        await conn.execute(
+            update(s.tasks)
+            .where(s.tasks.c.id == tid)
+            .values(
+                status="provisioning",
+                active_since=task["active_since"] or started,
+                ctf_control={**task["ctf_control"], "phase": "provisioning"},
+            )
+        )
+        return self._public(value)
 
     @staticmethod
     def _configuration(value):
@@ -334,22 +350,10 @@ class NativeRunnerBootstrap:
             raise HTTPException(422, "Native journal writer lock requires the Sandbox host profile")
         if any("@sha256:" not in value[key] for key in ("runner_image", "sandbox_image")):
             raise HTTPException(422, "Native resource images require immutable digests")
-        traffic_keys = {"traffic_targets", "traffic_target_namespace", "traffic_sandbox_image"}
-        if traffic_keys & value.keys():
+        if BINDING_CAPTURE_CONFIG_FIELDS & value.keys():
             try:
-                if (
-                    not traffic_keys <= value.keys()
-                    or value.get("runner_profile") != "node-sandbox-host-v1"
-                    or not re.fullmatch(
-                        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value["traffic_target_namespace"]
-                    )
-                    or not re.fullmatch(
-                        r"[^@]+@sha256:[0-9a-f]{64}", value["traffic_sandbox_image"]
-                    )
-                    or capture_targets(value["traffic_targets"]) != value["traffic_targets"]
-                ):
-                    raise ValueError("Invalid capture deployment")
-            except (TypeError, ValueError) as error:
+                validate_binding_capture_deployment(value)
+            except ValueError as error:
                 raise HTTPException(422, "Trusted native capture deployment is invalid") from error
         return value
 
@@ -377,6 +381,9 @@ class NativeRunnerBootstrap:
                 raise HTTPException(
                     409, "An unclaimed deleting Task cannot acquire native resources"
                 )
+            expected = record["request"].get("publication", {}).get("runtime_config_digest")
+            if expected is not None and management_document_digest(config) != expected:
+                raise HTTPException(409, "Runtime does not match the Task's published environment")
             if record["config"] is not None and record["config"] != config:
                 raise HTTPException(409, "Frozen native resource deployment changed")
             await self._global_fence(

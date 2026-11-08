@@ -580,6 +580,7 @@ class CtfService(
         input_owner=None,
         create_request_hash=None,
         business_contract=BOARD_LEGACY,
+        native_queue=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
 
@@ -594,6 +595,11 @@ class CtfService(
         require(
             business_contract in {BOARD_LEGACY, BOARD_CONTRACT}, "Unsupported business contract"
         )
+        if native_queue is not None:
+            require(
+                native_workers and input_group_id is not None,
+                "Native creation needs an owned input group",
+            )
         data = spec.model_dump(mode="json")
         tid = input_group_id or uuid4()
         fields: dict[str, Any] = dict(
@@ -645,6 +651,11 @@ class CtfService(
                     return tid
                 check_mutable(group, input_owner or "")
                 files = group["files"]
+                if native_queue is not None:
+                    require(
+                        not files and not input_file_ids and not public_input_ids,
+                        "Published native CTF creation does not support attachments",
+                    )
                 if input_file_ids is not None:
                     selected = {str(file_id) for file_id in input_file_ids}
                     require(selected <= {item["id"] for item in files}, "Input file missing")
@@ -696,6 +707,8 @@ class CtfService(
                     )
             for body in initial_input_parts(fields):
                 await self._message(conn, tid, "user", "lead", body, str(uuid4()), "instruction")
+            if native_queue is not None:
+                await native_queue(conn, tid)
         return tid
 
     async def _member(self, conn, tid, aid, name, request_id, role):

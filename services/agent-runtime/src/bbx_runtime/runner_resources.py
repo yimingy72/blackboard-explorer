@@ -19,6 +19,10 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 import httpx
+from bbx_contracts.runner_bootstrap import (
+    BINDING_CAPTURE_CONFIG_FIELDS,
+    validate_binding_capture_deployment,
+)
 from bbx_sandbox_execution.connect import read_execution_context
 from opensandbox import Sandbox, SandboxManager
 from opensandbox.adapters.factory import AdapterFactory
@@ -30,7 +34,7 @@ from opensandbox.transport import RetryPolicy
 CLEANUP_GRACE_SECONDS = 120
 SANDBOX_HOST_PROFILE = "node-sandbox-host-v1"
 TRAFFIC_PROFILE = "binding-pcap-v1"
-TRAFFIC_CONFIG_FIELDS = {"traffic_targets", "traffic_target_namespace", "traffic_sandbox_image"}
+TRAFFIC_CONFIG_FIELDS = BINDING_CAPTURE_CONFIG_FIELDS
 SANDBOX_HOST_SECRET = "bbx-sandbox-host"
 SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
 SANDBOX_HOST_PORT = 8766
@@ -84,39 +88,8 @@ class RunnerResources:
             ipaddress.IPv4Address(network["ipv4"])
             if self.config.get("sandbox_host_execd_origin"):
                 self._execd_origin(self.config["sandbox_host_execd_origin"])
-        traffic = TRAFFIC_CONFIG_FIELDS & self.config.keys()
-        if traffic:
-            targets = self.config.get("traffic_targets")
-            if (
-                not self.sandbox_host
-                or traffic != TRAFFIC_CONFIG_FIELDS
-                or not isinstance(targets, list)
-                or not 1 <= len(targets) <= 8
-            ):
-                raise ValueError("Trusted Assignment traffic deployment is incomplete")
-            self._name(self.config["traffic_target_namespace"])
-            addresses = set()
-            for target in targets:
-                if not isinstance(target, dict) or set(target) != {"ipv4", "port"}:
-                    raise ValueError("Invalid Assignment network target")
-                address = ipaddress.IPv4Address(target["ipv4"])
-                pair = (address, target["port"])
-                if (
-                    str(address) != target["ipv4"]
-                    or address in ipaddress.IPv4Network("198.19.0.0/16")
-                    or address.is_loopback
-                    or address.is_multicast
-                    or address.is_link_local
-                    or address.is_unspecified
-                    or address.is_reserved
-                    or type(target["port"]) is not int
-                    or not 1 <= target["port"] <= 65535
-                    or pair in addresses
-                ):
-                    raise ValueError("Invalid Assignment network target")
-                addresses.add(pair)
-            if self.config["traffic_sandbox_image"] == self.config["sandbox_image"]:
-                raise ValueError("Assignment traffic requires its distinct trusted Sandbox image")
+        if TRAFFIC_CONFIG_FIELDS & self.config.keys():
+            validate_binding_capture_deployment(self.config)
             images.append("traffic_sandbox_image")
         for key in images:
             if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.config.get(key, "")):

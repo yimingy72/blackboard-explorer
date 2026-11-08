@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal, DecimalException, InvalidOperation
+from decimal import Decimal, DecimalException, InvalidOperation
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -17,6 +17,7 @@ from bbx_contracts.native_gateway import (
     NativeBudgetPrepare,
     NativeModelDispatchRequest,
     NativeTransportObservation,
+    native_budget_threshold_usd,
 )
 from bbx_contracts.runner import (
     BACKGROUND_HELPER_TOOLS,
@@ -169,11 +170,12 @@ class NativeFees:
                 if original["config"]["preparation"] != frozen:
                     raise HTTPException(409, "Frozen Task budget cannot be replaced")
                 return self._public(original)
-            usd = (
-                Decimal(str(task["budget"]["max_cost"])) / body.exchange_rate.rate_cny_per_usd
-            ).quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
-            if usd <= 0:
-                raise HTTPException(422, "Converted USD threshold must be positive")
+            try:
+                usd = native_budget_threshold_usd(
+                    Decimal(str(task["budget"]["max_cost"])), body.exchange_rate.rate_cny_per_usd
+                )
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
             key = "bbx-task-" + secrets.token_urlsafe(32)
             sha = hashlib.sha256(key.encode()).hexdigest()
             name = "bbx-task-" + str(tid)

@@ -1,7 +1,7 @@
 """Native gateway identity, Task key publication and cost evidence contracts."""
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal, DecimalException
 from typing import Literal
 
 from pydantic import Field
@@ -26,6 +26,21 @@ class FrozenExchangeRate(ContractModel):
     observed_at: datetime
     rounding: Literal["ROUND_DOWN"] = "ROUND_DOWN"
     usd_decimal_places: Literal[9] = 9
+
+
+MAX_NATIVE_USD = Decimal("9223372036.854775807")
+
+
+def native_budget_threshold_usd(cny: Decimal, rate: Decimal) -> Decimal:
+    try:
+        usd = (cny / rate).quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
+    except DecimalException as error:
+        raise ValueError("Task budget cannot be represented in USD") from error
+    if not usd.is_finite() or usd <= 0:
+        raise ValueError("Converted USD threshold must be positive")
+    if usd > MAX_NATIVE_USD or Decimal(str(float(usd))) != usd:
+        raise ValueError("Task budget cannot be represented in native USD")
+    return usd
 
 
 class NativeBudgetPrepare(ContractModel):

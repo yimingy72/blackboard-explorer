@@ -18,16 +18,15 @@ from common import ROOT, STATE, kubectl, owned_cluster
 shared = runpy.run_path(str(ROOT / "deploy/kubernetes/p4g/probe.py"))
 tool_results = shared["tool_results"]
 PORT = 18888
-TARGET = "bbx-p4i-traffic-target"
-TARGET_NAMESPACE = "bbx-p4i-target"
 MINIO = "pgsty/minio@sha256:83885c27b3b5b673049e33ddf4029afe2c134fd51ce4309e65e4f39d3b9ca282"
-MINIO_NAME = "bbx-p4i-traffic-objects"
 
 
-def target(revised):
+def target(revised, prefix="p4i"):
     owned_cluster()
     suffix = "-fixed" if revised else ""
-    target_namespace, target_name = TARGET_NAMESPACE + suffix, TARGET + suffix
+    target_namespace = f"bbx-{prefix}-target{suffix}"
+    target_name = f"bbx-{prefix}-traffic-target{suffix}"
+    owner = f"{prefix}-traffic{suffix}"
     name = "traffic-target-revised.json" if revised else "traffic-target.json"
     namespace = kubectl("get", "namespace", target_namespace, "--ignore-not-found", "-o", "json")
     if not namespace.strip():
@@ -38,13 +37,13 @@ def target(revised):
             data={
                 "apiVersion": "v1",
                 "kind": "Namespace",
-                "metadata": {"name": target_namespace, "labels": {"bbx.dev/owner": "p4i-traffic"}},
+                "metadata": {"name": target_namespace, "labels": {"bbx.dev/owner": owner}},
             },
         )
         namespace = kubectl("get", "namespace", target_namespace, "-o", "json")
-    assert json.loads(namespace)["metadata"]["labels"]["bbx.dev/owner"] == "p4i-traffic"
+    assert json.loads(namespace)["metadata"]["labels"]["bbx.dev/owner"] == owner
     image = json.loads((STATE / "build-source.json").read_text())["images"][
-        "bbx-p4i-sandbox:20261107"
+        f"bbx-{prefix}-sandbox:20261107"
     ]["reference"]
     code = (
         "import socketserver,threading\n"
@@ -75,7 +74,7 @@ def target(revised):
             "metadata": {
                 "name": target_name,
                 "namespace": target_namespace,
-                "labels": {"bbx.dev/traffic-target": "allowed", "bbx.dev/owner": "p4i"},
+                "labels": {"bbx.dev/traffic-target": "allowed", "bbx.dev/owner": owner},
             },
             "spec": {
                 "automountServiceAccountToken": False,
@@ -131,19 +130,17 @@ class TrafficProbe(shared["HelperProbe"]):
     def __init__(self, destination, revised=False):
         super().__init__(scoped=True)
         self.revised = revised
-        self.gateway_name = "bbx-p4i-gateway-fixed" if revised else "bbx-p4i-gateway-unique"
-        self.gateway_owner = "p4i-fixed" if revised else "p4i-unique"
+        identity = "fixed" if revised else "unique"
+        self.gateway_name = f"bbx-{self.prefix}-gateway-{identity}"
+        self.gateway_owner = f"{self.prefix}-{identity}"
         self.result_directory = "joint-fixed" if revised else "joint"
         self.build_source_name = "build-source-revised.json" if revised else "build-source.json"
         self.task_minutes = 15
         self.destination = destination
         images = json.loads((STATE / self.build_source_name).read_text())["images"]
-        capture = (
-            "bbx-p4i-capture-sandbox-fixed:20261108"
-            if revised
-            else "bbx-p4i-capture-sandbox:20261107"
-        )
-        host = "bbx-p4i-sandbox-host-fixed:20261108" if revised else "bbx-p4i-sandbox-host:20261107"
+        variant = "-fixed:20261108" if revised else ":20261107"
+        capture = f"bbx-{self.prefix}-capture-sandbox{variant}"
+        host = f"bbx-{self.prefix}-sandbox-host{variant}"
         self.resource_options = {
             "journal_writer_lock": True,
             "sandbox_host_image": images[host]["reference"],
@@ -161,8 +158,8 @@ class TrafficProbe(shared["HelperProbe"]):
         from urllib3.exceptions import HTTPError
 
         suffix = "-fixed" if self.revised else ""
-        container_name = MINIO_NAME + suffix
-        owner = "p4i-traffic" + suffix
+        container_name = f"bbx-{self.prefix}-traffic-objects{suffix}"
+        owner = f"{self.prefix}-traffic{suffix}"
         path = STATE / f"traffic-objects{suffix}-private.json"
         if path.exists():
             state = json.loads(path.read_text())
@@ -228,8 +225,7 @@ class TrafficProbe(shared["HelperProbe"]):
                     await asyncio.sleep(0.2)
         return objects
 
-    @staticmethod
-    async def decoder(home):
+    async def decoder(self, home):
         from bbx_blackboard.native import NativeWorker
 
         build = json.loads((STATE / "build-source.json").read_text())
@@ -245,9 +241,9 @@ class TrafficProbe(shared["HelperProbe"]):
             "--pull",
             "never",
             "--name",
-            "bbx-p4i-decoder-" + uuid4().hex[:8],
+            f"bbx-{self.prefix}-decoder-" + uuid4().hex[:8],
             "--label",
-            "bbx.dev/owner=p4i-traffic-decoder",
+            f"bbx.dev/owner={self.prefix}-traffic-decoder",
             "--network",
             "none",
             "--user",
@@ -273,7 +269,7 @@ class TrafficProbe(shared["HelperProbe"]):
             "TZ=UTC",
             "--entrypoint",
             "/usr/bin/python3",
-            "bbx-p4i-ubuntu-tools:20261107",
+            f"bbx-{self.prefix}-ubuntu-tools:20261107",
             "/native_worker.py",
             "/usr/bin/sharkd",
             stdin=asyncio.subprocess.PIPE,

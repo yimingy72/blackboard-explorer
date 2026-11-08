@@ -766,47 +766,55 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     ),
                     "p3h",
                 )
-                template = load_ctf_profile(candidate / "profiles/ctf").model_dump(mode="json")
-                template["model"] = stored["config"]
-                template["role_run_options"] = {}
-                profile_name = "p3h-profile-" + uuid4().hex[:8]
-                profile = await ProfileStore(engine).create(
-                    profile_name, CtfAgentProfile.model_validate(template), "p3h"
-                )
-                tid = await app.state.ctf_service.create_task(
-                    {
-                        "mode": "ctf",
-                        "goal": "Run the local Sandbox receipt only",
-                        "budget": {
-                            "max_cost": "1",
-                            "max_minutes": getattr(workers, "task_minutes", 8),
+                public_create = getattr(workers, "public_create", None)
+                if public_create is not None:
+                    tid = await public_create(
+                        app, cfg, settings, resources_cfg, http, origin, stored
+                    )
+                    state["task_id"] = str(tid)
+                    private_json(state_path, state)
+                else:
+                    template = load_ctf_profile(candidate / "profiles/ctf").model_dump(mode="json")
+                    template["model"] = stored["config"]
+                    template["role_run_options"] = {}
+                    profile_name = "p3h-profile-" + uuid4().hex[:8]
+                    profile = await ProfileStore(engine).create(
+                        profile_name, CtfAgentProfile.model_validate(template), "p3h"
+                    )
+                    tid = await app.state.ctf_service.create_task(
+                        {
+                            "mode": "ctf",
+                            "goal": "Run the local Sandbox receipt only",
+                            "budget": {
+                                "max_cost": "1",
+                                "max_minutes": getattr(workers, "task_minutes", 8),
+                            },
+                            "ctf_options": {"max_teammates": 1}
+                            if workers is None
+                            else {"max_teammates": 2, "dispatch_mode": "automatic"},
+                            "agent_profile": profile_name,
                         },
-                        "ctf_options": {"max_teammates": 1}
-                        if workers is None
-                        else {"max_teammates": 2, "dispatch_mode": "automatic"},
-                        "agent_profile": profile_name,
-                    },
-                    profile_version=profile["version"],
-                    business_contract=BOARD_CONTRACT,
-                )
-                state["task_id"] = str(tid)
-                private_json(state_path, state)
-                response = await http.post(
-                    origin + f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap",
-                    headers=headers,
-                    json={
-                        "request_id": str(uuid4()),
-                        "model_alias": "bounded-fake",
-                        "exchange_rate": {
-                            "rate_cny_per_usd": "7",
-                            "source_ref": "fixture://p3h",
-                            "observed_at": datetime.now(UTC).isoformat(),
+                        profile_version=profile["version"],
+                        business_contract=BOARD_CONTRACT,
+                    )
+                    state["task_id"] = str(tid)
+                    private_json(state_path, state)
+                    response = await http.post(
+                        origin + f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap",
+                        headers=headers,
+                        json={
+                            "request_id": str(uuid4()),
+                            "model_alias": "bounded-fake",
+                            "exchange_rate": {
+                                "rate_cny_per_usd": "7",
+                                "source_ref": "fixture://p3h",
+                                "observed_at": datetime.now(UTC).isoformat(),
+                            },
+                            **getattr(workers, "launch_options", {}),
                         },
-                        **getattr(workers, "launch_options", {}),
-                    },
-                )
-                if response.status_code != 200:
-                    raise RuntimeError("Trusted H launch refused: " + str(response.status_code))
+                    )
+                    if response.status_code != 200:
+                        raise RuntimeError("Trusted H launch refused: " + str(response.status_code))
             tid = UUID(state["task_id"])
             evidence["task_id"] = str(tid)
             if retire_only:

@@ -1,0 +1,18 @@
+# Restore the implicit system Python tools of the unavailable historical kali-mini.
+FROM docker.io/kalilinux/kali-rolling@sha256:5cc5e418c51098ae3c48f9a1d5b3bc74a508588900765a3964259da783652b03
+ENV DEBIAN_FRONTEND=noninteractive
+# Use the official signed archive directly, avoiding redirector connection failures.
+RUN sed -i 's|http://http.kali.org/kali/|http://kali.download/kali/|' /etc/apt/sources.list.d/kali.sources \
+    && apt-get -o Acquire::Retries=3 update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates python3 python3-pip python3-pwntools python3-z3 python3-pycryptodome \
+        python3-gmpy2 python3-sympy python3-pyelftools python3-requests \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i 's|http://kali.download/kali/|https://kali.download/kali/|' /etc/apt/sources.list.d/kali.sources
+# Kali's Debian package provides Cryptodome; preserve the historical Crypto import too.
+RUN printf '%s\n' 'pycryptodome==3.23.0 --hash=sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575' > /tmp/p4j-crypto.txt \
+    && python3 -m pip install --break-system-packages --no-deps --no-cache-dir \
+        --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+        -r /tmp/p4j-crypto.txt \
+    && rm /tmp/p4j-crypto.txt \
+    && python3 -c 'import pwn,z3,Crypto,Cryptodome,gmpy2,sympy,elftools,requests'

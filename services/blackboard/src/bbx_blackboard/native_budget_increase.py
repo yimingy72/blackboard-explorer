@@ -1,30 +1,22 @@
 """Raise the original threshold once; resolve a lost write response by readback."""
 
 from copy import deepcopy
-from decimal import ROUND_DOWN, Decimal, DecimalException
+from decimal import Decimal, DecimalException
 
+from bbx_contracts.native_gateway import native_budget_threshold_usd
 from fastapi import HTTPException
 from sqlalchemy import update
 
 from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.store import schema as s
 
-MAX_NATIVE_USD = Decimal("9223372036.854775807")
-
 
 def increase_value(config, value, additional_cny):
     try:
         cny = Decimal(config["threshold_cny"]) + additional_cny
-        usd = (cny / Decimal(config["exchange_rate"]["rate_cny_per_usd"])).quantize(
-            Decimal("0.000000001"), rounding=ROUND_DOWN
-        )
+        usd = native_budget_threshold_usd(cny, Decimal(config["exchange_rate"]["rate_cny_per_usd"]))
         amount = float(usd)
-        if (
-            not usd.is_finite()
-            or usd > MAX_NATIVE_USD
-            or Decimal(str(amount)) != usd
-            or usd <= Decimal(config["threshold_usd"])
-        ):
+        if usd <= Decimal(config["threshold_usd"]):
             raise ValueError
     except (DecimalException, ValueError, OverflowError) as error:
         raise HTTPException(
