@@ -2455,6 +2455,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/runner-vpn/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Claim */
+        post: operations["vpn_egress_claim_api_tasks__task_id__runner_vpn_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/desired": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vpn Egress Desired */
+        get: operations["vpn_egress_desired_api_tasks__task_id__runner_vpn_desired_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Lease */
+        post: operations["vpn_egress_lease_api_tasks__task_id__runner_vpn_lease_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/observe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Observe */
+        post: operations["vpn_egress_observe_api_tasks__task_id__runner_vpn_observe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/sandbox-host/admit": {
         parameters: {
             query?: never;
@@ -2738,6 +2806,57 @@ export interface paths {
         put?: never;
         /** Scope Event */
         post: operations["scope_event_api_tasks__task_id__sandbox_host_scopes__command_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vpn Sandbox Desired */
+        get: operations["vpn_sandbox_desired_api_tasks__task_id__sandbox_host_vpn_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Sandbox Link */
+        post: operations["vpn_sandbox_link_api_tasks__task_id__sandbox_host_vpn_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Sandbox Preflight */
+        post: operations["vpn_sandbox_preflight_api_tasks__task_id__sandbox_host_vpn_preflight_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5697,6 +5816,7 @@ export interface components {
             /** Revision */
             revision: number;
             shared_inputs?: components["schemas"]["NativeSharedInputLimits"] | null;
+            vpn?: components["schemas"]["NativeVpnCapability"] | null;
         };
         /** NativeCtfEnvironmentRef */
         NativeCtfEnvironmentRef: {
@@ -6005,7 +6125,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
+            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "vpn_material" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
             /** Controller Generation */
             controller_generation: number;
             /** Controller Id */
@@ -6137,6 +6257,18 @@ export interface components {
             protocol: "bbx.task-runner.v1";
             /** Request Digest */
             request_digest: string;
+        };
+        /** NativeVpnCapability */
+        NativeVpnCapability: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Profile
+             * @constant
+             */
+            profile: "openvpn-ipv4-tcp-v1";
         };
         /** OperationAck */
         OperationAck: {
@@ -13852,6 +13984,130 @@ export interface operations {
             };
         };
     };
+    vpn_egress_claim_api_tasks__task_id__runner_vpn_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_desired_api_tasks__task_id__runner_vpn_desired_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_lease_api_tasks__task_id__runner_vpn_lease_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_observe_api_tasks__task_id__runner_vpn_observe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     host_admit_api_tasks__task_id__sandbox_host_admit_post: {
         parameters: {
             query?: never;
@@ -14361,6 +14617,99 @@ export interface operations {
             path: {
                 task_id: string;
                 command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_desired_api_tasks__task_id__sandbox_host_vpn_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_link_api_tasks__task_id__sandbox_host_vpn_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_preflight_api_tasks__task_id__sandbox_host_vpn_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
             };
             cookie?: never;
         };

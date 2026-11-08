@@ -12,6 +12,7 @@ import httpx
 import uvicorn
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import retirement_manifest_digest
+from bbx_contracts.runner_vpn import VPN_PROFILE
 
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
@@ -182,8 +183,14 @@ class NativeRunnerController:
                         "resource_config": {
                             key: value
                             for key, value in self.config.items()
-                            if key not in TRAFFIC_CONFIG_FIELDS
-                            or initial.get("data", {}).get("traffic_profile") == TRAFFIC_PROFILE
+                            if (
+                                key not in TRAFFIC_CONFIG_FIELDS
+                                or initial.get("data", {}).get("traffic_profile") == TRAFFIC_PROFILE
+                            )
+                            and (
+                                key != "vpn"
+                                or initial.get("data", {}).get("vpn_profile") == VPN_PROFILE
+                            )
                         },
                         "retirement_single_apiserver": self.retirement_authority,
                     },
@@ -320,6 +327,7 @@ class NativeRunnerController:
     async def _drive(self, tid, operation, tenant_key, idle):
         last_rotation = 0.0
         published_scope = None
+        published_vpn_generation = None
         control_only = operation["state"] == "held"
         while not self.closed:
             self.current()
@@ -419,6 +427,19 @@ class NativeRunnerController:
                                     "runner_terminated": True,
                                     "sandbox_terminated": True,
                                     "pvcs_retained": True,
+                                    **(
+                                        {
+                                            "egress_terminated": incident["exit_proof"].get(
+                                                "egress_terminated"
+                                            )
+                                            is True,
+                                            "egress_container_id": incident["exit_proof"].get(
+                                                "egress_container_id"
+                                            ),
+                                        }
+                                        if operation["data"].get("vpn_profile") == VPN_PROFILE
+                                        else {}
+                                    ),
                                     "observation_digest": runner_payload_digest(
                                         runner_json_text(operation["observation"])
                                     ),
@@ -514,6 +535,20 @@ class NativeRunnerController:
                     "data"
                 ].get("sandbox_host_ready"):
                     await self._prepare_sandbox_host(tid, operation, tenant_key)
+                generation = operation["data"].get("resource_generation", 1)
+                if (
+                    operation["data"].get("vpn_profile") == VPN_PROFILE
+                    and published_vpn_generation != generation
+                ):
+                    material = await self.action(tid, operation, "vpn_material")
+                    await self.guarded(
+                        tid,
+                        operation,
+                        self.resources.publish_vpn_mount(
+                            operation, material, self.config["runner_blackboard_url"]
+                        ),
+                    )
+                    published_vpn_generation = generation
                 now = asyncio.get_running_loop().time()
                 if (
                     not operation["data"].get("credentials_issued")

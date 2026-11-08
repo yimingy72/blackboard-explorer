@@ -13,6 +13,7 @@ from sqlalchemy import or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.native_fees import threshold_hold_id
+from bbx_blackboard.native_vpn import require_vpn_resume
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 
@@ -404,7 +405,8 @@ class NativePause:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            task, _, _, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
+            task, record, _, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
+            require_vpn_resume(record, request.pause_id)
             budget = await self.native._budget(conn, tid)
             budget_resume = self._resume_budget(task, snapshot, budget)
         if budget_resume:
@@ -415,6 +417,7 @@ class NativePause:
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
             task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
+            require_vpn_resume(record, request.pause_id)
             current = await self.native._budget(conn, tid)
             if (
                 self._budget_identity(current) != self._budget_identity(budget)

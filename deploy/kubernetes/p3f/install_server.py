@@ -26,6 +26,7 @@ def install(
     owner="p3f",
     server_image="bbx-p3f-server-g7:20261106",
     environment_revision="bbx-p3f-ubuntu-g1-20261106",
+    sandbox_never_restart=False,
 ):
     owned_cluster()
     inputs = input_state or STATE
@@ -76,7 +77,10 @@ def install(
     )
     template = json.loads((ROOT / "deploy/kubernetes/g1/batchsandbox-template.json").read_text())
     template["metadata"]["name"] = "bbx-p3f-template"
-    env = template["spec"]["shardPatches"][0]["spec"]["containers"][0]["env"]
+    shard = template["spec"]["shardPatches"][0]["spec"]
+    if sandbox_never_restart:
+        shard["restartPolicy"] = "Never"
+    env = shard["containers"][0]["env"]
     env[0]["valueFrom"]["secretKeyRef"]["name"] = "bbx-execd"
     env[2]["value"] = environment_revision
     apply(

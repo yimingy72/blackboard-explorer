@@ -39,6 +39,7 @@ from bbx_contracts.runner_bootstrap import (
     validate_binding_capture_deployment,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE
+from bbx_contracts.runner_vpn import VPN_PROFILE, NativeVpnProfile, vpn_targets_compatible
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
@@ -56,6 +57,13 @@ from bbx_blackboard.native_inputs import (
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_traffic import PROFILE, lost_captures, opted_in
+from bbx_blackboard.native_vpn import (
+    NativeVpn,
+    vpn_enabled,
+    vpn_exit_data,
+    vpn_solver_deadline,
+    vpn_state,
+)
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
@@ -113,6 +121,8 @@ class NativeRunnerBootstrap:
         self.pause_control = NativePause(self)
         self.recovery = native_recovery.NativeRecovery(self)
         self.inputs = NativeInputs(self)
+        self.vpn = NativeVpn(self)
+        gateway.vpn = self.vpn
 
     async def _get(self, conn, tid):
         found = (
@@ -312,6 +322,11 @@ class NativeRunnerBootstrap:
             data={
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
+                **(
+                    {"vpn_profile": VPN_PROFILE, "vpn": {"state": "idle"}}
+                    if (publication or {}).get("vpn_profile") == VPN_PROFILE
+                    else {}
+                ),
             },
             last_error=None,
             next_check_at=started,
@@ -374,6 +389,28 @@ class NativeRunnerBootstrap:
                 validate_binding_capture_deployment(value)
             except ValueError as error:
                 raise HTTPException(422, "Trusted native capture deployment is invalid") from error
+        if "vpn" in value:
+            try:
+                validate_binding_capture_deployment(value)
+                profile = NativeVpnProfile.model_validate(value["vpn"])
+                if profile.sandbox_image.rsplit("@", 1)[-1] in {
+                    value["traffic_sandbox_image"].rsplit("@", 1)[-1],
+                    value["sandbox_image"].rsplit("@", 1)[-1],
+                }:
+                    raise ValueError("VPN requires a distinct frozen Sandbox image")
+                vpn_targets_compatible(
+                    profile, value["traffic_targets"], value.get("runner_control_egress", ())
+                )
+                if profile.peer_namespace and profile.peer_namespace in {
+                    value.get("system_namespace"),
+                    "default",
+                    "kube-system",
+                    "kube-public",
+                    "kube-node-lease",
+                }:
+                    raise ValueError("VPN peer namespace overlaps a control namespace")
+            except (ValueError, TypeError, KeyError) as error:
+                raise HTTPException(422, "Trusted native VPN deployment is invalid") from error
         return value
 
     async def claim(self, tid, raw):
@@ -385,6 +422,8 @@ class NativeRunnerBootstrap:
             if record is None:
                 raise HTTPException(404, "Native Runner bootstrap is not registered")
             task = await self.control._task(conn, tid)
+            if vpn_enabled(record) != ("vpn" in config):
+                raise HTTPException(409, "Original Task VPN deployment changed")
             if opted_in(record) and "traffic_targets" not in config:
                 raise HTTPException(
                     409, "Original Task requires the frozen native capture deployment"
@@ -517,6 +556,7 @@ class NativeRunnerBootstrap:
             "execd_secret",
             "runner_secret",
             "sandbox_host_secret",
+            "vpn_egress_secret",
             "sandbox",
             "runner",
         }
@@ -524,6 +564,7 @@ class NativeRunnerBootstrap:
             "phase",
             "terminated",
             "host_terminated",
+            "egress_terminated",
             "exit_code",
             "observation",
             "resource_version",
@@ -539,6 +580,7 @@ class NativeRunnerBootstrap:
             "container_id",
             "container_name",
             "host_container_id",
+            "egress_container_id",
             "journal_writer_lock",
             "pod_ip",
         } | mutable
@@ -597,7 +639,11 @@ class NativeRunnerBootstrap:
                         and prior[field] != observed
                     ):
                         raise HTTPException(409, "Original native resource UID changed")
-                    if field == "terminated" and prior.get(field) is True and observed is not True:
+                    if (
+                        field in {"terminated", "egress_terminated"}
+                        and prior.get(field) is True
+                        and observed is not True
+                    ):
                         raise HTTPException(409, "Terminated native resource cannot be revived")
                 merged[name] = {**prior, **value}
             else:
@@ -607,7 +653,7 @@ class NativeRunnerBootstrap:
         history = record["data"].get("recovery_history", [])
         if history:
             original = history[-1]["resources"]
-            for name, (scope, field) in native_recovery.IDENTITIES.items():
+            for name, (scope, field) in native_recovery.identities_for(record).items():
                 if (
                     scope in {"runner", "sandbox"}
                     and merged.get(scope, {}).get(field) == original[name]
@@ -744,6 +790,14 @@ class NativeRunnerBootstrap:
 
     async def act(self, tid, raw):
         body, _ = decode(NativeRunnerAction, raw, 262144)
+        if body.action == "vpn_material":
+            async with self.repo.engine.begin() as conn:
+                record, _ = await self._checked(conn, tid, body, live=True)
+                if not self._resources_ready(record["observation"]) or not record[
+                    "observation"
+                ].get("vpn_egress_secret", {}).get("uid"):
+                    raise HTTPException(409, "Original VPN resources are not ready")
+                return await self.vpn.material(conn, tid, record)
         if body.action in {"sandbox_host_material", "sandbox_host_ready"}:
             async with self.repo.engine.begin() as conn:
                 record, _ = await self._checked(conn, tid, body, live=True)
@@ -801,6 +855,13 @@ class NativeRunnerBootstrap:
                     return self._public(record)
                 observed = self._merge_observation(record, body.observation)
                 ready = self._resources_ready(observed)
+                if vpn_enabled(record):
+                    ready = ready and bool(
+                        observed.get("runner", {}).get("egress_container_id")
+                        and observed.get("runner", {}).get("egress_terminated") is not True
+                        and observed.get("sandbox", {}).get("pod_ip")
+                        and observed.get("vpn_egress_secret", {}).get("uid")
+                    )
                 data = dict(record["data"])
                 if not stopping and not data.get("recovery") and data.get("credentials_issued"):
                     reason = (
@@ -1030,7 +1091,7 @@ class NativeRunnerBootstrap:
                         .values(current=False, revoked=True)
                     )
                 data = {
-                    **record["data"],
+                    **await vpn_exit_data(conn, record, body.proof, never_started=never_dispatched),
                     "exit_confirmed": True,
                     "exit_reason": "not_dispatched" if never_dispatched else "terminated",
                     **({"network_scopes": lost_captures(record)} if opted_in(record) else {}),
@@ -1144,6 +1205,11 @@ class NativeRunnerBootstrap:
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
             require_inputs_confirmed(record)
+            if vpn_enabled(record) and (
+                not vpn_state(record).get("material")
+                or record["observation"].get("runner", {}).get("egress_terminated") is True
+            ):
+                raise HTTPException(409, "Original VPN egress control is not identified")
             if not self._resources_ready(record["observation"]) or (
                 record["config"].get("journal_writer_lock")
                 and not record["observation"].get("journal_subdir")
@@ -1482,6 +1548,29 @@ class NativeRunnerBootstrap:
             if first:
                 control = {**task["ctf_control"], "phase": "running"}
                 if native_pause_state(task) == "resuming":
+                    if vpn_enabled(record) and vpn_state(record).get("credential_reserved"):
+                        try:
+                            vpn_solver_deadline(record)
+                        except HTTPException:
+                            if vpn_state(record).get("state") in {
+                                "failed",
+                                "unknown",
+                                "disconnected",
+                            }:
+                                await conn.execute(
+                                    update(s.tasks)
+                                    .where(s.tasks.c.id == tid)
+                                    .values(
+                                        ctf_control={
+                                            **task["ctf_control"],
+                                            "native_pause": {
+                                                **task["ctf_control"]["native_pause"],
+                                                "blocker": "original_vpn_lost_stop_task",
+                                            },
+                                        }
+                                    )
+                                )
+                            return self._public(record)
                     control["native_pause"] = {**control["native_pause"], "state": "resumed"}
                     data["pause_state"] = "resumed"
                 if recovery_id := control.pop("native_recovery_rebuilding", None):

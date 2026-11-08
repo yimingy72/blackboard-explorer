@@ -150,6 +150,7 @@ class NativeResourceRetirement:
             ("execd_secret", "secrets"),
             ("runner_secret", "secrets"),
             ("sandbox_host_secret", "secrets"),
+            ("vpn_egress_secret", "secrets"),
         ):
             ref = record["observation"].get(key)
             if (

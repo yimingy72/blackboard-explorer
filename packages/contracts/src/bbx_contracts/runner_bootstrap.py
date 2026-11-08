@@ -15,6 +15,7 @@ from .models import ContractModel
 from .native_gateway import FrozenExchangeRate
 from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
 from .runner_inputs import NativeSharedInputLimits
+from .runner_vpn import NativeVpnCapability
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -139,6 +140,7 @@ class NativeCtfEnvironment(NativeCtfEnvironmentRef):
     shared_inputs: NativeSharedInputLimits | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    vpn: NativeVpnCapability | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TaskCreationCapabilities(ContractModel):
@@ -343,6 +345,7 @@ class NativeRunnerAction(ContractModel):
         "retire_complete",
         "sandbox_host_material",
         "sandbox_host_ready",
+        "vpn_material",
         "recovery_exit",
         "recovery_prepare",
         "recovery_verifier_admit",

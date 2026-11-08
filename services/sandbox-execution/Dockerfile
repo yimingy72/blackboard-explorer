@@ -9,10 +9,23 @@ RUN gcc -std=c11 -O2 -Wall -Wextra -Werror -static /tmp/launcher.c /tmp/assignme
 FROM ${TOOL_IMAGE}
 USER root
 ARG ASSIGNMENT_NETWORK_V1=0
+ARG TASK_VPN_V1=0
 COPY --from=official /execd /opt/bbx/control/execd
 COPY --from=launcher-build /tmp/launcher /opt/bbx/control/launcher
-COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py launcher/materialize-inputs.py /opt/bbx/control/
+COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py launcher/materialize-inputs.py launcher/task-vpn.py /opt/bbx/control/
 RUN case "$ASSIGNMENT_NETWORK_V1" in 0) ;; 1) install -m 0444 /dev/null /opt/bbx/control/assignment-network-v1 ;; *) exit 1 ;; esac
+RUN case "$TASK_VPN_V1" in \
+    0) ;; \
+    1) curl --proto '=https' -fsS -o /tmp/bbx-wg.deb \
+        'https://kali.download/kali/pool/main/w/wireguard/wireguard-tools_1.0.20260223-2_amd64.deb' \
+       && echo '83cc339b28f266944b8d0df7a44312cedf5a872143a37d783f05b89d1a1aade0  /tmp/bbx-wg.deb' \
+          | sha256sum -c - \
+       && dpkg -i /tmp/bbx-wg.deb \
+       && rm /tmp/bbx-wg.deb \
+       && install -m 0444 /dev/null /opt/bbx/control/task-vpn-v1 ;; \
+    *) exit 1 ;; \
+    esac
+
 COPY src/bbx_sandbox_execution /opt/bbx/control/python/bbx_sandbox_execution
 RUN groupadd --gid 10000 bbx-solver \
     && useradd --uid 10000 --gid 10000 --no-create-home --home-dir /workspace --shell /bin/bash bbx-solver \

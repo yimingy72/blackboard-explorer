@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from uuid import UUID
 
 ROOT = Path("/var/lib/bbx/control/networks")
 MARKER = Path("/opt/bbx/control/assignment-network-v1")
@@ -129,11 +130,40 @@ def init():
     command(IP4, "-w", "2", "-X", "BBX_CAP")
 
 
-def plan(value):
+VPN_MARKER = Path("/opt/bbx/control/task-vpn-v1")
+VPN_STATE = Path("/var/lib/bbx/control/vpn")
+VPN_INTERFACE = "bbxwg"
+
+
+def check_vpn(proof, targets):
+    require(set(proof) == {"vpn_operation_id", "link_ifindex"})
+    require(str(UUID(proof["vpn_operation_id"])) == proof["vpn_operation_id"])
+    require(type(proof["link_ifindex"]) is int and proof["link_ifindex"] > 0)
+    require(not (VPN_STATE / "fenced").exists())
+    operation = load(VPN_STATE / "operation.json")
+    link = load(VPN_STATE / "link.json")
+    peer = load(VPN_STATE / "peer.json")
+    actual_index = int((Path("/sys/class/net") / VPN_INTERFACE / "ifindex").read_text())
     require(
-        set(value)
-        == {"source_id", "ordinal", "namespace", "network_identity", "ipv4", "targets", "scope_id"}
+        operation["vpn_operation_id"] == proof["vpn_operation_id"]
+        and link["ifindex"] == proof["link_ifindex"] == actual_index
+        and peer["targets"] == [[item["ipv4"], item["port"]] for item in targets]
     )
+
+
+def plan(value):
+    fields = {
+        "source_id",
+        "ordinal",
+        "namespace",
+        "network_identity",
+        "ipv4",
+        "targets",
+        "scope_id",
+    }
+    if VPN_MARKER.is_file():
+        fields.add("vpn")
+    require(set(value) == fields)
     ordinal = value["ordinal"]
     require(type(ordinal) is int and 1 <= ordinal <= 256 and ordinal != 64)
     require(
@@ -162,6 +192,8 @@ def plan(value):
             )
         )
         require(type(item["port"]) is int and 1 <= item["port"] <= 65535)
+    if "vpn" in value:
+        check_vpn(value["vpn"], value["targets"])
     return value | {
         "veth": f"{PREFIX}{ordinal:03x}",
         "gateway": str(host),
@@ -220,6 +252,9 @@ def prepare(directory, requested):
     command(IP, "addr", "add", record["gateway"] + "/30", "dev", veth)
     command(IP, "-n", ns, "addr", "add", address + "/30", "dev", veth + "p")
     command(IP, "-n", ns, "link", "set", "lo", "up")
+    if record.get("vpn"):
+        command(IP, "link", "set", veth, "mtu", "1280")
+        command(IP, "-n", ns, "link", "set", veth + "p", "mtu", "1280")
     command(IP, "-n", ns, "link", "set", veth + "p", "up")
     command(IP, "-n", ns, "route", "add", "default", "via", record["gateway"])
     command(IP, "link", "set", veth, "up")  # Prefix defaults already deny both directions.
@@ -249,26 +284,27 @@ def prepare(directory, requested):
     )
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-i", veth, "-j", chain)
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-o", veth, "-j", chain)
-    for target in record["targets"]:
-        command(
-            IP4,
-            "-w",
-            "2",
-            "-t",
-            "nat",
-            "-A",
-            "POSTROUTING",
-            "-s",
-            address + "/32",
-            "-d",
-            target["ipv4"] + "/32",
-            "-p",
-            "tcp",
-            "--dport",
-            str(target["port"]),
-            "-j",
-            "MASQUERADE",
-        )
+    if not record.get("vpn"):
+        for target in record["targets"]:
+            command(
+                IP4,
+                "-w",
+                "2",
+                "-t",
+                "nat",
+                "-A",
+                "POSTROUTING",
+                "-s",
+                address + "/32",
+                "-d",
+                target["ipv4"] + "/32",
+                "-p",
+                "tcp",
+                "--dport",
+                str(target["port"]),
+                "-j",
+                "MASQUERADE",
+            )
     save(directory / "state.json", record)
     subprocess.Popen(
         [sys.executable, "-I", THIS, "capture", directory.name],
@@ -302,36 +338,40 @@ def renew(directory, record, value):
         and not (ROOT / (record["namespace"] + ".revoked")).exists()
     )
     identity(directory, record)
+    ttl = 5000 if record.get("vpn") else TTL_MS
+    if record.get("vpn"):
+        check_vpn(record["vpn"], record["targets"])
     if value["grant_revision"] == record["grant_revision"]:
         return read(directory, record)
     require(value["grant_revision"] > record.get("attempted_revision", record["grant_revision"]))
     now = boot_ms()
     budget = value["authority_until_ms"] - value["issued_at_ms"]
     require(
-        0 <= now - value["boot_ms"]
-        and now - value["boot_ms"] + TTL_MS + GUARD_MS <= budget <= 12000
+        0 <= now - value["boot_ms"] and now - value["boot_ms"] + ttl + GUARD_MS <= budget <= 12000
     )
     wall = time.time_ns() // 1_000_000
     ceiling = (value["authority_until_ms"] - UTC_SKEW_MS) // 1000 - 1
-    require((ceiling + 1) * 1000 - wall >= TTL_MS)
+    require((ceiling + 1) * 1000 - wall >= ttl)
     from datetime import UTC, datetime
 
     end = datetime.fromtimestamp(ceiling, UTC).strftime("%Y-%m-%dT%H:%M:%S")
     veth, address = (record[k] for k in ("veth", "ipv4"))
     chain = chain_name(record)
     save(directory / "state.json", record | {"attempted_revision": value["grant_revision"]})
-    common = f"-m recent --name {chain} --rcheck --seconds 7"
+    common = f"-m recent --name {chain} --rcheck --seconds {ttl // 1000}"
     timing = f"-m time --datestop {end}"
     # Replace both directions together. The temporary empty chain falls through to the
     # prefix DROP; no established connection has a path around these two checks.
     rules = ["*filter", f"-F {chain}"]
+    outbound = f"-o {VPN_INTERFACE}" if record.get("vpn") else f"! -o {PREFIX}+"
+    inbound = f"-i {VPN_INTERFACE}" if record.get("vpn") else f"! -i {PREFIX}+"
     for target in record["targets"]:
         dst, port = target["ipv4"], target["port"]
         rules += [
-            f"-A {chain} -i {veth} ! -o {PREFIX}+ -s {address}/32 -d {dst}/32 -p tcp "
+            f"-A {chain} -i {veth} {outbound} -s {address}/32 -d {dst}/32 -p tcp "
             f"--dport {port} {common} --rsource {timing} "
             "-m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
-            f"-A {chain} ! -i {PREFIX}+ -o {veth} -s {dst}/32 -d {address}/32 -p tcp "
+            f"-A {chain} {inbound} -o {veth} -s {dst}/32 -d {address}/32 -p tcp "
             f"--sport {port} {common} --rdest {timing} "
             "-m conntrack --ctstate ESTABLISHED -j ACCEPT",
         ]
@@ -345,13 +385,13 @@ def renew(directory, record, value):
     collector = identity(directory, record)
     refreshed = boot_ms()
     wall_remaining = (ceiling + 1) * 1000 - time.time_ns() // 1_000_000
-    require(refreshed - value["boot_ms"] + TTL_MS + GUARD_MS <= budget and wall_remaining >= TTL_MS)
+    require(refreshed - value["boot_ms"] + ttl + GUARD_MS <= budget and wall_remaining >= ttl)
     (Path("/proc/net/xt_recent") / chain).write_text(f"+{address}\n")
     atomic(
         ROOT / (record["namespace"] + ".gate"),
         (
             f"{record['scope_id']} {record['network_identity']} {address} {record['dev']} "
-            f"{record['inode']} {refreshed + TTL_MS} {record['veth']} {record['ifindex']} "
+            f"{record['inode']} {refreshed + ttl} {record['veth']} {record['ifindex']} "
             f"{collector['pid']} {collector['start_ticks']}\n"
         ).encode(),
     )
@@ -359,7 +399,7 @@ def renew(directory, record, value):
         grant_revision=value["grant_revision"],
         attempted_revision=value["grant_revision"],
         state="ready",
-        gate_until_ms=refreshed + TTL_MS,
+        gate_until_ms=refreshed + ttl,
     )
     save(directory / "state.json", record)
     return read(directory, record)

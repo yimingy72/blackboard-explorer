@@ -38,6 +38,7 @@
         "retire_complete",
         "sandbox_host_material",
         "sandbox_host_ready",
+        "vpn_material",
         "recovery_exit",
         "recovery_prepare",
         "recovery_verifier_admit",

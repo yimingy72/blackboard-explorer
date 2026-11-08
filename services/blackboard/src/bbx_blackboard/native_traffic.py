@@ -24,6 +24,7 @@ from pydantic import Field, model_validator
 from sqlalchemy import select, text, update
 
 from bbx_blackboard.native import NativeUnavailable, object_bytes
+from bbx_blackboard.native_vpn import vpn_enabled, vpn_retired, vpn_solver_deadline, vpn_state
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 
@@ -292,6 +293,11 @@ class NativeTraffic:
                 "host_interface": f"bv{ordinal:03x}",
                 "host_ipv4": str(gateway),
                 "targets": context["traffic_targets"],
+                **(
+                    {"vpn_operation_id": vpn_state(record)["operation_id"]}
+                    if vpn_enabled(record)
+                    else {}
+                ),
             }
             task = await row(conn, s.tasks, tid)
             entry = {
@@ -341,7 +347,11 @@ class NativeTraffic:
             for entry in network_scopes(record).values():
                 if not _same_host(record, entry):
                     continue
-                retire = entry["state"] in {"sealed", "archived"} or bool(entry.get("loss"))
+                retire = (
+                    entry["state"] in {"sealed", "archived"}
+                    or bool(entry.get("loss"))
+                    or vpn_retired(record)
+                )
                 if not retire:
                     try:
                         await self._live(conn, tid, record, entry)
@@ -382,7 +392,13 @@ class NativeTraffic:
                 raise HTTPException(409, "Original capture is not ready for forwarding")
             owner, binding = await self._live(conn, tid, record, entry)
             now = int(datetime.now(UTC).timestamp() * 1000)
+            vpn_deadline = vpn_solver_deadline(record)
+            if vpn_deadline is not None and (
+                entry["scope"].get("vpn_operation_id") != vpn_state(record).get("operation_id")
+            ):
+                raise HTTPException(409, "Original capture source VPN identity changed")
             until = min(
+                vpn_deadline or now + 12000,
                 now + 12000,
                 int(owner["expires_at"].timestamp() * 1000),
                 int(binding["permit_expires_at"].timestamp() * 1000),

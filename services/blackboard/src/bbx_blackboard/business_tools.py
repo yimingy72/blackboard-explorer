@@ -17,6 +17,15 @@ from bbx_contracts.challenge_board import (
     FlagCandidateRequest,
     FlagSubmissionRequest,
 )
+from bbx_contracts.runner_vpn import (
+    VPN_CONFIGURE,
+    VPN_DISCONNECT,
+    VPN_STATUS,
+    VPN_TOOLS,
+    NativeVpnConfigure,
+    NativeVpnDisconnect,
+    NativeVpnStatus,
+)
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -44,6 +53,8 @@ class BusinessTools:
         self.flags = FlagBoardService(ctf, signing_key)
 
     async def invoke(self, task_id, identity, operation, arguments):
+        if operation in VPN_TOOLS:
+            raise HTTPException(403, "VPN tools require the original Runner journal")
         manifest = await self.tasks.manifest(task_id, identity)
         if not any(operation in names for names in manifest["roles"].values()):
             raise HTTPException(403, "Tool is not published for this role")
@@ -126,6 +137,9 @@ def schemas():
         "board_post_intent": ChallengeIntentRequest,
         "board_record_flag": FlagCandidateRequest,
         "board_submit_flag": FlagSubmissionRequest,
+        VPN_CONFIGURE: NativeVpnConfigure,
+        VPN_STATUS: NativeVpnStatus,
+        VPN_DISCONNECT: NativeVpnDisconnect,
     }
     result = {}
     for name, model in models.items():

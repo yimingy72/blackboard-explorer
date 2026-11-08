@@ -6293,6 +6293,16 @@
                 "type": "null"
               }
             ]
+          },
+          "vpn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeVpnCapability"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -7178,6 +7188,7 @@
               "retire_complete",
               "sandbox_host_material",
               "sandbox_host_ready",
+              "vpn_material",
               "recovery_exit",
               "recovery_prepare",
               "recovery_verifier_admit",
@@ -7459,6 +7470,31 @@
           "request_digest"
         ],
         "title": "NativeTransportReceipt",
+        "type": "object"
+      },
+      "NativeVpnCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "profile": {
+            "const": "openvpn-ipv4-tcp-v1",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "id",
+          "label"
+        ],
+        "title": "NativeVpnCapability",
         "type": "object"
       },
       "OperationAck": {
@@ -22169,6 +22205,170 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/runner-vpn/claim": {
+      "post": {
+        "operationId": "vpn_egress_claim_api_tasks__task_id__runner_vpn_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Egress Claim",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-vpn/desired": {
+      "get": {
+        "operationId": "vpn_egress_desired_api_tasks__task_id__runner_vpn_desired_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Egress Desired",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-vpn/lease": {
+      "post": {
+        "operationId": "vpn_egress_lease_api_tasks__task_id__runner_vpn_lease_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Egress Lease",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runner-vpn/observe": {
+      "post": {
+        "operationId": "vpn_egress_observe_api_tasks__task_id__runner_vpn_observe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Egress Observe",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/sandbox-host/admit": {
       "post": {
         "operationId": "host_admit_api_tasks__task_id__sandbox_host_admit_post",
@@ -22946,6 +23146,129 @@
         "summary": "Scope Event",
         "tags": [
           "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/vpn": {
+      "get": {
+        "operationId": "vpn_sandbox_desired_api_tasks__task_id__sandbox_host_vpn_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Sandbox Desired",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/vpn/link": {
+      "post": {
+        "operationId": "vpn_sandbox_link_api_tasks__task_id__sandbox_host_vpn_link_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Sandbox Link",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/vpn/preflight": {
+      "post": {
+        "operationId": "vpn_sandbox_preflight_api_tasks__task_id__sandbox_host_vpn_preflight_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Vpn Sandbox Preflight",
+        "tags": [
+          "runner"
         ]
       }
     },

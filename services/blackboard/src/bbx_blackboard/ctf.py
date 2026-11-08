@@ -582,6 +582,7 @@ class CtfService(
         business_contract=BOARD_LEGACY,
         native_queue=None,
         native_inputs_profile=None,
+        native_vpn_profile=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
         from bbx_contracts.runner_inputs import INPUT_PROFILE
@@ -631,7 +632,10 @@ class CtfService(
         if business_contract == BOARD_CONTRACT:
             fields["ctf_control"].update(
                 business_contract=BOARD_CONTRACT,
-                business_tools=business_manifest(automatic=native_workers),
+                business_tools=business_manifest(
+                    automatic=native_workers,
+                    vpn=native_queue is not None and bool(native_vpn_profile),
+                ),
             )
         async with self.repo.engine.begin() as conn:
             if input_group_id is not None:

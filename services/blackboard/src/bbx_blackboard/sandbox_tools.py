@@ -38,6 +38,7 @@ from bbx_blackboard.native_traffic import (
     NativeTraffic,
     opted_in,
 )
+from bbx_blackboard.native_vpn import vpn_enabled, vpn_solver_deadline
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.runner_gateway import decode
 from bbx_blackboard.store import schema as s
@@ -149,6 +150,7 @@ class SandboxTools:
                 if resource["request"].get("shared_inputs")
                 else {}
             ),
+            **({"vpn_profile": resource["data"]["vpn_profile"]} if vpn_enabled(resource) else {}),
             "blackboard_url": resource["config"]["runner_blackboard_url"],
             "hard_deadline": resource["hard_deadline"].isoformat(),
         }
@@ -897,6 +899,8 @@ async def host_admit(request: Request, task_id: UUID):
             or call["data"]["authorized_wait_until_ms"] <= int(now().timestamp() * 1000)
         ):
             raise HTTPException(409, "Original Sandbox dispatch has no current SDK admission")
+        if call["data"]["tool_name"] == "exec_command":
+            vpn_solver_deadline(resource)
         if opted_in(resource) and call["data"]["tool_name"] == "exec_command":
             entry = service.traffic.binding(resource, runner_binding["id"])
             grant = (entry or {}).get("grant", {})

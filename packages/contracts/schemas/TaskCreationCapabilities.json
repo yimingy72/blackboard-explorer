@@ -42,6 +42,17 @@
             }
           ],
           "default": null
+        },
+        "vpn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeVpnCapability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -81,6 +92,31 @@
         }
       },
       "title": "NativeSharedInputLimits",
+      "type": "object"
+    },
+    "NativeVpnCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "const": "openvpn-ipv4-tcp-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "id",
+        "label"
+      ],
+      "title": "NativeVpnCapability",
       "type": "object"
     }
   },

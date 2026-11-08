@@ -277,7 +277,12 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
             ],
             text=True,
         ).strip()
-        shared["certificates"](directory, state["host_ip"], dns_names=(gateway_dns,))
+        shared["certificates"](
+            directory,
+            state["host_ip"],
+            dns_names=(gateway_dns,),
+            strict=getattr(workers, "strict_control_tls", False),
+        )
         private_json(state_path, state)
     ports = state["ports"]
     ip = state["host_ip"]
@@ -470,6 +475,11 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 owner=prefix,
                 server_image=f"bbx-{prefix}-server-g7:20261107",
                 environment_revision=images["environment_revision"],
+                **(
+                    {"sandbox_never_restart": True}
+                    if getattr(workers, "sandbox_never_restart", False)
+                    else {}
+                ),
             )
             await stack.enter_async_context(forward("bbx-p3f-server", ports["server"], 80))
             await stack.enter_async_context(forward("bbx-p3f-ingress", ports["ingress"], 80))

@@ -85,6 +85,7 @@ from bbx_blackboard.native_ctf_publication import (
 from bbx_blackboard.native_inputs import router as native_inputs_router
 from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap, native_role_thinking
 from bbx_blackboard.native_runner_bootstrap import router as native_runner_bootstrap_router
+from bbx_blackboard.native_vpn import router as native_vpn_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile, require_ctf_tool_capabilities
@@ -690,7 +691,7 @@ def create_app(
             # This fixed router uses an independent audience and never constructs a Principal.
             return None
         if re.fullmatch(
-            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp|sandbox-host|sandbox/commands)(?:/.*)?",
+            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp|sandbox-host|sandbox/commands|runner-vpn)(?:/.*)?",
             request.url.path,
         ):
             return None
@@ -1065,6 +1066,7 @@ def create_app(
                         "native_inputs_profile": publication.inputs_profile
                         if publication
                         else None,
+                        "native_vpn_profile": publication.vpn_profile if publication else None,
                     }
                     if native_queue is not None
                     else {}
@@ -2219,6 +2221,7 @@ def create_app(
     app.include_router(runner_gateway_private_router)
     app.include_router(sandbox_tools_router)
     app.include_router(native_inputs_router)
+    app.include_router(native_vpn_router)
     app.mount("/api/tasks/{task_id}/business-mcp", app.state.business_mcp)
     app.include_router(platform_router)
     app.include_router(settings_router)

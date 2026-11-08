@@ -16,6 +16,7 @@ from sqlalchemy import and_, case, false, func, or_, select, update
 from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
+from bbx_blackboard.native_vpn import vpn_enabled, vpn_exit_data, vpn_state
 from bbx_blackboard.runner_gateway import cancel_admitted
 from bbx_blackboard.store import schema as s
 
@@ -30,6 +31,12 @@ IDENTITIES = {
     "journal_pvc_uid": ("journal_pvc", "uid"),
     "workspace_pvc_uid": ("workspace_pvc", "uid"),
 }
+
+
+def identities_for(record):
+    if vpn_enabled(record):
+        return {**IDENTITIES, "egress_container_id": ("runner", "egress_container_id")}
+    return IDENTITIES
 
 
 def _original_scope(incident, commands):
@@ -92,7 +99,7 @@ async def capture(repo, conn, tid, record, task, reason, instant):
     observed = record["observation"]
     resources = {
         name: value
-        for name, (scope, field) in IDENTITIES.items()
+        for name, (scope, field) in identities_for(record).items()
         if (value := observed.get(scope, {}).get(field))
     }
     if observed.get("namespace_uid"):
@@ -578,24 +585,38 @@ class NativeRecovery:
                     )
                     or proof.get("observation_digest")
                     != runner_payload_digest(runner_json_text(observation))
-                    or set(IDENTITIES) | {"namespace_uid"} != incident["resources"].keys()
+                    or set(identities_for(record)) | {"namespace_uid"}
+                    != incident["resources"].keys()
                     or any(
                         observation.get(scope, {}).get(field) != incident["resources"][name]
-                        for name, (scope, field) in IDENTITIES.items()
+                        for name, (scope, field) in identities_for(record).items()
                     )
                     or observation.get("namespace_uid") != incident["resources"]["namespace_uid"]
                 ):
                     raise HTTPException(409, "Original execution exit is not confirmed")
                 if not incident.get("exit_proof"):
+                    released = await vpn_exit_data(conn, record, proof)
+                    archived_vpn = vpn_state(record)
                     await self._write(
                         conn,
                         tid,
-                        record,
+                        {**record, "data": released},
                         {
                             **incident,
                             "exit_proof": proof,
                             "exit_observation": observation,
                             "blocker": None,
+                            **(
+                                {
+                                    "original_vpn": {
+                                        "operation_id": archived_vpn.get("operation_id"),
+                                        "scope": archived_vpn.get("material", {}).get("scope"),
+                                        "egress_exit_confirmed": True,
+                                    }
+                                }
+                                if vpn_enabled(record)
+                                else {}
+                            ),
                         },
                     )
                 return self.bootstrap._public(await self.bootstrap._get(conn, tid))
@@ -862,6 +883,11 @@ class NativeRecovery:
                     else {}
                 ),
                 **{key: data[key] for key in ("inputs_profile", "inputs_receipt") if key in data},
+                **(
+                    {"vpn_profile": data["vpn_profile"], "vpn": {"state": "idle"}}
+                    if vpn_enabled(record)
+                    else {}
+                ),
                 "continuation": continuation,
                 "lead_turn_id": continuation["lead_turn_id"],
                 "worker_spec": data["worker_spec"],

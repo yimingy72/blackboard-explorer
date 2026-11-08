@@ -19,6 +19,7 @@ import mcp.types as types
 import uvicorn
 from bbx_contracts.runner import ToolInvocation, runner_json_text
 from bbx_contracts.runner_inputs import INPUT_PROFILE
+from bbx_contracts.runner_vpn import VPN_PROFILE
 from bbx_contracts.sandbox_tools import sandbox_schemas
 from bbx_sandbox_execution.connect import connect_bound_execd, read_execution_context
 from bbx_sandbox_execution.execution import AssignmentBinding
@@ -32,6 +33,7 @@ from starlette.routing import Mount, Route
 from bbx_runtime.sandbox_inputs import initial_inputs_ready
 from bbx_runtime.sandbox_network import SEAL_FIELDS, ready_identity, root_network, sealed_bytes
 from bbx_runtime.sandbox_tools import BoundedExecdLogTransport, assignment_control, dispatch
+from bbx_runtime.sandbox_vpn import supervise_sandbox_vpn
 
 request_scope: ContextVar[tuple[str, str]] = ContextVar("bbx_sandbox_mcp_scope")
 
@@ -45,6 +47,7 @@ def load_configuration(path):
         or task != config["task_id"]
         or config.get("inbound_key") == config.get("report_key")
         or config.get("inputs_profile") not in {None, INPUT_PROFILE}
+        or config.get("vpn_profile") not in {None, VPN_PROFILE}
         or any(
             not isinstance(config.get(key), str) or not config[key]
             for key in ("inbound_key", "report_key", "execd_token")
@@ -69,6 +72,7 @@ class SandboxMCP:
         self.manager = StreamableHTTPSessionManager(self.server, json_response=True, stateless=True)
         self.http: httpx.AsyncClient
         self.sandbox = None
+        self.vpn_link: dict | None = None
         self.network_locks: dict[str, asyncio.Lock] = {}
         self.acknowledged_networks: set[str] = set()
         self.app = Starlette(
@@ -235,6 +239,10 @@ class SandboxMCP:
         scope, binding = item["scope"], AssignmentBinding(**item["binding"])
         source = self.network_scope(item, binding)
         path = f"network/{source}"
+        if self.config.get("vpn_profile") == VPN_PROFILE and (
+            not self.vpn_link or self.vpn_link["vpn_operation_id"] != scope.get("vpn_operation_id")
+        ):
+            raise ValueError("Original Task VPN link is unavailable")
         if prepare and item.get("prepare_allowed"):
             await root_network(
                 sandbox,
@@ -248,6 +256,11 @@ class SandboxMCP:
                     "ipv4": binding.ipv4,
                     "targets": scope["targets"],
                     "scope_id": binding.scope_request()[0],
+                    **(
+                        {"vpn": self.vpn_link}
+                        if self.config.get("vpn_profile") == VPN_PROFILE
+                        else {}
+                    ),
                 },
             )
         observed = await root_network(sandbox, "read", source)
@@ -482,6 +495,8 @@ class SandboxMCP:
                     cleanup.append(asyncio.create_task(self.prepare_inputs(self.sandbox)))
                 if self.config.get("traffic_targets"):
                     cleanup.append(asyncio.create_task(self.networks()))
+                if self.config.get("vpn_profile") == VPN_PROFILE:
+                    cleanup.append(asyncio.create_task(supervise_sandbox_vpn(self, self.sandbox)))
                 try:
                     yield
                 finally:

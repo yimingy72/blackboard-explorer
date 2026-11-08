@@ -157,7 +157,7 @@ class TrafficProbe(shared["HelperProbe"]):
         from bbx_objects import ObjectStore
         from urllib3.exceptions import HTTPError
 
-        suffix = "-fixed" if self.revised else ""
+        suffix = getattr(self, "object_store_suffix", "-fixed" if self.revised else "")
         container_name = f"bbx-{self.prefix}-traffic-objects{suffix}"
         owner = f"{self.prefix}-traffic{suffix}"
         path = STATE / f"traffic-objects{suffix}-private.json"

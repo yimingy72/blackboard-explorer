@@ -20,6 +20,7 @@ from bbx_contracts.runner import (
     runner_payload_digest,
 )
 from bbx_contracts.runner_bootstrap import native_resume_pending
+from bbx_contracts.runner_vpn import VPN_TOOLS
 from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS, SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
@@ -33,6 +34,7 @@ from bbx_blackboard.gateway_auth import (
     issue_gateway_credentials,
     validate_gateway_role,
 )
+from bbx_blackboard.native_vpn import NativeVpn, vpn_result, vpn_solver_deadline
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import RunnerControl, fence, row
 from bbx_blackboard.store import schema as s
@@ -99,6 +101,7 @@ class RunnerGateway:
         from bbx_blackboard.sandbox_tools import SandboxTools
 
         self.sandbox = SandboxTools(self)
+        self.vpn: NativeVpn | None = None
 
     async def _scope(self, conn, tid, identity, *, sdk=None, journal=None, metadata=False):
         owner = await self.control._identity(
@@ -371,6 +374,15 @@ class RunnerGateway:
                 created_at=datetime.now(UTC),
             )
             await conn.execute(insert(s.runner_calls).values(**value))
+            if invocation.tool_name == "exec_command" and self.vpn is not None:
+                resource = await self.vpn.bootstrap._get(conn, tid)
+                try:
+                    if resource:
+                        vpn_solver_deadline(resource)
+                except HTTPException:
+                    result = vpn_result({"error": "The original Task VPN is not ready"}, error=True)
+                    await self._save_tool_result(conn, tid, value, result)
+                    return self._permit(await self._call(conn, tid, value["id"]))
             return self._permit(value)
 
     async def claim_business_tool(
@@ -395,6 +407,21 @@ class RunnerGateway:
                 raise HTTPException(409, "Tool outcome is unknown; redispatch is forbidden")
             if data["authorized_wait_until_ms"] <= int(datetime.now(UTC).timestamp() * 1000):
                 raise HTTPException(409, "Tool permit expired")
+            # Enqueue VPN management and complete the original MCP call in one Task transaction.
+            if name in VPN_TOOLS:
+                if target != "business" or self.vpn is None:
+                    raise HTTPException(403, "Original VPN management is unavailable")
+                value = await self.vpn.tool(conn, tid, owner, binding, name, original)
+                await self._save_tool_result(conn, tid, call, value)
+                return None, self._permit(await self._call(conn, tid, call["id"]))
+            if target == "sandbox" and name == "exec_command":
+                resource = await self.sandbox.resource(conn, tid)
+                try:
+                    vpn_solver_deadline(resource)
+                except HTTPException:
+                    value = vpn_result({"error": "The original Task VPN is not ready"}, error=True)
+                    await self._save_tool_result(conn, tid, call, value)
+                    return None, self._permit(await self._call(conn, tid, call["id"]))
             await conn.execute(
                 update(s.runner_calls)
                 .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])

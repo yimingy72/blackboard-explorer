@@ -24,6 +24,7 @@ from bbx_contracts.runner_bootstrap import (
     validate_binding_capture_deployment,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE
+from bbx_contracts.runner_vpn import VPN_PROFILE, NativeVpnProfile, NativeVpnScope
 from bbx_sandbox_execution.connect import read_execution_context
 from opensandbox import Sandbox, SandboxManager
 from opensandbox.adapters.factory import AdapterFactory
@@ -39,6 +40,11 @@ TRAFFIC_CONFIG_FIELDS = BINDING_CAPTURE_CONFIG_FIELDS
 SANDBOX_HOST_SECRET = "bbx-sandbox-host"
 SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
 SANDBOX_HOST_PORT = 8766
+VPN_EGRESS = "vpn-egress"
+VPN_SECRET = "bbx-vpn-egress"
+VPN_MOUNT = "/var/run/bbx-vpn/config"
+VPN_STATE = "/var/run/bbx-vpn/state"
+VPN_WG_PORT = 51820
 JOURNAL_LOCK = ".bbx-writer.lock"
 JOURNAL_SCRIPT = "/opt/bbx-runner/src/recovery-journal.mjs"
 JOURNAL_VERIFIER = "journal-verifier"
@@ -60,6 +66,9 @@ class RunnerResources:
         if type(lock) is not bool or (lock and not self.sandbox_host):
             raise ValueError("Journal writer locking requires the trusted Sandbox host profile")
         self.journal_writer_lock = lock
+        self.vpn = NativeVpnProfile.model_validate(config["vpn"]) if config.get("vpn") else None
+        if self.vpn and not self.sandbox_host:
+            raise ValueError("The Task VPN requires its original trusted Sandbox Host")
         for key in (
             "source_id",
             "kubeconfig",
@@ -294,7 +303,66 @@ class RunnerResources:
             raise ResourceUnknown("The trusted Assignment traffic deployment is unavailable")
         return enabled
 
+    def vpn_enabled(self, operation):
+        enabled = operation.get("data", {}).get("vpn_profile") == VPN_PROFILE
+        if enabled and (not self.vpn or not self.traffic_enabled(operation)):
+            raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+        return enabled
+
+    async def _vpn_peer_rule(self, namespace):
+        if self.vpn is None:
+            raise ResourceUnknown("The original Task VPN profile is missing")
+        peer, remote_namespace = self.vpn.peer, self.vpn.peer_namespace
+        ports = [{"ports": [{"port": str(peer.port), "protocol": "UDP"}]}]
+        if remote_namespace is None:
+            return {"toCIDR": [peer.ipv4 + "/32"], "toPorts": ports}
+        if remote_namespace in {
+            namespace,
+            "default",
+            "kube-system",
+            self.config["system_namespace"],
+        }:
+            raise ResourceUnknown("The isolated VPN peer namespace overlaps control resources")
+        pods = json.loads(
+            await self._kubectl(
+                "get",
+                "pods",
+                "-n",
+                remote_namespace,
+                "-l",
+                "bbx.dev/vpn-peer=allowed",
+                "-o",
+                "json",
+            )
+        )["items"]
+        matched = [pod for pod in pods if pod.get("status", {}).get("podIP") == peer.ipv4]
+        if (
+            len(matched) != 1
+            or matched[0]["spec"].get("hostNetwork")
+            or matched[0]["metadata"].get("deletionTimestamp")
+            or not any(
+                c["type"] == "Ready" and c["status"] == "True"
+                for c in matched[0].get("status", {}).get("conditions", [])
+            )
+        ):
+            raise ResourceUnknown("The original isolated VPN peer is unavailable")
+        return {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": remote_namespace,
+                        "k8s:bbx.dev/vpn-peer": "allowed",
+                    }
+                }
+            ],
+            "toPorts": ports,
+        }
+
     def _sandbox_image(self, operation):
+        if self.vpn_enabled(operation):
+            if self.vpn is None:
+                raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+            return self.vpn.sandbox_image
         return self.config[
             "traffic_sandbox_image" if self.traffic_enabled(operation) else "sandbox_image"
         ]
@@ -490,9 +558,18 @@ class RunnerResources:
                 "egressDeny": [{"toEntities": ["host", "remote-node", "kube-apiserver"]}],
             },
         )
+        vpn = self.vpn_enabled(operation)
+        if vpn:
+            link = [{"ports": [{"port": str(VPN_WG_PORT), "protocol": "UDP"}]}]
+            same, system = policy["spec"]["ingress"][0]["fromEndpoints"]
+            policy["spec"]["ingress"] = [
+                {"fromEndpoints": [same], "toPorts": link},
+                {"fromEndpoints": [system]},
+            ]
+            policy["spec"]["egress"][0]["toPorts"] = link
         policy["apiVersion"] = "cilium.io/v2"
         await self._ensure(policy, labels)
-        if self.traffic_enabled(operation):
+        if self.traffic_enabled(operation) and not vpn:
             target = self._document(
                 "CiliumNetworkPolicy",
                 "bbx-binding-traffic",
@@ -536,6 +613,8 @@ class RunnerResources:
             },
         )
         runner_policy["apiVersion"] = "cilium.io/v2"
+        if vpn:
+            runner_policy["spec"]["egress"].append(await self._vpn_peer_rule(namespace))
         if self.sandbox_host:
             for target, port in (
                 ({"k8s:bbx.dev/component": "native-mcp-gateway"}, "3000"),
@@ -728,6 +807,21 @@ class RunnerResources:
                 "name": SANDBOX_HOST_SECRET,
                 "uid": host_mount["metadata"]["uid"],
             }
+        if vpn:
+            egress = await self._ensure(
+                self._document(
+                    "Secret",
+                    VPN_SECRET,
+                    labels,
+                    namespace,
+                    type="Opaque",
+                    stringData={"ca.pem": expected_ca},
+                ),
+                labels,
+                observed.get("vpn_egress_secret", {}).get("uid"),
+            )
+            self._vpn_secret(egress)
+            refs["vpn_egress_secret"] = {"name": VPN_SECRET, "uid": egress["metadata"]["uid"]}
         if self.journal_writer_lock and generation > 1:
             storage = await self._recovery_storage(namespace, labels, refs)
             if storage != observed.get("journal_storage"):
@@ -743,7 +837,7 @@ class RunnerResources:
             ):
                 raise ResourceUnknown("Unexpected Pod before opening the replacement writer")
         lock_id = observed.get("journal_lock_id")
-        runner_doc = self._runner_document(namespace, labels, generation, lock_id)
+        runner_doc = self._runner_document(namespace, labels, generation, lock_id, with_vpn=vpn)
         fingerprint = hashlib.sha256(
             json.dumps(runner_doc["spec"], sort_keys=True).encode()
         ).hexdigest()
@@ -768,12 +862,16 @@ class RunnerResources:
                 for status in runner.get("status", {}).get("initContainerStatuses", [])
             )
             if initialized:
-                projection = self._pod_projection(runner, with_host=self.sandbox_host)
+                projection = self._pod_projection(runner, with_host=self.sandbox_host, with_vpn=vpn)
                 if projection["terminated"] or projection.get("observation") == "unknown":
                     raise ResourceUnknown("An original Runner container exited before readiness")
-                if projection.get("container_id") and (
-                    not self.sandbox_host
-                    or (projection.get("host_container_id") and projection.get("pod_ip"))
+                if (
+                    projection.get("container_id")
+                    and (
+                        not self.sandbox_host
+                        or (projection.get("host_container_id") and projection.get("pod_ip"))
+                    )
+                    and (not vpn or projection.get("egress_container_id"))
                 ):
                     if not self.journal_writer_lock:
                         break
@@ -792,7 +890,10 @@ class RunnerResources:
                             runner_uid,
                         )
                         if not self._same_process(
-                            self._pod_projection(current, with_host=self.sandbox_host), projection
+                            self._pod_projection(
+                                current, with_host=self.sandbox_host, with_vpn=vpn
+                            ),
+                            projection,
                         ):
                             raise ResourceUnknown("The journal lock holder changed")
                         journal_identity["journal_lock_id"] = identity[0]
@@ -830,6 +931,7 @@ class RunnerResources:
                 "pod_uid": pod["metadata"]["uid"],
                 "environment_revision": environment_revision,
                 "container_id": self._pod_projection(pod).get("container_id"),
+                **({"pod_ip": str(ipaddress.IPv4Address(pod["status"]["podIP"]))} if vpn else {}),
             },
             "runner": {
                 **projection,
@@ -873,6 +975,7 @@ class RunnerResources:
         env = {entry["name"]: entry for entry in main.get("env", [])}
         if (
             main["image"] != self._sandbox_image(operation)
+            or (self.vpn_enabled(operation) and pod["spec"].get("restartPolicy") != "Never")
             or (
                 self.traffic_enabled(operation)
                 and "bbx.dev/component" in pod["metadata"].get("labels", {})
@@ -907,7 +1010,7 @@ class RunnerResources:
             self._workspace_input_mount(pod, main)
         return env["BBX_ENVIRONMENT_REVISION"]["value"]
 
-    def _runner_document(self, namespace, labels, generation=1, lock_id=None):
+    def _runner_document(self, namespace, labels, generation=1, lock_id=None, *, with_vpn=False):
         document = self._document(
             "Pod",
             "bbx-runner",
@@ -1034,6 +1137,48 @@ class RunnerResources:
                     "secret": {"secretName": SANDBOX_HOST_SECRET, "defaultMode": 0o440},
                 }
             )
+        if with_vpn:
+            if self.vpn is None:
+                raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+            spec = document["spec"]
+            spec["securityContext"]["sysctls"] = [{"name": "net.ipv4.ip_forward", "value": "1"}]
+            spec["containers"].append(
+                {
+                    "name": VPN_EGRESS,
+                    "image": self.vpn.egress_image,
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": [
+                        "/usr/bin/env",
+                        "-i",
+                        "/usr/bin/python3",
+                        "-I",
+                        "-S",
+                        "/opt/bbx/control/task-vpn.py",
+                    ],
+                    "args": ["egress"],
+                    "resources": {
+                        "requests": {"cpu": "25m", "memory": "64Mi", "devic.es/tun": "1"},
+                        "limits": {"cpu": "200m", "memory": "128Mi", "devic.es/tun": "1"},
+                    },
+                    "securityContext": {
+                        "runAsUser": 0,
+                        "runAsGroup": 0,
+                        "runAsNonRoot": False,
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"], "add": ["NET_ADMIN"]},
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                    },
+                    "volumeMounts": [
+                        {"name": VPN_EGRESS, "mountPath": VPN_MOUNT, "readOnly": True},
+                        {"name": "vpn-state", "mountPath": VPN_STATE},
+                    ],
+                }
+            )
+            spec["volumes"] += [
+                {"name": VPN_EGRESS, "secret": {"secretName": VPN_SECRET, "defaultMode": 0o400}},
+                {"name": "vpn-state", "emptyDir": {"medium": "Memory", "sizeLimit": "8Mi"}},
+            ]
         return document
 
     def _journal_container(self, name, command, mounts):
@@ -1073,6 +1218,17 @@ class RunnerResources:
             or not set(data) <= {"ca.pem", "host.json"}
         ):
             raise ResourceUnknown("The Sandbox host Secret contains undeclared material")
+
+    @staticmethod
+    def _vpn_secret(secret):
+        data = secret.get("data", {})
+        if (
+            secret.get("type") != "Opaque"
+            or "ca.pem" not in data
+            or set(data)
+            not in ({"ca.pem"}, {"ca.pem", "config.json", "ca.crt", "tls.crt", "tls.key"})
+        ):
+            raise ResourceUnknown("The original VPN egress Secret changed")
 
     @staticmethod
     def _runner_spec(pod, expected):
@@ -1139,14 +1295,23 @@ class RunnerResources:
                 raise ResourceUnknown("The original Runner container contract changed")
 
     @staticmethod
-    def _pod_projection(pod, *, with_host=False):
+    def _pod_projection(pod, *, with_host=False, with_vpn=False):
         spec = pod.get("spec", {})
         containers = spec.get("containers", [])
         names = [c["name"] for c in containers]
         states = pod.get("status", {}).get("containerStatuses", [])
         by_name = {state.get("name"): state for state in states}
         if (
-            (names != ["runner", "sandbox-host"] if with_host else len(names) != 1)
+            (
+                names
+                != (
+                    ["runner", "sandbox-host", VPN_EGRESS]
+                    if with_vpn
+                    else ["runner", "sandbox-host"]
+                )
+                if with_host
+                else len(names) != 1 or with_vpn
+            )
             or spec.get("ephemeralContainers")
             or pod.get("status", {}).get("ephemeralContainerStatuses")
             or len(by_name) != len(states)
@@ -1162,7 +1327,9 @@ class RunnerResources:
         host = by_name.get("sandbox-host", {}) if with_host else {}
         primary_ended = "terminated" in primary.get("state", {})
         host_ended = "terminated" in host.get("state", {})
-        ended = primary_ended and (not with_host or host_ended)
+        vpn = by_name.get(VPN_EGRESS, {}) if with_vpn else {}
+        vpn_ended = "terminated" in vpn.get("state", {})
+        ended = primary_ended and (not with_host or host_ended) and (not with_vpn or vpn_ended)
         return {
             "pod_name": pod["metadata"]["name"],
             "pod_uid": pod["metadata"]["uid"],
@@ -1178,19 +1345,28 @@ class RunnerResources:
             **({"exit_code": primary["state"]["terminated"]["exitCode"]} if primary_ended else {}),
             **({"host_container_id": host["containerID"]} if host.get("containerID") else {}),
             **({"host_terminated": host_ended} if with_host else {}),
+            **({"egress_container_id": vpn["containerID"]} if vpn.get("containerID") else {}),
+            **({"egress_terminated": vpn_ended} if with_vpn else {}),
             **(
                 {"pod_ip": pod["status"]["podIP"]}
                 if with_host and pod.get("status", {}).get("podIP")
                 else {}
             ),
-            **({"observation": "unknown"} if with_host and primary_ended != host_ended else {}),
+            **(
+                {"observation": "unknown"}
+                if (
+                    (with_host and primary_ended != host_ended)
+                    or (with_vpn and primary_ended != vpn_ended)
+                )
+                else {}
+            ),
         }
 
     @staticmethod
     def _same_process(projection, reference):
         return all(
             projection.get(key) == reference.get(key)
-            for key in ("pod_uid", "container_id", "host_container_id")
+            for key in ("pod_uid", "container_id", "host_container_id", "egress_container_id")
         )
 
     @staticmethod
@@ -1223,9 +1399,10 @@ class RunnerResources:
                 labels,
                 observed.get("resource_generation", 1),
                 observed.get("journal_lock_id"),
+                with_vpn=self.vpn_enabled(operation),
             )["spec"],
         )
-        actual = self._pod_projection(pod, with_host=True)
+        actual = self._pod_projection(pod, with_host=True, with_vpn=self.vpn_enabled(operation))
         if (
             pod["metadata"].get("deletionTimestamp")
             or not self._same_process(actual, observed["runner"])
@@ -1241,6 +1418,78 @@ class RunnerResources:
         ):
             raise ResourceUnknown("The original Sandbox host process is not live")
         return namespace, labels, pod
+
+    async def publish_vpn_mount(self, operation, material, blackboard_url):
+        if not self.vpn_enabled(operation) or self.vpn is None:
+            raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+        namespace, labels, _ = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        scope = NativeVpnScope.model_validate(material["scope"]).model_dump(mode="json")
+        expected = {
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "resource_generation": operation["data"].get("resource_generation", 1),
+            "runner_pod_uid": observed["runner"]["pod_uid"],
+            "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
+            "sandbox_container_id": observed["sandbox"]["container_id"],
+            "runner_pod_ipv4": observed["runner"]["pod_ip"],
+            "sandbox_pod_ipv4": observed["sandbox"]["pod_ip"],
+            "egress_container_id": observed["runner"]["egress_container_id"],
+        }
+        if any(scope[key] != value for key, value in expected.items()) or (
+            not isinstance(material.get("report_key"), str) or not material["report_key"]
+        ):
+            raise ResourceUnknown("Original VPN egress credential scope changed")
+        secret = self._owned(
+            await self._get("secret", VPN_SECRET, namespace),
+            labels,
+            observed["vpn_egress_secret"]["uid"],
+        )
+        self._vpn_secret(secret)
+        credential = self.vpn.credential
+        source = await self._get("secret", credential.name, credential.namespace)
+        fields = {"ca.crt", "tls.crt", "tls.key"}
+        if (
+            not source
+            or source["metadata"]["uid"] != str(credential.uid)
+            or source["metadata"].get("deletionTimestamp")
+            or source.get("immutable") is not True
+            or source.get("type") not in {"Opaque", "kubernetes.io/tls"}
+            or set(source.get("data", {})) != fields
+        ):
+            raise ResourceUnknown("Original approved VPN credential identity changed")
+        try:
+            raw = {
+                key: base64.b64decode(value, validate=True) for key, value in source["data"].items()
+            }
+        except (ValueError, TypeError):
+            raise ResourceUnknown("Original approved VPN credential encoding is invalid") from None
+        if (
+            any(not item or len(item) > 64 * 1024 for item in raw.values())
+            or hashlib.sha256(raw["tls.crt"]).hexdigest() != credential.cert_sha256
+        ):
+            raise ResourceUnknown("Original approved VPN certificate changed")
+        document = {
+            "scope": scope,
+            "report_key": material["report_key"],
+            "blackboard_url": blackboard_url,
+            "hard_deadline": operation["hard_deadline"],
+            "peer": self.vpn.peer.model_dump(mode="json"),
+            "tun_ipv4": self.vpn.tun_ipv4,
+            "targets": self.config["traffic_targets"],
+        }
+        if not document["blackboard_url"]:
+            raise ResourceUnknown("Original trusted VPN control origin is missing")
+        config = base64.b64encode(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        ).decode()
+        desired = {**source["data"], "ca.pem": secret["data"]["ca.pem"], "config.json": config}
+        if "config.json" in secret["data"]:
+            if secret["data"] != desired:
+                raise ResourceUnknown("Original VPN startup material cannot change")
+            return
+        secret["data"] = desired
+        await self._kubectl("replace", "-f", "-", body=secret)
 
     async def sandbox_host_context(self, operation, tenant_key):
         namespace, labels, runner = await self._original_host_runner(operation)
@@ -1346,6 +1595,7 @@ class RunnerResources:
                 if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE
                 else {}
             ),
+            **({"vpn_profile": VPN_PROFILE} if self.vpn_enabled(operation) else {}),
             "ca_file": SANDBOX_HOST_MOUNT + "/ca.pem",
         }
         fields = set(expected) | {
@@ -1469,7 +1719,8 @@ class RunnerResources:
             {**labels, "bbx.dev/component": "runner"},
             observation["runner"]["pod_uid"],
         )
-        projection = self._pod_projection(pod, with_host=self.sandbox_host)
+        with_vpn = bool(observation["runner"].get("egress_container_id"))
+        projection = self._pod_projection(pod, with_host=self.sandbox_host, with_vpn=with_vpn)
         if (
             projection["terminated"]
             or projection.get("observation") == "unknown"
@@ -1486,6 +1737,7 @@ class RunnerResources:
                 labels,
                 observation.get("resource_generation", 1),
                 observation.get("journal_lock_id"),
+                with_vpn=with_vpn,
             )["spec"],
         )
         if self.sandbox_host:
@@ -1609,7 +1861,10 @@ class RunnerResources:
             return {**result, "not_started": True}
         self._owned(ns, labels, prior.get("namespace_uid"))
         result["namespace_uid"] = ns["metadata"]["uid"]
+        vpn = self.vpn_enabled(operation)
         retained = ("journal_pvc", "workspace_pvc", "execd_secret", "runner_secret")
+        if vpn:
+            retained += ("vpn_egress_secret",)
         if self.sandbox_host:
             retained += ("sandbox_host_secret",)
         for key in retained:
@@ -1619,6 +1874,7 @@ class RunnerResources:
                 "execd_secret": "bbx-execd",
                 "runner_secret": "bbx-runner",
                 "sandbox_host_secret": SANDBOX_HOST_SECRET,
+                "vpn_egress_secret": VPN_SECRET,
             }[key]
             value = await self._get("pvc" if key.endswith("_pvc") else "secret", name, namespace)
             if not value:
@@ -1643,6 +1899,8 @@ class RunnerResources:
                 self._runner_secret(value)
             elif key == "sandbox_host_secret":
                 self._host_secret(value)
+            elif key == "vpn_egress_secret":
+                self._vpn_secret(value)
             elif (
                 value.get("type") != "Opaque"
                 or set(value.get("data", {})) != {"token"}
@@ -1686,6 +1944,11 @@ class RunnerResources:
                             key
                         ] != projection.get(key):
                             raise ResourceUnknown("The original Sandbox process identity changed")
+                    if vpn:
+                        pod_ip = str(ipaddress.IPv4Address(pod["status"]["podIP"]))
+                        if prior.get("sandbox", {}).get("pod_ip", pod_ip) != pod_ip:
+                            raise ResourceUnknown("Original VPN Sandbox Pod address changed")
+                        projection["pod_ip"] = pod_ip
                     result["sandbox"].update(**projection, environment_revision=revision)
         runner = await self._get("pod", "bbx-runner", namespace)
         if runner:
@@ -1701,12 +1964,13 @@ class RunnerResources:
                     labels,
                     prior.get("resource_generation", 1),
                     prior.get("journal_lock_id"),
+                    with_vpn=vpn,
                 )["spec"],
             )
-            projection = self._pod_projection(runner, with_host=self.sandbox_host)
+            projection = self._pod_projection(runner, with_host=self.sandbox_host, with_vpn=vpn)
             if any(
                 prior.get("runner", {}).get(key) and prior["runner"][key] != projection.get(key)
-                for key in ("container_id", "host_container_id", "pod_ip")
+                for key in ("container_id", "host_container_id", "egress_container_id", "pod_ip")
             ):
                 raise ResourceUnknown("The original Runner container identity changed")
             result["runner"] = projection
@@ -1736,7 +2000,11 @@ class RunnerResources:
                 continue
             pod = await self._get("pod", ref["pod_name"], namespace)
             projection = (
-                self._pod_projection(pod, with_host=self.sandbox_host and key == "runner")
+                self._pod_projection(
+                    pod,
+                    with_host=self.sandbox_host and key == "runner",
+                    with_vpn=bool(ref.get("egress_container_id")),
+                )
                 if pod
                 else {}
             )
@@ -1751,8 +2019,15 @@ class RunnerResources:
                             labels,
                             observation.get("resource_generation", 1),
                             observation.get("journal_lock_id"),
+                            with_vpn=bool(ref.get("egress_container_id")),
                         )["spec"],
                     )
+                if (
+                    key == "sandbox"
+                    and ref.get("pod_ip")
+                    and pod["status"].get("podIP") != ref["pod_ip"]
+                ):
+                    raise ResourceUnknown("Original VPN Sandbox Pod address changed")
                 result[key] = {**ref, **projection}
         return result
 
@@ -1812,11 +2087,13 @@ class RunnerResources:
                         failure = "watch_uid_changed"
                         break
                     projection = self._pod_projection(
-                        current, with_host=bool(reference.get("host_container_id"))
+                        current,
+                        with_host=bool(reference.get("host_container_id")),
+                        with_vpn=bool(reference.get("egress_container_id")),
                     )
                     if projection["container_name"] != reference["container_name"] or any(
                         projection.get(k) not in {None, reference.get(k)}
-                        for k in ("container_id", "host_container_id")
+                        for k in ("container_id", "host_container_id", "egress_container_id")
                     ):
                         failure = "watch_container_changed"
                         break
@@ -1856,7 +2133,9 @@ class RunnerResources:
                     if pod["metadata"]["uid"] != ref["pod_uid"]:
                         raise ResourceUnknown("The original Pod identity changed")
                     projection = self._pod_projection(
-                        pod, with_host=self.sandbox_host and key == "runner"
+                        pod,
+                        with_host=self.sandbox_host and key == "runner",
+                        with_vpn=bool(ref.get("egress_container_id")),
                     )
                     if not self._same_process(projection, ref):
                         raise ResourceUnknown("The original container identity changed")
@@ -1912,6 +2191,9 @@ class RunnerResources:
                     await self._close_sdk(manager, connection)
             for key, watch in watches.items():
                 result[key + "_terminated"] = await watch
+            if original_egress := observation.get("runner", {}).get("egress_container_id"):
+                result["egress_container_id"] = original_egress
+                result["egress_terminated"] = result["runner_terminated"]
             if sandbox_ref.get("id") and result["sandbox_terminated"]:
                 if not sandbox_ref.get("cr_uid"):
                     raise ResourceUnknown("The original logical Sandbox UID was not bound")
@@ -2077,7 +2359,9 @@ class RunnerResources:
             ref = observed[key]
             value = await self._get("pod", ref["pod_name"], namespace)
             if value:
-                projection = self._pod_projection(value, with_host=key == "runner")
+                projection = self._pod_projection(
+                    value, with_host=key == "runner", with_vpn=bool(ref.get("egress_container_id"))
+                )
                 if not projection["terminated"] or not self._same_process(projection, ref):
                     raise ResourceUnknown("Original terminal Pod identity changed")
                 await self._remove_recovery_object(
@@ -2085,7 +2369,9 @@ class RunnerResources:
                 )
         if await self._get("batchsandbox", observed["sandbox"]["id"], namespace):
             raise ResourceUnknown("The original logical Sandbox still exists")
-        for key in ("runner_secret", "sandbox_host_secret"):
+        for key in ("runner_secret", "sandbox_host_secret", "vpn_egress_secret"):
+            if key == "vpn_egress_secret" and not observed.get(key):
+                continue
             ref = observed[key]
             value = await self._get("secret", ref["name"], namespace)
             if value:
@@ -2424,7 +2710,7 @@ class RunnerResources:
             ("CiliumNetworkPolicy", "bbx-task"),
             ("CiliumNetworkPolicy", "bbx-runner-control"),
         }
-        if self.traffic_enabled(operation):
+        if self.traffic_enabled(operation) and not self.vpn_enabled(operation):
             allowed.add(("CiliumNetworkPolicy", "bbx-binding-traffic"))
         original = {observed["namespace_uid"]}
         for value in observed.values():
@@ -2493,6 +2779,7 @@ class RunnerResources:
                 "runner_secret",
                 "execd_secret",
                 "sandbox_host_secret",
+                "vpn_egress_secret",
             ):
                 ref = observed.get(key, {})
                 if name == ref.get("name") and kind == (
@@ -2510,7 +2797,9 @@ class RunnerResources:
                 )
                 expected = ref.get("pod_uid")
                 projection = self._pod_projection(
-                    value, with_host=self.sandbox_host and name == "bbx-runner"
+                    value,
+                    with_host=self.sandbox_host and name == "bbx-runner",
+                    with_vpn=bool(ref.get("egress_container_id")),
                 )
                 if (
                     not expected

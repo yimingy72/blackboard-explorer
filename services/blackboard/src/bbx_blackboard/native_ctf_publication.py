@@ -17,6 +17,7 @@ from bbx_contracts.runner_bootstrap import (
     management_document_digest,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE, NativeSharedInputLimits
+from bbx_contracts.runner_vpn import VPN_PROFILE, NativeVpnCapability, NativeVpnProfile
 from fastapi import HTTPException
 from pydantic import Field
 
@@ -52,6 +53,11 @@ class CaptureAcceptance(ContractModel):
     public_create_and_archive: Literal[True]
     inputs_profile: Literal["shared-inputs-v1"] | None = None
     inputs_host_image: str | None = None
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1"] | None = None
+    vpn_egress_image: str | None = None
+    vpn_sandbox_image: str | None = None
+    vpn_host_image: str | None = None
+    vpn_roundtrip_and_disconnect: Literal[True] | None = None
 
 
 class NativeCtfPublication(ContractModel):
@@ -67,8 +73,16 @@ class NativeCtfPublication(ContractModel):
     inputs_profile: Literal["shared-inputs-v1"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     def public(self, stamp: str) -> NativeCtfEnvironment:
+        vpn = (
+            NativeVpnProfile.model_validate(self.runtime_resource_config["vpn"])
+            if self.vpn_profile == VPN_PROFILE
+            else None
+        )
         return NativeCtfEnvironment(
             id=self.id,
             revision=self.revision,
@@ -76,6 +90,9 @@ class NativeCtfPublication(ContractModel):
             label=self.label,
             model_id=self.model.id,
             model_version=self.model.version,
+            vpn=NativeVpnCapability(profile=vpn.profile, id=vpn.id, label=vpn.label)
+            if vpn
+            else None,
             shared_inputs=NativeSharedInputLimits()
             if self.inputs_profile == INPUT_PROFILE
             else None,
@@ -87,6 +104,7 @@ class NativeCtfPublication(ContractModel):
             "revision": self.revision,
             "runtime_config_digest": management_document_digest(self.runtime_resource_config),
             **({"inputs_profile": self.inputs_profile} if self.inputs_profile else {}),
+            **({"vpn_profile": self.vpn_profile} if self.vpn_profile else {}),
         }
 
     def validate_budget(self, cny: Decimal) -> None:
@@ -128,6 +146,11 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
 
     try:
         publication = NativeCtfPublication.model_validate_json(_bounded_file(path))
+        vpn = publication.runtime_resource_config.get("vpn")
+        if (vpn is not None) != (publication.vpn_profile == VPN_PROFILE):
+            raise ValueError("VPN deployment and publication must be enabled together")
+        if vpn is not None:
+            NativeVpnProfile.model_validate(vpn)
         if publication.release == "test_only":
             if not allow_test_only or publication.acceptance is not None:
                 raise ValueError("Fixture publications are not accepted by the application")
@@ -154,6 +177,17 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 or accepted.catalog_revision != settings.native_gateway_catalog_revision
                 or accepted.model != publication.model
                 or accepted.inputs_profile != publication.inputs_profile
+                or accepted.vpn_profile != publication.vpn_profile
+                or (
+                    vpn is not None
+                    and (
+                        accepted.vpn_egress_image != vpn.get("egress_image")
+                        or accepted.vpn_sandbox_image != vpn.get("sandbox_image")
+                        or accepted.vpn_host_image
+                        != publication.runtime_resource_config.get("sandbox_host_image")
+                        or accepted.vpn_roundtrip_and_disconnect is not True
+                    )
+                )
                 or (
                     publication.inputs_profile == INPUT_PROFILE
                     and accepted.inputs_host_image
