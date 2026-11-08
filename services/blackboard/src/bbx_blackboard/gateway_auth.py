@@ -30,7 +30,7 @@ class GatewayIdentity:
     token_version: str
     audience: Literal["model", "mcp"]
     expires_at: int
-    role: Literal["lead", "teammate"] | None = None
+    role: Literal["lead", "teammate", "helper"] | None = None
 
 
 @dataclass(frozen=True)
@@ -75,11 +75,13 @@ def mcp_public_jwks(settings):
     return {"keys": [dict(_mcp_material(settings.runner_mcp_signing_key.get_secret_value())[2])]}
 
 
-def issue_gateway_credentials(settings, owner, binding_id, role):
-    if role not in {"lead", "teammate"}:
+def issue_gateway_credentials(settings, owner, binding_id, role, *, deadline_ms=None):
+    if role not in {"lead", "teammate", "helper"}:
         raise HTTPException(403, "Runner role is not ready")
     mcp_key, _, jwk = _mcp_material(settings.runner_mcp_signing_key.get_secret_value())
     expiry = int(min(owner["hard_deadline"], datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    if deadline_ms is not None:
+        expiry = min(expiry, deadline_ms // 1000)
     result = {}
     for audience in ("model", "mcp"):
         token = jwt.encode(
@@ -147,7 +149,7 @@ def require_gateway_identity(request: Request, task_id: UUID, audience, *, autho
             claims["aud"] != audience
             or not isinstance(claims["bid"], str)
             or not isinstance(claims["token_version"], str)
-            or (audience == "mcp" and claims.get("role") not in {"lead", "teammate"})
+            or (audience == "mcp" and claims.get("role") not in {"lead", "teammate", "helper"})
         ):
             raise ValueError("Invalid capability scope")
         fence = RunnerFence(
@@ -198,5 +200,6 @@ async def validate_gateway_role(conn, tid, identity, binding):
         from bbx_blackboard.store import schema as s
 
         member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
-        if identity.role != member["role"]:
+        expected = "helper" if binding["business"].get("native_child_id") else member["role"]
+        if identity.role != expected:
             raise HTTPException(403, "MCP role scope changed")

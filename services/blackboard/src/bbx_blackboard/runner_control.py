@@ -174,6 +174,32 @@ class RunnerControl:
             or turn["purpose"] != business["purpose"]
         ):
             raise HTTPException(403, "Current business turn mapping is unavailable")
+        if child_id := business.get("native_child_id"):
+            task = await row(conn, s.tasks, tid)
+            active = task["ctf_control"].get("native_helpers_active", {}).get(member["id"], {})
+            if (
+                active.get("child_id") != child_id
+                or active.get("binding_id") != value["id"]
+                or active.get("state") not in {"reserved", "launch_claimed"}
+                or business["child_deadline_ms"] <= int(self.clock().timestamp() * 1000)
+            ):
+                raise HTTPException(409, "Original helper is stopped")
+            parent = await row(conn, s.runner_bindings, tid, business["parent_binding_id"])
+            if (
+                parent["status"] != "prepared"
+                or parent["owner_epoch"] != value["owner_epoch"]
+                or parent["business"].get("native_assignment_id")
+                != business["parent_assignment_id"]
+                or parent["business"]["turn_id"] != business["parent_turn_id"]
+                or parent["business"]["generation"] != business["parent_generation"]
+                or parent["business"]["challenge_id"] != business["challenge_id"]
+                or parent["business"]["scope_revision"] != business["scope_revision"]
+                or parent["permit_expires_at"] is None
+                or parent["permit_expires_at"] <= self.clock()
+            ):
+                raise HTTPException(403, "Original helper parent is no longer current")
+            await self._mapping(conn, tid, parent)
+            return member, turn
         if business["challenge_id"]:
             challenge = await row(conn, s.ctf_challenges, tid, business["challenge_id"])
             data = challenge["data"]
@@ -255,8 +281,12 @@ class RunnerControl:
 
     async def native_worker_cleanup_changed(self, conn, tid, bid):
         task = await row(conn, s.tasks, tid)
-        active = task["ctf_control"].get("native_worker_active", {})
-        if not any(value["binding_id"] == bid for value in active.values()):
+        control = task["ctf_control"]
+        active = (
+            *control.get("native_worker_active", {}).values(),
+            *control.get("native_helpers_active", {}).values(),
+        )
+        if not any(value["binding_id"] == bid for value in active):
             return
         written = await self.repo.append(
             conn,
@@ -433,11 +463,13 @@ class RunnerControl:
             await self.repo.lock(conn, tid)
             return await self._register_binding(conn, tid, raw)
 
-    async def _register_binding(self, conn, tid, raw, *, assignment=None):
+    async def _register_binding(
+        self, conn, tid, raw, *, assignment=None, helper=None, helper_foreground=False
+    ):
         body, _, sha = decode(RunnerBindingRegistration, raw)
         task = await self._task(conn, tid, live=True)
         owner = await self._current_owner(conn, tid)
-        if body.agent_id != "lead" and native_dispatch_enabled(task):
+        if not helper and body.agent_id != "lead" and native_dispatch_enabled(task):
             current = task["ctf_control"].get("native_worker_active", {}).get(body.agent_id)
             if not assignment or current != assignment:
                 raise HTTPException(403, "Native Worker binding requires its original Assignment")
@@ -546,7 +578,9 @@ class RunnerControl:
             generation=max((x["generation"] for x in prior_bindings), default=0) + 1,
             journal_generation=str(uuid4()),
             assignment_ref=(
-                assignment["assignment_ref"]
+                helper["child_id"]
+                if helper
+                else assignment["assignment_ref"]
                 if assignment
                 else str(
                     uuid5(
@@ -565,9 +599,28 @@ class RunnerControl:
                     exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
                 ),
                 "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
+                **({"helper_foreground": True} if helper_foreground else {}),
+                **(
+                    {
+                        "helper_child": {
+                            "child_id": helper["child_id"],
+                            "parent_binding_id": helper["parent_binding_id"],
+                            "deadline_ms": helper["deadline_ms"],
+                        }
+                    }
+                    if helper
+                    else {}
+                ),
             }
         )
-        payload = runner_json_text({"kind": "prepare", "spec": spec.model_dump(mode="json")})
+        omitted = {
+            key
+            for key, enabled in (("helper_child", helper), ("helper_foreground", helper_foreground))
+            if not enabled
+        }
+        payload = runner_json_text(
+            {"kind": "prepare", "spec": spec.model_dump(mode="json", exclude=omitted)}
+        )
         value = dict(
             task_id=tid,
             id=bid,
@@ -582,6 +635,20 @@ class RunnerControl:
                 "challenge_id": cid,
                 "scope_revision": scope_revision,
                 **({"native_assignment_id": assignment["assignment_ref"]} if assignment else {}),
+                **(
+                    {
+                        "native_child_id": helper["child_id"],
+                        "parent_binding_id": helper["parent_binding_id"],
+                        "parent_agent_id": helper["parent_agent_id"],
+                        "parent_assignment_id": helper["parent_assignment_id"],
+                        "parent_turn_id": helper["parent_turn_id"],
+                        "parent_generation": helper["parent_generation"],
+                        "child_deadline_ms": helper["deadline_ms"],
+                        "delegate_invocation_id": helper["invocation_id"],
+                    }
+                    if helper
+                    else {}
+                ),
             },
             prepare_request_id=str(uuid5(NAMESPACE_URL, f"runner-prepare:{bid}")),
             payload_json=payload,
@@ -838,12 +905,31 @@ class RunnerControl:
             "cursor": binding["cursor"],
         }
 
+    def _permit_deadline(self, owner, binding):
+        deadline = min(
+            owner["expires_at"],
+            owner["hard_deadline"],
+            self.clock() + timedelta(seconds=PERMIT_SECONDS),
+        )
+        if child := binding["business"].get("child_deadline_ms"):
+            deadline = min(deadline, datetime.fromtimestamp(child / 1000, UTC))
+        return deadline
+
     async def acquire(self, tid, bid, identity, raw):
         body, text, sha = decode(SessionLeaseRequest, raw)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             owner = await self._identity(conn, tid, identity, live=True)
             value = await self._binding(conn, tid, bid, owner, live=True)
+            if value["business"].get("native_child_id"):
+                task = await row(conn, s.tasks, tid)
+                child = (
+                    task["ctf_control"]
+                    .get("native_helpers_active", {})
+                    .get(value["binding"]["agent_id"], {})
+                )
+                if child.get("state") != "launch_claimed":
+                    raise HTTPException(409, "Helper launch was not claimed")
             command = await row(
                 conn, s.runner_commands, tid, command_key(owner["epoch"], body.request_id)
             )
@@ -863,11 +949,7 @@ class RunnerControl:
             if value["permit_expires_at"] is None:
                 value = {
                     **value,
-                    "permit_expires_at": min(
-                        owner["expires_at"],
-                        owner["hard_deadline"],
-                        self.clock() + timedelta(seconds=PERMIT_SECONDS),
-                    ),
+                    "permit_expires_at": self._permit_deadline(owner, value),
                     "permit_revision": value["permit_revision"] + 1,
                 }
                 await conn.execute(
@@ -978,11 +1060,7 @@ class RunnerControl:
                     active[value["id"]] = value
                     expiry = value["permit_expires_at"]
                     if expiry is not None and expiry > self.clock():
-                        extended = min(
-                            owner["expires_at"],
-                            owner["hard_deadline"],
-                            self.clock() + timedelta(seconds=PERMIT_SECONDS),
-                        )
+                        extended = self._permit_deadline(owner, value)
                         if (
                             expiry <= self.clock() + timedelta(seconds=PERMIT_SECONDS / 2)
                             and extended > expiry
@@ -1040,6 +1118,9 @@ class RunnerControl:
                                 or_(
                                     and_(
                                         s.runner_commands.c.kind == "prepare",
+                                        s.runner_bindings.c.business["native_child_id"].astext.is_(
+                                            None
+                                        ),
                                         s.runner_bindings.c.status.in_(["registered", "prepared"]),
                                         s.runner_bindings.c.owner_epoch == owner["epoch"],
                                     ),
@@ -1169,6 +1250,8 @@ class RunnerControl:
                 and value["sdk_session_id"] != body.sdk_session_id
             ):
                 raise HTTPException(403, "SDK session identity changed")
+            if value["business"].get("native_child_id") and body.applied_inputs:
+                raise HTTPException(403, "Helper journal has no mailbox input authority")
             cursor = body.cursor.model_dump(mode="json")
             receipt = {
                 "protocol": PROTOCOL,
@@ -1178,7 +1261,11 @@ class RunnerControl:
                 "sdk_session_id": body.sdk_session_id,
                 "cursor": cursor,
             }
-            if not live and not await self._paused_journal_tail(conn, tid, owner, value):
+            if (
+                not live
+                and not await self._paused_journal_tail(conn, tid, owner, value)
+                and not await self._helper_journal_tail(conn, tid, owner, value)
+            ):
                 known = (
                     await conn.execute(
                         select(s.runner_receipts.c.body_text).where(
@@ -1314,6 +1401,38 @@ class RunnerControl:
                 conn, tid, owner["epoch"], "journal", body.request_id, text, sha, receipt, bid
             )
 
+    async def _helper_journal_tail(self, conn, tid, owner, binding):
+        business = binding["business"]
+        if (
+            not business.get("native_child_id")
+            or binding["status"] != "closing"
+            or not binding["sdk_session_id"]
+            or binding["owner_epoch"] != owner["epoch"]
+        ):
+            return False
+        task = await self._task(conn, tid)
+        control = task["ctf_control"]
+        if (
+            task["status"] != "running"
+            or task["deleting"]
+            or control.get("native_stop_requested")
+            or control.get("native_recovery")
+            or control.get("native_budget_hold")
+            or control.get("failure_hold")
+            or native_pause_state(task) in {"draining", "paused"}
+        ):
+            return False
+        try:
+            self._owner_live(owner)
+        except HTTPException:
+            return False
+        child = control.get("native_helpers_active", {}).get(binding["binding"]["agent_id"], {})
+        if child.get("binding_id") != binding["id"] or child.get("state") != "draining":
+            return False
+        close = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{owner['epoch']}:{binding['id']}"))
+        command = await row(conn, s.runner_commands, tid, command_key(owner["epoch"], close))
+        return command["status"] == "queued"
+
     async def _paused_journal_tail(self, conn, tid, owner, binding):
         from bbx_blackboard.native_fees import threshold_hold_id
 
@@ -1438,6 +1557,11 @@ class RunnerControl:
                 ):
                     raise HTTPException(409, "Journal confirmation is not registered")
                 if body.status == "prepared":
+                    business = value["business"]
+                    if bool(business.get("native_child_id")) != bool(body.helper_run_id) or (
+                        business.get("helper_run_id") not in (None, body.helper_run_id)
+                    ):
+                        raise HTTPException(409, "Original helper prepare identity changed")
                     if value["sdk_session_id"] is None or not await self._confirmed_cursor(
                         conn, tid, value, cursor
                     ):
@@ -1495,7 +1619,19 @@ class RunnerControl:
                     )
                 if value and body.status in {"prepared", "rejected", "closed", "aborted"}:
                     if body.status == "prepared" and live:
-                        patch = {"status": "prepared"}
+                        patch = {
+                            "status": "prepared",
+                            **(
+                                {
+                                    "business": {
+                                        **value["business"],
+                                        "helper_run_id": body.helper_run_id,
+                                    }
+                                }
+                                if body.helper_run_id
+                                else {}
+                            ),
+                        }
                     elif closing and value["owner_epoch"] == owner["epoch"]:
                         patch = {"status": "closed", "permit_expires_at": None}
                     elif body.status == "rejected" and command["kind"] == "prepare" and live:
@@ -1521,7 +1657,10 @@ class RunnerControl:
             wake = False
             if (
                 value
-                and value["business"].get("native_assignment_id")
+                and (
+                    value["business"].get("native_assignment_id")
+                    or value["business"].get("native_child_id")
+                )
                 and command["kind"] == "close"
                 and body.status == "closed"
                 and body.sdk_idle is True

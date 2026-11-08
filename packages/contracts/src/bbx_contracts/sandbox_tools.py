@@ -17,6 +17,7 @@ SANDBOX_TOOLS = (
     "read_file",
     "write_file",
 )
+HELPER_SANDBOX_TOOLS = ("read_file", "exec_command")
 SANDBOX_CONTROLS = frozenset(SANDBOX_TOOLS[1:4])
 MAX_COMMAND_OUTPUT_BYTES = 65536
 
@@ -76,7 +77,8 @@ class SandboxCommandSummary(ContractModel):
     sequence: int
     task_id: UUID
     agent_id: str
-    role: Literal["lead", "worker"]
+    role: Literal["lead", "worker", "helper"]
+    parent_agent_id: str | None = None
     challenge_id: UUID | None
     assignment_id: str
     generation: int

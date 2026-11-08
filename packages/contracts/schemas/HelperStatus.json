@@ -1,0 +1,103 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "state": {
+      "enum": [
+        "reserved",
+        "launch_claimed",
+        "draining",
+        "saved",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "invocation_id": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "child_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Child Id"
+    },
+    "binding_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Binding Id"
+    },
+    "deadline_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deadline Ms"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "result_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Json"
+    },
+    "result_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Digest"
+    }
+  },
+  "required": [
+    "state",
+    "invocation_id"
+  ],
+  "title": "HelperStatus",
+  "type": "object"
+}

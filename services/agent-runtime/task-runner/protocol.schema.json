@@ -151,6 +151,19 @@
           "default": null,
           "title": "Sdk Idle"
         },
+        "helper_run_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Helper Run Id"
+        },
         "journal_confirmed": {
           "anyOf": [
             {
@@ -325,6 +338,34 @@
         "max_output_tokens"
       ],
       "title": "EffectiveRunnerModel",
+      "type": "object"
+    },
+    "HelperChild": {
+      "additionalProperties": false,
+      "properties": {
+        "child_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Child Id",
+          "type": "string"
+        },
+        "parent_binding_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Parent Binding Id",
+          "type": "string"
+        },
+        "deadline_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Deadline Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "child_id",
+        "parent_binding_id",
+        "deadline_ms"
+      ],
+      "title": "HelperChild",
       "type": "object"
     },
     "InputApplication": {
@@ -1020,6 +1061,11 @@
           "minimum": 50,
           "title": "Mcp Metadata Timeout Ms",
           "type": "integer"
+        },
+        "helper_foreground": {
+          "default": false,
+          "title": "Helper Foreground",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1341,6 +1387,22 @@
           "minimum": 1,
           "title": "Prompt Revision",
           "type": "integer"
+        },
+        "helper_foreground": {
+          "default": false,
+          "title": "Helper Foreground",
+          "type": "boolean"
+        },
+        "helper_child": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HelperChild"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

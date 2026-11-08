@@ -12,7 +12,9 @@ from bbx_contracts.runner import (
     RunnerPoll,
     SessionLeaseReceipt,
     SessionLeaseRequest,
+    ToolInvocation,
 )
+from bbx_contracts.runner_bootstrap import HelperLaunch, HelperResult, HelperStatus, HelperTerminal
 from bbx_contracts.runner_control import (
     RunnerBindingRegistration,
     RunnerCommandSubmission,
@@ -23,6 +25,7 @@ from bbx_contracts.runner_control import (
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from bbx_blackboard.auth import require_service
+from bbx_blackboard.gateway_auth import require_gateway_identity
 from bbx_blackboard.runner_auth import (
     issue_runner_control_token,
     require_runner_control,
@@ -186,3 +189,91 @@ async def prompt(
     identity = require_runner_control(request, task_id)
     value = await service(request).prompt(task_id, binding_id, identity, known_revision)
     return Response(status_code=304) if value is None else value
+
+
+HELPERS = "/bindings/{binding_id}/helpers"
+
+
+def _helpers(request, response):
+    native = request.app.state.native_runner_bootstrap
+    if native is None:
+        raise HTTPException(503, "Native helper control is unavailable")
+    response.headers["Cache-Control"] = "no-store"
+    return native.helpers
+
+
+@router.post(HELPERS + "/reserve", response_model=HelperStatus)
+async def reserve_helper(
+    request: Request, response: Response, task_id: UUID, binding_id: str, body: ToolInvocation
+):
+    identity = require_gateway_identity(request, task_id, "mcp")
+    return await _helpers(request, response).reserve(
+        task_id, binding_id, identity, await request.body()
+    )
+
+
+@router.post(
+    HELPERS + "/{invocation_id}/launch",
+    response_model=HelperLaunch,
+    response_model_exclude_none=True,
+)
+async def launch_helper(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    invocation_id: str,
+    body: ToolInvocation,
+):
+    identity = require_gateway_identity(request, task_id, "mcp")
+    return await _helpers(request, response).launch(
+        task_id, binding_id, invocation_id, identity, await request.body()
+    )
+
+
+@router.get(HELPERS + "/{invocation_id}", response_model=HelperStatus)
+async def helper_status(
+    request: Request, response: Response, task_id: UUID, binding_id: str, invocation_id: str
+):
+    identity = require_runner_control(request, task_id)
+    return await _helpers(request, response).status(task_id, binding_id, invocation_id, identity)
+
+
+@router.post(HELPERS + "/{invocation_id}/cancel", response_model=HelperStatus)
+async def cancel_helper(
+    request: Request, response: Response, task_id: UUID, binding_id: str, invocation_id: str
+):
+    identity = require_runner_control(request, task_id)
+    return await _helpers(request, response).report(
+        task_id, binding_id, invocation_id, identity, "cancel"
+    )
+
+
+@router.post(HELPERS + "/{invocation_id}/terminal", response_model=HelperStatus)
+async def helper_terminal(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    invocation_id: str,
+    body: HelperTerminal,
+):
+    identity = require_runner_control(request, task_id)
+    return await _helpers(request, response).report(
+        task_id, binding_id, invocation_id, identity, "terminal", body
+    )
+
+
+@router.post(HELPERS + "/{invocation_id}/result", response_model=HelperStatus)
+async def helper_result(
+    request: Request,
+    response: Response,
+    task_id: UUID,
+    binding_id: str,
+    invocation_id: str,
+    body: HelperResult,
+):
+    identity = require_runner_control(request, task_id)
+    return await _helpers(request, response).report(
+        task_id, binding_id, invocation_id, identity, "result", body
+    )

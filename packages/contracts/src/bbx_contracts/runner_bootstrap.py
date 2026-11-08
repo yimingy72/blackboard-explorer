@@ -10,7 +10,7 @@ from pydantic import AwareDatetime, Field
 
 from .models import ContractModel
 from .native_gateway import FrozenExchangeRate
-from .runner import JournalCursor, RunnerId
+from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -29,6 +29,7 @@ class NativeRunnerLaunch(ContractModel):
     request_id: UUID
     model_alias: str = Field(min_length=1, max_length=512)
     exchange_rate: FrozenExchangeRate
+    helper_foreground: bool = False
 
 
 def native_pause_state(task):
@@ -118,6 +119,44 @@ class NativeRecoveryStatus(ContractModel):
     bindings: list[NativeRecoveryBinding] = Field(default_factory=list, max_length=32)
     bindings_truncated: bool = False
     ledger: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class HelperGoal(ContractModel):
+    goal: str = Field(min_length=1, max_length=2000)
+    input_refs: list[RunnerId] = Field(default_factory=list, max_length=8)
+    expected_output: str = Field(min_length=1, max_length=1000)
+
+
+class HelperStatus(ContractModel):
+    state: Literal["reserved", "launch_claimed", "draining", "saved", "unavailable", "unknown"]
+    invocation_id: Digest
+    child_id: RunnerId | None = None
+    binding_id: RunnerId | None = None
+    deadline_ms: int | None = None
+    reason: str | None = None
+    result_json: str | None = None
+    result_digest: Digest | None = None
+
+
+class HelperLaunch(HelperStatus):
+    launch_allowed: bool = False
+    command: RunnerCommand | None = None
+    credentials: dict[str, Any] | None = None
+
+
+class HelperTerminal(ContractModel):
+    child_id: RunnerId
+    binding_id: RunnerId
+    plugin_run_id: RunnerId
+    sdk_session_id: RunnerId
+    cursor: JournalCursor
+    sdk_idle: Literal[True]
+    disposed: Literal[True]
+    journal_confirmed: Literal[True]
+
+
+class HelperResult(ContractModel):
+    result_json: str = Field(min_length=1, max_length=16000)
 
 
 class NativeRunnerClaim(ContractModel):

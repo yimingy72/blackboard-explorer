@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "result_json": {
+      "maxLength": 16000,
+      "minLength": 1,
+      "title": "Result Json",
+      "type": "string"
+    }
+  },
+  "required": [
+    "result_json"
+  ],
+  "title": "HelperResult",
+  "type": "object"
+}

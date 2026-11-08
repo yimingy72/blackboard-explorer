@@ -209,7 +209,11 @@ class SandboxTools:
         return {
             "task_id": str(tid),
             "agent_id": member["id"],
-            "role": "lead" if member["role"] == "lead" else "worker",
+            "role": "helper"
+            if business.get("native_child_id")
+            else "lead"
+            if member["role"] == "lead"
+            else "worker",
             "assignment_id": assignment,
             "generation": runner_binding["binding"]["generation"],
             "epoch": owner["epoch"],
@@ -218,7 +222,7 @@ class SandboxTools:
             "environment_revision": context["environment_revision"],
             **context["network"],
             "challenge_id": business.get("challenge_id"),
-            "parent_agent_id": None,
+            "parent_agent_id": business.get("parent_agent_id"),
             "execution_profile": "basic",
             "process_accounting": "cgroup-v2",
             "execution_context_id": context["execution_context_id"],
@@ -270,6 +274,13 @@ class SandboxTools:
         data = {**call["data"], "sandbox_binding": binding}
         if call["data"]["tool_name"] == "exec_command":
             remaining = int((owner["hard_deadline"] - now()).total_seconds())
+            if binding["role"] == "helper":
+                if args.get("background"):
+                    raise HTTPException(403, "Helper command must use foreground mode")
+                remaining = min(
+                    remaining,
+                    int(runner_binding["business"]["child_deadline_ms"] / 1000 - now().timestamp()),
+                )
             if remaining <= 0:
                 raise HTTPException(409, "Task command deadline has elapsed")
             args["timeout_seconds"] = min(
@@ -720,8 +731,10 @@ class SandboxTools:
             **{
                 name: command[name]
                 for name in SandboxCommandSummary.model_fields
-                if name not in {"command", "cwd", "background", "output_truncated"}
+                if name
+                not in {"command", "cwd", "background", "output_truncated", "parent_agent_id"}
             },
+            parent_agent_id=data.get("binding", {}).get("parent_agent_id"),
             command=arguments["command"],
             cwd=data["cwd"],
             background=data["background"],

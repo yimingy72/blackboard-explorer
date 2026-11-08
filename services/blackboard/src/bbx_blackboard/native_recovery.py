@@ -111,9 +111,16 @@ async def capture(repo, conn, tid, record, task, reason, instant):
         "sandbox_create_claimed": record["sandbox_create_claimed"],
         "resources": resources,
         "assignment_ids": {
-            item["binding_id"]: item["assignment_ref"]
-            for item in control.get("native_worker_active", {}).values()
+            **{
+                item["binding_id"]: item["assignment_ref"]
+                for item in control.get("native_worker_active", {}).values()
+            },
+            **{
+                child["binding_id"]: child["child_id"]
+                for child in control.get("native_helpers_active", {}).values()
+            },
         },
+        "helpers": control.get("native_helpers_active", {}),
         "assignments": control.get("native_worker_active", {}),
         "lead_binding_id": data.get("binding_id"),
         "resource_generation": data.get("resource_generation", 1),
@@ -463,6 +470,7 @@ class NativeRecovery:
         # Exact Sandbox exit proves the old scopes cannot run; command results still need receipts.
         if not incident.get("execution_context_id"):
             return None, "original_scope_unconfirmed"
+        await self.bootstrap.helpers.reconcile_frozen(conn, tid, task, incident)
         if reason := await self._effects(conn, tid, incident):
             return None, reason
         table = s.runner_bindings
@@ -484,6 +492,7 @@ class NativeRecovery:
             len(bindings) > 32
             or not active <= ids
             or (task["ctf_control"].get("native_worker_active", {}) != incident["assignments"])
+            or task["ctf_control"].get("native_helpers_active", {}) != incident.get("helpers", {})
         ):
             return None, "original_bindings_unconfirmed"
         for binding in bindings:
@@ -778,6 +787,7 @@ class NativeRecovery:
                 "lead_binding_id": incident["lead_binding_id"],
                 "binding_ids": [item["binding_id"] for item in manifest["bindings"]],
                 "assignments": incident["assignments"],
+                "helpers": incident.get("helpers", {}),
                 "owner_epoch": incident["original_epoch"],
             },
             request,

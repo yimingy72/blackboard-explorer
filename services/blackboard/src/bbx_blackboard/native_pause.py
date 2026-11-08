@@ -147,7 +147,12 @@ class NativePause:
         if not data.get("activated") or not data.get("binding_id"):
             raise HTTPException(409, "Original Lead session is not ready")
         assignments = dict(control.get("native_worker_active", {}))
-        ids = {data["binding_id"], *(a["binding_id"] for a in assignments.values())}
+        children = dict(control.get("native_helpers_active", {}))
+        ids = {
+            data["binding_id"],
+            *(a["binding_id"] for a in assignments.values()),
+            *(child["binding_id"] for child in children.values()),
+        }
         live = (
             (
                 await conn.execute(
@@ -169,6 +174,7 @@ class NativePause:
             "pause_id": pause_id,
             "binding_ids": sorted(ids),
             "assignments": assignments,
+            "helpers": children,
             "lead_binding_id": data["binding_id"],
             **(budget or {}),
         }
@@ -533,6 +539,8 @@ class NativePause:
                 changed,
             )
         pause = {"pause_id": str(request.pause_id), "state": "resuming", "blocker": None}
+        if snapshot.get("helpers"):
+            control["native_helpers_active"] = {}
         if recovery:
             del control["native_recovery"], control["failure_hold"]
             control.update(

@@ -2098,6 +2098,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Helper */
+        post: operations["reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Helper Status */
+        get: operations["helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Helper */
+        post: operations["cancel_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/launch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Launch Helper */
+        post: operations["launch_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__launch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Helper Result */
+        post: operations["helper_result_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Helper Terminal */
+        post: operations["helper_terminal_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__terminal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal": {
         parameters: {
             query?: never;
@@ -3427,6 +3529,8 @@ export interface components {
             /** Error Code */
             error_code?: ("stale_fence" | "request_conflict" | "binding_unavailable" | "boundary_frozen" | "unsupported_model") | null;
             fence: components["schemas"]["RunnerFence"];
+            /** Helper Run Id */
+            helper_run_id?: string | null;
             /** Input Id */
             input_id?: string | null;
             /** Journal Confirmed */
@@ -4550,6 +4654,92 @@ export interface components {
              */
             usage_known: boolean;
         };
+        /** HelperLaunch */
+        HelperLaunch: {
+            /** Binding Id */
+            binding_id?: string | null;
+            /** Child Id */
+            child_id?: string | null;
+            command?: components["schemas"]["RunnerCommand"] | null;
+            /** Credentials */
+            credentials?: {
+                [key: string]: unknown;
+            } | null;
+            /** Deadline Ms */
+            deadline_ms?: number | null;
+            /** Invocation Id */
+            invocation_id: string;
+            /**
+             * Launch Allowed
+             * @default false
+             */
+            launch_allowed: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reserved" | "launch_claimed" | "draining" | "saved" | "unavailable" | "unknown";
+        };
+        /** HelperResult */
+        HelperResult: {
+            /** Result Json */
+            result_json: string;
+        };
+        /** HelperStatus */
+        HelperStatus: {
+            /** Binding Id */
+            binding_id?: string | null;
+            /** Child Id */
+            child_id?: string | null;
+            /** Deadline Ms */
+            deadline_ms?: number | null;
+            /** Invocation Id */
+            invocation_id: string;
+            /** Reason */
+            reason?: string | null;
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reserved" | "launch_claimed" | "draining" | "saved" | "unavailable" | "unknown";
+        };
+        /** HelperTerminal */
+        HelperTerminal: {
+            /** Binding Id */
+            binding_id: string;
+            /** Child Id */
+            child_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Disposed
+             * @constant
+             */
+            disposed: true;
+            /**
+             * Journal Confirmed
+             * @constant
+             */
+            journal_confirmed: true;
+            /** Plugin Run Id */
+            plugin_run_id: string;
+            /**
+             * Sdk Idle
+             * @constant
+             */
+            sdk_idle: true;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
         /** ImportKey */
         ImportKey: {
             /**
@@ -5526,6 +5716,11 @@ export interface components {
         /** NativeRunnerLaunch */
         NativeRunnerLaunch: {
             exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /**
+             * Helper Foreground
+             * @default false
+             */
+            helper_foreground: boolean;
             /** Model Alias */
             model_alias: string;
             /**
@@ -6527,11 +6722,13 @@ export interface components {
             id: string;
             /** Output Truncated */
             output_truncated: boolean;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
             /**
              * Role
              * @enum {string}
              */
-            role: "lead" | "worker";
+            role: "lead" | "worker" | "helper";
             /** Sequence */
             sequence: number;
             /** Started At */
@@ -6595,11 +6792,13 @@ export interface components {
             id: string;
             /** Output Truncated */
             output_truncated: boolean;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
             /**
              * Role
              * @enum {string}
              */
-            role: "lead" | "worker";
+            role: "lead" | "worker" | "helper";
             /** Sequence */
             sequence: number;
             /** Started At */
@@ -12453,6 +12652,219 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionLeaseReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    launch_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__launch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperLaunch"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_result_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperResult"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_terminal_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__terminal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperTerminal"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
                 };
             };
             /** @description Validation Error */

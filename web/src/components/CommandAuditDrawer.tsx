@@ -98,7 +98,7 @@ function CommandAudit({ taskId, agents, challenges }: Omit<Props, 'open' | 'onCl
           <dl className={styles.metadata}>
             <dt>cwd</dt><dd><code>{command.cwd}</code></dd>
             <dt>Agent</dt><dd>{agentName(command.agent_id)}<br /><code>{command.agent_id}</code></dd>
-            <dt>角色</dt><dd>{command.role === 'lead' ? 'Lead' : 'Worker'}</dd>
+            <dt>角色</dt><dd>{command.role === 'lead' ? 'Lead' : command.role === 'helper' ? 'Helper' : 'Worker'}{command.parent_agent_id && <> · 父 Agent：{agentName(command.parent_agent_id)}</>}</dd>
             <dt>题目</dt><dd>{command.challenge_id ? <>{challenges.find(item => item.id === command.challenge_id)?.title ?? '题目'}<br /><code>{command.challenge_id}</code></> : '未关联题目'}</dd>
             <dt>Assignment</dt><dd><code>{command.assignment_id || '未关联'}</code></dd>
             <dt>Generation / Epoch</dt><dd>{command.generation} / {command.epoch}</dd>

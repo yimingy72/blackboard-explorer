@@ -162,6 +162,7 @@ class NativeMCPRoutes:
             config["jwks_file"],
             config["backend_token_file"],
             sandbox=sandbox,
+            helper_foreground=bool(resource and resource["request"].get("helper_foreground")),
             business_roles=task["ctf_control"].get("business_tools", {}).get("roles", {}),
         )
         source_hash = hashlib.sha256(config["source"].encode()).hexdigest()[:16]
@@ -370,7 +371,9 @@ class NativeMCPRoutes:
         for item, expected in zip(targets, expected_targets, strict=True):
             upstream = item["mcp"]
             expected_url = urlsplit(expected["mcp"]["host"])
-            if upstream["path"] != expected_url.path:
+            if upstream["path"] != expected_url.path or item.get("condition") != expected.get(
+                "condition"
+            ):
                 raise HTTPException(409, "mcp_active_route_conflict")
             host_backend = backends.get(upstream["backend"]["backend"])
             if host_backend is None:

@@ -89,6 +89,8 @@ def main(candidate, *, tags=TAGS, sandbox_tag="bbx-p3g-sandbox:20261107"):
     for name in ["Dockerfile", "package.json", "package-lock.json", "protocol.schema.json"]:
         shutil.copyfile(original / name, runner / name)
     shutil.copytree(original / "src", runner / "src", dirs_exist_ok=True)
+    if (original / "plugin").is_dir():
+        shutil.copytree(original / "plugin", runner / "plugin", dirs_exist_ok=True)
     loader = runpy.run_path(str(HERE / "load_images.py"), run_name="p3h_images")
     images = {}
     for role, path in [

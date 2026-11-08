@@ -1,5 +1,6 @@
 import { PROTOCOL, SUPPORTED_BUSINESS_CONTRACTS, decodeCommand, sameFence, sameValue, validate } from "./protocol.mjs";
 import { RunnerSession } from "./session.mjs";
+import { ForegroundHelpers } from "./helper-host.mjs";
 
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -9,6 +10,7 @@ export class TaskRunner {
     this.config = config;
     this.platform = platform;
     this.credentials = credentials;
+    this.helpers = new ForegroundHelpers(config, platform);
     this.sessions = new Map();
     this.preparing = new Map();
     this.preparingSlots = new Map();
@@ -70,6 +72,9 @@ export class TaskRunner {
   async handle(command) {
     const payload = command.payload;
     if (payload.kind === "prepare") {
+      if (payload.spec.helper_child) throw new Error("The plugin owns helper preparation");
+      if (payload.spec.helper_foreground && this.config.helper_foreground !== true)
+        throw new Error("The Task has no trusted foreground helper profile");
       const id = payload.spec.binding.binding_id;
       this.controller.signal.throwIfAborted();
       if (this.closedBindings.has(id) || this.abortedBindings.has(id)) throw new Error("The binding is closed");
@@ -87,7 +92,7 @@ export class TaskRunner {
           this.controller.signal.throwIfAborted();
           if (this.abortedBindings.has(id)) throw new Error("The binding was aborted during prepare");
           const slot = new RunnerSession(this.config, payload.spec, command.payload_digest, lease, this.platform, this.credentials,
-            (slot, cursor) => this.applications(slot, cursor));
+            (slot, cursor) => this.applications(slot, cursor), this.helpers);
           this.preparingSlots.set(id, slot);
           try {
             await slot.initialize();
@@ -140,6 +145,8 @@ export class TaskRunner {
           sdk_session_id: slot.session?.sessionId ?? slot.lease.sdk_session_id ?? null };
         marker.pending = (async () => {
           try {
+            const helper = await this.helpers.closeBinding(id);
+            if (helper) marker.summary = helper;
             if (preparing) await preparing.catch(() => {});
             if (slot) {
               marker.summary = await slot.close();
@@ -164,6 +171,11 @@ export class TaskRunner {
     if (payload.kind === "abort") {
       this.abortedBindings.add(payload.binding_id);
       this.preparingSlots.get(payload.binding_id)?.stop();
+      const helper = await this.helpers.closeBinding(payload.binding_id);
+      if (helper) {
+        this.enqueue(this.receipt(command, "aborted", { binding_id: payload.binding_id, ...helper }));
+        return;
+      }
     }
     const slot = this.sessions.get(payload.binding_id) ?? await this.preparing.get(payload.binding_id);
     if (!slot) {
@@ -198,6 +210,7 @@ export class TaskRunner {
     }
   }
   async run() {
+    if (this.config.helper_foreground === true) await this.helpers.parentPaths();
     const flusher = (async () => {
       while (!this.controller.signal.aborted) { await this.flushReceipts(); await pause(50); }
     })();
@@ -216,7 +229,8 @@ export class TaskRunner {
               }
               continue;
             }
-            const slot = this.sessions.get(receipt.binding_id) ?? this.preparingSlots.get(receipt.binding_id);
+            const slot = this.sessions.get(receipt.binding_id) ?? this.preparingSlots.get(receipt.binding_id) ??
+              this.helpers.renewal(receipt.binding_id);
             if (slot) {
               try { slot.renew(receipt); }
               catch (error) { throw Object.assign(error, { code: "invalid_protocol" }); }
@@ -240,6 +254,7 @@ export class TaskRunner {
   }
   async stop() {
     this.controller.abort();
+    this.helpers.stopAll();
     for (const slot of this.preparingSlots.values()) slot.stop();
     for (const slot of this.sessions.values()) await slot.abort().catch(() => {});
   }

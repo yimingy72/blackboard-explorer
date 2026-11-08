@@ -19,7 +19,7 @@ from bbx_contracts.runner import (
     runner_payload_digest,
 )
 from bbx_contracts.runner_bootstrap import native_resume_pending
-from bbx_contracts.sandbox_tools import SANDBOX_CONTROLS, SANDBOX_TOOLS
+from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS, SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -115,7 +115,8 @@ class RunnerGateway:
         if task["ctf_control"].get("failure_hold"):
             raise HTTPException(409, "Task admission is paused")
         if not metadata and (
-            binding["sdk_session_id"] is None
+            (binding["business"].get("native_child_id") and binding["status"] != "prepared")
+            or binding["sdk_session_id"] is None
             or binding["sdk_session_id"] != sdk
             or journal is None
             or not await self.control._confirmed_cursor(conn, tid, binding, journal)
@@ -132,6 +133,8 @@ class RunnerGateway:
             if body.expected_epoch != owner["epoch"]:
                 raise HTTPException(409, "Runner owner changed")
             binding = await self.control._binding(conn, tid, bid, owner, live=True)
+            if binding["business"].get("native_child_id"):
+                raise HTTPException(403, "Helper credentials require the original launch claim")
             await self.routes.prepare(conn, tid)
         verified_revision = await self.routes.reconcile(tid)
         async with self.repo.engine.begin() as conn:
@@ -176,7 +179,11 @@ class RunnerGateway:
             task, _, binding = await self._scope(conn, tid, identity, metadata=True)
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
             roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
-            allowed = set(roles.get(member["role"], [])) | set(SANDBOX_TOOLS)
+            allowed = (
+                set(HELPER_SANDBOX_TOOLS)
+                if binding["business"].get("native_child_id")
+                else set(roles.get(member["role"], [])) | set(SANDBOX_TOOLS)
+            )
             declared = set(json.loads(binding["payload_json"])["spec"]["allowed_tools"])
             return sorted(allowed & declared)
 
@@ -258,6 +265,8 @@ class RunnerGateway:
 
     async def admit_tool(self, tid, identity, raw):
         invocation, _ = decode(ToolInvocation, raw, 2 * 1024 * 1024)
+        if invocation.tool_name == "delegate_helper":
+            raise HTTPException(403, "Helper delegation requires the local Runner control route")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             call, owner, binding = await self._tool(conn, tid, identity, invocation)
@@ -274,10 +283,16 @@ class RunnerGateway:
             task = await self.control._task(conn, tid, live=True)
             roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
             spec = json.loads(binding["payload_json"])["spec"]
-            if invocation.tool_name not in spec["allowed_tools"] or invocation.tool_name not in {
-                *roles.get(member["role"], []),
-                *SANDBOX_TOOLS,
-            }:
+            child = bool(binding["business"].get("native_child_id"))
+            role_tools = (
+                set(HELPER_SANDBOX_TOOLS)
+                if child
+                else {*roles.get(member["role"], []), *SANDBOX_TOOLS}
+            )
+            if (
+                invocation.tool_name not in spec["allowed_tools"]
+                or invocation.tool_name not in role_tools
+            ):
                 raise HTTPException(403, "Tool is not published for this role")
             reconciling = invocation.tool_name in SANDBOX_CONTROLS
             original_args = exact_json(invocation.arguments_json)
@@ -294,6 +309,12 @@ class RunnerGateway:
                 raise HTTPException(403, "Worker tool arguments exceed the current Assignment")
             if invocation.tool_name in SANDBOX_TOOLS:
                 self.sandbox.validate_arguments(invocation.tool_name, original_args)
+                if (
+                    child
+                    and invocation.tool_name == "exec_command"
+                    and original_args.get("background")
+                ):
+                    raise HTTPException(403, "Helper command must use foreground mode")
                 scoped = await self.sandbox.binding(conn, tid, binding, owner)
                 if reconciling:
                     await self.sandbox.resolve_command(

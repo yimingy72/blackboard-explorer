@@ -79,6 +79,12 @@ class EffectiveRunnerModel(ContractModel):
         return self
 
 
+class HelperChild(ContractModel):
+    child_id: RunnerId
+    parent_binding_id: RunnerId
+    deadline_ms: int = Field(ge=1, le=9007199254740991)
+
+
 class SessionSpec(ContractModel):
     binding: RunnerBinding
     model: EffectiveRunnerModel
@@ -89,9 +95,13 @@ class SessionSpec(ContractModel):
     instructions: str = Field(max_length=131072)
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
+    helper_foreground: bool = False
+    helper_child: HelperChild | None = None
 
     @model_validator(mode="after")
     def exact_tool_aliases(self):
+        if self.helper_child and self.helper_foreground:
+            raise ValueError("Helpers cannot delegate")
         if len(set(self.allowed_tools)) != len(self.allowed_tools):
             raise ValueError("Declared tools must be distinct")
         if set(self.mcp_tool_aliases) != set(self.allowed_tools) or len(
@@ -374,6 +384,7 @@ class CommandReceipt(ContractModel):
     unresolved_attempts: list[str] = Field(default_factory=list)
     unresolved_invocations: list[str] = Field(default_factory=list)
     sdk_idle: bool | None = None
+    helper_run_id: RunnerId | None = None
     journal_confirmed: bool | None = None
     pending_confirmation: JournalConfirmation | None = None
     supported_business_contracts: list[Literal["challenge-board-v1"]] = Field(default_factory=list)
@@ -399,6 +410,7 @@ class RunnerBootstrap(ContractModel):
     credential_file: str
     journal_root: str
     mcp_metadata_timeout_ms: int = Field(default=15000, ge=50, le=30000)
+    helper_foreground: bool = False
 
 
 class RunnerSchemaBundle(ContractModel):

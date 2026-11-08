@@ -12,7 +12,7 @@ const BASE_PROMPT = "Use the published bbx_role instructions and only the declar
 const CREDENTIAL_PROJECTION_WAIT_MS = 120000;
 
 export class RunnerSession {
-  constructor(config, spec, specDigest, lease, platform, credentials, onApplied) {
+  constructor(config, spec, specDigest, lease, platform, credentials, onApplied, helpers) {
     this.config = config;
     this.spec = spec;
     this.specDigest = specDigest;
@@ -21,6 +21,7 @@ export class RunnerSession {
     this.platform = platform;
     this.credentials = credentials;
     this.onApplied = onApplied;
+    this.helpers = helpers;
     this.jobs = new Set();
     this.invocations = new Map();
     this.unresolvedAttempts = new Set();
@@ -34,7 +35,8 @@ export class RunnerSession {
   }
   assertLease() {
     this.stopController.signal.throwIfAborted();
-    if (this.expired || this.lease.lease_expires_at <= Date.now() / 1000) {
+    if (this.expired || this.lease.lease_expires_at <= Date.now() / 1000 ||
+        (this.spec?.helper_child && this.spec.helper_child.deadline_ms <= Date.now())) {
       this.expired = true;
       if (this.session) freezeSession(this.session);
       throw new Error("The session lease expired");
@@ -75,7 +77,7 @@ export class RunnerSession {
     this.lease = { ...this.lease, lease_revision: receipt.lease_revision, lease_expires_at: receipt.lease_expires_at };
     this.scheduleLeaseTimer();
   }
-  async initialize() {
+  async prepareSession() {
     this.assertLease();
     const aliases = this.spec.mcp_tool_aliases;
     if (!aliases || new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length
@@ -118,7 +120,8 @@ export class RunnerSession {
       throw new Error("An unregistered persisted conversation requires reconciliation");
     }
     const settings = SettingsManager.inMemory({ cacheWarming: "off", compaction: { enabled: true },
-      retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } });
+      retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } },
+      { projectTrusted: false });
     const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
       allowModelNetwork: false, refreshOnCreate: false });
     const sdkProvider = "openai";
@@ -128,10 +131,6 @@ export class RunnerSession {
         ...(model.thinking_level_map ? { thinkingLevelMap: model.thinking_level_map } : {}),
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
     await runtime.refresh({ allowNetwork: false });
-    const resourceLoader = new DefaultResourceLoader({ cwd: directory, agentDir, settingsManager: settings,
-      noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
-      systemPrompt: BASE_PROMPT, appendSystemPrompt: [] });
-    await resourceLoader.reload();
     this.mcp = new McpClient({ name: "bbx-task-runner", version: "0.1.0",
       requestTimeoutMs: this.config.mcp_metadata_timeout_ms ?? 15000, capabilities: {} });
     this.transport = new StreamableHttpTransport({ url: safeUrl(this.config.mcp_gateway_url), openGetStream: false,
@@ -152,11 +151,39 @@ export class RunnerSession {
         execute: (callId, args, signal) => this.callTool(name, callId, args, signal) };
     });
     this.assertLease();
-    const created = await createAgentSession({ cwd: directory, agentDir, modelRuntime: runtime, settingsManager: settings,
-      resourceLoader, model: runtime.getModel(sdkProvider, model.id), thinkingLevel: model.thinking_level, sessionManager: manager,
-      noTools: "builtin", tools: tools.map((tool) => tool.name), customTools: tools });
-    this.session = created.session;
-    if (this.session.thinkingLevel !== model.thinking_level) throw Object.assign(new Error("Pi cannot honor the effective thinking level"), { code: "unsupported_model" });
+    return { cwd: directory, agentDir, modelRuntime: runtime, settingsManager: settings,
+      model: runtime.getModel(sdkProvider, model.id), thinkingLevel: model.thinking_level,
+      sessionManager: manager, customTools: tools };
+  }
+  async initialize() {
+    if (this.spec.helper_child) throw new Error("A helper can only open through its claimed plugin launch");
+    const plan = await this.prepareSession();
+    const paths = this.spec.helper_foreground ? await this.helpers.parentPaths() : [];
+    if (paths.length) plan.customTools.push(this.helpers.tool(this));
+    const resourceLoader = new DefaultResourceLoader({ cwd: plan.cwd, agentDir: plan.agentDir,
+      settingsManager: plan.settingsManager, noExtensions: true, noSkills: true, noContextFiles: true,
+      noPromptTemplates: true, noThemes: true, projectTrusted: false, additionalExtensionPaths: paths,
+      systemPrompt: BASE_PROMPT, appendSystemPrompt: [] });
+    await resourceLoader.reload();
+    if (resourceLoader.getExtensions().errors.length) throw new Error("A trusted Runner extension could not load");
+    const names = plan.customTools.map((tool) => tool.name);
+    const created = await createAgentSession({ ...plan, resourceLoader, noTools: "builtin",
+      tools: paths.length ? [...names, "subagent"] : names, projectTrusted: false });
+    await this.installSession(created.session);
+    if (paths.length) {
+      this.helperShutdownNeeded = true;
+      const errors = [];
+      await this.session.bindExtensions({ mode: "print", onError: (error) => errors.push(error) });
+      if (errors.length || !this.session.getToolDefinition("subagent")) throw new Error("Trusted helper plugin startup failed");
+      this.session.setActiveToolsByName(names);
+      this.helperParent = true;
+    }
+  }
+  async installSession(session) {
+    this.session = session;
+    const manager = session.sessionManager;
+    if (session.sessionId !== this.sdkSessionId || session.thinkingLevel !== this.spec.model.thinking_level)
+      throw Object.assign(new Error("Pi cannot honor the effective session identity or thinking level"), { code: "unsupported_model" });
     const promptEntry = manager.getEntries().findLast((entry) => entry.type === "custom" && entry.customType === "bbx.prompt");
     if (promptEntry) {
       const system = manager.getEntry(promptEntry.data.system_entry_id)?.message;
@@ -194,6 +221,7 @@ export class RunnerSession {
     this.assertActive();
   }
   async refreshPrompt(context, options) {
+    if (this.helperParent) this.helpers.checkParentTools(this);
     const published = await this.platform.publishedPrompt(this, options.signal);
     this.assertActive();
     if (!published && !this.roleInstalled) throw new Error("The initial published prompt is unavailable");
@@ -248,9 +276,8 @@ export class RunnerSession {
     this.jobs.add(settled);
     void settled.finally(() => this.jobs.delete(settled));
   }
-  async callTool(name, callId, args, signal) {
+  async toolInvocation(name, callId, args, signal) {
     this.assertActive();
-    if (!this.toolNames.has(name)) throw new Error("The tool is not declared in this session");
     const entry = this.session.sessionManager.getBranch().findLast((entry) => entry.type === "message"
       && entry.message.role === "assistant" && Array.isArray(entry.message.content)
       && entry.message.content.some((part) => part.type === "toolCall" && part.id === callId && part.name === name));
@@ -258,10 +285,15 @@ export class RunnerSession {
     const invocationId = digest(jsonText([this.config.fence.task_id, this.binding.binding_id, this.session.sessionId, entry.id, callId, name]));
     const argumentsJson = jsonText(args);
     this.invocations.set(`${entry.id}:${callId}`, invocationId);
-    const invocation = { protocol: PROTOCOL, fence: this.config.fence, binding: this.binding,
+    return { protocol: PROTOCOL, fence: this.config.fence, binding: this.binding,
       sdk_session_id: this.session.sessionId, invocation_id: invocationId, tool_call_id: callId,
       assistant_entry_id: entry.id, tool_name: name, arguments_json: argumentsJson,
       arguments_digest: digest(argumentsJson), journal: await this.confirm(signal) };
+  }
+  async callTool(name, callId, args, signal) {
+    if (!this.toolNames.has(name)) throw new Error("The tool is not declared in this session");
+    const invocation = await this.toolInvocation(name, callId, args, signal);
+    const { invocation_id: invocationId, arguments_json: argumentsJson } = invocation;
     try {
       const permit = await this.platform.admitTool(this, invocation, signal);
       this.assertActive();
@@ -298,11 +330,34 @@ export class RunnerSession {
   }
   async abort() {
     this.stop();
+    if (this.helperParent) this.helpers.cancelParent(this.binding.binding_id);
     await this.session?.abort();
     await Promise.allSettled([...this.jobs]);
     if (!this.journal) return this.lease.cursor;
     try { const cursor = await this.confirm(AbortSignal.timeout(2000)); this.journalPending = false; return cursor; }
     catch { this.journalPending = true; return this.journal.cursor; }
+  }
+  async hostedTerminal(idle) {
+    this.closed = true;
+    clearTimeout(this.leaseTimer);
+    try {
+      this.stop();
+      if (!idle || !this.journal || this.session?.isStreaming) throw new Error("The helper did not become idle");
+      const cursor = await this.confirm(AbortSignal.timeout(2000));
+      if ((await this.journal.assertFile(cursor.offset)).size !== cursor.offset || this.journal.pendingConfirmation)
+        throw new Error("The disposed helper journal does not end at its confirmed cursor");
+      return { sdk_session_id: this.session.sessionId, cursor, sdk_idle: true, journal_confirmed: true,
+        unresolved_attempts: [...this.unresolvedAttempts], unresolved_invocations: [...this.unresolvedInvocations] };
+    } finally {
+      const closed = await Promise.allSettled([this.mcp?.close(), this.journal?.close()]);
+      if (closed.some((outcome) => outcome.status === "rejected")) throw new Error("The helper resources did not close");
+    }
+  }
+  async hostedPreparationFailed() {
+    this.closed = true;
+    clearTimeout(this.leaseTimer);
+    this.stop();
+    await this.mcp?.close();
   }
   close() {
     if (this.closing) return this.closing;
@@ -310,6 +365,14 @@ export class RunnerSession {
     clearTimeout(this.leaseTimer);
     this.closing = (async () => {
       await this.abort();
+      if (this.helperShutdownNeeded) {
+        await this.helpers.stopParent(this.binding.binding_id);
+        await this.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+        try {
+          const cursor = await this.confirm(AbortSignal.timeout(2000));
+          this.journalPending = (await this.journal.assertFile(cursor.offset)).size !== cursor.offset;
+        } catch { this.journalPending = true; }
+      }
       await this.journal?.queue;
       const cleanup = await Promise.allSettled([
         this.mcp?.close(),

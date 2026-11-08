@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "goal": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "input_refs": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Input Refs",
+      "type": "array"
+    },
+    "expected_output": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Expected Output",
+      "type": "string"
+    }
+  },
+  "required": [
+    "goal",
+    "expected_output"
+  ],
+  "title": "HelperGoal",
+  "type": "object"
+}

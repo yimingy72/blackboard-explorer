@@ -164,7 +164,8 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
     if workers is not None and (STATE != workers.state or fresh or retire_only):
         raise RuntimeError("The scoped fixture must use its own private state")
     prefix = getattr(workers, "prefix", "p4a") if workers is not None else "p3h"
-    service_name = f"bbx-{prefix}-gateway"
+    service_name = getattr(workers, "gateway_name", f"bbx-{prefix}-gateway")
+    gateway_owner = getattr(workers, "gateway_owner", prefix)
     gateway_dns = f"{service_name}.{SYSTEM}.svc.cluster.local"
     context = kubectl("config", "current-context").strip()
     for directory in reversed(
@@ -219,7 +220,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
     owned_cluster()
     cluster = json.loads((KUBE_STATE / "cluster-identity.json").read_text())
     images = json.loads((STATE / "build-source.json").read_text())
-    directory = STATE / "joint"
+    directory = STATE / getattr(workers, "result_directory", "joint")
     directory.mkdir(mode=0o700, exist_ok=True)
     state_path = directory / "private-state.json"
     evidence = {
@@ -541,7 +542,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     "leaf-key.pem": key.read_bytes(),
                 },
                 name=service_name,
-                owner=prefix,
+                owner=gateway_owner,
             )
             kubectl(
                 "-n",
@@ -551,6 +552,40 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 "pod/" + service_name,
                 "--timeout=90s",
             )
+            if gateway_owner != prefix:
+                pod = json.loads(kubectl("-n", SYSTEM, "get", "pod", service_name, "-o", "json"))
+                pod_uid, pod_ip = pod["metadata"]["uid"], pod["status"]["podIP"]
+                assert pod_uid == evidence["native_gateway"]["pod_uid"]
+                async with asyncio.timeout(15):
+                    while True:
+                        slices = json.loads(
+                            kubectl(
+                                "-n",
+                                SYSTEM,
+                                "get",
+                                "endpointslices",
+                                "-l",
+                                "kubernetes.io/service-name=" + service_name,
+                                "-o",
+                                "json",
+                            )
+                        )["items"]
+                        endpoints = [
+                            endpoint for item in slices for endpoint in item.get("endpoints", [])
+                        ]
+                        if endpoints:
+                            if (
+                                len(endpoints) != 1
+                                or endpoints[0].get("targetRef", {}).get("uid") != pod_uid
+                                or endpoints[0].get("addresses") != [pod_ip]
+                            ):
+                                raise RuntimeError(
+                                    "The scoped native gateway has a foreign endpoint"
+                                )
+                            if endpoints[0].get("conditions", {}).get("ready") is True:
+                                break
+                        await asyncio.sleep(0.2)
+                evidence["gateway_backend_isolation"] = {"pod_uid": pod_uid, "pod_ip": pod_ip}
             await stack.enter_async_context(
                 forward(
                     service_name, ports["admin"], 15000, diagnostics=evidence["forward_diagnostics"]
@@ -738,7 +773,10 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     {
                         "mode": "ctf",
                         "goal": "Run the local Sandbox receipt only",
-                        "budget": {"max_cost": "1", "max_minutes": 8},
+                        "budget": {
+                            "max_cost": "1",
+                            "max_minutes": getattr(workers, "task_minutes", 8),
+                        },
                         "ctf_options": {"max_teammates": 1}
                         if workers is None
                         else {"max_teammates": 2, "dispatch_mode": "automatic"},
@@ -760,6 +798,7 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                             "source_ref": "fixture://p3h",
                             "observed_at": datetime.now(UTC).isoformat(),
                         },
+                        **getattr(workers, "launch_options", {}),
                     },
                 )
                 if response.status_code != 200:

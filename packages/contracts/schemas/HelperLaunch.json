@@ -1,0 +1,213 @@
+{
+  "$defs": {
+    "RunnerCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bbx.task-runner.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "command_seq": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Command Seq",
+          "type": "integer"
+        },
+        "fence": {
+          "$ref": "#/$defs/RunnerFence"
+        },
+        "payload_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Payload Digest",
+          "type": "string"
+        },
+        "payload_json": {
+          "maxLength": 2097152,
+          "minLength": 1,
+          "title": "Payload Json",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "request_id",
+        "command_seq",
+        "fence",
+        "payload_digest",
+        "payload_json"
+      ],
+      "title": "RunnerCommand",
+      "type": "object"
+    },
+    "RunnerFence": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "runner_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Runner Id",
+          "type": "string"
+        },
+        "pod_uid": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Pod Uid",
+          "type": "string"
+        },
+        "epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "runner_id",
+        "pod_uid",
+        "epoch"
+      ],
+      "title": "RunnerFence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "state": {
+      "enum": [
+        "reserved",
+        "launch_claimed",
+        "draining",
+        "saved",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "invocation_id": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "child_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Child Id"
+    },
+    "binding_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Binding Id"
+    },
+    "deadline_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deadline Ms"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "result_json": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Json"
+    },
+    "result_digest": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Digest"
+    },
+    "launch_allowed": {
+      "default": false,
+      "title": "Launch Allowed",
+      "type": "boolean"
+    },
+    "command": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunnerCommand"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "credentials": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Credentials"
+    }
+  },
+  "required": [
+    "state",
+    "invocation_id"
+  ],
+  "title": "HelperLaunch",
+  "type": "object"
+}

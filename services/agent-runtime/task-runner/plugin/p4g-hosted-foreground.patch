@@ -1,0 +1,255 @@
+--- a/src/shared/required-child-extensions.ts
++++ b/src/shared/required-child-extensions.ts
+@@ -1,13 +1,25 @@
+ import * as fs from "node:fs";
+ import * as path from "node:path";
+ 
+-import type { AgentSession } from "@earendil-works/pi-coding-agent";
++import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
+ 
+ export interface RequiredChildSessionHostContext {
+ 	session: AgentSession;
+ 	run: { runId?: string; agent?: string; childIndex?: number };
+ }
+ 
++/** The trusted host owns the exact Pi inputs, never plugin defaults or placement. */
++export type HostedChildPlan = Required<Pick<CreateAgentSessionOptions,
++    "cwd" | "agentDir" | "sessionManager" | "modelRuntime" | "settingsManager" | "model" | "thinkingLevel" | "customTools"
++>> & {
++    withoutSession(): Promise<void>;
++    beforeDispose(session: AgentSession): Promise<void>;
++    afterDispose(session: AgentSession, idle: boolean): Promise<void>;
++};
++export type PrepareChildSessionHost = (
++    run: RequiredChildSessionHostContext["run"], signal: AbortSignal | undefined,
++) => Promise<HostedChildPlan>;
++
+ /** A trusted host setup, awaited before session_start or the first child prompt. */
+ export type RequiredChildSessionHost = (context: RequiredChildSessionHostContext) => void | Promise<void>;
+ 
+@@ -23,6 +35,8 @@
+ 	path: string;
+ 	/** Require this module to export installChildSessionHost; failures reject the launch. */
+ 	sessionHost?: true;
++	/** Require the pre-creation host plan and its terminal barriers. */
++	hosted?: true;
+ }
+ 
+ export interface RegisterRequiredChildExtensionsInput {
+@@ -34,7 +48,7 @@
+ 
+ export interface RequiredChildExtensionRegistration { dispose(): void }
+ /** Registration stamps `requireForAllRunners` on each entry so every carrier of the snapshot retains it. */
+-export type RequiredChildExtensionSnapshot = ReadonlyArray<Readonly<RequiredChildExtension & { requireForAllRunners?: true }>>;
++export type RequiredChildExtensionSnapshot = ReadonlyArray<Readonly<RequiredChildExtension & { requireForAllRunners?: true; hostOwnerSessionId?: string }>>;
+ 
+ /** Validate and freeze a snapshot; registration canonicalizes once, while retained launches preserve that identity. */
+ export function snapshotRequiredChildExtensions(value: unknown, label = "Required child extensions", canonicalizeFiles = false): RequiredChildExtensionSnapshot {
+@@ -43,11 +57,15 @@
+ 	const paths = new Set<string>();
+ 	return Object.freeze(value.map((entry, index) => {
+ 		// The flag comes from registration, so only serialized snapshots (not registration input) may carry it.
+-		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && key !== "sessionHost" && (canonicalizeFiles || key !== "requireForAllRunners"))) throw new Error(`${label} entry ${index} requires id, path and an optional sessionHost flag.`);
++		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && key !== "sessionHost" && key !== "hosted" && (canonicalizeFiles || !["requireForAllRunners", "hostOwnerSessionId"].includes(key)))) throw new Error(`${label} entry ${index} requires id, path and an optional sessionHost flag.`);
+ 		const id = "id" in entry ? entry.id : undefined;
+ 		const rawPath = "path" in entry ? entry.path : undefined;
+ 		const sessionHost = "sessionHost" in entry ? entry.sessionHost : undefined;
+ 		if (sessionHost !== undefined && sessionHost !== true) throw new Error(`${label} sessionHost must be true when present.`);
++		const hosted = "hosted" in entry ? entry.hosted : undefined;
++		if (hosted !== undefined && (hosted !== true || !sessionHost)) throw new Error(`${label} hosted requires a session host.`);
++		const hostOwnerSessionId = "hostOwnerSessionId" in entry ? entry.hostOwnerSessionId : undefined;
++		if (hostOwnerSessionId !== undefined && (!hosted || typeof hostOwnerSessionId !== "string" || !hostOwnerSessionId || hostOwnerSessionId.length > 256)) throw new Error("Invalid hosted parent session.");
+ 		const requireForAllRunners = "requireForAllRunners" in entry ? entry.requireForAllRunners : undefined;
+ 		if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error(`${label} entry ${index} requires a safe id of at most 128 characters.`);
+ 		if (ids.has(id)) throw new Error(`${label} id '${id}' is duplicated.`);
+@@ -65,7 +83,7 @@
+ 		if (paths.has(extensionPath)) throw new Error(`${label} path '${extensionPath}' is duplicated.`);
+ 		ids.add(id);
+ 		paths.add(extensionPath);
+-		return Object.freeze({ id, path: extensionPath, ...(sessionHost ? { sessionHost: true as const } : {}), ...(requireForAllRunners ? { requireForAllRunners } : {}) });
++		return Object.freeze({ id, path: extensionPath, ...(sessionHost ? { sessionHost: true as const } : {}), ...(hosted ? { hosted: true as const } : {}), ...(hostOwnerSessionId ? { hostOwnerSessionId } : {}), ...(requireForAllRunners ? { requireForAllRunners } : {}) });
+ 	}));
+ }
+ 
+@@ -91,7 +109,7 @@
+ 	if (input.requireForAllRunners !== undefined && typeof input.requireForAllRunners !== "boolean") throw new Error("Required child extension registration requireForAllRunners must be a boolean.");
+ 	const canonical = snapshotRequiredChildExtensions(input.extensions, "Required child extensions", true);
+ 	if (canonical.some((entry) => entry.sessionHost) && !input.requireForAllRunners) throw new Error("A required child session host must require all runners.");
+-	const frozen = input.requireForAllRunners ? Object.freeze(canonical.map((entry) => Object.freeze({ ...entry, requireForAllRunners: true as const }))) : canonical;
++	const frozen = input.requireForAllRunners ? Object.freeze(canonical.map((entry) => Object.freeze({ ...entry, ...(entry.hosted ? { hostOwnerSessionId: input.sessionId } : {}), requireForAllRunners: true as const }))) : canonical;
+ 	const store = registry();
+ 	if (store.bySession.has(input.sessionId)) throw new Error(`Required child extensions are already registered for session '${input.sessionId}'; dispose them first.`);
+ 	store.bySession.set(input.sessionId, frozen);
+--- a/src/api/required-child-extensions.ts
++++ b/src/api/required-child-extensions.ts
+@@ -5,4 +5,6 @@
+ 	type RequiredChildExtensionRegistration,
+ 	type RequiredChildSessionHost,
+ 	type RequiredChildSessionHostContext,
++	type HostedChildPlan,
++	type PrepareChildSessionHost,
+ } from "../shared/required-child-extensions.ts";
+--- a/src/runs/shared/child-session.ts
++++ b/src/runs/shared/child-session.ts
+@@ -21,7 +21,7 @@
+ import { resolvePackageSubpath } from "../background/runner-aliases.ts";
+ import { PI_CODING_AGENT_PACKAGE, resolveHostPiPackageRoot } from "./pi-spawn.ts";
+ import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
+-import type { RequiredChildExtensionSnapshot, RequiredChildSessionHost } from "../../shared/required-child-extensions.ts";
++import type { RequiredChildExtensionSnapshot, RequiredChildSessionHost, PrepareChildSessionHost } from "../../shared/required-child-extensions.ts";
+ import type { PlacementMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
+ 
+ export interface ChildSessionEvent {
+@@ -512,6 +512,104 @@
+ 			};
+ 			assertLaunchCurrent();
+ 			const pi = await loadPiCodingAgent();
++			const hosted = (launch.requiredExtensions ?? []).filter((entry) => entry.hosted);
++			if (hosted.length > 0) {
++				if (hosted.length !== 1 || launch.requiredExtensions?.length !== 1 ||
++					!hosted[0].requireForAllRunners || !hosted[0].sessionHost || launch.machine) {
++					throw new Error("The child must use exactly one trusted local host.");
++				}
++				const owner = hosted[0].hostOwnerSessionId;
++				if (!owner) throw new Error("The required child host has no original owner.");
++				const run = { runId: launch.runtime.runId, agent: launch.runtime.agent, childIndex: launch.runtime.childIndex };
++				const setup = new AbortController();
++				const signal = launch.signal ? AbortSignal.any([setup.signal, launch.signal]) : setup.signal;
++				const assertHostedCurrent = () => { signal.throwIfAborted(); assertLaunchCurrent(); };
++				const stops = hostedChildren.get(owner) ?? new Set();
++				hostedChildren.set(owner, stops);
++				let finished!: () => void;
++				const terminal = new Promise<void>((resolve) => { finished = resolve; });
++				let close: (() => Promise<void>) | undefined;
++				let published = false;
++				const stop = () => { setup.abort(); if (published) void close?.().catch(() => {}); return terminal; };
++				stops.add(stop);
++				const finish = () => {
++					stops.delete(stop);
++					if (!stops.size && hostedChildren.get(owner) === stops) hostedChildren.delete(owner);
++					finished();
++				};
++				let plan: Awaited<ReturnType<PrepareChildSessionHost>> | undefined;
++				try {
++					const module = await createJiti(import.meta.url, { moduleCache: false, fsCache: false }).import(hosted[0].path) as Record<string, unknown>;
++					assertHostedCurrent();
++					if (typeof module.prepareChildSessionHost !== "function" || typeof module.installChildSessionHost !== "function")
++						throw new Error("The required child host is incomplete.");
++					const prepared = await (module.prepareChildSessionHost as PrepareChildSessionHost)(run, signal);
++					plan = prepared;
++					assertHostedCurrent();
++					const names = prepared.customTools.map((tool) => tool.name);
++					if (new Set(names).size !== names.length || names.some((name) =>
++						["bash", "read", "write", "edit", "subagent", "bg_wait", "codemode"].includes(name)))
++						throw new Error("The hosted child tool list is invalid.");
++					const loader = new pi.DefaultResourceLoader({
++						cwd: prepared.cwd, agentDir: prepared.agentDir, settingsManager: prepared.settingsManager,
++						noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
++						systemPrompt: "Follow the platform's scoped helper instructions.", appendSystemPrompt: [],
++					});
++					await loader.reload();
++					assertHostedCurrent();
++					const { session } = await pi.createAgentSession({
++						cwd: prepared.cwd, agentDir: prepared.agentDir, sessionManager: prepared.sessionManager,
++						modelRuntime: prepared.modelRuntime, settingsManager: prepared.settingsManager, model: prepared.model,
++						thinkingLevel: prepared.thinkingLevel, resourceLoader: loader, noTools: "builtin",
++						tools: names, customTools: prepared.customTools,
++					});
++					let closing: Promise<void> | undefined;
++					close = () => closing ??= (async () => {
++						let idle = false;
++						try {
++							try { await session.abort(); idle = true; }
++							finally { await prepared.beforeDispose(session); }
++						} catch (error) { idle = false; throw error; }
++						finally {
++							try { session.dispose(); }
++							catch (error) { idle = false; throw error; }
++							finally { await prepared.afterDispose(session, idle); }
++						}
++					})().finally(finish);
++					assertHostedCurrent();
++					await (module.installChildSessionHost as RequiredChildSessionHost)({ session, run });
++					assertHostedCurrent();
++					if (session.getActiveToolNames().sort().join("\0") !== [...names].sort().join("\0"))
++						throw new Error("The hosted child has an unexpected active tool.");
++					const child: ChildSession = {
++						subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
++						prompt: (text) => { assertHostedCurrent(); return session.prompt(text); },
++						steer: async () => { throw new Error("Hosted helpers do not accept steering."); },
++						followUp: async () => { throw new Error("Hosted helpers do not accept follow-up input."); },
++						abort: () => session.abort(),
++						hasQueuedMessages: () => session.agent?.hasQueuedMessages?.() === true,
++						dispose: () => {
++							live.delete(child);
++							const pending = close!();
++							shutdowns.add(pending);
++							void pending.then(() => shutdowns.delete(pending), () => shutdowns.delete(pending));
++							return pending;
++						},
++						get messages() { return session.messages; },
++						get sessionFile() { return session.sessionFile; },
++						get sessionId() { return session.sessionId; },
++						get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
++						get contextWindow() { return session.model?.contextWindow; },
++					};
++					live.add(child);
++					published = true;
++					return child;
++				} catch (error) {
++					if (close) await close();
++					else try { await plan?.withoutSession(); } finally { finish(); }
++					throw error;
++				}
++			}
+ 			const builtinMcpTools = launch.builtinMcpTools ?? [];
+ 			let readinessTool: ToolDefinition | undefined;
+ 			const builtinMcp = builtinMcpTools.length ? selectedBuiltinMcpExtension(pi, builtinMcpTools, () => readinessTool) : undefined;
+@@ -775,6 +873,11 @@
+ 	};
+ }
+ 
++const hostedChildren = new Map<string, Set<() => Promise<void>>>();
++export async function disposeHostedChildSessions(parent: string): Promise<void> {
++	await Promise.allSettled([...(hostedChildren.get(parent) ?? [])].map((stop) => stop()));
++}
++
+ let activeFactory: ChildSessionFactory | undefined;
+ let activeFactoryModule: string | undefined;
+ 
+--- a/src/extension/index.ts
++++ b/src/extension/index.ts
+@@ -60,7 +60,7 @@
+ import { createParentWake } from "../shared/parent-wake.ts";
+ import { handleSubagentSteeringNotice, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
+ import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/child-runtime-config.ts";
+-import { disposeChildSessions } from "../runs/shared/child-session.ts";
++import { disposeHostedChildSessions } from "../runs/shared/child-session.ts";
+ import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
+ import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
+ import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
+@@ -750,6 +750,7 @@
+ 	const tool: ToolDefinition<typeof parameters, Details> = {
+ 		name: "subagent",
+ 		...MODEL_ONLY_TOOL,
++		exposure: "hidden",
+ 		label: "Subagent",
+ 		description: buildSubagentToolDescription(config, { disabledFeatures }),
+ 		...buildSubagentToolPromptMetadata(config, disabledFeatures),
+@@ -1257,14 +1258,14 @@
+ 		supervisorChannel.activateTransport();
+ 	});
+ 
+-	pi.on("session_shutdown", async (event) => {
++	pi.on("session_shutdown", async (event, context) => {
+ 		sessionSwitchGuard.sessionShutdown(event);
+ 		cancelCompactionResume();
+ 		completionNotifier.sessionShutdown(event?.reason);
+ 		parentWake.sessionShutdown(event?.reason);
+ 		runtimeEntry.cleanup(event?.reason);
+ 		try {
+-			await disposeChildSessions();
++			await disposeHostedChildSessions(context.sessionManager.getSessionId());
+ 		} catch (error) {
+ 			console.error("Failed to dispose in-process child sessions:", error);
+ 		}

@@ -114,6 +114,8 @@ class BusinessMCP:
                 raise HTTPException(401, "Business MCP gateway identity required")
             tid = UUID(scope["path_params"]["task_id"])
             identity = require_gateway_identity(request, tid, "mcp")
+            if identity.role == "helper":
+                raise HTTPException(403, "Helper capability is scoped to the Sandbox target")
             gateway = self.application.state.runner_gateway
             if gateway is None:
                 raise HTTPException(503, "Business MCP is unavailable")

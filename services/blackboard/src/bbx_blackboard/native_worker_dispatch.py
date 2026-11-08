@@ -147,6 +147,7 @@ class NativeWorkers:
                 }
             ).encode(),
             assignment=assignment,
+            helper_foreground=worker_spec.get("helper_foreground", False),
         )
         if registered["id"] != binding_id:
             raise HTTPException(409, "Native Worker binding identity changed")
@@ -180,6 +181,9 @@ class NativeWorkers:
         bid, epoch = binding["id"], assignment["epoch"]
         close_id = str(uuid5(NAMESPACE_URL, f"runner-close:{tid}:{epoch}:{bid}"))
         await self._enqueue(conn, tid, close_id, {"kind": "close", "binding_id": bid})
+        owner = await self.control._current_owner(conn, tid)
+        if await self.bootstrap.helpers.drain_parent(conn, tid, owner, bid):
+            return
         if not await self.close_proven(conn, tid, binding):
             return
         commands = s.sandbox_command_records
@@ -319,10 +323,37 @@ class NativeWorkers:
             and binding["cursor"] is not None
         )
 
+    async def idle_members(self, conn, tid, task, spec):
+        members = (
+            (
+                await conn.execute(
+                    select(s.ctf_members)
+                    .where(
+                        s.ctf_members.c.task_id == tid,
+                        s.ctf_members.c.role == "teammate",
+                        s.ctf_members.c.lifecycle == "active",
+                        s.ctf_members.c.run_state == "idle",
+                        s.ctf_members.c.current_turn_id.is_(None),
+                        s.ctf_members.c.pending_operation.is_(None),
+                    )
+                    .order_by(s.ctf_members.c.id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        control = task["ctf_control"]
+        occupied = set(control.get("native_worker_active", {})) | set(
+            control.get("native_helpers_active", {})
+        )
+        return [m for m in members if m["id"] in spec["instructions"] and m["id"] not in occupied]
+
     async def reconcile(self, conn, tid, task, record, owner, *, allow_new):
         spec = record["data"].get("worker_spec")
         if not spec:
             return []
+        await self.bootstrap.helpers.reconcile(conn, tid, task, owner)
+        task = await row(conn, s.tasks, tid)
         for assignment in task["ctf_control"].get("native_worker_active", {}).values():
             if assignment["epoch"] != owner["epoch"]:
                 raise HTTPException(409, "Original Worker epoch changed")
@@ -345,28 +376,7 @@ class NativeWorkers:
         task = await row(conn, s.tasks, tid)
         queue = task["ctf_control"].get("native_worker_ready", {})
         if allow_new and queue:
-            members = (
-                (
-                    await conn.execute(
-                        select(s.ctf_members)
-                        .where(
-                            s.ctf_members.c.task_id == tid,
-                            s.ctf_members.c.role == "teammate",
-                            s.ctf_members.c.lifecycle == "active",
-                            s.ctf_members.c.run_state == "idle",
-                            s.ctf_members.c.current_turn_id.is_(None),
-                            s.ctf_members.c.pending_operation.is_(None),
-                        )
-                        .order_by(s.ctf_members.c.id)
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            active = task["ctf_control"].get("native_worker_active", {})
-            idle = iter(
-                m for m in members if m["id"] in spec["instructions"] and m["id"] not in active
-            )
+            idle = iter(await self.idle_members(conn, tid, task, spec))
             for cid, ready in sorted(
                 queue.items(), key=lambda item: (item[1]["priority"], item[1]["sequence"])
             ):

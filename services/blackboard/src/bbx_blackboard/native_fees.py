@@ -423,10 +423,13 @@ class NativeFees:
                 or wire.get("n", 1) != 1
             ):
                 raise HTTPException(403, "Model request exceeds the frozen role output settings")
+            allowed_tools = set(spec["allowed_tools"])
+            if spec.get("helper_foreground") and binding["business"].get("native_assignment_id"):
+                allowed_tools.add("delegate_helper")
             for tool in wire.get("tools", []):
                 if (
                     not isinstance(tool, dict)
-                    or tool.get("function", {}).get("name") not in spec["allowed_tools"]
+                    or tool.get("function", {}).get("name") not in allowed_tools
                 ):
                     raise HTTPException(403, "Model tool declaration exceeds the binding")
             if await self.gateway._count(

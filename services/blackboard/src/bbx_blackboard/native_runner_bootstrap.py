@@ -43,6 +43,7 @@ from bbx_blackboard import native_recovery
 from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_budget_increase import increase_budget
+from bbx_blackboard.native_helpers import NativeHelpers
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
@@ -93,6 +94,7 @@ class NativeRunnerBootstrap:
 
         self.retirement = NativeResourceRetirement(self)
         self.workers = NativeWorkers(self)
+        self.helpers = NativeHelpers(self)
         self.pause_control = NativePause(self)
         self.recovery = native_recovery.NativeRecovery(self)
 
@@ -239,6 +241,8 @@ class NativeRunnerBootstrap:
                 )
             ).first():
                 raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
+            if body.helper_foreground and not native_dispatch_enabled(task):
+                raise HTTPException(422, "Foreground helpers require native Worker dispatch")
             if (
                 native_dispatch_enabled(task)
                 and not 1 <= task["ctf_options"]["max_teammates"] <= 20
@@ -993,6 +997,7 @@ class NativeRunnerBootstrap:
                     turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
                     if turn["status"] == "running":
                         await self.ctf._settle(conn, tid, member, turn, "stopped", "")
+                await self.helpers.finish_after_task_exit(conn, tid)
                 await self.workers.finish_after_task_exit(conn, tid)
         if task["ctf_control"].get("phase") == "closing":
             await self.ctf.finalize_close(tid, True)
@@ -1179,6 +1184,11 @@ class NativeRunnerBootstrap:
                 worker_spec = {
                     "model": effective_role_model(profile, "teammate", selected["sdk_model"]),
                     "allowed_tools": worker_tools,
+                    **(
+                        {"helper_foreground": True}
+                        if record["request"].get("helper_foreground")
+                        else {}
+                    ),
                     "instructions": {
                         f"member-{n}": render_ctf_prompt(
                             profile,
@@ -1274,6 +1284,11 @@ class NativeRunnerBootstrap:
                 "credential_file": "/var/run/bbx/credentials.json",
                 "journal_root": "/journal",
                 "mcp_metadata_timeout_ms": 15000,
+                **(
+                    {"helper_foreground": True}
+                    if current["request"].get("helper_foreground")
+                    else {}
+                ),
             }
             if (
                 current["data"].get("bootstrap") is not None
@@ -1350,6 +1365,10 @@ class NativeRunnerBootstrap:
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
             if native_pause_state(task) in {"draining", "paused"}:
+                if record["data"].get("worker_spec"):
+                    owner = await self.control._current_owner(conn, tid)
+                    await self.helpers.reconcile(conn, tid, task, owner)
+                    task = await row(conn, s.tasks, tid)
                 await self.pause_control.progress(conn, tid, record, task)
                 return {**self._public(await self._get(conn, tid)), "control_only": True}
             data = dict(record["data"])

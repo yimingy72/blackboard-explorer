@@ -21,10 +21,23 @@
     "role": {
       "enum": [
         "lead",
-        "worker"
+        "worker",
+        "helper"
       ],
       "title": "Role",
       "type": "string"
+    },
+    "parent_agent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Agent Id"
     },
     "challenge_id": {
       "anyOf": [

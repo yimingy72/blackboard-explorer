@@ -4,7 +4,7 @@ import json
 from uuid import UUID
 
 from bbx_contracts.challenge_board import business_manifest
-from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
+from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS, SANDBOX_TOOLS
 
 
 def business_mcp_route(
@@ -16,6 +16,7 @@ def business_mcp_route(
     *,
     sandbox=None,
     business_roles=None,
+    helper_foreground=False,
 ):
     tid = str(UUID(str(task_id)))
     path = f"/api/tasks/{tid}/mcp"
@@ -76,6 +77,18 @@ def business_mcp_route(
         ],
     }
     if sandbox:
+        if helper_foreground:
+            roles = json.dumps(["lead", "teammate", "helper"])
+            value["policies"]["authorization"]["rules"] = [
+                {"require": f'jwt.tid == "{tid}" && jwt.role in {roles}'}
+            ]
+            value["policies"]["mcpAuthorization"]["rules"].append(
+                f'jwt.tid == "{tid}" && mcp.tool.target == "sandbox" && '
+                'jwt.role == "helper" && mcp.tool.name in ' + json.dumps(HELPER_SANDBOX_TOOLS)
+            )
+            value["backends"][0]["mcp"]["targets"][0]["condition"] = (
+                'jwt.role in ["lead", "teammate"]'
+            )
         value["policies"]["mcpAuthorization"]["rules"].append(
             f'jwt.tid == "{tid}" && mcp.tool.target == "sandbox" && '
             'jwt.role in ["lead", "teammate"] && mcp.tool.name in ' + json.dumps(SANDBOX_TOOLS)

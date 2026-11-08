@@ -64,6 +64,11 @@
     },
     "exchange_rate": {
       "$ref": "#/$defs/FrozenExchangeRate"
+    },
+    "helper_foreground": {
+      "default": false,
+      "title": "Helper Foreground",
+      "type": "boolean"
     }
   },
   "required": [

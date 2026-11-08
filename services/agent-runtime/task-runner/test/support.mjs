@@ -16,8 +16,9 @@ export async function waitFor(read, label, timeoutMs = 10000) {
 }
 export function sse(response, tool) {
   response.writeHead(200, { "content-type": "text/event-stream" });
+  const definition = typeof tool === "object" ? tool : { name: "remote_echo", arguments: { value: "same" } };
   const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: "same-sdk-call", type: "function",
-    function: { name: "remote_echo", arguments: JSON.stringify({ value: "same" }) } }] } : { role: "assistant", content: "Done." };
+    function: { name: definition.name, arguments: JSON.stringify(definition.arguments) } }] } : { role: "assistant", content: "Done." };
   const chunk = (delta, finish_reason, usage) => ({ id: "fake", model: "fake", choices: [{ index: 0, delta, finish_reason }], ...(usage ? { usage } : {}) });
   response.write(`data: ${JSON.stringify(chunk(delta, null))}\n\n`);
   response.write(`data: ${JSON.stringify(chunk({}, tool ? "tool_calls" : "stop", { prompt_tokens: 30, completion_tokens: 5, total_tokens: 35 }))}\n\n`);
@@ -48,8 +49,13 @@ export async function fixture(t, ids = ["one"]) {
       const wireDigest = digest(raw);
       if (url.pathname.startsWith("/blackboard/")) {
         const bindingId = url.pathname.split("/")[3];
-        assert.equal(request.headers.authorization, url.pathname.includes("/tools/")
+        assert.equal(request.headers.authorization, url.pathname.includes("/tools/") ||
+          (url.pathname.includes("/helpers/") && /\/(reserve|launch)$/.test(url.pathname))
           ? `Bearer ${token(bindingId, "mcp")}` : `Bearer ${token("task", "control")}`);
+        if (url.pathname.includes("/helpers/") && state.helperApi) {
+          await state.helperApi({ url, bindingId, body, response, send });
+          return;
+        }
         if (url.pathname === "/blackboard/commands") {
           await new Promise((resolve) => setTimeout(resolve, 25));
           const renewals = state.lateRenewals.splice(0);
@@ -154,7 +160,8 @@ export async function fixture(t, ids = ["one"]) {
           assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
           state.modelCalls.push({ bindingId, body, promptRevision: attempt.prompt_revision });
           const index = state.modelCalls.filter((call) => call.bindingId === bindingId).length;
-          sse(response, state.useTools && index === 1); return;
+          if (state.modelGate) await state.modelGate(bindingId, index);
+          sse(response, state.modelTool ? state.modelTool(bindingId, index, body) : state.useTools && index === 1); return;
         }
       }
       if (url.pathname === "/mcp") {
@@ -176,7 +183,7 @@ export async function fixture(t, ids = ["one"]) {
         else if (body.method === "tools/call") {
           const invocation = body.params._meta.bbx;
           assert.equal(body.params.name, state.wireNames?.get(bindingId) ?? "remote_echo");
-          assert.equal(invocation.tool_name, "remote_echo");
+          assert.equal(invocation.tool_name, state.logicalNames?.get(bindingId) ?? "remote_echo");
           assert.equal(invocation.binding.binding_id, bindingId);
           assert.deepEqual(invocation.fence, fence);
           assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
