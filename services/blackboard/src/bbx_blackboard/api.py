@@ -42,6 +42,7 @@ from bbx_contracts.models import (
 )
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import NativeRunnerLaunch, TaskCreationCapabilities
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -81,6 +82,7 @@ from bbx_blackboard.native_ctf_publication import (
     PublicationState,
     load_publication,
 )
+from bbx_blackboard.native_inputs import router as native_inputs_router
 from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap, native_role_thinking
 from bbx_blackboard.native_runner_bootstrap import router as native_runner_bootstrap_router
 from bbx_blackboard.platform import PlatformStore
@@ -148,6 +150,9 @@ class TaskView(BaseModel):
     business_contract: str | None = None
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
+    initial_attachment_state: Literal["pending", "ready", "blocked"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     cost_currency: str | None = None
     cost_breakdown: dict[str, str] = Field(default_factory=dict)
     id: UUID
@@ -979,9 +984,11 @@ def create_app(
             ) != (publication.id, publication.revision, state.stamp):
                 raise HTTPException(409, "所选原生 CTF 环境或版本已变化")
             if body.input_group_id is None:
-                raise HTTPException(422, "原生 CTF 任务需要一个本人空附件组")
-            if body.input_file_ids or body.public_input_ids:
-                raise HTTPException(422, "原生 CTF 任务目前不支持附件")
+                raise HTTPException(422, "原生 CTF 任务需要一个本人附件组")
+            if publication.inputs_profile != INPUT_PROFILE and (
+                body.input_file_ids or body.public_input_ids
+            ):
+                raise HTTPException(422, "此原生 CTF 发布未启用初始附件")
             if (
                 body.agent_profile != "ctf"
                 or body.profile_version not in (None, publication.ctf_profile_version)
@@ -1052,7 +1059,13 @@ def create_app(
                 spec,
                 profile_version=row["version"],
                 **(
-                    {"business_contract": BOARD_CONTRACT, "native_queue": native_queue}
+                    {
+                        "business_contract": BOARD_CONTRACT,
+                        "native_queue": native_queue,
+                        "native_inputs_profile": publication.inputs_profile
+                        if publication
+                        else None,
+                    }
                     if native_queue is not None
                     else {}
                 ),
@@ -1237,6 +1250,9 @@ def create_app(
                     mode=task.get("mode", "blackboard"),
                     name=task.get("name"),
                     initial_attachments=task.get("initial_attachments") or [],
+                    initial_attachment_state=(task.get("ctf_control") or {}).get(
+                        "initial_attachment_state"
+                    ),
                     cost_currency=currency,
                     id=task["id"],
                     goal=task["goal"],
@@ -2202,6 +2218,7 @@ def create_app(
     app.include_router(runner_tool_router)
     app.include_router(runner_gateway_private_router)
     app.include_router(sandbox_tools_router)
+    app.include_router(native_inputs_router)
     app.mount("/api/tasks/{task_id}/business-mcp", app.state.business_mcp)
     app.include_router(platform_router)
     app.include_router(settings_router)

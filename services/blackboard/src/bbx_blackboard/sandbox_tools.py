@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.sandbox_tools import (
     MAX_COMMAND_OUTPUT_BYTES,
     SANDBOX_TOOLS,
@@ -141,6 +142,11 @@ class SandboxTools:
             **(
                 {"traffic_targets": resource["config"]["traffic_targets"]}
                 if opted_in(resource)
+                else {}
+            ),
+            **(
+                {"inputs_profile": INPUT_PROFILE}
+                if resource["request"].get("shared_inputs")
                 else {}
             ),
             "blackboard_url": resource["config"]["runner_blackboard_url"],

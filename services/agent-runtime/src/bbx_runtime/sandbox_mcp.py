@@ -18,6 +18,7 @@ import httpx
 import mcp.types as types
 import uvicorn
 from bbx_contracts.runner import ToolInvocation, runner_json_text
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.sandbox_tools import sandbox_schemas
 from bbx_sandbox_execution.connect import connect_bound_execd, read_execution_context
 from bbx_sandbox_execution.execution import AssignmentBinding
@@ -28,6 +29,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
+from bbx_runtime.sandbox_inputs import initial_inputs_ready
 from bbx_runtime.sandbox_network import SEAL_FIELDS, ready_identity, root_network, sealed_bytes
 from bbx_runtime.sandbox_tools import BoundedExecdLogTransport, assignment_control, dispatch
 
@@ -42,6 +44,7 @@ def load_configuration(path):
         or config.get("runner_pod_uid") != os.environ.get("BBX_POD_UID")
         or task != config["task_id"]
         or config.get("inbound_key") == config.get("report_key")
+        or config.get("inputs_profile") not in {None, INPUT_PROFILE}
         or any(
             not isinstance(config.get(key), str) or not config[key]
             for key in ("inbound_key", "report_key", "execd_token")
@@ -436,6 +439,10 @@ class SandboxMCP:
                 pass
             await asyncio.sleep(3)
 
+    async def prepare_inputs(self, sandbox):
+        if await initial_inputs_ready(self, sandbox):
+            self.ready = True
+
     @asynccontextmanager
     async def run(self, app):
         tls = ssl.create_default_context()
@@ -469,8 +476,10 @@ class SandboxMCP:
                     "execution_context_id": self.config["execution_context_id"],
                 }:
                     raise ValueError("Original Sandbox execution context changed")
-                self.ready = True
+                self.ready = self.config.get("inputs_profile") is None
                 cleanup = [asyncio.create_task(self.scopes())]
+                if not self.ready:
+                    cleanup.append(asyncio.create_task(self.prepare_inputs(self.sandbox)))
                 if self.config.get("traffic_targets"):
                     cleanup.append(asyncio.create_task(self.networks()))
                 try:

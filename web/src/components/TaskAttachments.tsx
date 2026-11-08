@@ -12,13 +12,15 @@ type Upload = {
     attachment?: InitialAttachment;
     error?: string;
 };
-const LIMIT = 50 * 1024 * 1024;
+const LEGACY_LIMITS = { max_file_bytes: 50 * 1024 * 1024, max_total_bytes: 200 * 1024 * 1024, max_files: 20 };
+type AttachmentLimits = typeof LEGACY_LIMITS;
 const sizeLabel = (size: number) => size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
-export default function TaskAttachments({ ensureGroup, resetGroup, groupExpired, disabled, onStatus }: {
+export default function TaskAttachments({ ensureGroup, resetGroup, groupExpired, disabled, limits, onStatus }: {
     ensureGroup: () => Promise<string>;
     resetGroup: () => void;
     groupExpired: boolean;
     disabled: boolean;
+    limits?: AttachmentLimits;
     onStatus: (busy: boolean, invalid: boolean, ids: string[]) => void;
 }) {
     const [uploads, setUploads] = useState<Upload[]>([]);
@@ -91,9 +93,10 @@ export default function TaskAttachments({ ensureGroup, resetGroup, groupExpired,
             return;
         setError('');
         const next = [...entries.current];
+        const active = limits ?? LEGACY_LIMITS;
         for (const file of Array.from(files)) {
-            if (file.size > LIMIT || next.length >= 20 || next.reduce((total, item) => total + item.file.size, 0) + file.size > 200 * 1024 * 1024) {
-                setError('每个文件最多 50 MB，最多 20 个文件，总量 200 MB。');
+            if (file.size > active.max_file_bytes || next.length >= active.max_files || next.reduce((total, item) => total + item.file.size, 0) + file.size > active.max_total_bytes) {
+                setError(limits ? `每个文件最多 ${active.max_file_bytes / 1048576} MiB，最多 ${active.max_files} 个文件，总量 ${active.max_total_bytes / 1048576} MiB。` : '每个文件最多 50 MB，最多 20 个文件，总量 200 MB。');
                 break;
             }
             next.push({ key: randomUUID(), file, status: 'queued' });

@@ -6283,6 +6283,16 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "shared_inputs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeSharedInputLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6402,6 +6412,183 @@
           "catalog_revision"
         ],
         "title": "NativeFeeView",
+        "type": "object"
+      },
+      "NativeInputClaimResult": {
+        "additionalProperties": false,
+        "properties": {
+          "launch_allowed": {
+            "title": "Launch Allowed",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "disabled",
+              "pending",
+              "claimed",
+              "confirmed",
+              "blocked"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "launch_allowed",
+          "state"
+        ],
+        "title": "NativeInputClaimResult",
+        "type": "object"
+      },
+      "NativeInputFile": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 16777216.0,
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "path",
+          "size",
+          "sha256"
+        ],
+        "title": "NativeInputFile",
+        "type": "object"
+      },
+      "NativeInputPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/NativeInputFile"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeInputScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "disabled",
+              "pending",
+              "claimed",
+              "confirmed",
+              "blocked"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "NativeInputPlan",
+        "type": "object"
+      },
+      "NativeInputScope": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_context_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Execution Context Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "resource_generation": {
+            "minimum": 1.0,
+            "title": "Resource Generation",
+            "type": "integer"
+          },
+          "sandbox_container_id": {
+            "pattern": "^containerd://[0-9a-f]{64}$",
+            "title": "Sandbox Container Id",
+            "type": "string"
+          },
+          "sandbox_id": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Sandbox Id",
+            "type": "string"
+          },
+          "sandbox_pod_uid": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Sandbox Pod Uid",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workspace_pvc_uid": {
+            "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "title": "Workspace Pvc Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "operation_id",
+          "resource_generation",
+          "workspace_pvc_uid",
+          "sandbox_id",
+          "sandbox_pod_uid",
+          "sandbox_container_id",
+          "execution_context_id",
+          "manifest_sha256"
+        ],
+        "title": "NativeInputScope",
         "type": "object"
       },
       "NativeModelDispatchGrant": {
@@ -7155,6 +7342,34 @@
           "exchange_rate"
         ],
         "title": "NativeRunnerLaunch",
+        "type": "object"
+      },
+      "NativeSharedInputLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "max_file_bytes": {
+            "default": 16777216,
+            "title": "Max File Bytes",
+            "type": "integer"
+          },
+          "max_files": {
+            "default": 20,
+            "title": "Max Files",
+            "type": "integer"
+          },
+          "max_total_bytes": {
+            "default": 25165824,
+            "title": "Max Total Bytes",
+            "type": "integer"
+          },
+          "profile": {
+            "const": "shared-inputs-v1",
+            "default": "shared-inputs-v1",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "title": "NativeSharedInputLimits",
         "type": "object"
       },
       "NativeTransportObservation": {
@@ -10517,6 +10732,22 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "initial_attachment_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "ready",
+                  "blocked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Attachment State"
           },
           "initial_attachments": {
             "items": {
@@ -22158,6 +22389,181 @@
         "summary": "Host Claim",
         "tags": [
           "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/inputs": {
+      "get": {
+        "operationId": "input_plan_api_tasks__task_id__sandbox_host_inputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeInputPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Input Plan",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/inputs/claim": {
+      "post": {
+        "operationId": "input_claim_api_tasks__task_id__sandbox_host_inputs_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeInputClaimResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Input Claim",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/inputs/confirm": {
+      "post": {
+        "operationId": "input_confirm_api_tasks__task_id__sandbox_host_inputs_confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeInputPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Input Confirm",
+        "tags": [
+          "runner"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/inputs/{file_id}": {
+      "get": {
+        "operationId": "input_content_api_tasks__task_id__sandbox_host_inputs__file_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Input Content",
+        "tags": [
+          "runner"
         ]
       }
     },

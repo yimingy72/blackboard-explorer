@@ -581,8 +581,12 @@ class CtfService(
         create_request_hash=None,
         business_contract=BOARD_LEGACY,
         native_queue=None,
+        native_inputs_profile=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
+        from bbx_contracts.runner_inputs import INPUT_PROFILE
+
+        from bbx_blackboard.native_inputs import freeze_native_inputs
 
         spec = CtfTaskSpec.model_validate(spec)
         native_workers = (
@@ -652,14 +656,29 @@ class CtfService(
                 check_mutable(group, input_owner or "")
                 files = group["files"]
                 if native_queue is not None:
-                    require(
-                        not files and not input_file_ids and not public_input_ids,
-                        "Published native CTF creation does not support attachments",
-                    )
+                    if native_inputs_profile != INPUT_PROFILE:
+                        require(
+                            not files and not input_file_ids and not public_input_ids,
+                            "Published native CTF creation does not support attachments",
+                        )
+                    elif files and input_file_ids is None:
+                        raise HTTPException(422, "Select the initial files shared with the Task")
                 if input_file_ids is not None:
                     selected = {str(file_id) for file_id in input_file_ids}
                     require(selected <= {item["id"] for item in files}, "Input file missing")
                     files = [item for item in files if item["id"] in selected]
+                if native_queue is not None and files:
+                    if {item["id"] for item in files} != {
+                        str(file_id) for file_id in public_input_ids or ()
+                    }:
+                        raise HTTPException(422, "All selected native inputs must be Task-shared")
+                    try:
+                        freeze_native_inputs(tid, files)
+                    except ValueError as error:
+                        raise HTTPException(
+                            422, "Invalid native shared attachment manifest"
+                        ) from error
+                    fields["ctf_control"]["initial_attachment_state"] = "pending"
                 require(self.objects is not None or not files, "Object storage is unavailable")
                 for item in files:
                     assert self.objects is not None

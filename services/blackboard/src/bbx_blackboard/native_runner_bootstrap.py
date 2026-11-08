@@ -38,6 +38,7 @@ from bbx_contracts.runner_bootstrap import (
     native_recovery_frozen,
     validate_binding_capture_deployment,
 )
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
@@ -47,6 +48,11 @@ from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_budget_increase import increase_budget
 from bbx_blackboard.native_helpers import NativeHelpers
+from bbx_blackboard.native_inputs import (
+    NativeInputs,
+    freeze_native_inputs,
+    require_inputs_confirmed,
+)
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_traffic import PROFILE, lost_captures, opted_in
@@ -106,6 +112,7 @@ class NativeRunnerBootstrap:
         self.helpers = NativeHelpers(self)
         self.pause_control = NativePause(self)
         self.recovery = native_recovery.NativeRecovery(self)
+        self.inputs = NativeInputs(self)
 
     async def _get(self, conn, tid):
         found = (
@@ -270,6 +277,14 @@ class NativeRunnerBootstrap:
             deadline = started + timedelta(seconds=remaining)
         except OverflowError as error:
             raise HTTPException(422, "Task duration exceeds the native deadline range") from error
+        input_manifest = None
+        if task.get("initial_attachments"):
+            if (publication or {}).get("inputs_profile") != INPUT_PROFILE:
+                raise HTTPException(409, "Shared initial attachment capability is not frozen")
+            try:
+                input_manifest = freeze_native_inputs(tid, task["initial_attachments"])
+            except ValueError as error:
+                raise HTTPException(422, "Invalid native shared attachment manifest") from error
         key = "bbx-sandbox-" + secrets.token_urlsafe(32)
         operation = identity_id(str(tid), str(body.request_id))
         value = dict(
@@ -280,6 +295,7 @@ class NativeRunnerBootstrap:
             request={
                 **body.model_dump(mode="json"),
                 **({"publication": publication} if publication is not None else {}),
+                **({"shared_inputs": input_manifest} if input_manifest else {}),
             },
             config=None,
             controller_id=None,
@@ -293,7 +309,10 @@ class NativeRunnerBootstrap:
             tenant_key_hash=hashlib.sha256(key.encode()).hexdigest(),
             tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
             observation={},
-            data=({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
+            data={
+                **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
+                **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
+            },
             last_error=None,
             next_check_at=started,
             created_at=started,
@@ -740,6 +759,7 @@ class NativeRunnerBootstrap:
                     return await self.gateway.sandbox.host_material(
                         conn, tid, record, body.proof.get("context", {})
                     )
+                require_inputs_confirmed(record)
                 host = record["sandbox_host"]
                 if not host or body.proof.get(
                     "context_digest"
@@ -1123,6 +1143,7 @@ class NativeRunnerBootstrap:
         owner = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
+            require_inputs_confirmed(record)
             if not self._resources_ready(record["observation"]) or (
                 record["config"].get("journal_writer_lock")
                 and not record["observation"].get("journal_subdir")
@@ -1399,6 +1420,7 @@ class NativeRunnerBootstrap:
         if body.resource_generation > 1:
             async with self.repo.engine.begin() as conn:
                 record, task = await self._checked(conn, tid, body, live=True)
+                require_inputs_confirmed(record)
                 binding_id = record["data"].get("binding_id")
                 if task["ctf_control"].get("native_recovery_rebuilding") and binding_id:
                     prepared = await row(conn, s.runner_bindings, tid, binding_id)
@@ -1416,6 +1438,7 @@ class NativeRunnerBootstrap:
                     budget_proof = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
+            require_inputs_confirmed(record)
             if native_pause_state(task) in {"draining", "paused"}:
                 if record["data"].get("worker_spec"):
                     owner = await self.control._current_owner(conn, tid)

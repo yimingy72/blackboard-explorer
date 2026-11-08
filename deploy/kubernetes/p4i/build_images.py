@@ -35,7 +35,7 @@ def build(tag, *args):
     ).strip()
 
 
-def main(candidate):
+def main(candidate, *, capture_source=None):
     owned_cluster()
     tools = STATE / "tools-context/services/envd/Dockerfile"
     tools.write_text(tools.read_text().replace("FROM ubuntu:24.04\n", "FROM " + UBUNTU + "\n", 1))
@@ -52,10 +52,14 @@ def main(candidate):
     base = ["--network", "none", "--build-arg", "TOOL_IMAGE=" + TOOLS]
     source = str(candidate / "services/sandbox-execution")
     legacy_id = build(LEGACY, *base, source)
-    capture_id = build(CAPTURE, *base, "--build-arg", "ASSIGNMENT_NETWORK_V1=1", source)
+    if capture_source is None:
+        capture_tag = CAPTURE
+        capture_id = build(CAPTURE, *base, "--build-arg", "ASSIGNMENT_NETWORK_V1=1", source)
+    else:
+        capture_tag, capture_id = capture_source
     helpers = runpy.run_path(str(ROOT / "deploy/kubernetes/p3f/load_images.py"))
     helpers["load"](LEGACY, legacy_id)
-    helpers["load"](CAPTURE, capture_id)
+    helpers["load"](capture_tag, capture_id)
     (STATE / "built-images.json").write_text(
         json.dumps(
             {
@@ -75,7 +79,7 @@ def main(candidate):
     inventory = json.loads(path.read_text())
     inventory["images"][CAPTURE] = {
         "digest": capture_id,
-        "reference": CAPTURE.rsplit(":", 1)[0] + "@" + capture_id,
+        "reference": capture_tag.rsplit(":", 1)[0] + "@" + capture_id,
     }
     path.write_text(json.dumps(inventory, indent=2) + "\n")
     runpy.run_path(str(ROOT / "deploy/kubernetes/p4g/build_images.py"))["gateway_image"]()

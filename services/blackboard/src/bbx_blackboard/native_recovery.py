@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
+from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
 from bbx_blackboard.runner_gateway import cancel_admitted
 from bbx_blackboard.store import schema as s
@@ -469,8 +470,13 @@ class NativeRecovery:
             return None, "original_exit_unconfirmed"
         epoch = incident["original_epoch"]
         record = await self.bootstrap._get(conn, tid)
-        if record and epoch_capture_pending(record, epoch):
-            return None, "original_traffic_unconfirmed"
+        if record:
+            try:
+                require_inputs_confirmed(record)
+            except HTTPException:
+                return None, "original_inputs_unconfirmed"
+            if epoch_capture_pending(record, epoch):
+                return None, "original_traffic_unconfirmed"
         # Exact Sandbox exit proves the old scopes cannot run; command results still need receipts.
         if not incident.get("execution_context_id"):
             return None, "original_scope_unconfirmed"
@@ -812,6 +818,7 @@ class NativeRecovery:
                 key: route[key] for key in ("resource_id", "revision", "operation_id", "value")
             },
         }
+        require_inputs_confirmed(record)
         retained = {
             key: record["observation"][key]
             for key in (
@@ -854,6 +861,7 @@ class NativeRecovery:
                     if opted_in(record)
                     else {}
                 ),
+                **{key: data[key] for key in ("inputs_profile", "inputs_receipt") if key in data},
                 "continuation": continuation,
                 "lead_turn_id": continuation["lead_turn_id"],
                 "worker_spec": data["worker_spec"],

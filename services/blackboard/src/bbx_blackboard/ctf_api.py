@@ -79,6 +79,8 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     public["members"] = [public_member(member) for member in data.get("members", [])]
     public["task"] = {key: value for key, value in data["task"].items() if key != "ctf_control"}
     public["task"]["ctf_phase"] = data["task"].get("ctf_control", {}).get("phase")
+    if attachment_state := data["task"].get("ctf_control", {}).get("initial_attachment_state"):
+        public["task"]["initial_attachment_state"] = attachment_state
     public["task"]["ctf_cleanup"] = data["task"].get("ctf_control", {}).get("cleanup", {})
     public["task"]["ctf_review_usage"] = data["task"].get("ctf_control", {}).get("review_usage", {})
     if identity.kind == "user":

@@ -11,7 +11,7 @@ USER root
 ARG ASSIGNMENT_NETWORK_V1=0
 COPY --from=official /execd /opt/bbx/control/execd
 COPY --from=launcher-build /tmp/launcher /opt/bbx/control/launcher
-COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py /opt/bbx/control/
+COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py launcher/materialize-inputs.py /opt/bbx/control/
 RUN case "$ASSIGNMENT_NETWORK_V1" in 0) ;; 1) install -m 0444 /dev/null /opt/bbx/control/assignment-network-v1 ;; *) exit 1 ;; esac
 COPY src/bbx_sandbox_execution /opt/bbx/control/python/bbx_sandbox_execution
 RUN groupadd --gid 10000 bbx-solver \

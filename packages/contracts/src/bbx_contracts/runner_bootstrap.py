@@ -14,6 +14,7 @@ from pydantic import AwareDatetime, Field
 from .models import ContractModel
 from .native_gateway import FrozenExchangeRate
 from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
+from .runner_inputs import NativeSharedInputLimits
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -135,6 +136,9 @@ class NativeCtfEnvironment(NativeCtfEnvironmentRef):
     label: str = Field(min_length=1, max_length=100)
     model_id: str
     model_version: int
+    shared_inputs: NativeSharedInputLimits | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TaskCreationCapabilities(ContractModel):

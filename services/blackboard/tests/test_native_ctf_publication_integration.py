@@ -6,19 +6,21 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from bbx_blackboard.api import create_app
-from bbx_blackboard.auth import issue_user_token
+from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.input_groups import request_hash
 from bbx_blackboard.native_ctf_publication import PublicationState, load_publication
+from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.platform import ModelInput
 from bbx_blackboard.profiles import ctf_profile
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
 from bbx_contracts.ctf import CtfTaskCreate, load_ctf_profile
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
 from pydantic import SecretStr
@@ -31,6 +33,11 @@ from test_native_runner_bootstrap_integration import config, runtime_settings
 from test_runner_control_integration import SERVICE
 
 pytestmark = pytest.mark.integration
+
+
+class UploadObjects(Objects):
+    async def put(self, uri, data, **kwargs):
+        await super().put(uri, data.read() if hasattr(data, "read") else data, **kwargs)
 
 
 async def test_public_native_creation_freezes_and_replays_original_task(
@@ -51,7 +58,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
-    app = create_app(options, engine=ctf.repo.engine, objects=Objects())
+    app = create_app(options, engine=ctf.repo.engine, objects=UploadObjects())
     app.state.native_ctf_publication = PublicationState()
     platform = app.state.platform_store
     model = await platform.save(
@@ -174,10 +181,10 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as http:
 
-        async def group():
+        async def group() -> str:
             response = await http.post("/api/task-input-groups", headers=user)
             assert response.status_code == 200, response.text
-            return response.json()["id"]
+            return str(response.json()["id"])
 
         legacy_body = {**create, "input_group_id": await group()}
         old_hash = request_hash(
@@ -380,3 +387,254 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             )
             assert response.status_code == 200, response.text
             assert response.json()["data"]["traffic_profile"] == "binding-pcap-v1"
+
+        # Enable the additive P4k capability under the same original publication contract.
+        path.write_text(json.dumps({**publication, "inputs_profile": INPUT_PROFILE}))
+        app.state.native_ctf_publication = load_publication(rotated, allow_test_only=True)
+        shared = (await http.get("/api/task-creation-capabilities", headers=user)).json()[
+            "native_ctf"
+        ]
+        assert shared["shared_inputs"] == {
+            "profile": INPUT_PROFILE,
+            "max_file_bytes": 16 * 1024 * 1024,
+            "max_total_bytes": 24 * 1024 * 1024,
+            "max_files": 20,
+        }
+        source_group = await group()
+        uploads = f"/api/task-input-groups/{source_group}/files"
+        payload = b"\x00\xffinitial attachment\x00"
+        attached = []
+        for filename, data in (("材料.bin", payload), ("empty", b"")):
+            response = await http.post(
+                uploads, headers=user, params={"filename": filename}, content=data
+            )
+            assert response.status_code == 200, response.text
+            attached.append(response.json())
+        oversized = await http.post(
+            uploads,
+            headers=user,
+            params={"filename": "too-large.bin"},
+            content=b"x" * (shared["shared_inputs"]["max_file_bytes"] + 1),
+        )
+        assert oversized.status_code == 413
+        selected = [item["id"] for item in attached]
+        body = {
+            **create,
+            "input_group_id": source_group,
+            "input_file_ids": selected,
+            "native_environment": {
+                key: shared[key] for key in ("id", "revision", "publication_stamp")
+            },
+        }
+        assert (await http.post("/api/tasks", headers=user, json=body)).status_code == 422
+        assert (
+            await http.post(
+                "/api/tasks", headers=user, json={**body, "public_input_ids": selected[:1]}
+            )
+        ).status_code == 422
+        body["public_input_ids"] = selected
+        response = await http.post("/api/tasks", headers=user, json=body)
+        assert response.status_code == 200, response.text
+        attached_tid = response.json()["id"]
+        replay = await http.post("/api/tasks", headers=user, json=body)
+        assert replay.json()["id"] == attached_tid
+        assert (await http.get(f"/api/tasks/{attached_tid}", headers=user)).json()[
+            "initial_attachment_state"
+        ] == "pending"
+        # Users retain the original object; a Task-agent token cannot use the group API.
+        downloaded = await http.get(uploads + "/" + selected[0], headers=user)
+        assert downloaded.status_code == 200 and downloaded.content == payload
+        agent_token = issue_agent_token(
+            rotated, UUID(attached_tid), "lead", generation=1, turn_id=uuid4()
+        )
+        agent = {"Authorization": f"Bearer {agent_token}"}
+        assert (await http.get(uploads + "/" + selected[0], headers=agent)).status_code == 403
+
+        bootstrap_url = f"/api/tasks/{attached_tid}/ctf/runtime/runner-bootstrap"
+        host_url = f"/api/tasks/{attached_tid}/sandbox-host/inputs"
+        uid = str(uuid4())
+        observation = {
+            "namespace_uid": str(uuid4()),
+            "workspace_pvc": {"uid": uid, "name": "bbx-workspace"},
+            "journal_pvc": {"uid": str(uuid4()), "name": "bbx-journal"},
+            "runner_secret": {"uid": str(uuid4()), "name": "runner"},
+            "sandbox_host_secret": {"uid": str(uuid4()), "name": "bbx-sandbox-host"},
+            "runner": {
+                "pod_uid": str(uuid4()),
+                "container_id": "containerd://" + "a" * 64,
+                "host_container_id": "containerd://" + "b" * 64,
+                "phase": "Running",
+                "pod_ip": "10.12.0.1",
+            },
+            "sandbox": {
+                "id": str(uuid4()),
+                "cr_uid": str(uuid4()),
+                "pod_uid": str(uuid4()),
+                "container_id": "containerd://" + "c" * 64,
+                "phase": "Running",
+                "environment_revision": resource["environment_revision"],
+            },
+        }
+        async with RuntimeLock(runtime_settings(ctf_url), fenced=True) as runtime:
+            assert runtime.backend_started_at is not None
+            claim = {
+                "controller_id": str(uuid4()),
+                "controller_fence": runtime.fence,
+                "controller_pid": runtime.backend_pid,
+                "controller_started_at": runtime.backend_started_at.isoformat(),
+            }
+            response = await http.post(
+                bootstrap_url + "/claim",
+                headers=SERVICE,
+                json={**claim, "resource_config": resource},
+            )
+            assert response.status_code == 200, response.text
+            operation = response.json()
+            fence = {
+                "operation_id": operation["operation_id"],
+                "controller_id": claim["controller_id"],
+                "controller_generation": runtime.fence,
+            }
+
+            async def action(name, **params):
+                return await http.post(
+                    bootstrap_url + "/actions",
+                    headers=SERVICE,
+                    json={**fence, "action": name, **params},
+                )
+
+            response = await action("observation", observation=observation)
+            assert response.status_code == 200, response.text
+            context = {
+                "sandbox_id": observation["sandbox"]["id"],
+                "sandbox_pod_uid": observation["sandbox"]["pod_uid"],
+                "environment_revision": resource["environment_revision"],
+                "execution_context_id": "a" * 64,
+                "execd_endpoint": "sandbox.invalid",
+                "host_url": "http://10.12.0.1:8766",
+            }
+            material = await action("sandbox_host_material", proof={"context": context})
+            assert material.status_code == 200, material.text
+            assert material.json()["inputs_profile"] == INPUT_PROFILE
+            ready_proof = {"context_digest": material.json()["context_digest"]}
+            for name, params in (
+                ("material", {}),
+                ("activate", {}),
+                ("sandbox_host_ready", {"proof": ready_proof}),
+            ):
+                response = await action(name, **params)
+                assert response.status_code == 409, (name, response.text)
+            async with ctf.repo.engine.connect() as conn:
+                assert (
+                    await conn.execute(
+                        select(s.runner_owners.c.epoch).where(
+                            s.runner_owners.c.task_id == attached_tid
+                        )
+                    )
+                ).first() is None
+                assert (
+                    await conn.execute(
+                        select(s.native_task_budgets.c.task_id).where(
+                            s.native_task_budgets.c.task_id == attached_tid
+                        )
+                    )
+                ).first() is None
+            assert (await http.get(host_url, headers=user)).status_code == 401
+            host = {"x-bbx-sandbox-report": material.json()["report_key"]}
+            assert (
+                await http.post(host_url + "/claim", headers=host, content=b"x" * 4097)
+            ).status_code == 413
+            response = await http.get(host_url, headers=host)
+            assert response.status_code == 200, response.text
+            plan = response.json()
+            assert plan["state"] == "pending" and len(plan["files"]) == 2
+            assert all(
+                set(file) == {"id", "filename", "path", "size", "sha256"} for file in plan["files"]
+            )
+            scope = plan["scope"]
+            assert scope["workspace_pvc_uid"] == uid
+            wrong = {**scope, "workspace_pvc_uid": str(uuid4())}
+            assert (await http.get(host_url + "/" + selected[0], headers=host)).status_code == 409
+            assert (
+                await http.post(host_url + "/claim", headers=host, json={"scope": wrong})
+            ).status_code == 409
+            first = await http.post(host_url + "/claim", headers=host, json={"scope": scope})
+            repeat = await http.post(host_url + "/claim", headers=host, json={"scope": scope})
+            assert first.json() == {"launch_allowed": True, "state": "claimed"}
+            assert repeat.json() == {"launch_allowed": False, "state": "claimed"}
+            assert (await http.get(host_url + "/" + str(uuid4()), headers=host)).status_code == 404
+            for file, data in zip(selected, (payload, b""), strict=True):
+                response = await http.get(host_url + "/" + file, headers=host)
+                assert response.status_code == 200 and response.content == data, response.text
+            assert (
+                await http.post(
+                    host_url + "/confirm",
+                    headers=host,
+                    json={"scope": wrong, "result": "materialized"},
+                )
+            ).status_code == 409
+            wrong_pod = {**scope, "sandbox_pod_uid": str(uuid4())}
+            assert (
+                await http.post(
+                    host_url + "/confirm",
+                    headers=host,
+                    json={"scope": wrong_pod, "result": "materialized"},
+                )
+            ).status_code == 409
+            proof = {"scope": scope, "result": "materialized"}
+            for _ in range(2):
+                assert (
+                    await http.post(host_url + "/confirm", headers=host, json=proof)
+                ).json() == {"state": "confirmed"}
+            assert (await http.get(host_url + "/" + selected[0], headers=host)).status_code == 409
+            response = await action("sandbox_host_ready", proof=ready_proof)
+            assert response.status_code == 200, response.text
+            async with ctf.repo.engine.connect() as conn:
+                record = await app.state.native_runner_bootstrap._get(conn, attached_tid)
+            assert record is not None
+            require_inputs_confirmed(record)
+            # The original proof follows the retained PVC, not replacement Pod or mutable files.
+            replacement = {
+                **record,
+                "data": {**record["data"], "resource_generation": 2},
+                "observation": {**record["observation"], "sandbox": {"pod_uid": str(uuid4())}},
+            }
+            with pytest.raises(HTTPException, match="receipt identity changed"):
+                require_inputs_confirmed(replacement)
+            replacement["data"]["recovery_history"] = [
+                {
+                    "operation_id": operation["operation_id"],
+                    "resource_generation": 1,
+                    "execution_context_id": scope["execution_context_id"],
+                    "original_observation": record["observation"],
+                    "resources": {
+                        key: scope[key]
+                        for key in (
+                            "workspace_pvc_uid",
+                            "sandbox_id",
+                            "sandbox_pod_uid",
+                            "sandbox_container_id",
+                        )
+                    },
+                    "exit_proof": {
+                        "runner_terminated": True,
+                        "sandbox_terminated": True,
+                        "pvcs_retained": True,
+                    },
+                    "replacement_proof": {"writer_released": True, "workspace_pvc_uid": uid},
+                }
+            ]
+            require_inputs_confirmed(replacement)
+            missing = {
+                **replacement,
+                "data": {
+                    key: value
+                    for key, value in replacement["data"].items()
+                    if key != "inputs_receipt"
+                },
+            }
+            with pytest.raises(HTTPException, match="not confirmed"):
+                require_inputs_confirmed(missing)
+            replacement["observation"]["workspace_pvc"] = {"uid": str(uuid4())}
+            with pytest.raises(HTTPException, match="not confirmed"):
+                require_inputs_confirmed(replacement)

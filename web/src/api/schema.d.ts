@@ -2540,6 +2540,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/sandbox-host/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Input Plan */
+        get: operations["input_plan_api_tasks__task_id__sandbox_host_inputs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Input Claim */
+        post: operations["input_claim_api_tasks__task_id__sandbox_host_inputs_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Input Confirm */
+        post: operations["input_confirm_api_tasks__task_id__sandbox_host_inputs_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Input Content */
+        get: operations["input_content_api_tasks__task_id__sandbox_host_inputs__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/sandbox-host/network": {
         parameters: {
             query?: never;
@@ -5628,6 +5696,7 @@ export interface components {
             publication_stamp: string;
             /** Revision */
             revision: number;
+            shared_inputs?: components["schemas"]["NativeSharedInputLimits"] | null;
         };
         /** NativeCtfEnvironmentRef */
         NativeCtfEnvironmentRef: {
@@ -5665,6 +5734,70 @@ export interface components {
             pending_attempts: number;
             /** Threshold Usd */
             threshold_usd: string;
+        };
+        /** NativeInputClaimResult */
+        NativeInputClaimResult: {
+            /** Launch Allowed */
+            launch_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "disabled" | "pending" | "claimed" | "confirmed" | "blocked";
+        };
+        /** NativeInputFile */
+        NativeInputFile: {
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Path */
+            path: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+        };
+        /** NativeInputPlan */
+        NativeInputPlan: {
+            /** Files */
+            files?: components["schemas"]["NativeInputFile"][] | null;
+            scope?: components["schemas"]["NativeInputScope"] | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "disabled" | "pending" | "claimed" | "confirmed" | "blocked";
+        };
+        /** NativeInputScope */
+        NativeInputScope: {
+            /** Execution Context Id */
+            execution_context_id: string;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Resource Generation */
+            resource_generation: number;
+            /** Sandbox Container Id */
+            sandbox_container_id: string;
+            /** Sandbox Id */
+            sandbox_id: string;
+            /** Sandbox Pod Uid */
+            sandbox_pod_uid: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Workspace Pvc Uid */
+            workspace_pvc_uid: string;
         };
         /** NativeModelDispatchGrant */
         NativeModelDispatchGrant: {
@@ -5942,6 +6075,30 @@ export interface components {
             request_id: string;
             /** Traffic Profile */
             traffic_profile?: "binding-pcap-v1" | null;
+        };
+        /** NativeSharedInputLimits */
+        NativeSharedInputLimits: {
+            /**
+             * Max File Bytes
+             * @default 16777216
+             */
+            max_file_bytes: number;
+            /**
+             * Max Files
+             * @default 20
+             */
+            max_files: number;
+            /**
+             * Max Total Bytes
+             * @default 25165824
+             */
+            max_total_bytes: number;
+            /**
+             * Profile
+             * @default shared-inputs-v1
+             * @constant
+             */
+            profile: "shared-inputs-v1";
         };
         /** NativeTransportObservation */
         NativeTransportObservation: {
@@ -7282,6 +7439,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Initial Attachment State */
+            initial_attachment_state?: ("pending" | "ready" | "blocked") | null;
             /** Initial Attachments */
             initial_attachments?: components["schemas"]["InitialAttachment"][];
             /** Members */
@@ -13838,6 +13997,129 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_plan_api_tasks__task_id__sandbox_host_inputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_claim_api_tasks__task_id__sandbox_host_inputs_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputClaimResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_confirm_api_tasks__task_id__sandbox_host_inputs_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_content_api_tasks__task_id__sandbox_host_inputs__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

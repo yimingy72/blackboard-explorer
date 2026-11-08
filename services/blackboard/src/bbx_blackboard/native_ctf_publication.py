@@ -16,6 +16,7 @@ from bbx_contracts.runner_bootstrap import (
     TaskCreationCapabilities,
     management_document_digest,
 )
+from bbx_contracts.runner_inputs import INPUT_PROFILE, NativeSharedInputLimits
 from fastapi import HTTPException
 from pydantic import Field
 
@@ -49,6 +50,8 @@ class CaptureAcceptance(ContractModel):
     catalog_revision: str = Field(min_length=1)
     model: PublishedModel
     public_create_and_archive: Literal[True]
+    inputs_profile: Literal["shared-inputs-v1"] | None = None
+    inputs_host_image: str | None = None
 
 
 class NativeCtfPublication(ContractModel):
@@ -61,6 +64,9 @@ class NativeCtfPublication(ContractModel):
     exchange_rate: FrozenExchangeRate
     runtime_resource_config: dict[str, Any]
     acceptance: AcceptanceReference | None = None
+    inputs_profile: Literal["shared-inputs-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     def public(self, stamp: str) -> NativeCtfEnvironment:
         return NativeCtfEnvironment(
@@ -70,6 +76,9 @@ class NativeCtfPublication(ContractModel):
             label=self.label,
             model_id=self.model.id,
             model_version=self.model.version,
+            shared_inputs=NativeSharedInputLimits()
+            if self.inputs_profile == INPUT_PROFILE
+            else None,
         )
 
     def frozen(self) -> dict:
@@ -77,6 +86,7 @@ class NativeCtfPublication(ContractModel):
             "id": self.id,
             "revision": self.revision,
             "runtime_config_digest": management_document_digest(self.runtime_resource_config),
+            **({"inputs_profile": self.inputs_profile} if self.inputs_profile else {}),
         }
 
     def validate_budget(self, cny: Decimal) -> None:
@@ -143,6 +153,12 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 == accepted.traffic_sandbox_image.rsplit("@", 1)[-1]
                 or accepted.catalog_revision != settings.native_gateway_catalog_revision
                 or accepted.model != publication.model
+                or accepted.inputs_profile != publication.inputs_profile
+                or (
+                    publication.inputs_profile == INPUT_PROFILE
+                    and accepted.inputs_host_image
+                    != publication.runtime_resource_config.get("sandbox_host_image")
+                )
             ):
                 raise ValueError("Original image acceptance does not match this deployment")
         if publication.exchange_rate.observed_at.tzinfo is None:

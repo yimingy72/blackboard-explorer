@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "const": "shared-inputs-v1",
+      "default": "shared-inputs-v1",
+      "title": "Profile",
+      "type": "string"
+    },
+    "max_file_bytes": {
+      "default": 16777216,
+      "title": "Max File Bytes",
+      "type": "integer"
+    },
+    "max_total_bytes": {
+      "default": 25165824,
+      "title": "Max Total Bytes",
+      "type": "integer"
+    },
+    "max_files": {
+      "default": 20,
+      "title": "Max Files",
+      "type": "integer"
+    }
+  },
+  "title": "NativeSharedInputLimits",
+  "type": "object"
+}

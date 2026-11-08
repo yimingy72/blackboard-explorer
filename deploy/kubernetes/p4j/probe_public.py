@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import UUID
 
 from common import NODE, ROOT, STATE, kubectl, owned_cluster
-from image_release import DIGEST, GIB, local_docker, pinned_image
 
 shared = runpy.run_path(str(ROOT / "deploy/kubernetes/p4i/probe.py"))
 tool_results = shared["tool_results"]
@@ -20,6 +19,8 @@ PORT = shared["PORT"]
 
 
 def install_kali_capture(receipt_path):
+    from image_release import DIGEST, GIB, local_docker, pinned_image
+
     owned_cluster()
     receipt = json.loads(receipt_path.read_text())
     if (
@@ -83,6 +84,12 @@ class PublicCTFProbe(shared["TrafficProbe"]):
             self.gateway_owner = "p4j-corrected"
             self.revised = True
 
+    def publication_options(self):
+        return {}
+
+    async def group_inputs(self, http, origin, group_id, capability):
+        return {}
+
     async def public_create(self, app, cfg, settings, resources, http, origin, model):
         from bbx_blackboard.auth import issue_user_token
         from bbx_blackboard.native_ctf_publication import load_publication
@@ -109,6 +116,7 @@ class PublicCTFProbe(shared["TrafficProbe"]):
                 "runner_blackboard_url": settings.runner_blackboard_url.rstrip("/"),
                 "runner_model_proxy_url": settings.runner_model_proxy_url.rstrip("/"),
             },
+            **self.publication_options(),
         }
         path = STATE / self.result_directory / "test-only-publication.json"
         path.write_text(json.dumps(publication, indent=2) + "\n")
@@ -140,6 +148,7 @@ class PublicCTFProbe(shared["TrafficProbe"]):
                 **expected,
                 "publication_stamp": view["native_ctf"]["publication_stamp"],
             },
+            **await self.group_inputs(http, origin, group_id, view["native_ctf"]),
         }
         intent = STATE / self.result_directory / "public-create-intent.json"
         intent.write_text(

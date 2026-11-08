@@ -23,6 +23,7 @@ from bbx_contracts.runner_bootstrap import (
     BINDING_CAPTURE_CONFIG_FIELDS,
     validate_binding_capture_deployment,
 )
+from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_sandbox_execution.connect import read_execution_context
 from opensandbox import Sandbox, SandboxManager
 from opensandbox.adapters.factory import AdapterFactory
@@ -836,6 +837,36 @@ class RunnerResources:
             },
         }
 
+    @staticmethod
+    def _workspace_input_mount(pod, main):
+        mounts = main.get("volumeMounts", [])
+        selected = [mount for mount in mounts if mount.get("mountPath") == "/workspace"]
+        if len(selected) != 1 or any(
+            mount.get("mountPath", "").startswith("/workspace/") for mount in mounts
+        ):
+            raise ResourceUnknown("Original workspace mount is not exclusive")
+        mount = selected[0]
+        matching = [
+            volume
+            for volume in pod["spec"].get("volumes", [])
+            if volume.get("name") == mount.get("name")
+        ]
+        if (
+            len(matching) != 1
+            or mount.get("readOnly")
+            or mount.get("subPath")
+            or mount.get("subPathExpr")
+            or mount.get("mountPropagation")
+            or matching[0].get("persistentVolumeClaim")
+            not in (
+                {"claimName": "bbx-workspace"},
+                {"claimName": "bbx-workspace", "readOnly": False},
+            )
+        ):
+            raise ResourceUnknown(
+                "Original attachment destination is not the approved workspace PVC"
+            )
+
     def _sandbox_spec(self, pod, operation):
         self._pod_projection(pod)
         main = next(c for c in pod["spec"]["containers"] if c["name"] == "sandbox")
@@ -872,6 +903,8 @@ class RunnerResources:
             )
         ):
             raise ResourceUnknown("The native Sandbox deployment identity changed")
+        if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE:
+            self._workspace_input_mount(pod, main)
         return env["BBX_ENVIRONMENT_REVISION"]["value"]
 
     def _runner_document(self, namespace, labels, generation=1, lock_id=None):
@@ -1226,6 +1259,19 @@ class RunnerResources:
             or self._sandbox_spec(pod, operation) != original["environment_revision"]
         ):
             raise ResourceUnknown("The original Sandbox Pod identity changed")
+        if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE:
+            ref = observed.get("workspace_pvc", {})
+            if ref.get("name") != "bbx-workspace" or not ref.get("uid"):
+                raise ResourceUnknown("Original attachment workspace PVC is unconfirmed")
+            claim = self._owned(
+                await self._get("pvc", "bbx-workspace", namespace), labels, ref["uid"]
+            )
+            if (
+                claim["metadata"].get("deletionTimestamp")
+                or claim.get("status", {}).get("phase") != "Bound"
+                or not claim.get("spec", {}).get("volumeName")
+            ):
+                raise ResourceUnknown("Original attachment workspace PVC is not live and bound")
         secret = self._owned(
             await self._get("secret", "bbx-execd", namespace),
             labels,
@@ -1293,6 +1339,11 @@ class RunnerResources:
             **(
                 {"traffic_targets": self.config["traffic_targets"]}
                 if self.traffic_enabled(operation)
+                else {}
+            ),
+            **(
+                {"inputs_profile": INPUT_PROFILE}
+                if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE
                 else {}
             ),
             "ca_file": SANDBOX_HOST_MOUNT + "/ca.pem",

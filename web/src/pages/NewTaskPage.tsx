@@ -66,6 +66,7 @@ export default function NewTaskPage() {
     const capabilities = useQuery({ queryKey: ['task-creation-capabilities'], queryFn: api.taskCreationCapabilities });
     const nativeDeployment = capabilities.data?.mode === 'native-ctf';
     const nativeEnvironment = capabilities.data?.native_ctf;
+    const sharedInputs = nativeEnvironment?.shared_inputs;
     const creationBlocked = !capabilities.isSuccess || nativeDeployment && !nativeEnvironment;
     const mode = nativeDeployment ? 'ctf' : selectedMode;
     const models = useQuery({ queryKey: ['platform-models'], queryFn: api.listPlatformModels, enabled: capabilities.isSuccess && !nativeDeployment, refetchOnWindowFocus: true });
@@ -120,8 +121,8 @@ export default function NewTaskPage() {
                 setFormError('请选择可用的平台模型。');
                 return;
             }
-            if (nativeDeployment && (inputIds.length || agents > 20 || agents < 1)) {
-                setFormError(inputIds.length ? '此环境不支持附件，请返回后新建任务。' : '原生 CTF 需要 1 至 20 个 Worker 席位。');
+            if (nativeDeployment && ((!sharedInputs && inputIds.length) || agents > 20 || agents < 1)) {
+                setFormError(!sharedInputs && inputIds.length ? '此环境不支持附件，请返回后新建任务。' : '原生 CTF 需要 1 至 20 个 Worker 席位。');
                 return;
             }
             if (!nativeDeployment && reasoningEffort && (!provider?.supports_reasoning_effort || !['none', ...efforts].includes(reasoningEffort))) {
@@ -155,7 +156,7 @@ export default function NewTaskPage() {
         }
         setPending(true);
         try {
-            const ready = submitted.current ?? { ...input, input_group_id: await ensureGroup(), input_file_ids: inputIds };
+            const ready = submitted.current ?? { ...input, input_group_id: await ensureGroup(), input_file_ids: inputIds, ...(sharedInputs && inputIds.length ? { public_input_ids: inputIds } : {}) };
             if (!alive.current)
                 return;
             submitted.current = ready;
@@ -204,7 +205,10 @@ export default function NewTaskPage() {
               <Form.Item label="任务目标" htmlFor="goal" required><Input.TextArea id="goal" autoSize={{ minRows: 4, maxRows: 10 }} value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="描述要解决的问题、范围和预期结果" required /></Form.Item>
               <Form.Item label="领域背景" htmlFor="domain-context"><Input.TextArea id="domain-context" autoSize={{ minRows: 2, maxRows: 6 }} value={context} onChange={(event) => setContext(event.target.value)} placeholder="已知信息、资料范围或执行边界（可选）" /></Form.Item>
               {mode === 'ctf' ? <Form.Item label="完成要求" htmlFor="completion-requirements"><Input.TextArea id="completion-requirements" autoSize={{ minRows: 3, maxRows: 8 }} value={completionRequirements} onChange={(event) => setCompletionRequirements(event.target.value)} placeholder="需要完成的题目、证据或交付内容" /></Form.Item> : <section className={styles.acceptance} aria-label="验收条件"><h2>验收条件</h2>{acceptance.map((item, index) => <div className={styles.acceptanceRow} key={item.key}><span>A{index + 1}</span><Input.TextArea aria-label={`验收条件 ${index + 1}`} id={`acceptance-${item.key}`} autoSize={{ minRows: 1, maxRows: 5 }} value={item.desc} onChange={(event) => updateAcceptance(item.key, event.target.value)} placeholder="说明如何判断这一项已完成" required /><Button type="text" icon={<DeleteOutlined />} aria-label={`删除验收条件 ${index + 1}`} disabled={pending || locked || acceptance.length === 1} onClick={() => setAcceptance((items) => items.filter((entry) => entry.key !== item.key))} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={addAcceptance}>添加验收条件</Button></section>}
-              {nativeDeployment ? <p className={controls.hint}>此环境暂不支持初始附件。</p> : <section className={styles.attachments} aria-label="初始附件"><TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked} onStatus={attachmentsStatus} /></section>}
+              {nativeDeployment && !sharedInputs ? <p className={controls.hint}>此环境暂不支持初始附件。</p> : <section className={styles.attachments} aria-label="初始附件">
+                {sharedInputs && <p className={controls.hint}>所选附件在启动前复制到共享工作区，同任务团队可读。单件 {sharedInputs.max_file_bytes / 1048576} MiB，合计 {sharedInputs.max_total_bytes / 1048576} MiB，最多 {sharedInputs.max_files} 件。</p>}
+                <TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked} limits={sharedInputs ?? undefined} onStatus={attachmentsStatus} />
+              </section>}
             </section>
             <aside className={styles.sidebar} aria-label="任务设置"><h2>运行设置</h2>
               {nativeEnvironment && <Alert type="info" title={nativeEnvironment.label} description="此环境使用管理员配置的 IPv4 TCP 目标。已封存的逐 Agent 流量可在任务内查看。" />}

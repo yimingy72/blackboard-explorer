@@ -9,8 +9,9 @@ test('原生 CTF 创建需要已发布环境，网络不明时重试同一输入
   };
   const requests: unknown[] = [];
   let available = false;
+  let inputsEnabled = false;
   await page.route('**/api/task-creation-capabilities', (route) =>
-    route.fulfill({ json: { mode: 'native-ctf', native_ctf: available ? native : null } }));
+    route.fulfill({ json: { mode: 'native-ctf', native_ctf: available ? { ...native, ...(inputsEnabled && { shared_inputs: { profile: 'shared-inputs-v1', max_file_bytes: 16 * 1024 * 1024, max_total_bytes: 24 * 1024 * 1024, max_files: 20 } }) } : null } }));
   await page.route('**/api/tasks', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback();
     requests.push(route.request().postDataJSON());
@@ -27,6 +28,14 @@ test('原生 CTF 创建需要已发布环境，网络不明时重试同一输入
   await expect(page.getByText('此环境暂不支持初始附件。')).toBeVisible();
   await expect(page.locator('input[type=file]')).toHaveCount(0);
   await expect(page.getByText('黑板探索', { exact: true })).toHaveCount(0);
+  inputsEnabled = true;
+  await page.reload();
+  await expect(page.getByText(/同任务团队可读/)).toBeVisible();
+  const picker = page.locator('input[type=file]');
+  await picker.setInputFiles({ name: 'too-large.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(16 * 1024 * 1024 + 1) });
+  await expect(page.getByRole('alert').filter({ hasText: /每个文件最多 16 MiB/ })).toBeVisible();
+  await picker.setInputFiles({ name: 'shared.bin', mimeType: 'application/octet-stream', buffer: Buffer.from([0, 255, 10]) });
+  await expect(page.getByText(/已上传/)).toBeVisible();
   await page.getByLabel('任务目标').fill('验证原生创建和流量归档');
   await page.screenshot({ path: test.info().outputPath('native-ctf-create.png') });
   const create = page.getByRole('button', { name: '创建任务', exact: true });
@@ -41,8 +50,10 @@ test('原生 CTF 创建需要已发布环境，网络不明时重试同一输入
   expect(requests[0]).toMatchObject({
     mode: 'ctf', model_id: native.model_id, model_version: native.model_version,
     native_environment: { id: native.id, revision: native.revision, publication_stamp: native.publication_stamp },
-    input_group_id: expect.any(String), input_file_ids: [], egress_allowlist: [],
+    input_group_id: expect.any(String), input_file_ids: [expect.any(String)], egress_allowlist: [],
   });
+  const saved = requests[0] as { input_file_ids: string[]; public_input_ids: string[] };
+  expect(saved.public_input_ids).toEqual(saved.input_file_ids);
   expect(requests[0]).not.toHaveProperty('reasoning_effort');
   expect(mock.unexpected).toEqual([]);
 });

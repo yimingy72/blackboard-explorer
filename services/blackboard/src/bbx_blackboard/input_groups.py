@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import anyio
 from bbx_contracts.models import InitialAttachment
+from bbx_contracts.runner_inputs import INPUT_FILE_LIMIT, INPUT_PROFILE, INPUT_TOTAL_LIMIT
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -135,11 +136,20 @@ class InputGroups:
         return dict(task)
 
     async def upload(
-        self, group_id: UUID, owner: str, filename: str, content: BinaryIO, size: int, sha: str
+        self,
+        group_id: UUID,
+        owner: str,
+        filename: str,
+        content: BinaryIO,
+        size: int,
+        sha: str,
+        *,
+        file_limit=FILE_LIMIT,
+        total_limit=TOTAL_LIMIT,
     ) -> InitialAttachment:
         check_filename(filename)
-        if size > FILE_LIMIT:
-            raise HTTPException(413, "单个附件不能超过 50 MiB")
+        if size > file_limit:
+            raise HTTPException(413, f"单个附件不能超过 {file_limit // (1024 * 1024)} MiB")
         fid = uuid4()
         attachment = InitialAttachment(
             id=fid,
@@ -153,8 +163,10 @@ class InputGroups:
             row = await self.row(conn, group_id, lock=True)
             check_mutable(row, owner)
             files = row["files"]
-            if len(files) >= FILE_COUNT or sum(item["size"] for item in files) + size > TOTAL_LIMIT:
-                raise HTTPException(413, "最多 20 个附件，合计不能超过 200 MiB")
+            if len(files) >= FILE_COUNT or sum(item["size"] for item in files) + size > total_limit:
+                raise HTTPException(
+                    413, f"最多 20 个附件，合计不能超过 {total_limit // (1024 * 1024)} MiB"
+                )
             pending = asyncio.create_task(
                 self.objects.put(attachment.uri, content, length=size, part_size=FILE_LIMIT)
             )
@@ -298,11 +310,15 @@ async def readable(request: Request, group_id: UUID) -> dict[str, Any]:
         async with groups(request).engine.connect() as conn:
             task = (
                 await conn.execute(
-                    select(s.tasks.c.deleting).where(s.tasks.c.id == row["bound_task_id"])
+                    select(s.tasks.c.deleting, s.tasks.c.ctf_control).where(
+                        s.tasks.c.id == row["bound_task_id"]
+                    )
                 )
             ).first()
         if task is None or task[0]:
             raise HTTPException(404, "Task not found")
+        if identity.kind == "agent" and (task[1] or {}).get("initial_attachment_state"):
+            raise HTTPException(403, "Native shared inputs are not exposed by attachment-group API")
     return row
 
 
@@ -343,21 +359,35 @@ async def upload_file(
     store = groups(request)
     check_filename(filename)
     check_mutable(await store.get(group_id), owner_key(identity))
+    publication = request.app.state.native_ctf_publication.publication
+    shared = publication is not None and publication.inputs_profile == INPUT_PROFILE
+    file_limit = INPUT_FILE_LIMIT if shared else FILE_LIMIT
+    limit_options = (
+        {"file_limit": INPUT_FILE_LIMIT, "total_limit": INPUT_TOTAL_LIMIT} if shared else {}
+    )
     size, digest = 0, hashlib.sha256()
     with TemporaryFile() as content:
         try:
             async with asyncio.timeout(UPLOAD_SECONDS):
                 async for chunk in request.stream():
                     size += len(chunk)
-                    if size > FILE_LIMIT:
-                        raise HTTPException(413, "单个附件不能超过 50 MiB")
+                    if size > file_limit:
+                        raise HTTPException(
+                            413, f"单个附件不能超过 {file_limit // (1024 * 1024)} MiB"
+                        )
                     digest.update(chunk)
                     await anyio.to_thread.run_sync(content.write, chunk)
                 await anyio.to_thread.run_sync(content.seek, 0)
         except TimeoutError:
             raise HTTPException(408, "附件上传超时，请重新上传") from None
         return await store.upload(
-            group_id, owner_key(identity), filename, content, size, digest.hexdigest()
+            group_id,
+            owner_key(identity),
+            filename,
+            content,
+            size,
+            digest.hexdigest(),
+            **limit_options,
         )
 
 

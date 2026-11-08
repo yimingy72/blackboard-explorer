@@ -28,8 +28,9 @@ def main(candidate, *, tags=TAGS, sandbox_tag="bbx-p3g-sandbox:20261107"):
     files = {}
     runtime = candidate / "services/agent-runtime/src/bbx_runtime"
     host_sources = ["__init__.py", "sandbox_mcp.py", "sandbox_tools.py"]
-    if (runtime / "sandbox_network.py").is_file():
-        host_sources.append("sandbox_network.py")
+    for optional in ("sandbox_network.py", "sandbox_inputs.py"):
+        if (runtime / optional).is_file():
+            host_sources.append(optional)
     for name in host_sources:
         original = runtime / name
         shutil.copyfile(original, source / "bbx_runtime" / name)
