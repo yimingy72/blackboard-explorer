@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -41,6 +42,18 @@ REPLY_HEADERS = {
     "www-authenticate",
 }
 LIMIT = 16 * 1024 * 1024
+READBACK_SECONDS = 20
+READBACK_INTERVAL = 0.5
+TRANSIENT_READ_STATUS = {502, 503, 504}
+RETRY_READBACK = {
+    "read_transport",
+    "runtime_unavailable",
+    "runtime_unsynchronized",
+    "resource_unavailable",
+    "resource_not_visible",
+}
+RESOURCE_FIELDS = ("revision", "value", "createdAt")
+LOGGER = logging.getLogger(__name__)
 
 UI_SECURITY_HEADERS = {
     "content-security-policy",
@@ -290,18 +303,93 @@ class AdminUI:
         return Response(response.content, response.status_code, dict(response.headers))
 
     @staticmethod
-    def persisted(method, path, native, readback):
-        resources = {item["id"]: item for item in readback.json()["resources"]}
-        if method == "DELETE":
-            return path.rsplit("/", 1)[-1] not in resources
-        written = native.json()["resources"]
-        return bool(written) and all(
-            item["id"] in resources
-            and all(
-                resources[item["id"]].get(k) == item[k] for k in ("revision", "value", "createdAt")
-            )
-            for item in written
+    def resources(response):
+        items = response.json()["resources"]
+        if not isinstance(items, list):
+            raise ValueError("Invalid native resource collection")
+        result = {}
+        for item in items:
+            key = item["id"]
+            if (
+                not isinstance(key, str)
+                or not key
+                or key in result
+                or not isinstance(item["value"], dict)
+            ):
+                raise ValueError("Invalid native resource")
+            result[key] = item
+        return result
+
+    @staticmethod
+    def resource_identity(item):
+        revision, value, created = (item[field] for field in RESOURCE_FIELDS)
+        if type(revision) is not int or revision < 1 or not isinstance(created, str) or not created:
+            raise ValueError("Missing stored resource identity")
+        return revision, value, created
+
+    @classmethod
+    def write_receipt(cls, native):
+        resources = cls.resources(native)
+        if not resources:
+            raise ValueError("No original native write receipt")
+        return {key: cls.resource_identity(item) for key, item in resources.items()}
+
+    async def readback(self, http, read_path, headers, expected, deleted):
+        active = await self.forward(http, "GET", "/api/runtime", headers)
+        if active.status_code in TRANSIENT_READ_STATUS:
+            return "runtime_unavailable"
+        if active.status_code != 200:
+            return "runtime_rejected"
+        synchronized = active.json()["configReload"]["synchronized"]
+        if synchronized is False:
+            return "runtime_unsynchronized"
+        if synchronized is not True:
+            return "invalid_runtime_receipt"
+        current = await self.forward(http, "GET", read_path, headers)
+        if current.status_code in TRANSIENT_READ_STATUS:
+            return "resource_unavailable"
+        if current.status_code != 200:
+            return "resource_rejected"
+        by_id = self.resources(current)
+        if deleted is not None:
+            return "resource_conflict" if deleted in by_id else None
+        for key, receipt in expected.items():
+            if key in by_id and self.resource_identity(by_id[key]) != receipt:
+                return "resource_conflict"
+        return None if expected.keys() <= by_id.keys() else "resource_not_visible"
+
+    async def confirm(self, http, method, path, read_path, native, headers):
+        deleted = path.rsplit("/", 1)[-1] if method == "DELETE" else None
+        try:
+            expected = {} if deleted is not None else self.write_receipt(native)
+        except (KeyError, TypeError, ValueError):
+            return "invalid_write_receipt"
+        pending = "read_deadline"
+        headers = {name: value for name, value in headers.items() if name != "if-none-match"}
+        try:
+            async with asyncio.timeout(READBACK_SECONDS):
+                while True:
+                    try:
+                        pending = await self.readback(http, read_path, headers, expected, deleted)
+                    except httpx.TransportError:
+                        pending = "read_transport"
+                    except (KeyError, TypeError, ValueError, httpx.HTTPError):
+                        return "invalid_readback"
+                    if pending not in RETRY_READBACK:
+                        return pending
+                    await asyncio.sleep(READBACK_INTERVAL)
+        except TimeoutError:
+            return pending
+
+    @classmethod
+    def pending(cls, request_id, phase, reason):
+        LOGGER.warning(
+            "Native model maintenance pending: request_id=%s phase=%s reason=%s",
+            request_id,
+            phase,
+            reason,
         )
+        return cls.unavailable(request_id)
 
     @staticmethod
     def unavailable(request_id: UUID, *, idle=False) -> Response:
@@ -336,31 +424,30 @@ class AdminUI:
                 released = await self.fence(http, request_id, "release")
                 return self.unavailable(request_id, idle=released)
 
-            # Exactly one native effect; neither the body nor its credentials
-            # leave this request or enter the durable maintenance record.
+            # Exactly one native effect. Only confirmation reads may be retried.
             try:
                 native = await self.forward(http, request.method, path, headers, body=body)
-                if native.is_success:
+            except (httpx.HTTPError, ValueError):
+                return self.pending(request_id, "native_write", "unconfirmed_response")
+            if native.is_success:
+                try:
                     await self.restart(request.app.state.kube, request_id)
-                    active = await self.forward(http, "GET", "/api/runtime", headers)
-                    readback = await self.forward(http, "GET", read_path, headers)
-                    if (
-                        active.status_code != 200
-                        or active.json()["configReload"]["synchronized"] is not True
-                        or readback.status_code != 200
-                        or not self.persisted(request.method, path, native, readback)
-                    ):
-                        return self.unavailable(request_id)
-                elif native.status_code in {400, 401, 403, 404, 409, 422}:
+                except (httpx.HTTPError, KeyError, TypeError, ValueError, TimeoutError):
+                    return self.pending(request_id, "native_rollout", "unconfirmed_same_store")
+                reason = await self.confirm(http, request.method, path, read_path, native, headers)
+                if reason is not None:
+                    return self.pending(request_id, "native_readback", reason)
+            elif native.status_code in {400, 401, 403, 404, 409, 422}:
+                try:
                     after = await self.forward(http, "GET", read_path, headers)
                     if after.status_code != 200 or after.json() != before.json():
-                        return self.unavailable(request_id)
-                else:
-                    return self.unavailable(request_id)
-            except (httpx.HTTPError, KeyError, TypeError, ValueError, TimeoutError):
-                return self.unavailable(request_id)
+                        return self.pending(request_id, "native_write", "rejection_unconfirmed")
+                except (httpx.HTTPError, ValueError):
+                    return self.pending(request_id, "native_write", "rejection_unconfirmed")
+            else:
+                return self.pending(request_id, "native_write", "unexpected_status")
             if not await self.fence(http, request_id, "release"):
-                return self.unavailable(request_id)
+                return self.pending(request_id, "fence_release", "unconfirmed_consumers")
             return self.reply(native)
 
     async def localized_reply(self, request: Request, path: str, headers: dict) -> Response:
