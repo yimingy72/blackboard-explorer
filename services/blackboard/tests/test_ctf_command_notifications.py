@@ -384,19 +384,19 @@ async def test_review_command_result_route_rejects_execution_and_foreign_reader_
         response = await client.post(
             prefix + "read_command_result",
             json={"command_id": "saved"},
-            headers=setup.agent_headers,
+            headers=setup.review_headers,
         )
         assert response.status_code == 200
         for operation in ("start_command", "cancel_command", "execute_command"):
             assert (
                 await client.post(
-                    prefix + operation, json={"command_id": "saved"}, headers=setup.agent_headers
+                    prefix + operation, json={"command_id": "saved"}, headers=setup.review_headers
                 )
             ).status_code == 403
         foreign = await client.post(
             prefix + "read_command_result",
             json={"command_id": "saved", "agent_id": "lead"},
-            headers=setup.agent_headers,
+            headers=setup.review_headers,
         )
         assert foreign.status_code == 422
     args = setup.backend.read_command_result.await_args

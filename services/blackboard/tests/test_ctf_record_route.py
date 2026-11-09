@@ -64,12 +64,12 @@ async def test_record_tool_reads_the_reference_directly_in_execution_and_review(
         response = await client.post(
             f"/api/tasks/{setup.tid}/ctf/tools/get_record",
             json={"challenge_id": str(setup.cid), "record_id": rid},
-            headers=setup.agent_headers,
+            headers=setup.review_headers if review else setup.agent_headers,
         )
         bad = await client.post(
             f"/api/tasks/{setup.tid}/ctf/tools/get_record",
             json={"challenge_id": str(setup.cid), "record_id": "not-a-record"},
-            headers=setup.agent_headers,
+            headers=setup.review_headers if review else setup.agent_headers,
         )
     assert response.status_code == 200 and response.json()["body"] == "Exact shared evidence"
     assert bad.status_code == 422
@@ -87,10 +87,10 @@ async def test_review_can_read_back_only_its_own_saved_long_record(pagination_ap
     ) as client:
         path = f"/api/tasks/{setup.tid}/ctf/tools/read_saved_tool_result"
         result = await client.post(
-            path, json={"call_id": "record-call"}, headers=setup.agent_headers
+            path, json={"call_id": "record-call"}, headers=setup.review_headers
         )
         foreign = await client.post(
-            path, json={"call_id": "record-call", "actor": "lead"}, headers=setup.agent_headers
+            path, json={"call_id": "record-call", "actor": "lead"}, headers=setup.review_headers
         )
     assert result.status_code == 200 and foreign.status_code == 422
     setup.backend.read_saved_tool_result.assert_awaited_once_with(

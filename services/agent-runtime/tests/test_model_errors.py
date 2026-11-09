@@ -11,9 +11,9 @@ from bbx_runtime.model_errors import (
     model_attempt_limit,
     model_error_metadata,
 )
-from bbx_runtime.models import make_client
 from bbx_runtime.pi import Content, Message
 from bbx_runtime.pi.exceptions import ChatClientException, ChatClientInvalidRequestException
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
 

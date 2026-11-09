@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -15,11 +14,11 @@ from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.input_groups import request_hash
 from bbx_blackboard.native_ctf_publication import PublicationState, load_publication
 from bbx_blackboard.native_inputs import require_inputs_confirmed
-from bbx_blackboard.platform import ModelInput
 from bbx_blackboard.profiles import ctf_profile
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
 from bbx_contracts.ctf import CtfTaskCreate, load_ctf_profile
+from bbx_contracts.gateway_models import GatewayModelSnapshot, GatewayUsdRates
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
@@ -60,33 +59,28 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     )
     app = create_app(options, engine=ctf.repo.engine, objects=UploadObjects())
     app.state.native_ctf_publication = PublicationState()
-    platform = app.state.platform_store
-    model = await platform.save(
-        "models",
-        "synthetic-published",
-        ModelInput.model_validate(
-            {
-                "label": "Synthetic CTF model",
-                "provider": "openai_chat",
-                "model": "synthetic",
-                "base_url": "https://native.invalid/v1",
-                "reasoning_effort": "none",
-                "supports_vision": False,
-                "context_window": 16384,
-                "max_output_tokens": 128,
-                "price": {
-                    "billing_mode": "fixed",
-                    "currency": "CNY",
-                    "cache_hit_per_m": "1",
-                    "cache_miss_per_m": "1",
-                    "output_per_m": "1",
-                    "off_peak": False,
-                },
-                "api_key": "not-a-real-key",
-            }
+    model = GatewayModelSnapshot(
+        alias="fixture-native",
+        label="Synthetic CTF model",
+        catalog_revision="a" * 64,
+        accounting_source_id="fixture-accounting",
+        route_revision=1,
+        route_digest="b" * 64,
+        model_catalog_digest="c" * 64,
+        context_window=16384,
+        max_output_tokens=128,
+        input_modalities=["text"],
+        tool_call=True,
+        usd_rates=GatewayUsdRates.model_validate(
+            {"input": "1", "output": "1", "cache_read": "1", "cache_write": "1"}
         ),
-        "test",
     )
+
+    async def require_active(alias, revision=None):
+        assert alias == model.alias and revision in (None, model.catalog_revision)
+        return model
+
+    monkeypatch.setattr(app.state.gateway_models, "require_active", require_active)
     profile = await app.state.profile_store.create(
         "ctf", load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf"), "test"
     )
@@ -114,27 +108,16 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         "label": "Fixture CTF",
         "release": "test_only",
         "ctf_profile_version": profile["version"],
-        "model": {
-            "id": model["name"],
-            "version": model["version"],
-            "gateway_alias": "fixture-native",
-        },
-        "exchange_rate": {
-            "rate_cny_per_usd": "7",
-            "source_ref": "fixture://fx",
-            "observed_at": datetime.now(UTC).isoformat(),
-        },
+        "budget_currency": "USD",
         "runtime_resource_config": resource,
     }
     receipt = tmp_path / "acceptance.json"
     accepted = {
-        "schema_version": 1,
+        "schema_version": 2,
         "base_source": "reconstructed",
         "base_tool_image": "fixture-reconstructed@sha256:" + "e" * 64,
         "recipe_sha256": "f" * 64,
         "traffic_sandbox_image": resource["traffic_sandbox_image"],
-        "catalog_revision": options.native_gateway_catalog_revision,
-        "model": publication["model"],
         "public_create_and_archive": True,
     }
     receipt.write_text(json.dumps(accepted))
@@ -153,7 +136,8 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             {
                 **verified,
                 "model": {
-                    **publication["model"],
+                    "id": "historical-model",
+                    "version": 1,
                     "gateway_alias": "different-in-the-same-catalog",
                 },
             }
@@ -172,9 +156,8 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     create = {
         "mode": "ctf",
         "goal": "Verify a published native setup",
-        "budget": {"max_cost": "2", "max_minutes": 5},
-        "model_id": model["name"],
-        "model_version": model["version"],
+        "budget": {"currency": "USD", "max_cost": "2", "max_minutes": 5},
+        "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
         "ctf_options": {"max_teammates": 2},
     }
     async with httpx.AsyncClient(
@@ -186,13 +169,33 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             assert response.status_code == 200, response.text
             return str(response.json()["id"])
 
-        legacy_body = {**create, "input_group_id": await group()}
-        old_hash = request_hash(
-            CtfTaskCreate.model_validate(legacy_body).model_dump(exclude={"native_environment"})
-        )
+        legacy_body = {key: value for key, value in create.items() if key != "gateway_model"}
+        legacy_body["budget"] = {"max_cost": "2", "max_minutes": 5}
+        legacy_body["input_group_id"] = await group()
+        parsed = CtfTaskCreate.model_validate(legacy_body)
+        old_hash = request_hash(parsed.model_dump(exclude={"native_environment"}))
         response = await http.post("/api/tasks", headers=user, json=legacy_body)
-        assert response.status_code == 200, response.text
-        legacy = response.json()["id"]
+        assert response.status_code == 409, response.text
+        legacy_id = UUID(legacy_body["input_group_id"])
+        legacy = str(
+            await app.state.ctf_service.create_task(
+                parsed.model_dump(
+                    exclude={
+                        "input_group_id",
+                        "input_file_ids",
+                        "public_input_ids",
+                        "model_id",
+                        "model_version",
+                        "profile_version",
+                        "reasoning_effort",
+                    }
+                ),
+                profile_version=profile["version"],
+                input_group_id=legacy_id,
+                input_owner="user:alice",
+                create_request_hash=old_hash,
+            )
+        )
         async with ctf.repo.engine.connect() as conn:
             stored = (
                 (
@@ -214,8 +217,6 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             "revision",
             "publication_stamp",
             "label",
-            "model_id",
-            "model_version",
         }
         reference = {key: environment[key] for key in ("id", "revision", "publication_stamp")}
         assert (await http.post("/api/tasks", headers=user, json=legacy_body)).json()[
@@ -241,7 +242,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
                 headers=user,
                 json={
                     **native,
-                    "budget": {"max_cost": "0.00000000001", "max_minutes": 5},
+                    "budget": {"currency": "USD", "max_cost": "0.00000000001", "max_minutes": 5},
                 },
             )
         ).status_code == 422

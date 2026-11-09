@@ -322,16 +322,6 @@ class BlackboardClient:
             "GET", f"/settings/prompts/{quote(role, safe='')}", params={"since": since}
         )
 
-    async def import_environment_key(self, api_key: str) -> dict[str, int]:
-        return await self._json(
-            "POST", "/platform/import-environment-key", json={"api_key": api_key}
-        )
-
-    async def get_model_credentials(self, name: str, version: int) -> dict[str, Any]:
-        return await self._json(
-            "GET", f"/platform/models/{quote(name, safe='')}/versions/{version}/credentials"
-        )
-
     async def get_mcp_server(self, name: str, version: int) -> dict[str, Any]:
         return await self._json(
             "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}"

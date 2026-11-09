@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 import httpx
 import yaml
+from bbx_contracts.gateway_models import GatewayModelRef
 from bbx_contracts.profile import load_profile
 from bbx_runtime.clients import BlackboardClient
 
@@ -308,6 +309,7 @@ async def run_batch(
     base_url: str,
     token: str,
     exec_image: str | None = None,
+    gateway_model: GatewayModelRef | None = None,
     timeout: float | None = None,
     settle_timeout: float | None = None,
     poll_interval: float = 2,
@@ -333,6 +335,12 @@ async def run_batch(
     if exec_image is not None:
         content["exec_image"] = exec_image
     request = {**spec, "agent_profile": profile}
+    if gateway_model is None and http_client is None:
+        from .checkpoint import evaluation_model
+
+        gateway_model = evaluation_model(dict(os.environ))
+    if gateway_model is not None:
+        request["gateway_model"] = gateway_model.model_dump(mode="json")
     request["budget"] = {**spec["budget"]}
     if profile == "single":
         request["budget"]["max_concurrent_agents"] = 1

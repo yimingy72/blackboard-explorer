@@ -18,8 +18,10 @@ from bbx_contracts.ctf import (
     resolve_ctf_model,
     resolve_ctf_options,
 )
+from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
+from bbx_objects import ObjectStore
 
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 from bbx_runtime.clients.objects import object_store
@@ -54,8 +56,7 @@ from bbx_runtime.model_errors import (
 from bbx_runtime.models import (
     close_model_client,
     ctf_model_run_options,
-    make_client,
-    resolve_model_credentials,
+    make_gateway_client,
 )
 from bbx_runtime.pi import (
     Agent,
@@ -66,7 +67,7 @@ from bbx_runtime.pi import (
     ResponseStream,
 )
 from bbx_runtime.session import ToolResultCheckpointMiddleware
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 from bbx_runtime.traffic.observation import observation_context, runtime_secrets
 
 logger = logging.getLogger(__name__)
@@ -165,7 +166,7 @@ class CtfRunner:
     def __init__(
         self,
         service: CtfClient,
-        settings: Settings,
+        settings: Settings | NativeRunnerSettings,
         client_factory: Callable[..., BaseChatClient] | None = None,
         envd: Any = None,
         objects: Any = None,
@@ -182,10 +183,17 @@ class CtfRunner:
         self.settlement_retries: dict[tuple[str, str], SettlementRetry] = {}
         self.command_checkpoints: dict[tuple[str, str], Any] = {}
 
+    def _objects(self) -> ObjectStore:
+        if self.objects is not None:
+            return self.objects
+        if not isinstance(self.settings, Settings):
+            raise RuntimeError("Terminal review does not open execution storage")
+        return object_store(self.settings)
+
     async def run(self, task_id: str, member: dict[str, Any], turn: dict[str, Any]) -> None:
         platform = PlatformAdapter(
             self.service,
-            lambda: self.objects if self.objects is not None else object_store(self.settings),
+            self._objects,
             self.platform_transport,
             self.platform_catalog,
         )
@@ -236,7 +244,7 @@ class CtfRunner:
             ArtifactRegistrar(
                 self.service,
                 envd.envd,
-                lambda: self.objects if self.objects is not None else object_store(self.settings),
+                self._objects,
             )
             if hasattr(envd, "envd")
             else None
@@ -275,7 +283,6 @@ class CtfRunner:
         if envd is None and not review:
             instructions += "\n执行容器尚未连接，execute_command不可用。"
         client = None
-        credentials: dict[str, str] = {}
         answer, reason = "", "completed"
         response = None
         checkpoint = None
@@ -295,19 +302,28 @@ class CtfRunner:
                     member,
                     profile.model_copy(update={"model": effective_model, "role_run_options": {}}),
                 )
-            else:
-                credentials = await resolve_model_credentials(
-                    self.service.client,
+            elif review:
+                snapshot = GatewayModelSnapshot.model_validate(turn.get("gateway_model"))
+                client = make_gateway_client(
                     effective_model,
-                    self.settings.deepseek_api_key.get_secret_value(),
-                )
-                client = make_client(
-                    effective_model,
-                    credentials=credentials,
+                    snapshot=snapshot,
+                    service=self.service.client,
+                    task_id=task_id,
+                    purpose="review",
+                    gateway_url=self.settings.runner_gateway_url,
+                    proof={
+                        "agent_id": member["id"],
+                        "run_number": task["run_number"],
+                        "turn_id": turn["id"],
+                        "generation": turn["generation"],
+                    },
                     explore_max_steps=profile.options.max_steps,
                     conclude_grace_calls=0,
-                    max_duration_seconds=task["budget"]["max_minutes"] * 60,
+                    max_duration_seconds=180,
                 )
+                effective_model = client.model
+            else:
+                raise ValueError("Legacy CTF model execution has been retired")
             checkpoint = await load_checkpoint(
                 self.service, task_id, member["id"], turn, instructions
             )
@@ -366,6 +382,7 @@ class CtfRunner:
                 effective_model,
                 profile.options.context_threshold,
                 fixed_input_tokens=fixed_prompt_tokens(instructions, tools),
+                gateway_review=review and self.client_factory is None,
             )
             await history.flush_usage()
             with (
@@ -376,7 +393,6 @@ class CtfRunner:
                     turn_id=turn["id"],
                     secrets=runtime_secrets(
                         self.settings,
-                        *credentials.values(),
                         *platform.observation_secrets,
                         getattr(getattr(envd, "envd", None), "token", ""),
                     ),

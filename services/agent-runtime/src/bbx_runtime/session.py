@@ -7,7 +7,6 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
-from bbx_contracts.billing import add_usage
 from bbx_contracts.heartbeat import USAGE_RECEIPT_PROTOCOL, OrdinaryUsageReceipt
 from bbx_contracts.storage import storage_safe
 
@@ -102,7 +101,6 @@ class SessionCheckpoint:
         self.review_claim: dict[str, str] | None = None
         self.expected_derive_round: int | None = None
         self.expected_started_at: str | None = None
-        self.review_request: dict[str, Any] | None = None
         self.usage_error: Exception | None = None
         self.pending_usage_messages: list[Message] = []
         self.ordinary_usage_request: dict[str, Any] | None = None
@@ -294,20 +292,6 @@ class CheckpointHistoryProvider(InMemoryHistoryProvider):
         if self.usage_key is not None:
             response = context.response
             details = response.usage_details if response is not None else None
-            request = self.checkpoint.review_request
-            if details and request and request["message_id"] == self.usage_key:
-                usage, warning = _usage(details, request["price"], request["provider"])
-                ledger = session.state.setdefault("bbx_review_billed", {})
-                entry = ledger.setdefault(self.usage_key, {"usage": {}, "calls": []})
-                entry["usage"] = add_usage(entry["usage"], usage.model_dump(mode="json"))
-                entry["calls"].append(
-                    {
-                        "pricing": request["pricing"],
-                        "usage": usage.model_dump(mode="json"),
-                        "warning": warning,
-                    }
-                )
-                self.checkpoint.review_request = None
             if details:
                 all_usage = session.state.setdefault("bbx_review_usage", {})
                 running = all_usage.setdefault(self.usage_key, {})

@@ -18,7 +18,7 @@ make eval-run EVAL_OUT=eval/results/experiment-01 EVAL_N=5
 make eval-score EVAL_OUT=eval/results/experiment-01
 ```
 
-构建代理参数沿用 envd README。`bbx-eval-env:latest` 基于已有执行环境，仅预装 mini-shop 依赖；两组使用同一镜像。密钥从进程环境传入。已在本地 `.env` 配置时，可以显式传 `EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env`，由 uv 子进程加载；不要将密钥贴入命令或报告。`eval-run` 使用独立 Compose 项目、随机 localhost 端口、隔离卷，结束或失败时停止运行器并清理本次执行容器、服务及卷。
+构建代理参数沿用 envd README。`bbx-eval-env:latest` 基于已有执行环境，仅预装 mini-shop 依赖；两组使用同一镜像。评估的目标部署需要已发布的 AgentGateway 模型及可信汇率。用 `EVAL_GATEWAY_MODEL_ALIAS`、`EVAL_GATEWAY_MODEL_REVISION` 指定同一个活动模型引用；模型费用由目标网关记录。可信进程配置从环境传入。已在本地 `.env` 配置时，可以显式传 `EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env`，由 uv 子进程加载；不要将密钥贴入命令或报告。`eval-run` 使用独立 Compose 项目、随机 localhost 端口、隔离卷，结束或失败时停止运行器并清理本次执行容器、服务及卷。
 
 不传 `EVAL_OUT` 时，两条 Make 命令都使用 `eval/results/latest`；目录已经存在会拒绝覆盖，下一批请换名称。`eval/results/` 已忽略。不会自动推送结果。
 

@@ -27,6 +27,7 @@ from bbx_contracts.ctf import (
     resolve_ctf_model,
     resolve_ctf_options,
 )
+from bbx_contracts.gateway_models import GatewayModelRef, GatewayModelSnapshot, GatewayModelView
 from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
 from bbx_contracts.legacy_network import LegacyNetworkView
 from bbx_contracts.models import (
@@ -50,7 +51,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import Text, func, select, tuple_
+from sqlalchemy import Numeric, Text, func, select, tuple_
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -59,6 +60,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from bbx_blackboard.auth import (
     COOKIE_NAME,
     check_user_password,
+    ctf_review_tool_request,
     issue_agent_token,
     issue_user_token,
     principal,
@@ -75,6 +77,21 @@ from bbx_blackboard.ctf import CtfService
 from bbx_blackboard.ctf_api import public_member
 from bbx_blackboard.ctf_api import router as ctf_router
 from bbx_blackboard.domain import RuleViolation
+from bbx_blackboard.gateway_catalog_api import internal as gateway_catalog_internal
+from bbx_blackboard.gateway_catalog_api import router as gateway_catalog_router
+from bbx_blackboard.gateway_execution import GatewayExecution
+from bbx_blackboard.gateway_execution import router as gateway_execution_router
+from bbx_blackboard.gateway_maintenance import observed_generation
+from bbx_blackboard.gateway_maintenance import router as gateway_maintenance_router
+from bbx_blackboard.gateway_models import GatewayModels
+from bbx_blackboard.gateway_tasks import (
+    gateway_display_model,
+    require_original_model,
+    review_source,
+    select_review_model,
+    task_gateway_model,
+    validate_task_threshold,
+)
 from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
 from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.legacy_network import (
@@ -122,8 +139,6 @@ from bbx_blackboard.store import schema as s
 from bbx_blackboard.traffic import router as traffic_router
 from bbx_blackboard.worker_settings import (
     model_context_threshold,
-    override_reasoning_effort,
-    task_profile,
 )
 from bbx_blackboard.worker_settings import router as settings_router
 from bbx_blackboard.workspace import (
@@ -141,6 +156,9 @@ class LoginBody(BaseModel):
 
 
 class TaskCreateBody(TaskSpec):
+    gateway_model: GatewayModelRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
     model_id: str | None = Field(default=None, min_length=1)
@@ -165,7 +183,23 @@ class TaskCreated(BaseModel):
     agent_profile_version: int
 
 
+class GatewayFeeScope(BaseModel):
+    confirmed_usd: str | None = None
+    pending: int = 0
+
+
+class GatewayTaskFees(BaseModel):
+    solver: GatewayFeeScope
+    progress: GatewayFeeScope
+
+
 class TaskView(BaseModel):
+    gateway_fees: GatewayTaskFees | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    gateway_model: GatewayModelView | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     business_contract: str | None = None
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
@@ -214,6 +248,7 @@ class TaskPage(BaseModel):
 
 
 class ResumeBody(BaseModel):
+    currency: Literal["USD"] | None = None
     request_id: UUID
     additional_cost: Decimal = Field(ge=0)
     additional_minutes: int = Field(ge=0)
@@ -221,6 +256,8 @@ class ResumeBody(BaseModel):
 
 
 class BudgetAdjustBody(BaseModel):
+    currency: Literal["USD"] | None = None
+    request_id: UUID | None = None
     additional_cost: Decimal = Field(default=Decimal(0), ge=0)
     max_minutes: int | None = Field(default=None, ge=1)
 
@@ -612,6 +649,11 @@ def create_app(
         app.state.ctf_service = CtfService(app.state.engine, app.state.objects)
         app.state.runner_control = RunnerControl(app.state.engine)
         app.state.runner_gateway = RunnerGateway(app.state.engine, settings)
+        app.state.gateway_execution = GatewayExecution(
+            app.state.runner_gateway.native, app.state.gateway_models
+        )
+        app.state.runner_gateway.native.gateway_models = app.state.gateway_models
+        app.state.runner_gateway.native.auxiliary_execution = app.state.gateway_execution
         app.state.native_runner_bootstrap = NativeRunnerBootstrap(app.state.runner_gateway)
         app.state.conversations = Conversations(app.state.engine)
         app.state.input_groups = InputGroups(app.state.engine, app.state.objects)
@@ -619,9 +661,7 @@ def create_app(
         app.state.platform_store = PlatformStore(
             app.state.engine, settings.agent_token_secret.get_secret_value()
         )
-        await app.state.profile_store.ensure_bundled(
-            settings.profiles_dir, app.state.platform_store
-        )
+        await app.state.profile_store.ensure_bundled(settings.profiles_dir)
         if own_dispatcher:
             from bbx_blackboard.sse import SSEDispatcher
 
@@ -642,6 +682,7 @@ def create_app(
             with suppress(asyncio.CancelledError):
                 await native_fees
             await app.state.runner_gateway.native.admin.close()
+            await app.state.gateway_models.close()
             cleanup.cancel()
             with suppress(asyncio.CancelledError):
                 await cleanup
@@ -657,7 +698,12 @@ def create_app(
     app.include_router(traffic_router)
     app.include_router(native_router)
     app.include_router(legacy_network_router)
+    app.include_router(gateway_catalog_router)
+    app.include_router(gateway_catalog_internal)
+    app.include_router(gateway_execution_router)
+    app.include_router(gateway_maintenance_router)
     app.state.settings = settings
+    app.state.gateway_models = GatewayModels(settings)
     app.state.legacy_network_publication = deployment_snapshot(settings)
     app.state.native_ctf_publication = PublicationState(
         exclusive=settings.native_ctf_publication_file is not None
@@ -671,6 +717,11 @@ def create_app(
     app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
     app.state.runner_control = RunnerControl(engine) if engine is not None else None
     app.state.runner_gateway = RunnerGateway(engine, settings) if engine is not None else None
+    app.state.gateway_execution = (
+        GatewayExecution(app.state.runner_gateway.native, app.state.gateway_models)
+        if app.state.runner_gateway is not None
+        else None
+    )
     app.state.native_runner_bootstrap = (
         NativeRunnerBootstrap(app.state.runner_gateway)
         if app.state.runner_gateway is not None
@@ -697,21 +748,39 @@ def create_app(
         async with engine.connect() as conn:
             return await legacy_task_snapshot(conn, tid)
 
-    async def legacy_start_boundary(request, tid, task):
+    async def legacy_start_boundary(request, tid, task, *, publish=True):
         if task.get("mode", "blackboard") != "blackboard":
             return
         current = request.app.state.legacy_network_publication
         prior = await protected_snapshot(request, tid)
         if prior is not None and prior != current:
             raise HTTPException(409, "原黑板网络配置不可用，不能改用其他出口")
-        if prior is None and (current is None or current.mode != "default"):
-            raise HTTPException(409, "此部署不能以未冻结的旧版网络启动或恢复历史任务")
+        if prior is None:
+            raise HTTPException(409, "此历史任务没有原黑板网络配置")
+        generation = await observed_generation(request.app.state.engine)
+        if publish:
+            await request.app.state.gateway_execution.ordinary_ready(tid)
+        else:
+            async with request.app.state.engine.connect() as conn:
+                frozen = await task_gateway_model(conn, tid)
+            if frozen is None:
+                raise HTTPException(409, "此历史任务没有 AgentGateway 模型引用")
+            await require_original_model(request.app.state.gateway_models, frozen[0])
+        return generation
 
     async def ctf_boundary(request: Request) -> Response | None:
         # Presentation capabilities never enter a solver endpoint, including future routes.
         if request.headers.get("authorization") or request.cookies.get(COOKIE_NAME):
             try:
                 identity = principal(request)
+                if identity.purpose == "review":
+                    if identity.task_id is not None and ctf_review_tool_request(
+                        request, identity.task_id
+                    ):
+                        return None
+                    return JSONResponse(
+                        {"detail": "Review cannot access solver APIs"}, status_code=403
+                    )
                 if identity.purpose == "progress":
                     prefix = f"/api/tasks/{identity.task_id}/progress"
                     path = request.url.path
@@ -870,11 +939,27 @@ def create_app(
                     }
                     conversation = bool(re.fullmatch(r"/agents/[^/]+/(messages|session)", suffix))
                     traffic = suffix == "/traffic" or suffix.startswith("/traffic/")
+                    review_gateway = (
+                        identity.kind == "service"
+                        and request.method == "POST"
+                        and (
+                            suffix == "/gateway-model/review/claim"
+                            or bool(
+                                re.fullmatch(
+                                    r"/gateway-model/attempts/[0-9a-fA-F-]{36}/result", suffix
+                                )
+                            )
+                        )
+                        or identity.kind == "user"
+                        and request.method == "GET"
+                        and suffix == "/gateway-model/review-costs"
+                    )
                     if (
                         not suffix.startswith("/ctf/")
                         and suffix not in common
                         and not conversation
                         and not traffic
+                        and not review_gateway
                     ):
                         raise HTTPException(409, "mode_mismatch")
                     if identity.kind == "agent" and suffix in {
@@ -940,46 +1025,27 @@ def create_app(
         return {"ok": True}
 
     async def resolve_ctf_creation(
-        request: Request, body: CtfTaskCreate | None, publication: NativeCtfPublication | None
+        request: Request, publication: NativeCtfPublication
     ) -> CtfAgentProfile:
-        profiles = _profiles(request)
-        platform = request.app.state.platform_store
-        if publication is not None:
-            bootstrap = request.app.state.native_runner_bootstrap
-            if bootstrap is None or request.app.state.objects is None:
-                raise HTTPException(503, "原生 CTF 控制服务或对象存储不可用")
-            bootstrap.require_launch_configuration()
-            row = await profiles.get("ctf", publication.ctf_profile_version)
-        else:
-            assert body is not None
-            row = await profiles.get(body.agent_profile, body.profile_version)
+        bootstrap = request.app.state.native_runner_bootstrap
+        if bootstrap is None or request.app.state.objects is None:
+            raise HTTPException(503, "原生 CTF 控制服务或对象存储不可用")
+        bootstrap.require_launch_configuration()
+        row = await _profiles(request).get("ctf", publication.ctf_profile_version)
         profile = ctf_profile(row)
         require_ctf_tool_capabilities(profile)
-        if publication is not None:
-            selected = await platform.get("models", publication.model.id, publication.model.version)
-        else:
-            assert body is not None
-            model_name = body.model_id or await platform.default_model_name()
-            if not model_name:
-                raise HTTPException(422, "请先选择模型，或在模型配置中设置默认模型")
-            selected = await platform.get("models", model_name, body.model_version)
-        if not selected["enabled"]:
-            raise HTTPException(422, "Selected model is disabled")
-        model = platform.public(selected)["config"]
-        if body is not None and body.reasoning_effort is not None:
-            model = override_reasoning_effort({"lead": model}, body.reasoning_effort)["lead"]
-        try:
-            profile = CtfAgentProfile.model_validate(
-                {**profile.model_dump(mode="json"), "model": model}
-            )
-            if publication is not None:
-                for role in ("lead", "teammate"):
-                    native_role_thinking(resolve_ctf_model(profile, role).reasoning_effort)
-        except ValueError as error:
-            raise HTTPException(
-                422, "Selected model is incompatible with the CTF role run options"
-            ) from error
         return profile
+
+    async def selected_gateway_model(request: Request, ref: GatewayModelRef | None):
+        if ref is None:
+            raise HTTPException(422, "请选择 AgentGateway 已应用的模型")
+        generation = await observed_generation(request.app.state.engine)
+        selected = await request.app.state.gateway_models.require_active(
+            ref.alias, ref.catalog_revision
+        )
+        if not selected.tool_call:
+            raise HTTPException(422, "此模型未声明支持工具调用")
+        return selected, generation
 
     @app.get(
         "/api/task-creation-capabilities",
@@ -996,7 +1062,7 @@ def create_app(
         if publication is None:
             return state.capabilities()
         try:
-            await resolve_ctf_creation(request, None, publication)
+            await resolve_ctf_creation(request, publication)
         except (HTTPException, ValueError):
             return state.capabilities(available=False)
         return state.capabilities()
@@ -1013,20 +1079,26 @@ def create_app(
                 raise HTTPException(503, "Blackboard is starting")
             prior = await store.prior_task(body.input_group_id, owner_key(identity), digest)
             if prior is not None:
-                if (
-                    isinstance(body, CtfTaskCreate)
-                    and business_contract(prior) == BOARD_LEGACY
-                    and not state.exclusive
-                    and prior["status"] in {"created", "provisioning"}
-                ):
-                    await request.app.state.ctf_service.provision(prior["id"])
                 return TaskCreated(
                     id=prior["id"],
                     agent_profile=prior["agent_profile"],
                     agent_profile_version=prior["agent_profile_version"],
                 )
         native_queue = None
+        selected = None
+        generation = None
         publication = state.publication if state.exclusive else None
+        if isinstance(body, CtfTaskCreate) and not state.exclusive:
+            raise HTTPException(409, "请使用已发布原生 CTF 环境创建任务")
+        if body.budget.currency != "USD":
+            raise HTTPException(422, "新任务预算必须明确使用 USD")
+        if (
+            body.model_id is not None
+            or body.model_version is not None
+            or body.reasoning_effort is not None
+        ):
+            raise HTTPException(422, "新任务只能引用 AgentGateway 模型")
+
         if state.exclusive:
             if publication is None:
                 raise HTTPException(503, "当前部署没有可用的原生 CTF 环境")
@@ -1050,8 +1122,6 @@ def create_app(
                 or body.reasoning_effort is not None
                 or body.egress_allowlist
                 or body.ctf_options.model_fields_set - {"dispatch_mode", "max_teammates"}
-                or (body.model_id, body.model_version)
-                != (publication.model.id, publication.model.version)
                 or (
                     "dispatch_mode" in body.ctf_options.model_fields_set
                     and body.ctf_options.dispatch_mode != "automatic"
@@ -1059,13 +1129,14 @@ def create_app(
             ):
                 raise HTTPException(422, "该原生 CTF 环境要求已发布的模型、配置和自动派工")
             publication.validate_budget(body.budget.max_cost)
+            selected, generation = await selected_gateway_model(request, body.gateway_model)
             bootstrap = request.app.state.native_runner_bootstrap
             if bootstrap is None:
                 raise HTTPException(503, "原生 CTF 控制服务不可用")
             launch = NativeRunnerLaunch(
                 request_id=body.input_group_id,
-                model_alias=publication.model.gateway_alias,
-                exchange_rate=publication.exchange_rate,
+                model_alias=selected.alias,
+                budget_currency="USD",
                 traffic_profile="binding-pcap-v1",
             )
             launch_digest = runner_payload_digest(runner_json_text(launch.model_dump(mode="json")))
@@ -1087,7 +1158,23 @@ def create_app(
             if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
                 raise HTTPException(422, "Private VPN source is not supported by this Task")
         if isinstance(body, CtfTaskCreate):
-            profile = await resolve_ctf_creation(request, body, publication)
+            assert publication is not None and selected is not None
+            profile = await resolve_ctf_creation(request, publication)
+            try:
+                profile = CtfAgentProfile.model_validate(
+                    {
+                        **profile.model_dump(mode="json"),
+                        "model": gateway_display_model(selected),
+                    }
+                )
+                for role in ("lead", "teammate"):
+                    thinking = native_role_thinking(
+                        resolve_ctf_model(profile, role).reasoning_effort
+                    )
+                    if thinking != "off" and not selected.reasoning:
+                        raise ValueError("Selected route lacks reasoning support")
+            except ValueError as error:
+                raise HTTPException(422, "所选模型不兼容已发布的 CTF 角色配置") from error
             try:
                 requested_options = body.ctf_options.model_dump(exclude_unset=True)
                 if publication:
@@ -1097,14 +1184,13 @@ def create_app(
                     raise ValueError("原生 CTF 任务需要 1 至 20 个 Worker 席位")
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
-            if publication is None:
-                profile.options = options
             # Native dispatch uses the Task's board contract, not the legacy role tool catalog.
             row = await _profiles(request).create("ctf-task-settings", profile, identity.name)
             spec = body.model_dump(
                 exclude={
                     "input_group_id",
                     "input_file_ids",
+                    "gateway_model",
                     "public_input_ids",
                     "model_id",
                     "model_version",
@@ -1119,6 +1205,7 @@ def create_app(
             tid = await request.app.state.ctf_service.create_task(
                 spec,
                 profile_version=row["version"],
+                gateway_model=(selected, generation),
                 **(
                     {
                         "business_contract": BOARD_CONTRACT,
@@ -1148,59 +1235,32 @@ def create_app(
                     else {}
                 ),
             )
-            task = await _task(request, tid)
-            if native_queue is None and task["status"] in {"created", "provisioning"}:
-                await request.app.state.ctf_service.provision(tid)
+            original = await _task(request, tid)
             return TaskCreated(
                 id=tid,
-                agent_profile=task["agent_profile"],
-                agent_profile_version=task["agent_profile_version"],
+                agent_profile=original["agent_profile"],
+                agent_profile_version=original["agent_profile_version"],
             )
         legacy_network = request.app.state.legacy_network_publication
         if legacy_network is None:
             raise HTTPException(503, "黑板执行网络配置不可用")
         profiles = _profiles(request)
-        if body.model_version is not None and body.model_id is None:
-            raise HTTPException(422, "模型版本需要同时指定模型")
-        custom_override = False
-        if body.model_id is not None or (
-            body.agent_profile == "default" and body.profile_version is None
-        ):
-            row = await task_profile(
-                profiles,
-                request.app.state.platform_store,
-                body.model_id,
-                body.model_version,
-                body.reasoning_effort,
-            )
-        else:
-            row = await profiles.get(body.agent_profile, body.profile_version)
-            for model in row["models"].values():
-                if model.get("platform_id"):
-                    await request.app.state.platform_store.get(
-                        "models", model["platform_id"], model.get("platform_version")
-                    )
-            if body.reasoning_effort is not None:
-                row = {
-                    **row,
-                    "models": override_reasoning_effort(row["models"], body.reasoning_effort),
-                }
-                custom_override = True
+        selected, generation = await selected_gateway_model(request, body.gateway_model)
+        validate_task_threshold(body.budget.max_cost)
+        row = await profiles.get(body.agent_profile, body.profile_version)
         if row.get("prompts", {}).get("mode") == "ctf":
             raise HTTPException(409, "mode_mismatch")
-        threshold = model_context_threshold(row["models"])
-        if custom_override or (
-            threshold is not None and row["params"].get("context_threshold") != threshold
-        ):
-            content = {key: row[key] for key in AgentProfile.model_fields}
-            if threshold is not None:
-                content["params"] = {**content["params"], "context_threshold": threshold}
-            row = await profiles.create(
-                "task-settings", AgentProfile.model_validate(content), "task"
-            )
+        content = {key: row[key] for key in AgentProfile.model_fields}
+        model = gateway_display_model(selected)
+        content["models"] = {role: model for role in ("explore", "derive", "close")}
+        threshold = model_context_threshold(content["models"])
+        if threshold is not None:
+            content["params"] = {**content["params"], "context_threshold": threshold}
+        row = await profiles.create("task-settings", AgentProfile.model_validate(content), "task")
         spec = body.model_dump(
             exclude={
                 "profile_version",
+                "gateway_model",
                 "model_id",
                 "model_version",
                 "reasoning_effort",
@@ -1216,6 +1276,7 @@ def create_app(
             spec,
             profile_version=row["version"],
             legacy_network=legacy_network,
+            gateway_model=(selected, generation),
             **(
                 {
                     "input_group_id": body.input_group_id,
@@ -1253,6 +1314,16 @@ def create_app(
         if not tasks:
             return []
         ids = [task["id"] for task in tasks]
+        gateway_models = {
+            row.task_id: GatewayModelSnapshot.model_validate(row.snapshot).public()
+            for row in (
+                await conn.execute(
+                    select(s.gateway_task_models.c.task_id, s.gateway_task_models.c.snapshot).where(
+                        s.gateway_task_models.c.task_id.in_(ids)
+                    )
+                )
+            )
+        }
         ordinary_ids = [task["id"] for task in tasks if task.get("mode") != "ctf"]
         ctf_ids = [task["id"] for task in tasks if task.get("mode") == "ctf"]
         agents: dict[UUID, list[dict[str, Any]]] = {}
@@ -1306,16 +1377,100 @@ def create_app(
             )
         ).mappings():
             runs.setdefault(row["task_id"], []).append(dict(row))
-        progress_costs = {task["id"]: task.get("progress_cost") or "0" for task in tasks}
+        progress_rows = (
+            {
+                item.task_id: item.data
+                for item in (
+                    await conn.execute(
+                        select(s.task_progress.c.task_id, s.task_progress.c.data).where(
+                            s.task_progress.c.task_id.in_(ordinary_ids)
+                        )
+                    )
+                )
+                if isinstance(item.data, dict)
+            }
+            if ordinary_ids
+            else {}
+        )
+        fees: dict[UUID, dict[str, GatewayFeeScope]] = {}
+        if gateway_models:
+            attempts, costs = s.gateway_execution_attempts, s.native_request_costs
+            attached = attempts.outerjoin(
+                costs,
+                (costs.c.accounting_source_id == attempts.c.accounting_source_id)
+                & (costs.c.native_log_id == attempts.c.native_log_id),
+            )
+            for tid, purpose, amount, pending in await conn.execute(
+                select(
+                    attempts.c.task_id,
+                    attempts.c.purpose,
+                    func.sum(sql_cast(costs.c.cost_usd, Numeric)),
+                    func.count().filter(costs.c.cost_usd.is_(None)),
+                )
+                .select_from(attached)
+                .where(
+                    attempts.c.task_id.in_(gateway_models),
+                    attempts.c.purpose.in_(("ordinary", "progress")),
+                )
+                .group_by(attempts.c.task_id, attempts.c.purpose)
+            ):
+                name = "solver" if purpose == "ordinary" else "progress"
+                fees.setdefault(tid, {})[name] = GatewayFeeScope(
+                    confirmed_usd=str(amount) if amount is not None else None, pending=pending
+                )
+            native_ids = [tid for tid in ctf_ids if tid in gateway_models]
+            if native_ids:
+                for tid, amount in await conn.execute(
+                    select(costs.c.task_id, func.sum(sql_cast(costs.c.cost_usd, Numeric)))
+                    .where(
+                        costs.c.task_id.in_(native_ids),
+                        costs.c.state == "known",
+                        costs.c.evidence["attributes"]["bbx_purpose"].astext.is_(None),
+                    )
+                    .group_by(costs.c.task_id)
+                ):
+                    fees.setdefault(tid, {})["solver"] = GatewayFeeScope(
+                        confirmed_usd=str(amount) if amount is not None else None
+                    )
+                for tid, pending in await conn.execute(
+                    select(s.runner_calls.c.task_id, func.count())
+                    .where(
+                        s.runner_calls.c.task_id.in_(native_ids),
+                        s.runner_calls.c.kind == "model",
+                        s.runner_calls.c.state.in_(("dispatched", "unknown")),
+                    )
+                    .group_by(s.runner_calls.c.task_id)
+                ):
+                    fees.setdefault(tid, {}).setdefault(
+                        "solver", GatewayFeeScope()
+                    ).pending = pending
         result = []
         for task in tasks:
             models = profiles.get((task["agent_profile"], task["agent_profile_version"]))
             if models is None:
                 raise KeyError(task["agent_profile"])
             currencies = {model.get("price", {}).get("currency") for model in models.values()}
-            currency = currencies.pop() if len(currencies) == 1 else None
+            currency = task["budget"].get("currency") or (
+                currencies.pop() if len(currencies) == 1 else None
+            )
+            progress = progress_rows.get(task["id"], {})
+            progress_cost = Decimal(str(progress.get("cost", 0)))
+            progress_currency = progress.get("budget_currency") or (
+                (progress.get("model") or {}).get("price", {}).get("currency")
+            )
+            solver_cost = Decimal(str(task["usage"].get("cost", 0)))
+            common_currency = not progress or (
+                currency is not None and currency == progress_currency
+            )
             result.append(
                 TaskView(
+                    gateway_model=gateway_models.get(task["id"]),
+                    gateway_fees=GatewayTaskFees(
+                        solver=fees.get(task["id"], {}).get("solver", GatewayFeeScope()),
+                        progress=fees.get(task["id"], {}).get("progress", GatewayFeeScope()),
+                    )
+                    if task["id"] in gateway_models
+                    else None,
                     mode=task.get("mode", "blackboard"),
                     name=task.get("name"),
                     initial_attachments=task.get("initial_attachments") or [],
@@ -1330,12 +1485,9 @@ def create_app(
                     acceptance_state=task["acceptance_state"],
                     usage=task["usage"],
                     cost_breakdown={
-                        "solver": str(task["usage"].get("cost", 0)),
-                        "progress": str(progress_costs.get(task["id"], "0")),
-                        "total": str(
-                            Decimal(str(task["usage"].get("cost", 0)))
-                            + Decimal(str(progress_costs.get(task["id"], "0")))
-                        ),
+                        "solver": str(solver_cost),
+                        "progress": str(progress_cost),
+                        **({"total": str(solver_cost + progress_cost)} if common_currency else {}),
                     },
                     agents=agents.get(task["id"], []),
                     report_uri=task.get("report_uri"),
@@ -1485,10 +1637,9 @@ def create_app(
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
         task = await _task(request, task_id)
-        if (
-            request.app.state.native_ctf_publication.exclusive
-            and business_contract(task) == BOARD_LEGACY
-        ):
+        if body.additional_cost and body.currency != "USD":
+            raise HTTPException(422, "追加金额必须明确使用 USD")
+        if task.get("mode") == "ctf" and business_contract(task) == BOARD_LEGACY:
             raise HTTPException(409, "专用原生 CTF 部署不能恢复旧版任务")
         if task.get("mode") == "ctf":
             await request.app.state.ctf_service.resume(
@@ -1500,7 +1651,30 @@ def create_app(
                 identity.name,
             )
             return await task_detail(request, task_id)
-        await legacy_start_boundary(request, task_id, task)
+        generation = await legacy_start_boundary(request, task_id, task, publish=False)
+        execution = request.app.state.gateway_execution
+        async with request.app.state.engine.connect() as conn:
+            prior = await conn.scalar(
+                select(s.resume_requests.c.request_id).where(
+                    s.resume_requests.c.task_id == task_id,
+                    s.resume_requests.c.request_id == body.request_id,
+                )
+            )
+        if prior is None and body.additional_cost:
+            if task["status"] not in {"finished", "failed", "stopped"} or not task["cleanup_ready"]:
+                raise HTTPException(409, "原任务尚未归档，不能追加金额后恢复")
+            await execution.budgets.increase(
+                task_id,
+                "ordinary",
+                body.request_id,
+                body.additional_cost,
+                Decimal(str(task["budget"]["max_cost"])),
+            )
+        if prior is None:
+            budget = await execution.ordinary_ready(task_id)
+            _, used, exceeded = await execution.budgets.status(budget)
+            if exceeded or used >= Decimal(budget["config"]["threshold_usd"]):
+                raise HTTPException(409, "原 AgentGateway 预算已用尽，请追加额度后恢复")
         await _service(request).resume(
             task_id,
             body.request_id,
@@ -1508,6 +1682,7 @@ def create_app(
             body.additional_minutes,
             body.refresh_tools,
             identity.name,
+            gateway_generation=generation,
         )
         return await task_detail(request, task_id)
 
@@ -1519,13 +1694,30 @@ def create_app(
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
         task = await _task(request, task_id)
+        if body.additional_cost and body.currency != "USD":
+            raise HTTPException(422, "追加金额必须明确使用 USD")
         if task.get("mode") == "ctf":
             raise HTTPException(409, "mode_mismatch")
+        generation = await legacy_start_boundary(request, task_id, task, publish=False)
+        if body.additional_cost:
+            if body.request_id is None:
+                raise HTTPException(422, "追加金额需要原请求编号")
+            if task["status"] not in {"provisioning", "running", "closing"}:
+                raise HTTPException(409, "仅运行中的任务可以调整预算")
+            await request.app.state.gateway_execution.budgets.increase(
+                task_id,
+                "ordinary",
+                body.request_id,
+                body.additional_cost,
+                Decimal(str(task["budget"]["max_cost"])),
+            )
         await _service(request).adjust_budget(
             task_id,
             body.additional_cost,
             body.max_minutes,
             identity.name,
+            gateway_generation=generation,
+            request_id=body.request_id,
         )
         return await task_detail(request, task_id)
 
@@ -1539,16 +1731,17 @@ def create_app(
             if task["status"] == "provisioning":
                 return StatusResult(status="provisioning")
         if task.get("mode") == "ctf":
-            if task["status"] in {"created", "provisioning"}:
-                await request.app.state.ctf_service.provision(task_id)
-                return StatusResult(status="provisioning")
+            if business_contract(task) == BOARD_LEGACY:
+                raise HTTPException(409, "历史 CTF 任务没有原生执行引用")
             if task["status"] == "running":
                 return StatusResult(status="running")
             raise HTTPException(409, f"CTF task cannot start from {task['status']}")
-        await legacy_start_boundary(request, task_id, task)
+        generation = await legacy_start_boundary(request, task_id, task)
         if task["status"] != "created":
             raise HTTPException(409, "Task is not created")
-        events = await _service(request).transition(task_id, "provisioning", actor="user")
+        events = await _service(request).transition(
+            task_id, "provisioning", actor="user", gateway_generation=generation
+        )
         return StatusResult(status="provisioning", events=events)
 
     @app.post("/api/tasks/{task_id}/stop", response_model=StatusResult, tags=["tasks"])
@@ -1613,6 +1806,7 @@ def create_app(
         if gateway is not None:
             await gateway.routes.retire(task_id)
             await gateway.native.retire(task_id)
+            await request.app.state.gateway_execution.budgets.retire_task(task_id)
         result = await _conversations(request).purge(task_id, request.app.state.objects)
         await request.app.state.workspace_cache.invalidate_task(task_id)
         await request.app.state.native_cache.invalidate_task(task_id)
@@ -1662,6 +1856,41 @@ def create_app(
         require_user_or_service(request)
         return await _conversations(request).list_messages(task_id, agent_id, status)
 
+    @app.get("/api/ctf/reviews/pending-tasks", tags=["conversations"])
+    async def pending_ctf_reviews(request: Request) -> dict[str, list[UUID]]:
+        require_service(request)
+        async with request.app.state.engine.connect() as conn:
+            tasks = (
+                (
+                    await conn.execute(
+                        select(s.tasks.c.id)
+                        .where(
+                            s.tasks.c.mode == "ctf",
+                            s.tasks.c.deleting.is_(False),
+                            s.ctf_members.c.task_id == s.tasks.c.id,
+                            s.ctf_members.c.id == s.ctf_messages.c.recipient_id,
+                            (
+                                s.tasks.c.status.in_(("finished", "failed", "stopped"))
+                                & s.tasks.c.cleanup_ready.is_(True)
+                            )
+                            | s.ctf_members.c.lifecycle.in_(("stopped", "removed")),
+                            s.ctf_messages.c.task_id == s.tasks.c.id,
+                            s.ctf_messages.c.sender_kind == "user",
+                            s.ctf_messages.c.purpose == "review",
+                            s.ctf_messages.c.review_model.is_not(None),
+                            s.ctf_messages.c.request_run_number == s.tasks.c.run_number,
+                            s.ctf_messages.c.status.in_(("queued", "leased")),
+                        )
+                        .distinct()
+                        .order_by(s.tasks.c.id)
+                        .limit(100)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return {"task_ids": list(tasks)}
+
     @app.post("/api/tasks/{task_id}/agents/{agent_id}/messages", tags=["conversations"])
     async def post_agent_message(
         request: Request, task_id: UUID, agent_id: str, body: UserMessageBody
@@ -1669,6 +1898,16 @@ def create_app(
         identity = require_user_or_service(request)
         if identity.kind != "user":
             raise HTTPException(403, "User token required")
+        task = await _task(request, task_id)
+        review_model = None
+        review_generation = None
+        origin = await review_source(request.app.state.engine, task, agent_id)
+        if origin is not None:
+            review_generation = await observed_generation(request.app.state.engine)
+            await request.app.state.gateway_execution.review_key()
+            review_model = await select_review_model(
+                request.app.state.gateway_models, request.app.state.engine, task_id
+            )
         if getattr(request.state, "task_mode", "blackboard") == "ctf":
             return await request.app.state.ctf_service.post_message(
                 task_id,
@@ -1676,8 +1915,19 @@ def create_app(
                 recipient_id=agent_id,
                 body=body.content,
                 message_id=body.id,
+                review_model=review_model,
+                review_generation=review_generation,
+                review_origin=origin,
             )
-        return await _conversations(request).post_message(task_id, agent_id, body.id, body.content)
+        return await _conversations(request).post_message(
+            task_id,
+            agent_id,
+            body.id,
+            body.content,
+            review_model=review_model,
+            review_generation=review_generation,
+            review_origin=origin,
+        )
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
     async def get_agent_session(request: Request, task_id: UUID, agent_id: str) -> dict[str, Any]:
@@ -1839,6 +2089,10 @@ def create_app(
             return board
         async with engine.connect() as conn:
             policy = await legacy_task_snapshot(conn, task_id)
+            if frozen := await task_gateway_model(conn, task_id):
+                board["task"]["gateway_model"] = (
+                    frozen[0] if identity.kind == "service" else frozen[0].public()
+                ).model_dump(mode="json")
             if policy is not None:
                 receipt = await legacy_run_receipt(conn, task_id, board["task"]["run_number"])
                 if identity.kind == "service":
@@ -2303,9 +2557,16 @@ def create_app(
         if not name or "/" in name:
             raise HTTPException(422, "Invalid profile name")
         try:
-            body = await request.app.state.platform_store.normalize_profile(body)
+            default = await _profiles(request).get("default")
+            body = AgentProfile.model_validate(
+                {
+                    **body.model_dump(mode="json"),
+                    "models": default["models"],
+                }
+            )
+            await request.app.state.platform_store.validate_profile_tools(body)
         except ValueError:
-            raise HTTPException(422, "平台模型引用规范化后币种或工具配置不一致") from None
+            raise HTTPException(422, "工具配置不一致") from None
         row = await _profiles(request).create(name, body, identity.name)
         return _profile_document(row)
 

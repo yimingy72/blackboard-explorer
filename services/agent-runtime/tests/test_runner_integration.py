@@ -74,7 +74,7 @@ async def test_scripted_seed_records_board_tools_usage_and_receipt(
     await objects.ensure_bucket()
     engine = create_async_engine(database_url)
     app = create_app(settings, engine=engine, objects=objects)
-    runtime_settings = Settings.model_construct(deepseek_api_key=SecretStr("test-model"))
+    runtime_settings = Settings.model_construct()
     fake = FakeEnvd(
         tmp_path,
         command_outputs={

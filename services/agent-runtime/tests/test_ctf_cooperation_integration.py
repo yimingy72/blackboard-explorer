@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from bbx_blackboard.api import create_app
-from bbx_blackboard.platform import ModelInput
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_blackboard.store import schema as s
 from bbx_contracts.ctf import CtfAgentProfile, load_ctf_profile
@@ -125,22 +124,7 @@ async def cooperation_board(ctf_vertical_database):
         configured = await app.state.profile_store.create(
             f"ctf-cooperation-{uuid4().hex[:8]}", profile, "test"
         )
-        model = await app.state.platform_store.save(
-            "models",
-            f"cooperation-model-{uuid4().hex[:8]}",
-            ModelInput(
-                label="Scripted cooperation model",
-                provider=profile.model.provider,
-                model=profile.model.model,
-                base_url=profile.model.base_url,
-                reasoning_effort=profile.model.reasoning_effort,
-                context_window=profile.model.context_window,
-                price=profile.model.price,
-                api_key=SecretStr("unused-scripted"),
-            ),
-            "test",
-        )
-        configured["model_id"], configured["model_version"] = model["name"], model["version"]
+        configured["fixture_service"] = app.state.ctf_service
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://board",
@@ -162,21 +146,19 @@ async def wait_until(predicate):
 
 
 async def create_task(board, ctf, configured, budget):
-    task = await board.create_task(
+    # Replay an original legacy record without exposing a legacy creation API.
+    fixture = configured["fixture_service"]
+    tid = await fixture.create_task(
         {
             "mode": "ctf",
             "goal": "Coordinate three independent arithmetic workers",
             "budget": {"max_cost": str(budget), "max_minutes": 5},
             "agent_profile": configured["name"],
-            "profile_version": configured["version"],
-            "model_id": configured["model_id"],
-            "model_version": configured["model_version"],
-        }
+        },
+        profile_version=configured["version"],
     )
-    tid = task["id"]
-    await board.start_task(tid)
-    await ctf.runtime(tid, "start")
-    return tid
+    await fixture.start(tid)
+    return str(tid)
 
 
 async def test_budget_wait_keeps_turn_and_reduces_polling_operations(cooperation_board, capsys):
@@ -210,7 +192,7 @@ async def test_budget_wait_keeps_turn_and_reduces_polling_operations(cooperation
         clients[mid] = client
         return client
 
-    settings = Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted"))
+    settings = Settings.model_construct()
     coordinator = CtfCoordinator(board, settings, runner=CtfRunner(ctf, settings, factory))
     try:
         await run_ready_turns(coordinator, tid)
@@ -354,7 +336,7 @@ async def test_permanent_budget_shortfall_closes_without_model_call(cooperation_
     assert reservation is not None
     tid = await create_task(board, ctf, configured, reservation / 2)
     client = ScriptedChatClient([ScriptStep(text="Must never run")])
-    settings = Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted"))
+    settings = Settings.model_construct()
     coordinator = CtfCoordinator(
         board, settings, runner=CtfRunner(ctf, settings, lambda *_: client)
     )

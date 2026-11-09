@@ -3,6 +3,22 @@
     "CtfBudget": {
       "additionalProperties": false,
       "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "enum": [
+                "USD",
+                "CNY"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
         "max_cost": {
           "anyOf": [
             {

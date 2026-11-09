@@ -22,12 +22,13 @@ from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.middleware import BoardSyncMiddleware
-from bbx_runtime.models import close_model_client, make_client
+from bbx_runtime.models import close_model_client
 from bbx_runtime.pi import Agent, AgentSession, ChatResponseUpdate, Content, Message, tool
 from bbx_runtime.recovery import ModelRecoveryGate, RecoveryExhausted
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.session import SessionCheckpoint, _unpaired_calls
 from bbx_runtime.settings import Settings
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from openai import APIStatusError
 from usage_receipt_fixtures import heartbeat_ack

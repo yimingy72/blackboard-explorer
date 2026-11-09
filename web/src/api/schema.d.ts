@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ctf/reviews/pending-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending Ctf Reviews */
+        get: operations["pending_ctf_reviews_api_ctf_reviews_pending_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence": {
         parameters: {
             query?: never;
@@ -123,17 +140,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/platform/import-environment-key": {
+    "/api/platform/gateway-models": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Gateway Directory */
+        get: operations["gateway_directory_api_platform_gateway_models_get"];
         put?: never;
-        /** Import Key */
-        post: operations["import_key_api_platform_import_environment_key_post"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/gateway-models/review-costs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Review Costs */
+        get: operations["shared_review_costs_api_platform_gateway_models_review_costs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -184,110 +218,6 @@ export interface paths {
         };
         /** List Mcp Tools */
         get: operations["list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/model-catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Reference Model Catalog */
-        get: operations["reference_model_catalog_api_platform_model_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Models */
-        get: operations["models_api_platform_models_get"];
-        put?: never;
-        /** New Model */
-        post: operations["new_model_api_platform_models_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models/discover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Model Discovery */
-        post: operations["model_discovery_api_platform_models_discover_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Model */
-        post: operations["save_model_api_platform_models__name__post"];
-        /** Delete Model */
-        delete: operations["delete_model_api_platform_models__name__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models/{name}/default": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Default Model */
-        post: operations["default_model_api_platform_models__name__default_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/providers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Providers */
-        get: operations["providers_api_platform_providers_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -417,23 +347,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/ctf/prompts/{role}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Ctf Prompt */
-        get: operations["ctf_prompt_api_settings_ctf_prompts__role__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/ctf/workers": {
         parameters: {
             query?: never;
@@ -444,23 +357,6 @@ export interface paths {
         /** Ctf Workers */
         get: operations["ctf_workers_api_settings_ctf_workers_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/ctf/workers/{role}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Ctf Worker */
-        put: operations["update_ctf_worker_api_settings_ctf_workers__role__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1990,6 +1886,91 @@ export interface paths {
         put?: never;
         /** Post Fact */
         post: operations["post_fact_api_tasks__task_id__facts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/gateway-model/attempts/{attempt_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attempt Result */
+        post: operations["attempt_result_api_tasks__task_id__gateway_model_attempts__attempt_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/gateway-model/ordinary/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Ordinary */
+        post: operations["claim_ordinary_api_tasks__task_id__gateway_model_ordinary_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/gateway-model/progress/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Progress */
+        post: operations["claim_progress_api_tasks__task_id__gateway_model_progress_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/gateway-model/review-costs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Review Costs */
+        get: operations["task_review_costs_api_tasks__task_id__gateway_model_review_costs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/gateway-model/review/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Review */
+        post: operations["claim_review_api_tasks__task_id__gateway_model_review_claim_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3731,6 +3712,8 @@ export interface components {
         };
         /** Budget */
         Budget: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /**
              * Max Concurrent Agents
              * @description 并发探索和推导上限
@@ -3755,15 +3738,12 @@ export interface components {
              * @default 0
              */
             additional_cost: number | string;
+            /** Currency */
+            currency?: "USD" | null;
             /** Max Minutes */
             max_minutes?: number | null;
-        };
-        /** CatalogProvider */
-        CatalogProvider: {
-            /** Id */
-            id: string;
-            /** Name */
-            name: string;
+            /** Request Id */
+            request_id?: string | null;
         };
         /** ChallengeFactRequest */
         ChallengeFactRequest: {
@@ -4012,6 +3992,8 @@ export interface components {
         };
         /** CtfBudget */
         CtfBudget: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /** Max Cost */
             max_cost: number | string;
             /** Max Minutes */
@@ -4318,6 +4300,7 @@ export interface components {
             domain_context?: string | null;
             /** Egress Allowlist */
             egress_allowlist?: string[];
+            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /** Goal */
             goal: string;
             /** Input File Ids */
@@ -4359,17 +4342,6 @@ export interface components {
             /** Required */
             required: boolean;
         };
-        /** CtfWorkerUpdate */
-        CtfWorkerUpdate: {
-            /** Expected Revision */
-            expected_revision: number;
-            /** Platform Tools */
-            platform_tools?: components["schemas"]["CtfPlatformToolBinding"][] | null;
-            /** Prompt */
-            prompt: string;
-            run_options?: components["schemas"]["CtfRoleRunOptions"] | null;
-            tools: components["schemas"]["WorkerTools"];
-        };
         /** DeliveryBody */
         DeliveryBody: {
             /**
@@ -4382,27 +4354,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-        };
-        /** DiscoveredModel */
-        DiscoveredModel: {
-            /** Context Window */
-            context_window?: number | null;
-            /** Id */
-            id: string;
-            /** Max Input Tokens */
-            max_input_tokens?: number | null;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
-            /**
-             * Metadata Source
-             * @default provider_api
-             */
-            metadata_source: string;
-            /** Name */
-            name?: string | null;
-            price?: components["schemas"]["Price-Output"] | null;
-            /** Supports Vision */
-            supports_vision?: boolean | null;
         };
         /** DisplayFilterRequest */
         DisplayFilterRequest: {
@@ -4971,6 +4922,111 @@ export interface components {
             /** Expected Epoch */
             expected_epoch: number;
         };
+        /** GatewayDirectory */
+        GatewayDirectory: {
+            /**
+             * Maintenance
+             * @default false
+             */
+            maintenance: boolean;
+            /** Management Url */
+            management_url?: string | null;
+            /** Models */
+            models: components["schemas"]["GatewayModelView"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "unavailable";
+        };
+        /** GatewayExecutionGrant */
+        GatewayExecutionGrant: {
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Body Sha256 */
+            body_sha256: string;
+            /** Gateway Url */
+            gateway_url: string;
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+            /** Key */
+            key: string;
+        };
+        /** GatewayExecutionResult */
+        GatewayExecutionResult: {
+            /** Body Sha256 */
+            body_sha256: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "complete" | "unknown";
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** GatewayFeeScope */
+        GatewayFeeScope: {
+            /** Confirmed Usd */
+            confirmed_usd?: string | null;
+            /**
+             * Pending
+             * @default 0
+             */
+            pending: number;
+        };
+        /** GatewayModelRef */
+        GatewayModelRef: {
+            /** Alias */
+            alias: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+        };
+        /** GatewayModelView */
+        GatewayModelView: {
+            /** Alias */
+            alias: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Context Window */
+            context_window: number;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** Reasoning */
+            reasoning?: boolean | null;
+            /** Tool Call */
+            tool_call: boolean;
+            usd_rates: components["schemas"]["GatewayUsdRates"];
+        };
+        /** GatewayTaskFees */
+        GatewayTaskFees: {
+            progress: components["schemas"]["GatewayFeeScope"];
+            solver: components["schemas"]["GatewayFeeScope"];
+        };
+        /**
+         * GatewayUsdRates
+         * @description USD rates per million tokens for each named usage class.
+         */
+        GatewayUsdRates: {
+            /** Cache Read */
+            cache_read: string;
+            /** Cache Write */
+            cache_write: string;
+            /** Input */
+            input: string;
+            /** Output */
+            output: string;
+        };
         /** GraceBody */
         GraceBody: {
             /** Expected Derive Round */
@@ -5145,14 +5201,6 @@ export interface components {
             sdk_idle: true;
             /** Sdk Session Id */
             sdk_session_id: string;
-        };
-        /** ImportKey */
-        ImportKey: {
-            /**
-             * Api Key
-             * Format: password
-             */
-            api_key: string;
         };
         /** InitialAttachment */
         InitialAttachment: {
@@ -5576,17 +5624,6 @@ export interface components {
             /** Sdk Session Id */
             sdk_session_id: string;
         };
-        /** ModelCatalogResult */
-        ModelCatalogResult: {
-            /** Models */
-            models?: components["schemas"]["DiscoveredModel"][];
-            /** Provider */
-            provider?: string | null;
-            /** Providers */
-            providers: components["schemas"]["CatalogProvider"][];
-            /** Warnings */
-            warnings?: string[];
-        };
         /** ModelConfig */
         "ModelConfig-Input": {
             /**
@@ -5695,92 +5732,6 @@ export interface components {
              */
             supports_vision?: boolean | null;
         };
-        /** ModelDiscoveryInput */
-        ModelDiscoveryInput: {
-            /**
-             * Base Url
-             * @default
-             */
-            base_url: string;
-            /** Credentials */
-            credentials?: {
-                [key: string]: string;
-            };
-            /** Provider */
-            provider: string;
-            /** Provider Options */
-            provider_options?: {
-                [key: string]: string;
-            };
-            /** Saved Name */
-            saved_name?: string | null;
-            /** Saved Version */
-            saved_version?: number | null;
-        };
-        /** ModelDiscoveryResult */
-        ModelDiscoveryResult: {
-            /** Models */
-            models?: components["schemas"]["DiscoveredModel"][];
-            /**
-             * Supported
-             * @default true
-             */
-            supported: boolean;
-            /** Warnings */
-            warnings?: string[];
-        };
-        /** ModelInput */
-        ModelInput: {
-            /** Api Key */
-            api_key?: string | null;
-            /**
-             * Base Url
-             * @default
-             */
-            base_url: string;
-            /**
-             * Context Window
-             * @default 1000000
-             */
-            context_window: number | null;
-            /**
-             * Credential Source
-             * @default stored
-             * @enum {string}
-             */
-            credential_source: "stored" | "none";
-            /** Credentials */
-            credentials?: {
-                [key: string]: string;
-            };
-            /**
-             * Enabled
-             * @default true
-             */
-            enabled: boolean;
-            /** Label */
-            label: string;
-            /** Max Input Tokens */
-            max_input_tokens?: number | null;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
-            /** Model */
-            model: string;
-            price: components["schemas"]["Price-Input"];
-            /** Provider */
-            provider: string;
-            /** Provider Options */
-            provider_options?: {
-                [key: string]: string;
-            };
-            /**
-             * Reasoning Effort
-             * @default none
-             */
-            reasoning_effort: string;
-            /** Supports Vision */
-            supports_vision?: boolean | null;
-        };
         /** ModelOutcomeReceipt */
         ModelOutcomeReceipt: {
             /** Attempt Id */
@@ -5850,9 +5801,11 @@ export interface components {
         NativeBudgetBinding: {
             /** Accounting Source Id */
             accounting_source_id: string;
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
             /** Budget Name */
             budget_name: string;
-            exchange_rate: components["schemas"]["FrozenExchangeRate-Output"];
+            exchange_rate?: components["schemas"]["FrozenExchangeRate-Output"] | null;
             /** Key Fingerprint */
             key_fingerprint: string;
             /** Key Name */
@@ -5874,7 +5827,9 @@ export interface components {
         /** NativeBudgetIncreaseRequest */
         NativeBudgetIncreaseRequest: {
             /** Additional Cny */
-            additional_cny: number | string;
+            additional_cny?: number | string | null;
+            /** Additional Usd */
+            additional_usd?: number | string | null;
             /**
              * Pause Id
              * Format: uuid
@@ -5888,6 +5843,8 @@ export interface components {
         };
         /** NativeBudgetIncreaseStatus */
         NativeBudgetIncreaseStatus: {
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
             /**
              * Pause Id
              * Format: uuid
@@ -5899,7 +5856,7 @@ export interface components {
              */
             request_id: string;
             /** Threshold Cny */
-            threshold_cny: string;
+            threshold_cny?: string | null;
             /** Threshold Usd */
             threshold_usd: string;
         };
@@ -5907,7 +5864,9 @@ export interface components {
         NativeBudgetPrepare: {
             /** Accounting Source Id */
             accounting_source_id: string;
-            exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
+            exchange_rate?: components["schemas"]["FrozenExchangeRate-Input"] | null;
             /** Expected Epoch */
             expected_epoch: number;
             /** Selected Models */
@@ -5919,10 +5878,6 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-            /** Model Id */
-            model_id: string;
-            /** Model Version */
-            model_version: number;
             /** Publication Stamp */
             publication_stamp: string;
             /** Revision */
@@ -5943,19 +5898,21 @@ export interface components {
         NativeFeeView: {
             /** Accounting Source Id */
             accounting_source_id: string;
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
             /** Catalog Revision */
             catalog_revision: string;
             /** Confirmed Usd */
             confirmed_usd: string;
             /** Converted Cny */
-            converted_cny: string;
+            converted_cny?: string | null;
             /**
              * Currency
              * @default USD
              * @constant
              */
             currency: "USD";
-            exchange_rate: components["schemas"]["FrozenExchangeRate-Output"];
+            exchange_rate?: components["schemas"]["FrozenExchangeRate-Output"] | null;
             /** Hold Reason */
             hold_reason?: string | null;
             /** Native Used High Water Usd */
@@ -6287,7 +6244,9 @@ export interface components {
         };
         /** NativeRunnerLaunch */
         NativeRunnerLaunch: {
-            exchange_rate: components["schemas"]["FrozenExchangeRate-Input"];
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
+            exchange_rate?: components["schemas"]["FrozenExchangeRate-Input"] | null;
             /**
              * Helper Background
              * @default false
@@ -6413,6 +6372,31 @@ export interface components {
             request_id: string;
             /** Status */
             status: string;
+        };
+        /** OrdinaryGatewayAttempt */
+        OrdinaryGatewayAttempt: {
+            /** Agent Id */
+            agent_id: string;
+            /** Alias */
+            alias: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Body Sha256 */
+            body_sha256: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Expected Derive Round */
+            expected_derive_round?: number | null;
+            /**
+             * Expected Started At
+             * Format: date-time
+             */
+            expected_started_at: string;
+            /** Run Number */
+            run_number: number;
         };
         /** Params */
         "Params-Input": {
@@ -6896,12 +6880,44 @@ export interface components {
             /** Transport Type */
             transport_type?: ("ProxyError" | "ConnectError" | "ReadError" | "RemoteProtocolError" | "LocalProtocolError" | "ConnectTimeout" | "ReadTimeout" | "WriteError" | "WriteTimeout" | "PoolTimeout") | null;
         };
+        /** ProgressGatewayAttempt */
+        ProgressGatewayAttempt: {
+            /** Alias */
+            alias: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Body Sha256 */
+            body_sha256: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /**
+             * Claim Token
+             * Format: uuid
+             */
+            claim_token: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Reservation Id
+             * Format: uuid
+             */
+            reservation_id: string;
+            /** Run Number */
+            run_number: number;
+        };
         /** ProgressGlobalSettings */
         ProgressGlobalSettings: {
             /** Enabled Tools */
             enabled_tools?: string[];
             /** Expected Revision */
             expected_revision: number;
+            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /** Model Id */
             model_id?: string | null;
             /**
@@ -7018,11 +7034,14 @@ export interface components {
         };
         /** ProgressSettings */
         ProgressSettings: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /**
              * Enabled
              * @default false
              */
             enabled: boolean;
+            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /**
              * Max Cost
              * @default 2
@@ -7172,6 +7191,8 @@ export interface components {
             additional_cost: number | string;
             /** Additional Minutes */
             additional_minutes: number;
+            /** Currency */
+            currency?: "USD" | null;
             /**
              * Refresh Tools
              * @default false
@@ -7182,6 +7203,32 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
+        };
+        /** ReviewGatewayAttempt */
+        ReviewGatewayAttempt: {
+            /** Agent Id */
+            agent_id: string;
+            /** Alias */
+            alias: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Body Sha256 */
+            body_sha256: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Claim Token */
+            claim_token?: string | null;
+            /** Generation */
+            generation?: number | null;
+            /** Message Id */
+            message_id?: string | null;
+            /** Run Number */
+            run_number: number;
+            /** Turn Id */
+            turn_id?: string | null;
         };
         /** RunnerBinding */
         RunnerBinding: {
@@ -7316,14 +7363,10 @@ export interface components {
         };
         /** RuntimeUpdate */
         RuntimeUpdate: {
-            /** Exec Image */
-            exec_image: string;
             exec_resources: components["schemas"]["ExecResources"];
             /** Expected Revision */
             expected_revision: number;
             params: components["schemas"]["Params-Input"];
-            /** Privileged Allowlist */
-            privileged_allowlist?: string[];
         };
         /** SandboxCommandDetail */
         SandboxCommandDetail: {
@@ -7568,6 +7611,7 @@ export interface components {
              * @description 任务希望访问的域名（仅记录，不限制默认直连）
              */
             egress_allowlist?: string[];
+            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /**
              * Goal
              * @description 任务目标
@@ -7697,6 +7741,8 @@ export interface components {
             ctf_phase?: string | null;
             /** Deleting */
             deleting: boolean;
+            gateway_fees?: components["schemas"]["GatewayTaskFees"] | null;
+            gateway_model?: components["schemas"]["GatewayModelView"] | null;
             /** Goal */
             goal: string;
             /**
@@ -8678,6 +8724,28 @@ export interface operations {
             };
         };
     };
+    pending_ctf_reviews_api_ctf_reviews_pending_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string[];
+                    };
+                };
+            };
+        };
+    };
     evidence_api_evidence_get: {
         parameters: {
             query: {
@@ -8817,18 +8885,34 @@ export interface operations {
             };
         };
     };
-    import_key_api_platform_import_environment_key_post: {
+    gateway_directory_api_platform_gateway_models_get: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImportKey"];
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayDirectory"];
+                };
             };
         };
+    };
+    shared_review_costs_api_platform_gateway_models_review_costs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -8837,17 +8921,8 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: number;
+                        [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8980,254 +9055,12 @@ export interface operations {
             };
         };
     };
-    reference_model_catalog_api_platform_model_catalog_get: {
-        parameters: {
-            query?: {
-                provider?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelCatalogResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    models_api_platform_models_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-        };
-    };
-    new_model_api_platform_models_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelInput"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    model_discovery_api_platform_models_discover_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelDiscoveryInput"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelDiscoveryResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_model_api_platform_models__name__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelInput"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_model_api_platform_models__name__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    default_model_api_platform_models__name__default_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    providers_api_platform_providers_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-        };
-    };
     config_version_api_platform__kind___name__versions__version__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                kind: "models" | "mcp-servers";
+                kind: "mcp-servers";
                 name: string;
                 version: number;
             };
@@ -9262,7 +9095,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "models" | "mcp-servers";
+                kind: "mcp-servers";
                 name: string;
                 version: number;
             };
@@ -9483,39 +9316,6 @@ export interface operations {
             };
         };
     };
-    ctf_prompt_api_settings_ctf_prompts__role__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role: "lead" | "teammate";
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     ctf_workers_api_settings_ctf_workers_get: {
         parameters: {
             query?: never;
@@ -9534,43 +9334,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    update_ctf_worker_api_settings_ctf_workers__role__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role: "lead" | "teammate";
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CtfWorkerUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -13146,6 +12909,182 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attempt_result_api_tasks__task_id__gateway_model_attempts__attempt_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayExecutionResult"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_ordinary_api_tasks__task_id__gateway_model_ordinary_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrdinaryGatewayAttempt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayExecutionGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_progress_api_tasks__task_id__gateway_model_progress_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressGatewayAttempt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayExecutionGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_review_costs_api_tasks__task_id__gateway_model_review_costs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_review_api_tasks__task_id__gateway_model_review_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewGatewayAttempt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayExecutionGrant"];
                 };
             };
             /** @description Validation Error */

@@ -497,6 +497,21 @@
       "Budget": {
         "additionalProperties": false,
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "enum": [
+                  "USD",
+                  "CNY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
           "max_concurrent_agents": {
             "default": 5,
             "description": "并发探索和推导上限",
@@ -548,6 +563,18 @@
             "default": "0",
             "title": "Additional Cost"
           },
+          "currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
           "max_minutes": {
             "anyOf": [
               {
@@ -559,27 +586,21 @@
               }
             ],
             "title": "Max Minutes"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
           }
         },
         "title": "BudgetAdjustBody",
-        "type": "object"
-      },
-      "CatalogProvider": {
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name"
-        ],
-        "title": "CatalogProvider",
         "type": "object"
       },
       "ChallengeFactRequest": {
@@ -1333,6 +1354,21 @@
       "CtfBudget": {
         "additionalProperties": false,
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "enum": [
+                  "USD",
+                  "CNY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
           "max_cost": {
             "anyOf": [
               {
@@ -2175,6 +2211,16 @@
             "title": "Egress Allowlist",
             "type": "array"
           },
+          "gateway_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "goal": {
             "minLength": 1,
             "title": "Goal",
@@ -2353,55 +2399,6 @@
         "title": "CtfVerificationRequiredRequest",
         "type": "object"
       },
-      "CtfWorkerUpdate": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_revision": {
-            "minimum": 1.0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "platform_tools": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/CtfPlatformToolBinding"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Platform Tools"
-          },
-          "prompt": {
-            "minLength": 1,
-            "title": "Prompt",
-            "type": "string"
-          },
-          "run_options": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CtfRoleRunOptions"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "$ref": "#/components/schemas/WorkerTools"
-          }
-        },
-        "required": [
-          "expected_revision",
-          "prompt",
-          "tools"
-        ],
-        "title": "CtfWorkerUpdate",
-        "type": "object"
-      },
       "DeliveryBody": {
         "properties": {
           "claim_token": {
@@ -2420,89 +2417,6 @@
           "claim_token"
         ],
         "title": "DeliveryBody",
-        "type": "object"
-      },
-      "DiscoveredModel": {
-        "properties": {
-          "context_window": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Context Window"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "max_input_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Input Tokens"
-          },
-          "max_output_tokens": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Output Tokens"
-          },
-          "metadata_source": {
-            "default": "provider_api",
-            "title": "Metadata Source",
-            "type": "string"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "price": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Price-Output"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "supports_vision": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Supports Vision"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "DiscoveredModel",
         "type": "object"
       },
       "DisplayFilterRequest": {
@@ -3898,6 +3812,303 @@
         "title": "GatewayCredentialsRequest",
         "type": "object"
       },
+      "GatewayDirectory": {
+        "additionalProperties": false,
+        "properties": {
+          "maintenance": {
+            "default": false,
+            "title": "Maintenance",
+            "type": "boolean"
+          },
+          "management_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Management Url"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/GatewayModelView"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "models"
+        ],
+        "title": "GatewayDirectory",
+        "type": "object"
+      },
+      "GatewayExecutionGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "body_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Body Sha256",
+            "type": "string"
+          },
+          "gateway_url": {
+            "title": "Gateway Url",
+            "type": "string"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gateway_url",
+          "key",
+          "headers",
+          "attempt_id",
+          "body_sha256"
+        ],
+        "title": "GatewayExecutionGrant",
+        "type": "object"
+      },
+      "GatewayExecutionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "body_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Body Sha256",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "complete",
+              "unknown"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          }
+        },
+        "required": [
+          "body_sha256",
+          "outcome"
+        ],
+        "title": "GatewayExecutionResult",
+        "type": "object"
+      },
+      "GatewayFeeScope": {
+        "properties": {
+          "confirmed_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Usd"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          }
+        },
+        "title": "GatewayFeeScope",
+        "type": "object"
+      },
+      "GatewayModelRef": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "title": "Alias",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "catalog_revision"
+        ],
+        "title": "GatewayModelRef",
+        "type": "object"
+      },
+      "GatewayModelView": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "title": "Alias",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "context_window": {
+            "minimum": 1024.0,
+            "title": "Context Window",
+            "type": "integer"
+          },
+          "input_modalities": {
+            "items": {
+              "enum": [
+                "text",
+                "image"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Input Modalities",
+            "type": "array"
+          },
+          "label": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning"
+          },
+          "tool_call": {
+            "title": "Tool Call",
+            "type": "boolean"
+          },
+          "usd_rates": {
+            "$ref": "#/components/schemas/GatewayUsdRates"
+          }
+        },
+        "required": [
+          "label",
+          "context_window",
+          "max_output_tokens",
+          "input_modalities",
+          "tool_call",
+          "usd_rates",
+          "alias",
+          "catalog_revision"
+        ],
+        "title": "GatewayModelView",
+        "type": "object"
+      },
+      "GatewayTaskFees": {
+        "properties": {
+          "progress": {
+            "$ref": "#/components/schemas/GatewayFeeScope"
+          },
+          "solver": {
+            "$ref": "#/components/schemas/GatewayFeeScope"
+          }
+        },
+        "required": [
+          "solver",
+          "progress"
+        ],
+        "title": "GatewayTaskFees",
+        "type": "object"
+      },
+      "GatewayUsdRates": {
+        "additionalProperties": false,
+        "description": "USD rates per million tokens for each named usage class.",
+        "properties": {
+          "cache_read": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Cache Read",
+            "type": "string"
+          },
+          "cache_write": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Cache Write",
+            "type": "string"
+          },
+          "input": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Input",
+            "type": "string"
+          },
+          "output": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Output",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "cache_read",
+          "cache_write"
+        ],
+        "title": "GatewayUsdRates",
+        "type": "object"
+      },
       "GraceBody": {
         "properties": {
           "expected_derive_round": {
@@ -4579,21 +4790,6 @@
           "journal_confirmed"
         ],
         "title": "HelperTerminal",
-        "type": "object"
-      },
-      "ImportKey": {
-        "properties": {
-          "api_key": {
-            "format": "password",
-            "title": "Api Key",
-            "type": "string",
-            "writeOnly": true
-          }
-        },
-        "required": [
-          "api_key"
-        ],
-        "title": "ImportKey",
         "type": "object"
       },
       "InitialAttachment": {
@@ -5617,47 +5813,6 @@
         "title": "ModelAttemptRequest",
         "type": "object"
       },
-      "ModelCatalogResult": {
-        "properties": {
-          "models": {
-            "items": {
-              "$ref": "#/components/schemas/DiscoveredModel"
-            },
-            "title": "Models",
-            "type": "array"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider"
-          },
-          "providers": {
-            "items": {
-              "$ref": "#/components/schemas/CatalogProvider"
-            },
-            "title": "Providers",
-            "type": "array"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        },
-        "required": [
-          "providers"
-        ],
-        "title": "ModelCatalogResult",
-        "type": "object"
-      },
       "ModelConfig-Input": {
         "additionalProperties": false,
         "properties": {
@@ -5908,224 +6063,6 @@
         "title": "ModelConfig",
         "type": "object"
       },
-      "ModelDiscoveryInput": {
-        "additionalProperties": false,
-        "properties": {
-          "base_url": {
-            "default": "",
-            "title": "Base Url",
-            "type": "string"
-          },
-          "credentials": {
-            "additionalProperties": {
-              "format": "password",
-              "type": "string",
-              "writeOnly": true
-            },
-            "title": "Credentials",
-            "type": "object"
-          },
-          "provider": {
-            "title": "Provider",
-            "type": "string"
-          },
-          "provider_options": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Provider Options",
-            "type": "object"
-          },
-          "saved_name": {
-            "anyOf": [
-              {
-                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Saved Name"
-          },
-          "saved_version": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Saved Version"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "title": "ModelDiscoveryInput",
-        "type": "object"
-      },
-      "ModelDiscoveryResult": {
-        "properties": {
-          "models": {
-            "items": {
-              "$ref": "#/components/schemas/DiscoveredModel"
-            },
-            "title": "Models",
-            "type": "array"
-          },
-          "supported": {
-            "default": true,
-            "title": "Supported",
-            "type": "boolean"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        },
-        "title": "ModelDiscoveryResult",
-        "type": "object"
-      },
-      "ModelInput": {
-        "additionalProperties": false,
-        "properties": {
-          "api_key": {
-            "anyOf": [
-              {
-                "format": "password",
-                "type": "string",
-                "writeOnly": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "base_url": {
-            "default": "",
-            "title": "Base Url",
-            "type": "string"
-          },
-          "context_window": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": 1000000,
-            "title": "Context Window"
-          },
-          "credential_source": {
-            "default": "stored",
-            "enum": [
-              "stored",
-              "none"
-            ],
-            "title": "Credential Source",
-            "type": "string"
-          },
-          "credentials": {
-            "additionalProperties": {
-              "format": "password",
-              "type": "string",
-              "writeOnly": true
-            },
-            "title": "Credentials",
-            "type": "object"
-          },
-          "enabled": {
-            "default": true,
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "label": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Label",
-            "type": "string"
-          },
-          "max_input_tokens": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Input Tokens"
-          },
-          "max_output_tokens": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Output Tokens"
-          },
-          "model": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Model",
-            "type": "string"
-          },
-          "price": {
-            "$ref": "#/components/schemas/Price-Input"
-          },
-          "provider": {
-            "title": "Provider",
-            "type": "string"
-          },
-          "provider_options": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Provider Options",
-            "type": "object"
-          },
-          "reasoning_effort": {
-            "default": "none",
-            "minLength": 1,
-            "title": "Reasoning Effort",
-            "type": "string"
-          },
-          "supports_vision": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Supports Vision"
-          }
-        },
-        "required": [
-          "label",
-          "provider",
-          "model",
-          "price"
-        ],
-        "title": "ModelInput",
-        "type": "object"
-      },
       "ModelOutcomeReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -6297,12 +6234,31 @@
             "title": "Accounting Source Id",
             "type": "string"
           },
+          "budget_currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Currency"
+          },
           "budget_name": {
             "title": "Budget Name",
             "type": "string"
           },
           "exchange_rate": {
-            "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "key_fingerprint": {
             "pattern": "^[a-f0-9]{64}$",
@@ -6359,7 +6315,6 @@
           "budget_name",
           "key_fingerprint",
           "threshold_usd",
-          "exchange_rate",
           "selected_models",
           "publication_state"
         ],
@@ -6378,9 +6333,28 @@
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,7}|(?=[\\d.]{1,17}0*$)\\d{0,7}\\.\\d{0,9}0*$)",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Additional Cny"
+          },
+          "additional_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,7}|(?=[\\d.]{1,17}0*$)\\d{0,7}\\.\\d{0,9}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional Usd"
           },
           "pause_id": {
             "format": "uuid",
@@ -6395,8 +6369,7 @@
         },
         "required": [
           "request_id",
-          "pause_id",
-          "additional_cny"
+          "pause_id"
         ],
         "title": "NativeBudgetIncreaseRequest",
         "type": "object"
@@ -6404,6 +6377,18 @@
       "NativeBudgetIncreaseStatus": {
         "additionalProperties": false,
         "properties": {
+          "budget_currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Currency"
+          },
           "pause_id": {
             "format": "uuid",
             "title": "Pause Id",
@@ -6415,9 +6400,16 @@
             "type": "string"
           },
           "threshold_cny": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Threshold Cny",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold Cny"
           },
           "threshold_usd": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -6428,7 +6420,6 @@
         "required": [
           "request_id",
           "pause_id",
-          "threshold_cny",
           "threshold_usd"
         ],
         "title": "NativeBudgetIncreaseStatus",
@@ -6443,8 +6434,27 @@
             "title": "Accounting Source Id",
             "type": "string"
           },
+          "budget_currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Currency"
+          },
           "exchange_rate": {
-            "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expected_epoch": {
             "minimum": 1.0,
@@ -6464,8 +6474,7 @@
         "required": [
           "expected_epoch",
           "accounting_source_id",
-          "selected_models",
-          "exchange_rate"
+          "selected_models"
         ],
         "title": "NativeBudgetPrepare",
         "type": "object"
@@ -6483,14 +6492,6 @@
             "minLength": 1,
             "title": "Label",
             "type": "string"
-          },
-          "model_id": {
-            "title": "Model Id",
-            "type": "string"
-          },
-          "model_version": {
-            "title": "Model Version",
-            "type": "integer"
           },
           "publication_stamp": {
             "pattern": "^[a-f0-9]{64}$",
@@ -6527,9 +6528,7 @@
           "id",
           "revision",
           "publication_stamp",
-          "label",
-          "model_id",
-          "model_version"
+          "label"
         ],
         "title": "NativeCtfEnvironment",
         "type": "object"
@@ -6568,6 +6567,18 @@
             "title": "Accounting Source Id",
             "type": "string"
           },
+          "budget_currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Currency"
+          },
           "catalog_revision": {
             "title": "Catalog Revision",
             "type": "string"
@@ -6578,9 +6589,16 @@
             "type": "string"
           },
           "converted_cny": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Converted Cny",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Converted Cny"
           },
           "currency": {
             "const": "USD",
@@ -6589,7 +6607,14 @@
             "type": "string"
           },
           "exchange_rate": {
-            "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenExchangeRate-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "hold_reason": {
             "anyOf": [
@@ -6632,11 +6657,9 @@
         "required": [
           "accounting_source_id",
           "confirmed_usd",
-          "converted_cny",
           "threshold_usd",
           "overage_usd",
           "pending_attempts",
-          "exchange_rate",
           "catalog_revision"
         ],
         "title": "NativeFeeView",
@@ -7531,8 +7554,27 @@
       "NativeRunnerLaunch": {
         "additionalProperties": false,
         "properties": {
+          "budget_currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Currency"
+          },
           "exchange_rate": {
-            "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenExchangeRate-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "helper_background": {
             "default": false,
@@ -7570,8 +7612,7 @@
         },
         "required": [
           "request_id",
-          "model_alias",
-          "exchange_rate"
+          "model_alias"
         ],
         "title": "NativeRunnerLaunch",
         "type": "object"
@@ -7789,6 +7830,70 @@
           "receipt_digest"
         ],
         "title": "OperationAck",
+        "type": "object"
+      },
+      "OrdinaryGatewayAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "alias": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "title": "Alias",
+            "type": "string"
+          },
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "body_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Body Sha256",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "expected_derive_round": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Derive Round"
+          },
+          "expected_started_at": {
+            "format": "date-time",
+            "title": "Expected Started At",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alias",
+          "catalog_revision",
+          "attempt_id",
+          "body_sha256",
+          "agent_id",
+          "run_number",
+          "expected_started_at"
+        ],
+        "title": "OrdinaryGatewayAttempt",
         "type": "object"
       },
       "Params-Input": {
@@ -8919,6 +9024,63 @@
         "title": "ProgressFailureDiagnostic",
         "type": "object"
       },
+      "ProgressGatewayAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "title": "Alias",
+            "type": "string"
+          },
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "body_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Body Sha256",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "claim_token": {
+            "format": "uuid",
+            "title": "Claim Token",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "reservation_id": {
+            "format": "uuid",
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alias",
+          "catalog_revision",
+          "reservation_id",
+          "attempt_id",
+          "body_sha256",
+          "job_id",
+          "claim_token",
+          "run_number"
+        ],
+        "title": "ProgressGatewayAttempt",
+        "type": "object"
+      },
       "ProgressGlobalSettings": {
         "additionalProperties": false,
         "properties": {
@@ -8933,6 +9095,16 @@
             "minimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "gateway_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "model_id": {
             "anyOf": [
@@ -9199,10 +9371,35 @@
       "ProgressSettings": {
         "additionalProperties": false,
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "enum": [
+                  "USD",
+                  "CNY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
           "enabled": {
             "default": false,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "gateway_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "max_cost": {
             "anyOf": [
@@ -9555,6 +9752,18 @@
             "title": "Additional Minutes",
             "type": "integer"
           },
+          "currency": {
+            "anyOf": [
+              {
+                "const": "USD",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
           "refresh_tools": {
             "default": false,
             "title": "Refresh Tools",
@@ -9572,6 +9781,100 @@
           "additional_minutes"
         ],
         "title": "ResumeBody",
+        "type": "object"
+      },
+      "ReviewGatewayAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "alias": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "title": "Alias",
+            "type": "string"
+          },
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "body_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Body Sha256",
+            "type": "string"
+          },
+          "catalog_revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "claim_token": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Token"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "alias",
+          "catalog_revision",
+          "attempt_id",
+          "body_sha256",
+          "agent_id",
+          "run_number"
+        ],
+        "title": "ReviewGatewayAttempt",
         "type": "object"
       },
       "RunnerBinding": {
@@ -9949,11 +10252,6 @@
       "RuntimeUpdate": {
         "additionalProperties": false,
         "properties": {
-          "exec_image": {
-            "minLength": 1,
-            "title": "Exec Image",
-            "type": "string"
-          },
           "exec_resources": {
             "$ref": "#/components/schemas/ExecResources"
           },
@@ -9964,19 +10262,11 @@
           },
           "params": {
             "$ref": "#/components/schemas/Params-Input"
-          },
-          "privileged_allowlist": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Privileged Allowlist",
-            "type": "array"
           }
         },
         "required": [
           "expected_revision",
           "params",
-          "exec_image",
           "exec_resources"
         ],
         "title": "RuntimeUpdate",
@@ -10674,6 +10964,16 @@
             "title": "Egress Allowlist",
             "type": "array"
           },
+          "gateway_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "goal": {
             "description": "任务目标",
             "minLength": 1,
@@ -11029,6 +11329,26 @@
           "deleting": {
             "title": "Deleting",
             "type": "boolean"
+          },
+          "gateway_fees": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayTaskFees"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gateway_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GatewayModelView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "goal": {
             "title": "Goal",
@@ -13628,6 +13948,35 @@
         ]
       }
     },
+    "/api/ctf/reviews/pending-tasks": {
+      "get": {
+        "operationId": "pending_ctf_reviews_api_ctf_reviews_pending_tasks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Pending Ctf Reviews Api Ctf Reviews Pending Tasks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pending Ctf Reviews",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
     "/api/evidence": {
       "get": {
         "operationId": "evidence_api_evidence_get",
@@ -13806,48 +14155,47 @@
         ]
       }
     },
-    "/api/platform/import-environment-key": {
-      "post": {
-        "operationId": "import_key_api_platform_import_environment_key_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportKey"
-              }
-            }
-          },
-          "required": true
-        },
+    "/api/platform/gateway-models": {
+      "get": {
+        "operationId": "gateway_directory_api_platform_gateway_models_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "integer"
-                  },
-                  "title": "Response Import Key Api Platform Import Environment Key Post",
+                  "$ref": "#/components/schemas/GatewayDirectory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Gateway Directory",
+        "tags": [
+          "agentgateway"
+        ]
+      }
+    },
+    "/api/platform/gateway-models/review-costs": {
+      "get": {
+        "operationId": "shared_review_costs_api_platform_gateway_models_review_costs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Shared Review Costs Api Platform Gateway Models Review Costs Get",
                   "type": "object"
                 }
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
-        "summary": "Import Key",
+        "summary": "Shared Review Costs",
         "tags": [
-          "platform"
+          "agentgateway"
         ]
       }
     },
@@ -14025,323 +14373,6 @@
         ]
       }
     },
-    "/api/platform/model-catalog": {
-      "get": {
-        "operationId": "reference_model_catalog_api_platform_model_catalog_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "provider",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 200,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Provider"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelCatalogResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Reference Model Catalog",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
-    "/api/platform/models": {
-      "get": {
-        "operationId": "models_api_platform_models_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Models Api Platform Models Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Models",
-        "tags": [
-          "platform"
-        ]
-      },
-      "post": {
-        "operationId": "new_model_api_platform_models_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response New Model Api Platform Models Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "New Model",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
-    "/api/platform/models/discover": {
-      "post": {
-        "operationId": "model_discovery_api_platform_models_discover_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelDiscoveryInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelDiscoveryResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Model Discovery",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
-    "/api/platform/models/{name}": {
-      "delete": {
-        "operationId": "delete_model_api_platform_models__name__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "title": "Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Model",
-        "tags": [
-          "platform"
-        ]
-      },
-      "post": {
-        "operationId": "save_model_api_platform_models__name__post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "title": "Name",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Save Model Api Platform Models  Name  Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Save Model",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
-    "/api/platform/models/{name}/default": {
-      "post": {
-        "operationId": "default_model_api_platform_models__name__default_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "title": "Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Default Model Api Platform Models  Name  Default Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Default Model",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
-    "/api/platform/providers": {
-      "get": {
-        "operationId": "providers_api_platform_providers_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Providers Api Platform Providers Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Providers",
-        "tags": [
-          "platform"
-        ]
-      }
-    },
     "/api/platform/{kind}/{name}/versions/{version}": {
       "get": {
         "operationId": "config_version_api_platform__kind___name__versions__version__get",
@@ -14351,10 +14382,7 @@
             "name": "kind",
             "required": true,
             "schema": {
-              "enum": [
-                "models",
-                "mcp-servers"
-              ],
+              "const": "mcp-servers",
               "title": "Kind",
               "type": "string"
             }
@@ -14417,10 +14445,7 @@
             "name": "kind",
             "required": true,
             "schema": {
-              "enum": [
-                "models",
-                "mcp-servers"
-              ],
+              "const": "mcp-servers",
               "title": "Kind",
               "type": "string"
             }
@@ -14721,54 +14746,6 @@
         ]
       }
     },
-    "/api/settings/ctf/prompts/{role}": {
-      "get": {
-        "operationId": "ctf_prompt_api_settings_ctf_prompts__role__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "role",
-            "required": true,
-            "schema": {
-              "enum": [
-                "lead",
-                "teammate"
-              ],
-              "title": "Role",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ctf Prompt Api Settings Ctf Prompts  Role  Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Ctf Prompt",
-        "tags": [
-          "settings"
-        ]
-      }
-    },
     "/api/settings/ctf/workers": {
       "get": {
         "operationId": "ctf_workers_api_settings_ctf_workers_get",
@@ -14787,64 +14764,6 @@
           }
         },
         "summary": "Ctf Workers",
-        "tags": [
-          "settings"
-        ]
-      }
-    },
-    "/api/settings/ctf/workers/{role}": {
-      "put": {
-        "operationId": "update_ctf_worker_api_settings_ctf_workers__role__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "role",
-            "required": true,
-            "schema": {
-              "enum": [
-                "lead",
-                "teammate"
-              ],
-              "title": "Role",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CtfWorkerUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Ctf Worker Api Settings Ctf Workers  Role  Put",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Ctf Worker",
         "tags": [
           "settings"
         ]
@@ -20767,6 +20686,277 @@
         "summary": "Post Fact",
         "tags": [
           "agent"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/gateway-model/attempts/{attempt_id}/result": {
+      "post": {
+        "operationId": "attempt_result_api_tasks__task_id__gateway_model_attempts__attempt_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewayExecutionResult"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Attempt Result Api Tasks  Task Id  Gateway Model Attempts  Attempt Id  Result Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attempt Result",
+        "tags": [
+          "agentgateway-runtime"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/gateway-model/ordinary/claim": {
+      "post": {
+        "operationId": "claim_ordinary_api_tasks__task_id__gateway_model_ordinary_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrdinaryGatewayAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayExecutionGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Ordinary",
+        "tags": [
+          "agentgateway-runtime"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/gateway-model/progress/claim": {
+      "post": {
+        "operationId": "claim_progress_api_tasks__task_id__gateway_model_progress_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressGatewayAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayExecutionGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Progress",
+        "tags": [
+          "agentgateway-runtime"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/gateway-model/review-costs": {
+      "get": {
+        "operationId": "task_review_costs_api_tasks__task_id__gateway_model_review_costs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Task Review Costs Api Tasks  Task Id  Gateway Model Review Costs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Review Costs",
+        "tags": [
+          "agentgateway-runtime"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/gateway-model/review/claim": {
+      "post": {
+        "operationId": "claim_review_api_tasks__task_id__gateway_model_review_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewGatewayAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayExecutionGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Review",
+        "tags": [
+          "agentgateway-runtime"
         ]
       }
     },

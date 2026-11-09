@@ -18,7 +18,7 @@ from bbx_runtime.ctf.client import CtfClient, CtfControlTransportExhausted
 from bbx_runtime.ctf.execution import CtfExecutionAdapter, DrainPending, UnknownCommandOutcome
 from bbx_runtime.ctf.failures import grouped_failure_types
 from bbx_runtime.ctf.runner import CtfRunner
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class CtfCoordinator:
     def __init__(
         self,
         service: BlackboardClient,
-        settings: Settings,
+        settings: Settings | NativeRunnerSettings,
         *,
         runner: Any = None,
         envd: Any = None,
@@ -991,11 +991,12 @@ class CtfCoordinator:
             else:
                 await self.renew(task_id, key[1], turn)
         state = await self.service.runtime_state(task_id)
-        if state["task"]["status"] not in {"finished", "stopped", "failed"}:
-            self.review_recovered.discard(task_id)
-            return
+        # Blackboard positively selects ended incarnations. An idle live
+        # member is not a review target simply because it has no active turn.
         ready = set(state["review_ready_member_ids"])
         for member in state["members"]:
+            if len(self.review_active) >= 4:
+                break
             key = (task_id, member["id"])
             if (
                 key in self.review_active
@@ -1012,6 +1013,32 @@ class CtfCoordinator:
                     asyncio.create_task(self.runner.run(task_id, member, turn)),
                     turn,
                 )
+
+    async def serve_readonly_reviews(self) -> None:
+        """Poll the native control deployment's read-only review mailbox."""
+        try:
+            while not self.stopping.is_set():
+                try:
+                    pending = await self.service.client._json("GET", "/ctf/reviews/pending-tasks")
+                    task_ids = {str(item) for item in pending["task_ids"]}
+                    task_ids.update(tid for tid, _ in self.review_active)
+                    task_ids.update(tid for tid, _ in self.runner.pending_settlements)
+                    task_ids.update(tid for tid, _ in self.runner.pending_checkpoints)
+                    self.review_recovered.intersection_update(task_ids)
+                    for task_id in sorted(task_ids):
+                        try:
+                            await self.review_tick(task_id)
+                        except Exception as error:
+                            logger.warning(
+                                "CTF read-only review delayed (%s)", type(error).__name__
+                            )
+                except Exception as error:
+                    logger.warning(
+                        "CTF read-only review polling delayed (%s)", type(error).__name__
+                    )
+                await asyncio.sleep(2)
+        finally:
+            await self.close()
 
     async def detach(self, task_id: str, *, deleting: bool = False) -> None:
         """Join local writers and discard per-run transport state without destroying files."""

@@ -2267,63 +2267,10 @@ async def test_concurrent_bundled_profile_initialization_creates_one_version(boa
     assert len(await store.versions("concurrent-bundled")) == 1
 
 
-async def test_platform_credentials_versions_and_profile_bindings(board_service):
-    from bbx_blackboard.platform import McpInput, ModelInput, PlatformStore
-    from bbx_blackboard.store.schema import platform_configs
-    from bbx_contracts.profile import load_profile
-    from fastapi import HTTPException
-    from sqlalchemy import select
+async def test_mcp_credentials_retain_version_and_do_not_echo_secret(board_service):
+    from bbx_blackboard.platform import McpInput, PlatformStore
 
     store = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
-    fields = dict(
-        label="Example model",
-        provider="openai_chat",
-        model="example-model",
-        base_url="https://example.invalid/v1",
-        reasoning_effort="none",
-        credential_source="stored",
-        price={
-            "currency": "CNY",
-            "cache_hit_per_m": 0,
-            "cache_miss_per_m": 1,
-            "output_per_m": 2,
-            "off_peak": False,
-        },
-    )
-    original = await store.save(
-        "models",
-        "example-model",
-        ModelInput.model_validate({**fields, "api_key": "fixture-secret"}),
-        "tester",
-    )
-    assert original["has_secret"] and "fixture-secret" not in str(original)
-    async with board_service.repo.engine.connect() as conn:
-        encrypted = (
-            await conn.execute(
-                select(platform_configs.c.secret_ciphertext).where(
-                    platform_configs.c.name == "example-model"
-                )
-            )
-        ).scalar_one()
-    assert encrypted and "fixture-secret" not in encrypted
-    second = await store.save(
-        "models",
-        "example-model",
-        ModelInput.model_validate({**fields, "model": "new-model"}),
-        "tester",
-    )
-    assert second["version"] == 2
-    assert (await store.credentials("models", "example-model", 2))["secret"] == "fixture-secret"
-    assert (await store.get("models", "example-model", 1))["config"]["model"] == "example-model"
-    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
-    for role in ("explore", "derive", "close"):
-        model = getattr(profile.models, role)
-        model.platform_id = "example-model"
-        model.platform_version = 1
-        model.model = "tampered-redundant-field"
-    fixed = await store.normalize_profile(profile)
-    assert fixed.models.explore.model == "example-model"
-    assert fixed.models.close.price.output_per_m == 2
     mcp = await store.save(
         "mcp-servers",
         "tools",
@@ -2341,28 +2288,19 @@ async def test_platform_credentials_versions_and_profile_bindings(board_service)
     )
     assert not cleared["has_secret"]
     assert (await store.credentials("mcp-servers", "tools", 1))["secret"] == "mcp-fixture-secret"
-    with pytest.raises(HTTPException):
-        await store.save("models", "missing-key", ModelInput.model_validate(fields), "tester")
 
 
-async def test_direct_worker_settings_default_model_and_pinned_task(board_service):
+async def test_worker_settings_and_gateway_task_keep_original_profile_versions(board_service):
     import httpx
     from bbx_blackboard.api import create_app
-    from bbx_blackboard.platform import PlatformStore
     from bbx_blackboard.profiles import ProfileStore
     from bbx_blackboard.settings import Settings
+    from bbx_contracts.gateway_models import GatewayModelSnapshot
     from bbx_contracts.models import BUILTIN_TOOLS
     from pydantic import SecretStr
 
-    platform = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
     profiles = ProfileStore(board_service.repo.engine)
-    await profiles.ensure_bundled(
-        Path(__file__).resolve().parents[3] / "profiles/default", platform
-    )
-    assert await platform.import_environment_key("fixture-existing-environment-key") >= 1
-    assert await platform.import_environment_key("must-not-overwrite-user-key") == 0
-    imported = await platform.credentials("models", "deepseek-default", 1)
-    assert imported["credentials"]["api_key"] == "fixture-existing-environment-key"
+    await profiles.ensure_bundled(Path(__file__).resolve().parents[3] / "profiles/default")
     settings = Settings.model_construct(
         postgres_password=SecretStr("test"),
         minio_root_password=SecretStr("test"),
@@ -2400,39 +2338,36 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
             json={**body, "expected_revision": revision, "prompt": "{{ unsupported_variable }}"},
         )
         assert bad.status_code == 422
-        model = await client.post(
-            "/api/platform/models",
-            json={
-                "label": "Task model",
-                "provider": "openai_chat",
-                "model": "chosen-model",
+        assert "models" not in saved.json()["profile"]
+        assert (await client.post("/api/platform/models", json={})).status_code in {404, 405}
+        model = GatewayModelSnapshot.model_validate(
+            {
+                "alias": "chosen-model",
+                "label": "Chosen gateway model",
+                "catalog_revision": "a" * 64,
+                "accounting_source_id": "fixture",
+                "route_revision": 1,
+                "route_digest": "b" * 64,
+                "model_catalog_digest": "c" * 64,
                 "context_window": 500000,
-                "base_url": "https://example.invalid/v1",
-                "credentials": {"api_key": "fixture-platform-key"},
-                "price": {
-                    "currency": "CNY",
-                    "cache_hit_per_m": 0,
-                    "cache_miss_per_m": 1,
-                    "output_per_m": 2,
-                    "off_peak": False,
-                },
-            },
+                "max_input_tokens": 490000,
+                "max_output_tokens": 8192,
+                "input_modalities": ["text"],
+                "tool_call": True,
+                "usd_rates": {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"},
+            }
         )
-        assert model.status_code == 200, model.text
-        model_data = model.json()
-        assert model_data["name"].startswith("model-")
-        assert "fixture-platform-key" not in model.text
-        assert model_data["configured_credentials"] == ["api_key"]
-        assert (
-            await client.post(f"/api/platform/models/{model_data['name']}/default")
-        ).status_code == 200
-        assert (await platform.default_model_name()) == model_data["name"]
-        listed = (await client.get("/api/platform/models")).json()
-        assert [item["name"] for item in listed if item["is_default"]] == [model_data["name"]]
+
+        async def require_active(alias, revision):
+            assert (alias, revision) == (model.alias, model.catalog_revision)
+            return model
+
+        app.state.gateway_models.require_active = require_active
         spec = {
             "goal": "Check task model",
             "acceptance": [{"id": "A1", "desc": "Evidence"}],
-            "budget": {"max_cost": "1", "max_minutes": 10},
+            "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 10},
+            "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
             "agent_profile": "default",
         }
         created = await client.post("/api/tasks", json=spec)
@@ -2441,10 +2376,10 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
         snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
         assert {item["model"] for item in snapshot["models"].values()} == {"chosen-model"}
         assert {item["context_window"] for item in snapshot["models"].values()} == {500000}
-        assert snapshot["params"]["context_threshold"] == 393446
+        assert snapshot["params"]["context_threshold"] == 392000
         assert (await board_service.state(UUID(task["id"])))["task"]["params"][
             "context_threshold"
-        ] == 393446
+        ] == 392000
         assert snapshot["prompt_templates"]["explore"] == body["prompt"]
         await client.put(
             "/api/settings/workers/explore",
@@ -2455,9 +2390,7 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
         assert (await client.get("/api/settings/prompts/explore")).json()[
             "prompt"
         ] == "Live follow-up {{ goal }}"
-        await profiles.ensure_bundled(
-            Path(__file__).resolve().parents[3] / "profiles/default", platform
-        )
+        await profiles.ensure_bundled(Path(__file__).resolve().parents[3] / "profiles/default")
         assert (await profiles.get("default"))["prompt_templates"][
             "explore"
         ] == "Live follow-up {{ goal }}"

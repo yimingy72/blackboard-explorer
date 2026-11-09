@@ -11,11 +11,13 @@ import httpx
 import pytest
 from bbx_contracts.models import ModelConfig, Price
 from bbx_runtime.clients.blackboard import BlackboardClient
-from bbx_runtime.models import close_model_client, make_client, model_run_options
+from bbx_runtime.models import close_model_client, model_run_options
 from bbx_runtime.pi import AgentSession
 from bbx_runtime.progress.prompt import PROGRESS_INSTRUCTIONS, default_progress_prompt
 from bbx_runtime.progress.worker import ProgressWorker, _instructions
 from bbx_runtime.settings import Settings
+from bbx_runtime.testing.pi_client import gateway_test_snapshot
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,
     ScriptStep,
@@ -213,10 +215,13 @@ class ProgressEndpoint:
 
 async def process(endpoint: ProgressEndpoint, script: ScriptedChatClient, monkeypatch):
     def client_factory(_model, **kwargs):
-        assert kwargs["max_retries"] == 0
+        assert kwargs["purpose"] == "progress"
         return script
 
-    monkeypatch.setattr("bbx_runtime.progress.worker.make_client", client_factory)
+    endpoint.job["gateway_model"] = gateway_test_snapshot(
+        ModelConfig.model_validate(endpoint.job["model"])
+    )
+    monkeypatch.setattr("bbx_runtime.progress.worker.make_gateway_client", client_factory)
     async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint.handle)) as http:
         service = BlackboardClient("http://test", "trusted-runtime", http)
         await ProgressWorker(Settings.model_construct(), service).process(endpoint.job)
@@ -458,7 +463,26 @@ async def test_budget_refusal_sends_no_provider_request(monkeypatch):
     assert endpoint.failed["error"] == (
         "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
     )
+
     assert not any(path.endswith("/settle") for _, path, _ in endpoint.requests)
+
+
+async def test_original_gateway_budget_refusal_releases_unsent_reservation(monkeypatch):
+    from bbx_runtime.clients.blackboard import RemoteError
+
+    class Refused(ScriptedChatClient):
+        def _inner_get_response(self, **kwargs):
+            raise RemoteError(429, "Native budget exhausted", "gateway_budget_exhausted")
+
+    endpoint = ProgressEndpoint()
+    await process(endpoint, Refused([]), monkeypatch)
+    assert endpoint.failed and endpoint.failed["budget_exhausted"] is True
+    assert endpoint.completed is None
+    assert list(item["status"] for item in endpoint.receipts.values()) == ["settled"]
+    assert any(
+        path.endswith("/settle") and body.get("executed") is False
+        for _, path, body in endpoint.requests
+    )
     assert endpoint.saved is not None
     assert "bbx_progress_active_request" not in endpoint.saved["session"]["state"]
 

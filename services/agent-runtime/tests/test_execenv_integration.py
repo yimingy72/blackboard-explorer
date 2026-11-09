@@ -227,7 +227,6 @@ async def test_execenv_lifecycle_with_archive(
             )
             await objects.ensure_bucket()
             settings = Settings.model_construct(
-                deepseek_api_key=SecretStr("fake-deepseek"),
                 minio_root_password=SecretStr("bbxm2a-password"),
                 service_token=SecretStr("fake-service"),
                 envd_token_secret=SecretStr("integration-only-secret"),

@@ -10,7 +10,6 @@ from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.pi import Content, Message
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
-from pydantic import SecretStr
 from sqlalchemy import select
 from test_ctf_cooperation_integration import cooperation_board as cooperation_board
 from test_ctf_cooperation_integration import create_task
@@ -43,7 +42,7 @@ async def test_blocked_runner_diagnostic_is_registered_and_readable_over_real_ht
     }
     await checkpoint.save()
     client = ScriptedChatClient([ScriptStep(text="must not dispatch")])
-    settings = Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted"))
+    settings = Settings.model_construct()
     runner = CtfRunner(ctf, settings, client_factory=lambda *_: client)
     await runner.run(tid, {"id": "lead", "display_name": "Lead", "role": "lead"}, turn)
     assert not client.received_messages

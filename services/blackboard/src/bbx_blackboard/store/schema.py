@@ -284,6 +284,11 @@ agent_messages = Table(
     Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False),
     col("agent_id", Text, nullable=False),
     col("role", Text, nullable=False),
+    col("purpose", Text),
+    col("request_run_number", Integer),
+    col("request_started_at", DateTime(timezone=True)),
+    col("request_derive_round", Integer),
+    col("review_model", JSONB),
     col("content", Text, nullable=False),
     col("status", Text, nullable=False),
     Column("reply_to", UUID(as_uuid=True), ForeignKey("agent_messages.id")),
@@ -372,6 +377,8 @@ ctf_turns = scoped(
     col("runtime_instance", Text, nullable=False),
     col("status", Text, nullable=False),
     col("purpose", Text, nullable=False),
+    col("review_model", JSONB),
+    col("review_origin_generation", Integer),
     col("assignment_message_ids", JSONB, nullable=False),
     col("explicit_reply_ids", JSONB, nullable=False),
     col("checkpoint_revision", Integer, nullable=False),
@@ -398,6 +405,9 @@ ctf_messages = scoped(
     col("kind", Text, nullable=False),
     col("body", Text, nullable=False),
     col("purpose", Text, nullable=False),
+    col("review_model", JSONB),
+    col("request_run_number", Integer),
+    col("request_agent_generation", Integer),
     col("reply_to", Text),
     col("status", Text, nullable=False),
     col("deferred", Boolean, nullable=False),
@@ -774,3 +784,62 @@ native_request_costs = Table(
     col("created_at", DateTime(timezone=True), nullable=False),
 )
 Index("ix_native_cost_task", native_request_costs.c.task_id, native_request_costs.c.attempt_id)
+
+
+gateway_task_models = Table(
+    "gateway_task_models",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("snapshot", JSONB, nullable=False),
+    col("budget_currency", Text, nullable=False),
+)
+
+
+gateway_execution_budgets = Table(
+    "gateway_execution_budgets",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("purpose", Text, primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("key_fingerprint", Text, nullable=False),
+    col("key_ciphertext", Text, nullable=False),
+    col("native_resource_id", Text),
+    col("publication_state", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("status_snapshot", JSONB),
+)
+Index(
+    "ux_gateway_execution_key",
+    gateway_execution_budgets.c.accounting_source_id,
+    gateway_execution_budgets.c.key_fingerprint,
+    unique=True,
+)
+
+gateway_execution_attempts = Table(
+    "gateway_execution_attempts",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("id", UUID(as_uuid=True), primary_key=True),
+    col("purpose", Text, nullable=False),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("body_sha256", Text, nullable=False),
+    col("attributes", JSONB, nullable=False),
+    col("phase", Text, nullable=False),
+    col("status_code", Integer),
+    col("native_log_id", Text),
+    col("fee_state", Text, nullable=False, server_default=text("'awaiting_log'")),
+    col("next_check_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index(
+    "ux_gateway_execution_native_log",
+    gateway_execution_attempts.c.accounting_source_id,
+    gateway_execution_attempts.c.native_log_id,
+    unique=True,
+)

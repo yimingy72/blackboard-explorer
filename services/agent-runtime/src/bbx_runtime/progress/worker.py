@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
+from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
 from bbx_contracts.progress import ProgressFailureDiagnostic
@@ -19,9 +20,8 @@ from bbx_runtime.ctf.provider_boundary import provider_call_boundary
 from bbx_runtime.model_errors import OPENAI_PROVIDERS, ModelStreamError, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
-    make_client,
+    make_gateway_client,
     model_run_options,
-    resolve_model_credentials,
 )
 from bbx_runtime.pi import (
     Agent,
@@ -88,6 +88,7 @@ class ProgressWorker:
         request_started = monotonic()
         request_messages: list[Message] = []
         budget_exhausted = False
+        native_budget_exhausted = False
         try:
             page = await bound.sources(int(job["source_version"]))
             instructions = _instructions(job, page)
@@ -236,6 +237,17 @@ class ProgressWorker:
                 active_request = {"input_tokens": text_bytes + 1024}
                 return list(messages)
 
+            def gateway_proof() -> dict[str, Any]:
+                current = checkpoint.session.state.get("bbx_progress_active_request")
+                if not isinstance(current, dict) or current.get("status") != "dispatching":
+                    raise ValueError("Original progress request is not reserved")
+                return {
+                    "job_id": str(job["job_id"]),
+                    "claim_token": str(job["claim_token"]),
+                    "run_number": job["run_number"],
+                    "reservation_id": current["request_id"],
+                }
+
             async def run_batch(prompt: Message) -> str:
                 nonlocal client
                 assert prompt.message_id is not None
@@ -246,16 +258,18 @@ class ProgressWorker:
                 if _has_user_message(checkpoint.session, prompt.message_id):
                     prompt.message_id += ":resume"
                 if client is None:
-                    credentials = await resolve_model_credentials(
-                        self.service, model, self.settings.deepseek_api_key.get_secret_value()
-                    )
-                    client = make_client(
+                    snapshot = GatewayModelSnapshot.model_validate(job.get("gateway_model"))
+                    client = make_gateway_client(
                         model,
-                        credentials=credentials,
+                        snapshot=snapshot,
+                        service=self.service,
+                        task_id=str(job["task_id"]),
+                        purpose="progress",
+                        gateway_url=self.settings.runner_gateway_url,
+                        proof=gateway_proof,
                         explore_max_steps=11,
                         conclude_grace_calls=0,
                         max_duration_seconds=JOB_TIMEOUT_SECONDS,
-                        max_retries=0,
                     )
                     if isinstance(client, BaseChatClient):
                         client.function_invocation_configuration["allow_concurrent_invocation"] = (
@@ -357,6 +371,19 @@ class ProgressWorker:
             await self._failed(bound, checkpoint, "Progress runtime stopped", retryable=False)
             raise
         except Exception as error:
+            if (
+                isinstance(error, RemoteError)
+                and error.status == 429
+                and error.code == "gateway_budget_exhausted"
+                and checkpoint is not None
+            ):
+                # The original native budget stopped the request before the
+                # trusted claim. The local reservation was never dispatched.
+                current = checkpoint.session.state.get("bbx_progress_active_request")
+                if isinstance(current, dict) and current.get("status") == "dispatching":
+                    current["status"] = "preparing"
+                budget_exhausted = True
+                native_budget_exhausted = True
             diagnostic = ProgressFailureDiagnostic.model_validate(
                 model_error_metadata(
                     error,
@@ -374,7 +401,9 @@ class ProgressWorker:
             await self._failed(
                 bound,
                 checkpoint,
-                "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
+                "成果整理的独立模型额度已耗尽。"
+                if native_budget_exhausted
+                else "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
                 if budget_exhausted
                 else error.message
                 if isinstance(error, RemoteError)

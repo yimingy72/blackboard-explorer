@@ -35,6 +35,8 @@ from bbx_blackboard.ctf_platform import CtfPlatformMixin
 from bbx_blackboard.ctf_readback import CtfReadbackMixin
 from bbx_blackboard.ctf_review import CtfReviewMixin
 from bbx_blackboard.domain.rules import event
+from bbx_blackboard.gateway_maintenance import admission
+from bbx_blackboard.gateway_tasks import ctf_review_allowed, ctf_review_generation
 from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
@@ -369,7 +371,7 @@ class CtfService(
         require(turn["status"] == "running", "CTF turn is not running")
         if turn["purpose"] == "review":
             task = await row(conn, s.tasks, tid)
-            require(task["status"] in {"finished", "failed", "stopped"}, "Review task resumed")
+            require(ctf_review_allowed(task, member), "The original review scope changed")
         else:
             require(member["lifecycle"] == "active", "Inactive execution member")
         return member, turn
@@ -459,7 +461,7 @@ class CtfService(
             member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
             context = {"task": task, "member": member, "purpose": turn["purpose"]}
             if allow_review and turn["purpose"] == "review":
-                self._authorize_review(task, turn)
+                self._authorize_review(task, member, turn)
                 return context
             require(turn["purpose"] == "execution", "Execution turn required")
             require(
@@ -584,10 +586,12 @@ class CtfService(
         native_inputs_profile=None,
         native_vpn_profile=None,
         native_vpn_source_id=None,
+        gateway_model=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
         from bbx_contracts.runner_inputs import INPUT_PROFILE
 
+        from bbx_blackboard.gateway_tasks import freeze_gateway_model
         from bbx_blackboard.native_inputs import freeze_native_inputs
 
         spec = CtfTaskSpec.model_validate(spec)
@@ -705,6 +709,8 @@ class CtfService(
                     .values(files=files, create_request_hash=create_request_hash)
                 )
             await conn.execute(insert(s.tasks).values(id=tid, **fields))
+            if gateway_model is not None:
+                await freeze_gateway_model(conn, tid, *gateway_model)
             if native_vpn_source_id is not None:
                 if native_vpn_profile != VPN_DYNAMIC_PROFILE or input_group_id is None:
                     raise HTTPException(422, "Private VPN source is not supported by this Task")
@@ -1340,11 +1346,27 @@ class CtfService(
         generation=None,
         turn_id=None,
         challenge_id=None,
+        review_model=None,
+        review_generation=None,
+        review_origin=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
-            if actor == "user" and task["status"] in {"finished", "failed", "stopped"}:
-                return await self._message(
+            member = await row(conn, s.ctf_members, tid, recipient_id) if actor == "user" else None
+            if member is not None and ctf_review_allowed(task, member):
+                await admission(conn, review_generation)
+                original_generation = await ctf_review_generation(conn, tid, member)
+                require(
+                    review_model is not None
+                    and review_origin
+                    == {
+                        "generation": original_generation,
+                        "run_number": task["run_number"],
+                    },
+                    "The original review identity changed",
+                )
+                assert review_model is not None
+                result = await self._message(
                     conn,
                     tid,
                     actor,
@@ -1355,6 +1377,21 @@ class CtfService(
                     purpose="review",
                     challenge_id=challenge_id,
                 )
+                current = await row(conn, s.ctf_messages, tid, str(message_id))
+                if current["review_model"] is None:
+                    await patch(
+                        conn,
+                        s.ctf_messages,
+                        tid,
+                        {
+                            "review_model": review_model.model_dump(mode="json"),
+                            "request_run_number": task["run_number"],
+                            "request_agent_generation": original_generation,
+                        },
+                        str(message_id),
+                    )
+                return result
+            require(review_origin is None, "Review cannot become execution")
             await self._actor(conn, tid, actor, generation, turn_id)
             phase = task["ctf_control"]["phase"]
             require(
@@ -1478,8 +1515,8 @@ class CtfService(
             raise HTTPException(422, "Invalid command result page")
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
-            _, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
-            self._authorize_review(task, turn)
+            member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            self._authorize_review(task, member, turn)
             commands, _ = await self._saved_commands(conn, tid, agent_id)
             entries = [
                 entry
@@ -1843,6 +1880,17 @@ class CtfService(
                             s.ctf_messages.c.recipient_id == agent_id,
                             s.ctf_messages.c.status.in_(["queued", "leased"]),
                             s.ctf_messages.c.purpose == turn["purpose"],
+                            *(
+                                (
+                                    s.ctf_messages.c.id.in_(turn["assignment_message_ids"]),
+                                    s.ctf_messages.c.review_model == turn["review_model"],
+                                    s.ctf_messages.c.request_run_number == task["run_number"],
+                                    s.ctf_messages.c.request_agent_generation
+                                    == turn["review_origin_generation"],
+                                )
+                                if turn["purpose"] == "review"
+                                else ()
+                            ),
                             s.ctf_messages.c.kind != "review_result",
                             s.ctf_messages.c.deferred.is_(False),
                         )

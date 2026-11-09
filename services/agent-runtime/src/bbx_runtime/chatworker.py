@@ -9,10 +9,11 @@ import logging
 from typing import Any, Literal, cast
 
 import httpx
+from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.models import ModelConfig
 from bbx_objects import ObjectStore
 
-from bbx_runtime.billing import ReviewBillingMiddleware, _usage
+from bbx_runtime.billing import _token_usage
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.evidence import evidence_page
@@ -21,9 +22,8 @@ from bbx_runtime.model_errors import OPENAI_PROVIDERS
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
-    make_client,
+    make_gateway_client,
     model_run_options,
-    resolve_model_credentials,
 )
 from bbx_runtime.pi import Agent, AgentSession, BaseChatClient, Content, Message, tool
 from bbx_runtime.session import (
@@ -78,7 +78,8 @@ def _review_usage(session: AgentSession, message_id: str, model: ModelConfig) ->
     if billed:
         return billed["usage"]
     if raw_usage:
-        return _usage(raw_usage, model.price, model.provider)[0].model_dump(mode="json")
+        tokens = _token_usage(raw_usage, model.provider).model_dump(mode="json", exclude={"cost"})
+        return {"accounting": "agentgateway", **tokens}
     return {"unavailable": True}
 
 
@@ -198,13 +199,21 @@ class ChatWorker:
                 if recovered is not None:
                     answer, usage = recovered, recovered_usage
                 else:
-                    credentials = await resolve_model_credentials(
-                        self.service, model, self.settings.deepseek_api_key.get_secret_value()
-                    )
-                    client = make_client(
+                    snapshot = GatewayModelSnapshot.model_validate(claim.get("gateway_model"))
+                    client = make_gateway_client(
                         model,
-                        credentials=credentials,
-                        explore_max_steps=3,  # make_client adds five; eight tool iterations total.
+                        snapshot=snapshot,
+                        service=self.service,
+                        task_id=task_id,
+                        purpose="review",
+                        gateway_url=self.settings.runner_gateway_url,
+                        proof={
+                            "agent_id": agent_id,
+                            "message_id": message_id,
+                            "claim_token": token,
+                            "run_number": task["run_number"],
+                        },
+                        explore_max_steps=3,
                         conclude_grace_calls=0,
                         max_duration_seconds=180,
                     )
@@ -249,9 +258,6 @@ class ChatWorker:
                         ],
                         middleware=[
                             ToolResultCheckpointMiddleware(checkpoint),
-                            ReviewBillingMiddleware(
-                                checkpoint, model, message_id, task.get("billing_mode")
-                            ),
                             ImageViewMiddleware(image_ctx),
                         ],
                         require_per_service_call_history_persistence=True,

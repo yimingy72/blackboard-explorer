@@ -16,7 +16,11 @@ async def test_batch_cleanup_runs_when_first_profile_fails(tmp_path, monkeypatch
 
     class Checkpoint:
         def __init__(self, *args):
-            self.environment = {"SERVICE_TOKEN": "test-only"}
+            self.environment = {
+                "SERVICE_TOKEN": "test-only",
+                "EVAL_GATEWAY_MODEL_ALIAS": "fixture-model",
+                "EVAL_GATEWAY_MODEL_REVISION": "a" * 64,
+            }
             self.project = "test-project"
 
         async def docker(self, *args):
@@ -25,6 +29,7 @@ async def test_batch_cleanup_runs_when_first_profile_fails(tmp_path, monkeypatch
 
     async def failing_run(**kwargs):
         assert kwargs["exec_image"] == "bbx-eval-env:latest"
+        assert kwargs["gateway_model"].alias == "fixture-model"
         raise RuntimeError("fixture failure")
 
     real_client = httpx.AsyncClient

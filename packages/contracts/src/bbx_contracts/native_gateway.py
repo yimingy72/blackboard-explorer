@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from decimal import ROUND_DOWN, Decimal, DecimalException
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .models import ContractModel
 from .runner import Digest, EffectiveRunnerModel, RunnerFence, RunnerId
@@ -31,6 +31,19 @@ class FrozenExchangeRate(ContractModel):
 MAX_NATIVE_USD = Decimal("9223372036.854775807")
 
 
+def native_usd_amount(amount: Decimal) -> Decimal:
+    """Keep the native USD threshold exact at its original wire precision."""
+    try:
+        usd = amount.quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
+    except DecimalException as error:
+        raise ValueError("Task budget cannot be represented in native USD") from error
+    if not usd.is_finite() or usd <= 0:
+        raise ValueError("USD threshold must be positive")
+    if usd != amount or usd > MAX_NATIVE_USD or Decimal(str(float(usd))) != usd:
+        raise ValueError("Task budget cannot be represented in native USD")
+    return usd
+
+
 def native_budget_threshold_usd(cny: Decimal, rate: Decimal) -> Decimal:
     try:
         usd = (cny / rate).quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
@@ -38,16 +51,35 @@ def native_budget_threshold_usd(cny: Decimal, rate: Decimal) -> Decimal:
         raise ValueError("Task budget cannot be represented in USD") from error
     if not usd.is_finite() or usd <= 0:
         raise ValueError("Converted USD threshold must be positive")
-    if usd > MAX_NATIVE_USD or Decimal(str(float(usd))) != usd:
-        raise ValueError("Task budget cannot be represented in native USD")
-    return usd
+    return native_usd_amount(usd)
+
+
+NativeBudgetExchange = Annotated[
+    FrozenExchangeRate | None, Field(exclude_if=lambda value: value is None)
+]
+NativeBudgetCurrency = Annotated[
+    Literal["USD"] | None, Field(exclude_if=lambda value: value is None)
+]
+
+
+def require_native_budget_currency(
+    exchange_rate: FrozenExchangeRate | None, budget_currency: Literal["USD"] | None
+) -> None:
+    if (exchange_rate is None) != (budget_currency == "USD"):
+        raise ValueError("Specify direct USD or the original frozen exchange rate")
 
 
 class NativeBudgetPrepare(ContractModel):
     expected_epoch: int = Field(ge=1)
     accounting_source_id: str = Field(min_length=1, max_length=200)
     selected_models: list[str] = Field(min_length=1, max_length=20)
-    exchange_rate: FrozenExchangeRate
+    exchange_rate: NativeBudgetExchange = None
+    budget_currency: NativeBudgetCurrency = None
+
+    @model_validator(mode="after")
+    def exact_currency(self):
+        require_native_budget_currency(self.exchange_rate, self.budget_currency)
+        return self
 
 
 class NativeBudgetBinding(ContractModel):
@@ -58,9 +90,15 @@ class NativeBudgetBinding(ContractModel):
     key_fingerprint: Digest
     native_resource_id: str | None = None
     threshold_usd: Decimal
-    exchange_rate: FrozenExchangeRate
+    exchange_rate: NativeBudgetExchange = None
     selected_models: list[str]
     publication_state: Literal["prepared", "creating", "creating_unknown", "ready", "retired"]
+    budget_currency: NativeBudgetCurrency = None
+
+    @model_validator(mode="after")
+    def exact_currency(self):
+        require_native_budget_currency(self.exchange_rate, self.budget_currency)
+        return self
 
 
 class NativeModelSelection(ContractModel):
@@ -75,14 +113,20 @@ class NativeFeeView(ContractModel):
     accounting_source_id: str
     currency: Literal["USD"] = "USD"
     confirmed_usd: Decimal
-    converted_cny: Decimal
+    converted_cny: Decimal | None = Field(default=None, exclude_if=lambda value: value is None)
     threshold_usd: Decimal
     overage_usd: Decimal
     pending_attempts: int
     hold_reason: str | None = None
-    exchange_rate: FrozenExchangeRate
+    exchange_rate: NativeBudgetExchange = None
     catalog_revision: str
     native_used_high_water_usd: Decimal | None = None
+    budget_currency: NativeBudgetCurrency = None
+
+    @model_validator(mode="after")
+    def exact_currency(self):
+        require_native_budget_currency(self.exchange_rate, self.budget_currency)
+        return self
 
 
 class NativeModelDispatchRequest(ContractModel):

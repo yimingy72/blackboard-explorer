@@ -154,7 +154,6 @@ async def test_cancelled_provision_joins_creation_and_removes_all_created_contai
 
 def settings(mode: str = "relay", egress_mode: str = "direct") -> Settings:
     return Settings.model_construct(
-        deepseek_api_key=SecretStr("fake-deepseek"),
         minio_root_password=SecretStr("fake-minio"),
         service_token=SecretStr("fake-service"),
         envd_token_secret=SecretStr("test-secret"),

@@ -26,6 +26,22 @@
     "Budget": {
       "additionalProperties": false,
       "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "enum": [
+                "USD",
+                "CNY"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
         "max_concurrent_agents": {
           "default": 5,
           "description": "并发探索和推导上限",

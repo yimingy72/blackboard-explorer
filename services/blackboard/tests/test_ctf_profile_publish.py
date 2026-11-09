@@ -3,18 +3,11 @@
 import json
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-from uuid import uuid4
 
-import httpx
 import pytest
-from bbx_blackboard import api
-from bbx_blackboard.auth import issue_user_token
 from bbx_blackboard.ctf_profile_publish import FAMILIES, HANDOFF_MARKERS, publication_plan
-from bbx_blackboard.profiles import _content, ctf_profile
+from bbx_blackboard.profiles import _content
 from bbx_contracts.ctf import load_ctf_profile
-from test_ctf_api import settings
 
 
 def profile_rows():
@@ -149,57 +142,3 @@ def test_unknown_source_window_does_not_block_or_inherit_target_capacity():
     assert summary["profiles"]["ctf"]["hard_input_limit_tokens"] is None
     assert summary["profiles"]["ctf"]["reserved_output_tokens"] is None
     assert summary["profiles"]["ctf-task-settings"]["hard_input_limit_tokens"] == 485427
-
-
-async def test_new_task_snapshots_latest_ctf_instead_of_reusing_old_task_family(monkeypatch):
-    rows = profile_rows()
-    config = settings()
-    tid = uuid4()
-    profiles = SimpleNamespace(
-        get=AsyncMock(return_value=rows["ctf"]),
-        create=AsyncMock(return_value={"name": "ctf-task-settings", "version": 7}),
-    )
-    model = ctf_profile(rows["ctf"]).model.model_dump(mode="json")
-    platform = SimpleNamespace(
-        default_model_name=AsyncMock(return_value="synthetic-model"),
-        get=AsyncMock(return_value={"enabled": True, "config": model}),
-        public=lambda row: row,
-    )
-    backend = SimpleNamespace(create_task=AsyncMock(return_value=tid), provision=AsyncMock())
-    app = api.create_app(config)
-    app.state.profile_store = profiles
-    app.state.platform_store = platform
-    app.state.ctf_service = backend
-    monkeypatch.setattr(
-        api,
-        "_task",
-        AsyncMock(
-            return_value={
-                "id": tid,
-                "mode": "ctf",
-                "status": "created",
-                "agent_profile": "ctf-task-settings",
-                "agent_profile_version": 7,
-            }
-        ),
-    )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as http:
-        response = await http.post(
-            "/api/tasks",
-            headers={"Authorization": f"Bearer {issue_user_token(config, 'alice')}"},
-            json={
-                "mode": "ctf",
-                "goal": "Synthetic new task",
-                "budget": {"max_cost": "10", "max_minutes": 5},
-            },
-        )
-    assert response.status_code == 200, response.text
-    profiles.get.assert_awaited_once_with("ctf", None)
-    published = profiles.create.call_args.args[1]
-    assert published.prompt_templates.model_dump() == rows["ctf"]["prompt_templates"]
-    assert published.prompt_templates.model_dump() != rows["ctf-task-settings"]["prompt_templates"]
-    assert published.options.context_threshold == 1_000_000
-    assert response.json()["agent_profile_version"] == 7
-    assert backend.create_task.call_args.kwargs["profile_version"] == 7

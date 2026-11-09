@@ -24,14 +24,6 @@
           "title": "Label",
           "type": "string"
         },
-        "model_id": {
-          "title": "Model Id",
-          "type": "string"
-        },
-        "model_version": {
-          "title": "Model Version",
-          "type": "integer"
-        },
         "shared_inputs": {
           "anyOf": [
             {
@@ -59,9 +51,7 @@
         "id",
         "revision",
         "publication_stamp",
-        "label",
-        "model_id",
-        "model_version"
+        "label"
       ],
       "title": "NativeCtfEnvironment",
       "type": "object"

@@ -16,6 +16,7 @@ from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_PROFILE
 
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
+from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.runner_proxy import RunnerModelProxy
 from bbx_runtime.runner_resources import (
     TRAFFIC_CONFIG_FIELDS,
@@ -754,28 +755,34 @@ async def serve_native(settings: NativeRunnerSettings):
                     access_log=False,
                 )
             )
+            reviews = CtfCoordinator(service, settings)
+            review_work = asyncio.create_task(reviews.serve_readonly_reviews())
             work = asyncio.create_task(controller.run())
             http = asyncio.create_task(server.serve())
             shutdown = asyncio.create_task(stopped.wait())
             lost = asyncio.create_task(instance.lost.wait())
             try:
                 done, _ = await asyncio.wait(
-                    [work, http, shutdown, lost], return_when=asyncio.FIRST_COMPLETED
+                    [work, review_work, http, shutdown, lost], return_when=asyncio.FIRST_COMPLETED
                 )
                 if lost in done:
                     raise RuntimeError("Native Runtime instance lock was lost")
                 if work in done:
                     await work
+                if review_work in done:
+                    await review_work
+                    raise RuntimeError("Native read-only review scheduler stopped unexpectedly")
                 if http in done:
                     await http
                     raise RuntimeError("Native Runner proxy stopped unexpectedly")
             finally:
                 await controller.close()
                 work.cancel()
+                review_work.cancel()
                 server.should_exit = True
                 shutdown.cancel()
                 lost.cancel()
-                await asyncio.gather(work, shutdown, lost, return_exceptions=True)
+                await asyncio.gather(work, review_work, shutdown, lost, return_exceptions=True)
                 try:
                     await asyncio.wait_for(http, 5)
                 except TimeoutError:

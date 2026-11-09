@@ -293,9 +293,7 @@ async def test_parallel_help_archive_resume_removed_history_and_isolated_purge(
                 clients.append((mid, client))
                 return client
 
-            runtime_settings = Settings.model_construct(
-                deepseek_api_key=SecretStr("unused-scripted")
-            )
+            runtime_settings = Settings.model_construct()
             execution = SimulatedExecution(ctf)
             runner = CtfRunner(
                 ctf, runtime_settings, client_factory=factory, envd=execution, objects=objects

@@ -1,8 +1,8 @@
 # agent-runtime
 
-提供 Agent 工具循环、黑板同步、证据持久化、用量记录，以及任务排队、调度、清扫和重启恢复。M3b 补齐完整闭环场景与显式付费 e2e。
+提供 Agent 工具循环、黑板同步、证据持久化、用量记录，以及任务排队、调度、清扫和重启恢复。
 
-配置从进程环境读取，不自动加载 `.env`。必需项为 `DEEPSEEK_API_KEY`、`MINIO_ROOT_PASSWORD`、`SERVICE_TOKEN`、`ENVD_TOKEN_SECRET`；地址与网络项见 `.env.example`。JWT 签名密钥仅由 blackboard 持有，runtime 使用登记 Agent 时取得的 token。
+配置从进程环境读取，不自动加载 `.env`。必需项为 `MINIO_ROOT_PASSWORD`、`SERVICE_TOKEN`、`ENVD_TOKEN_SECRET`；执行模型调用还需可信部署配置的 `RUNNER_GATEWAY_URL` 与任务冻结的 AgentGateway 模型。Runtime 不接收上游供应商密钥。JWT 签名密钥仅由 blackboard 持有，runtime 使用登记 Agent 时取得的 token。
 
 `state` 和 `conclude` 仅需 `BLACKBOARD_URL` 与 `SERVICE_TOKEN`，不要求模型密钥或 Docker。
 
@@ -41,7 +41,7 @@ docker compose --project-name blackboard-explorer up -d --wait
 
 停止服务会先阻止新派发，再以 runtime_restart 取消并等待 finish；保留执行容器。重启结束旧记录（不增加 attempts/种子空产，不清零失败连击），健康容器接管；尚无容器的 provisioning 继续排队，running/closing 丢失或无法恢复容器则 failed。终态任务先完成交接，然后归档上传、服务 API 登记 task.archived、最后销毁；登记失败保留容器重试。归档事件会让工作台的下载入口即时出现。
 
-执行容器默认直接出网：`EXEC_EGRESS_MODE=direct`配合带网关的exec网络（`EXEC_NETWORK_INTERNAL=false`），运行时不给Agent命令注入代理变量。任务的`egress_allowlist`只记录需求，不限制默认出网。需要白名单时显式设`EXEC_EGRESS_MODE=proxy`、`EXEC_NETWORK_INTERNAL=true`，并用`docker compose --profile egress-proxy up -d`启动可选代理；此时部署级`EGRESS_ALLOWLIST`实际生效，任务字段不会动态改变它。两种模式配错网络时运行时拒绝创建执行容器。runtime访问模型仍可使用独立`RUNTIME_HTTP_PROXY/RUNTIME_HTTPS_PROXY`（本机Docker Desktop例：`http://host.docker.internal:7897`）；黑板与envd内部HTTP客户端不读取外部代理变量。
+执行容器默认直接出网：`EXEC_EGRESS_MODE=direct`配合带网关的exec网络（`EXEC_NETWORK_INTERNAL=false`），运行时不给Agent命令注入代理变量。任务的`egress_allowlist`只记录需求，不限制默认出网。需要白名单时显式设`EXEC_EGRESS_MODE=proxy`、`EXEC_NETWORK_INTERNAL=true`，并用`docker compose --profile egress-proxy up -d`启动可选代理；此时部署级`EGRESS_ALLOWLIST`实际生效，任务字段不会动态改变它。两种模式配错网络时运行时拒绝创建执行容器。Runtime 发往固定 AgentGateway 的私有模型请求不读取环境代理，也不跟随重定向；上游网络由 AgentGateway 管理。
 
 ## 执行与同步
 
@@ -57,11 +57,11 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 
 ## 价格
 
-任务沿用固定的模型价格表与人民币账本，区分缓存命中、未命中和输出；推理 token 已包含在输出中，不重复收费。启用 DeepSeek 时段计划时，保存并使用每次调用的有效时段价。PI 提供 token 用量，平台通过原收据/outbox 幂等结算；PI 的美元估价不覆盖平台价格。缺少或不一致的用量保持未知，不能伪记为已知零费用。
+AgentGateway 是新模型费率和原生 USD 费用的唯一来源。黑板旧 CNY 账本按历史冻结配置保留；新黑板角色估算来自冻结的网关费率与可信汇率，不与原生账单相加。任务和成果整理分别使用原额度的原生密钥；终态复盘使用独立的共享统计密钥。缺少或不一致的用量保持未知。
 
 ## 模块接口
 
-- `models.make_client(model, api_key=…, explore_max_steps=…, conclude_grace_calls=…, max_duration_seconds=…)`：锁定版本的 PI 多厂商模型客户端，保留缓存 token 用量并转换为平台收据。`model_run_options` 传入 profile 的 `reasoning_effort`。
+- `models.make_gateway_client(…)`：使用任务冻结模型，通过原 Pi 协议适配向指定 AgentGateway 发送。每次请求在实际发送前取得原范围的可信授权与费用关联身份。
 - `models.load_runtime_profile(Path | Mapping)`：本地目录或黑板固定版本快照；快照包含提示词正文。
 - `clients.BlackboardClient(url, token)`：异步上下文管理器，封装任务、状态、事件、快照、对象、证据、事实/意图、Agent 生命周期与用量接口。`with_token(agent_token)` 共用连接池、绑定 Agent 身份；服务 token 不能代替 Agent 写入身份。
 - `clients.EnvdClient(url, token)`：健康、用户创建、文件 stat/read/stream、archive stream。
@@ -82,37 +82,15 @@ ToolLog 是最外层函数中间件：写完整记录、登记 call_id、追加�
 make check
 # Docker 构建代理参数见 services/envd/README.md
 make test-integration # 同时构建执行环境、代理与运行器镜像；不调用模型
-# 仅在进程环境已有 DEEPSEEK_API_KEY 时运行，会产生模型费用
-make test-live
 ```
 
-普通与集成测试排除 `live` 标记。PI 三个组件固定为 1.4.0，Node.js 最低 22.21（使用原生环境代理支持）。`make check` 同时执行 Node 原生组件检查、Ruff、Pyright 和脚本模型回归，不调用真实模型。升级时重跑协议、会话、执行围栏与 Docker 垂直检查。工具循环实际运行在 `pi-agent-core`，模型协议由 `pi-ai` 完成；Python 的 `pi/` 目录只保留持久格式、业务 hook 和进程边界适配。
-
-
-## 真实闭环检查（会调用 DeepSeek）
-
-```sh
-# 密钥已由外部注入进程环境时
-make e2e
-# 或由 uv 子进程显式加载用户选择的本地配置文件
-make e2e E2E_ENV_FILE=~/blackboard-explorer/.env
-# 同一引擎处理非代码的数据核对任务
-make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--task attendance-reconciliation'
-# 保留隔离工作台供浏览器复盘；--timeout 只限制任务等待时间
-make e2e E2E_ENV_FILE=~/blackboard-explorer/.env E2E_ARGS='--keep --timeout 1800'
-```
-
-先按上面的部署命令构建前端和所需镜像；每次修改实现后重新构建对应镜像。该命令生成已有玩具素材，使用已构建镜像，以唯一 `bbx-e2e-*` Compose 项目启动全栈。默认任务为flaky-order-test，可用 `--task` 选择eval/tasks中的任务；领域要求只来自所选task.yaml，数据任务不会自动收到pytest准备指令。黑板仅发布localhost随机端口，PG/MinIO不发布宿主端口，控制凭据为本次随机生成，只有模型配置使用提供的DEEPSEEK_API_KEY。Compose文件不保存密钥值；每条Compose命令另有180秒上限。
-
-控制台会显示任务/工作台地址与进展。隔离测试账号是 `e2e / local-e2e-only`，只用于这套临时服务。任务结束后输出报告和账本费用估算，并在 `.data/e2e/<项目名>/` 保存报告、事件、状态、工作区压缩包和脱敏日志。默认停止服务并清理本项目卷与执行容器；`--keep` 仅在任务已终结并登记归档后保留工作台，并打印清理命令。
-
-生产请求去重仍由 Agent 判断；e2e 不使用 embedding，也不会让普通检查调用模型。固定 profile 的价格是预算估算，不能代替供应商实际账单。
+PI 三个组件固定为 1.4.0，Node.js 最低 22.21。`make check` 同时执行 Node 原生组件检查、Ruff、Pyright 和脚本模型回归，不调用真实模型。升级时重跑协议、会话、执行围栏与 Docker 垂直检查。工具循环实际运行在 `pi-agent-core`，模型协议由 `pi-ai` 完成；Python 的 `pi/` 目录只保留持久格式、业务 hook 和进程边界适配。
 
 
 ## 持久会话与干预
 
 探索运行保留平台 `AgentSession` 快照与逐模型调用持久化，兼容旧 MAF 历史并保存 PI 原生元信息；初始指令单独保存，工具执行中断的未配对调用明确标为结果未知，恢复时不重跑旧命令。模型调用前认领用户消息，以稳定消息 ID 注入；消息确认与 checkpoint 同事务。CAS、claim token 与租约防止覆盖或重复回复；不确定提交读回对账。
 
-ChatWorker 对不同 Agent 最多四路并行，同一 Agent 串行。已结束的 Agent 仅有 get/search/read_evidence，恢复原会话回答用户；没有原生会话时标为 legacy。复盘单次最长180秒、最多8轮工具迭代，用量保存于消息，不重开任务或改变验收。
+终态复盘对不同 Agent 最多四路并行，同一 Agent 串行。用户可向已结束的 Agent 或终态任务发起复盘，工具限于 get/search/read_evidence，恢复原会话回答用户；没有原生会话时标为 legacy。复盘单次最长180秒、最多8轮工具迭代，用量保存于消息，不重开任务或改变验收。
 
 Supervisor 处理删除标记时停止残余cleanup、销毁执行容器，再调用幂等purge；普通归档不删除会话。derive 有新事实与空闲槽位时可提前并行，登记时锁内核对阶段和事实版本；无效的过期派发跳过。

@@ -72,14 +72,34 @@
       "type": "array"
     },
     "exchange_rate": {
-      "$ref": "#/$defs/FrozenExchangeRate"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrozenExchangeRate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
     }
   },
   "required": [
     "expected_epoch",
     "accounting_source_id",
-    "selected_models",
-    "exchange_rate"
+    "selected_models"
   ],
   "title": "NativeBudgetPrepare",
   "type": "object"

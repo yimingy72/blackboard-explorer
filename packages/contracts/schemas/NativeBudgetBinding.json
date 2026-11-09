@@ -97,7 +97,15 @@
       "title": "Threshold Usd"
     },
     "exchange_rate": {
-      "$ref": "#/$defs/FrozenExchangeRate"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrozenExchangeRate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "selected_models": {
       "items": {
@@ -116,6 +124,19 @@
       ],
       "title": "Publication State",
       "type": "string"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
     }
   },
   "required": [
@@ -125,7 +146,6 @@
     "budget_name",
     "key_fingerprint",
     "threshold_usd",
-    "exchange_rate",
     "selected_models",
     "publication_state"
   ],

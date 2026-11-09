@@ -282,9 +282,7 @@ async def test_two_job_backfill_real_http_session_graph_question_and_independent
     tid, aid, sources = await create_progress_task(board, facts=105, intents=3)
     assert len(sources) > 100
     before = await board.state(tid)
-    worker = ProgressWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test-only")), board
-    )
+    worker = ProgressWorker(Settings.model_construct(), board)
     first = await worker.control.claim()
     assert first is not None and first["task_id"] == tid
     assert first["through_version"] == sources[99]["version"]
@@ -395,9 +393,7 @@ async def test_restart_after_committed_response_checkpoint_recovers_without_mode
     await board._json(
         "POST", f"/tasks/{tid}/progress/messages", json={"id": mid, "content": "目前确定了什么？"}
     )
-    worker = ProgressWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test-only")), board
-    )
+    worker = ProgressWorker(Settings.model_construct(), board)
     job = await worker.control.claim()
     assert job is not None and job["kind"] == "question"
     script = script_for(job, sources)
@@ -469,9 +465,7 @@ async def test_session_known_ceiling_survives_later_object_reads_and_partial_sca
 ):
     board, app, transport = progress_http
     tid, _, sources = await create_progress_task(board, facts=105, intents=0)
-    worker = ProgressWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test-only")), board
-    )
+    worker = ProgressWorker(Settings.model_construct(), board)
     job = await worker.control.claim()
     assert job is not None and job["through_version"] == sources[99]["version"]
     far = next(
@@ -543,9 +537,7 @@ async def test_unsent_request_failure_is_terminal_and_can_be_explicitly_resumed(
         await board._json(
             "PUT", f"/tasks/{tid}/progress/settings", json={"enabled": True, "max_cost": "0.000001"}
         )
-    worker = ProgressWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test-only")), board
-    )
+    worker = ProgressWorker(Settings.model_construct(), board)
     job = await worker.control.claim()
     assert job is not None and job["kind"] == "question"
     unused = ScriptedChatClient([])

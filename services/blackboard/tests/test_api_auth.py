@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from copy import deepcopy
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import bbx_blackboard.api as api
@@ -200,7 +198,7 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate(monke
     tid, mid = uuid4(), uuid4()
 
     class FakeConversations:
-        async def post_message(self, task_id, aid, message_id, content):
+        async def post_message(self, task_id, aid, message_id, content, **kwargs):
             assert (task_id, aid, message_id, content) == (tid, "agent-1", mid, "hello")
             return {"id": message_id, "content": content}
 
@@ -223,7 +221,7 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate(monke
 
     async def fake_task(request, task_id):
         assert task_id == tid
-        return {"id": tid, "mode": "blackboard"}
+        return {"id": tid, "mode": "blackboard", "status": "running"}
 
     monkeypatch.setattr(api, "_task", fake_task)
     app.state.conversations = FakeConversations()
@@ -289,34 +287,56 @@ def test_unicode_credentials() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_inherits_selected_profile_params_with_task_override() -> None:
-    class Profiles:
-        async def get(self, name, version):
-            assert (name, version) == ("custom", 4)
-            return {
-                "name": "custom",
-                "version": 4,
-                "params": {"explore_max_steps": 7, "seed_max_steps": 3},
-                "models": {},
-            }
+async def test_task_freezes_gateway_and_preserves_nonmodel_profile_parameters(monkeypatch):
+    from bbx_contracts.gateway_models import GatewayModelSnapshot, GatewayUsdRates
 
-    class Service:
-        def __init__(self):
-            self.spec = None
-            self.profile_version = None
+    model = GatewayModelSnapshot(
+        alias="fixture-route",
+        label="Gateway fixture",
+        catalog_revision="a" * 64,
+        accounting_source_id="fixture",
+        route_revision=1,
+        route_digest="b" * 64,
+        model_catalog_digest="c" * 64,
+        context_window=32000,
+        max_input_tokens=12000,
+        max_output_tokens=1000,
+        input_modalities=["text"],
+        tool_call=True,
+        usd_rates=GatewayUsdRates.model_validate(
+            {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"}
+        ),
+    )
+    config = settings()
+    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
+    old = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
+    old["params"]["explore_max_steps"] = 7
 
-        async def create_task(self, spec, *, profile_version, legacy_network):
-            assert legacy_network.mode == "default"
-            self.spec = spec
-            self.profile_version = profile_version
-            return uuid4()
+    async def create_snapshot(name, snapshot, actor):
+        assert (name, actor) == ("task-settings", "task")
+        assert snapshot.params.context_threshold == 9600
+        assert snapshot.models.explore.model == model.alias
+        assert snapshot.models.explore.price.currency == "USD"
+        return {"name": name, "version": 5, **snapshot.model_dump(mode="json")}
 
-    app = api.create_app(settings())
-    service = Service()
-    app.state.profile_store = Profiles()
-    app.state.board_service = service
+    async def create_task(spec, *, profile_version, legacy_network, gateway_model):
+        assert legacy_network.mode == "default"
+        assert spec["params"]["context_threshold"] == 9600
+        assert spec["params"]["explore_max_steps"] == 7
+        assert spec["params"]["seed_max_steps"] == 5
+        assert "gateway_model" not in spec and profile_version == 5
+        assert gateway_model == (model, 8)
+        return uuid4()
+
+    app = api.create_app(config)
+    app.state.profile_store = SimpleNamespace(
+        get=AsyncMock(return_value=old), create=create_snapshot
+    )
+    app.state.board_service = SimpleNamespace(create_task=create_task)
+    app.state.gateway_models = SimpleNamespace(require_active=AsyncMock(return_value=model))
+    monkeypatch.setattr(api, "observed_generation", AsyncMock(return_value=8))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
             "/api/tasks",
@@ -324,133 +344,15 @@ async def test_task_inherits_selected_profile_params_with_task_override() -> Non
             json={
                 "goal": "Check parameters",
                 "acceptance": [{"id": "A1", "desc": "Done"}],
-                "budget": {"max_cost": "2", "max_minutes": 10},
+                "budget": {"currency": "USD", "max_cost": "2", "max_minutes": 10},
                 "agent_profile": "custom",
                 "profile_version": 4,
-                "params": {"seed_max_steps": 5},
-            },
-        )
-    assert response.status_code == 200
-    assert response.json()["agent_profile_version"] == 4
-    assert service.profile_version == 4
-    assert service.spec is not None
-    assert service.spec["params"] == {"explore_max_steps": 7, "seed_max_steps": 5}
-    assert service.spec["budget"] == {
-        "max_concurrent_agents": 5,
-        "max_cost": Decimal("2"),
-        "max_minutes": 10,
-    }
-
-
-async def test_task_uses_smallest_explicit_profile_context_window() -> None:
-    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
-    profile.models.explore.context_window = 300000
-    profile.models.derive.context_window = 500000
-    row = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
-
-    class Profiles:
-        async def get(self, name, version):
-            assert (name, version) == ("custom", 4)
-            return row
-
-        async def create(self, name, snapshot, actor):
-            assert (name, actor) == ("task-settings", "task")
-            assert snapshot.params.context_threshold == 120000
-            return {"name": name, "version": 1, **snapshot.model_dump(mode="json")}
-
-    class Service:
-        async def create_task(self, spec, *, profile_version, legacy_network):
-            assert legacy_network.mode == "default"
-            assert spec["params"]["context_threshold"] == 120000
-            assert profile_version == 1
-            return uuid4()
-
-    app = api.create_app(settings())
-    app.state.profile_store = Profiles()
-    app.state.board_service = Service()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
-    ) as client:
-        response = await client.post(
-            "/api/tasks",
-            headers={"Authorization": "Bearer service-test"},
-            json={
-                "goal": "Check window",
-                "acceptance": [{"id": "A1", "desc": "Done"}],
-                "budget": {"max_cost": "2", "max_minutes": 10},
-                "agent_profile": "custom",
-                "profile_version": 4,
-                "params": {"context_threshold": 128000},
+                "params": {"seed_max_steps": 5, "context_threshold": 128000},
+                "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
             },
         )
     assert response.status_code == 200, response.text
-    assert row["params"]["context_threshold"] == 128000
-
-
-@pytest.mark.parametrize(
-    "override",
-    [{}, {"reasoning_effort": None}, {"reasoning_effort": "max"}, {"reasoning_effort": "none"}],
-)
-@pytest.mark.parametrize("source", ["custom", "selected", "default"])
-async def test_task_reasoning_creates_isolated_snapshot_and_not_task_spec(override, source):
-    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
-    for model in (profile.models.explore, profile.models.derive, profile.models.close):
-        model.context_window = 300000
-        model.reasoning_effort = "high"
-    row = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
-    original = deepcopy(row)
-    profiles = AsyncMock()
-    profiles.get.return_value = row
-    profiles.create.side_effect = lambda name, snapshot, actor: {
-        "name": name,
-        "version": 9,
-        **snapshot.model_dump(mode="json"),
-    }
-    service = AsyncMock()
-    service.create_task.return_value = uuid4()
-    app = api.create_app(settings())
-    app.state.profile_store = profiles
-    app.state.board_service = service
-    platform = MagicMock(spec=api.PlatformStore)
-    platform.get.return_value = {"enabled": True}
-    platform.public.return_value = {"config": row["models"]["explore"]}
-    platform.default_model_name.return_value = "selected-model"
-    app.state.platform_store = platform
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
-    ) as client:
-        response = await client.post(
-            "/api/tasks",
-            headers={"Authorization": "Bearer service-test"},
-            json={
-                "goal": "Check task reasoning",
-                "acceptance": [{"id": "A1", "desc": "Done"}],
-                "budget": {"max_cost": "2", "max_minutes": 10},
-                "agent_profile": "default" if source == "default" else "custom",
-                **({"profile_version": 4} if source != "default" else {}),
-                **(
-                    {"model_id": "selected-model", "model_version": 2}
-                    if source == "selected"
-                    else {}
-                ),
-                **override,
-            },
-        )
-    assert response.status_code == 200, response.text
-    profiles.create.assert_awaited_once()
-    name, snapshot, actor = profiles.create.call_args.args
-    assert (name, actor) == ("task-settings", "task")
-    expected = override.get("reasoning_effort") or "high"
-    assert {
-        model.reasoning_effort
-        for model in (snapshot.models.explore, snapshot.models.derive, snapshot.models.close)
-    } == {expected}
-    assert snapshot.params.context_threshold == 120000
-    spec = service.create_task.call_args.args[0]
-    assert "reasoning_effort" not in spec
-    assert spec["agent_profile"] == "task-settings"
-    assert service.create_task.call_args.kwargs["profile_version"] == 9
-    assert row == original
+    assert response.json()["agent_profile_version"] == 5
 
 
 @pytest.mark.parametrize("effort", ["", "ultra", " ", True, 1])

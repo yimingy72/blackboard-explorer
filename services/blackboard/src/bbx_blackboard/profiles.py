@@ -14,7 +14,6 @@ from fastapi import HTTPException
 from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.store import schema as s
 
 
@@ -183,20 +182,12 @@ class ProfileStore:
         profile, _ = load_profile(directory)
         return await self._ensure_bundled_profile("default", profile)
 
-    async def ensure_bundled(self, directory: Path, platform: PlatformStore | None = None) -> None:
+    async def ensure_bundled(self, directory: Path) -> None:
         default, _ = load_profile(directory)
         single, _ = load_profile(directory.parent / "single")
-        model = default.models.explore
-        if platform is not None:
-            model = await platform.ensure_default_model(default.models.explore)
-            for profile in (default, single):
-                for role in ("explore", "derive", "close"):
-                    setattr(profile.models, role, model.model_copy(deep=True))
         await self._ensure_bundled_profile("default", default)
         await self._ensure_bundled_profile("single", single)
         ctf_directory = directory.parent / "ctf"
         if ctf_directory.is_dir():
             ctf = load_ctf_profile(ctf_directory)
-            if platform is not None:
-                ctf.model = model.model_copy(deep=True)
             await self._ensure_bundled_profile("ctf", ctf)

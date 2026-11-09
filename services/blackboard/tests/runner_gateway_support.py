@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from bbx_blackboard.platform import ModelInput, PlatformStore
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.task_board import TaskBoardService
@@ -14,7 +13,6 @@ from bbx_contracts.ctf import CtfAgentProfile, load_ctf_profile
 from bbx_contracts.runner import PROTOCOL, runner_json_text
 from sqlalchemy import select
 from test_board_flags_integration import Objects, bind_owner, identity, install_fake_runner
-from test_ctf_api import settings
 from test_runner_control_integration import (
     SERVICE,
     acquire,
@@ -59,37 +57,24 @@ async def prepare(
 ):
     if ctf.objects is None:
         ctf.objects = Objects()
-    platform = PlatformStore(ctf.repo.engine, settings().agent_token_secret.get_secret_value())
-    name = "bounded-" + uuid4().hex
     model_name = "deepseek-flash" if provider == "deepseek" else "bounded-fake"
-    stored = await platform.save(
-        "models",
-        name,
-        ModelInput.model_validate(
-            {
-                "label": "Bounded synthetic route",
-                "provider": provider,
-                "model": model_name,
-                "base_url": base_url,
-                "reasoning_effort": "none",
-                "supports_vision": False,
-                "context_window": 16384,
-                "max_output_tokens": 128,
-                "price": {
-                    "billing_mode": billing,
-                    "currency": "CNY",
-                    "cache_hit_per_m": "0.5" if billing != "fixed" else "1",
-                    "cache_miss_per_m": "0.5" if billing != "fixed" else "1",
-                    "output_per_m": "0.5" if billing != "fixed" else "1",
-                    "off_peak": billing != "fixed",
-                },
-                "api_key": "provider-fixture-key",
-                "credential_source": "stored",
-            }
-        ),
-        "test",
-    )
-    config = stored["config"]
+    config = {
+        "provider": provider,
+        "model": model_name,
+        "base_url": base_url,
+        "reasoning_effort": "none",
+        "supports_vision": False,
+        "context_window": 16384,
+        "max_output_tokens": 128,
+        "price": {
+            "billing_mode": billing,
+            "currency": "CNY",
+            "cache_hit_per_m": "0.5" if billing != "fixed" else "1",
+            "cache_miss_per_m": "0.5" if billing != "fixed" else "1",
+            "output_per_m": "0.5" if billing != "fixed" else "1",
+            "off_peak": billing != "fixed",
+        },
+    }
     template = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf").model_dump(
         mode="json"
     )

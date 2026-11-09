@@ -1,3 +1,4 @@
+import type { GatewayModelRef } from '../api/client';
 import type { AgentMessage } from '../api/client';
 
 export type ProgressRef = { kind: 'task' | 'fact' | 'intent' | 'acceptance' | 'event' | 'evidence'; id: string; version: number; evidence_uri?: string | null; sha256?: string | null; read_at?: number };
@@ -16,7 +17,8 @@ export type ProgressView = {
   diagnostic?: { category: string; event_type?: string | null; incomplete_reason?: string | null; finish_reason?: string | null; provider_code?: string | null; request_id?: string | null; provider_response_id?: string | null } | null;
   model?: { model: string; reasoning_effort: string };
   model_limits?: { context_window: number | null; max_input_tokens: number | null; max_output_tokens: number; reasoning_effort: string } | null;
-  budget: { max_cost: string; spent: string; reserved: string; unknown: string };
+  budget: { max_cost: string; spent: string; reserved: string; unknown: string; currency?: string | null };
+  cost_breakdown?: { total: string | null };
 };
-export type ProgressSettings = { revision: number; prompt: string; model_id: string | null; enabled_tools: string[] };
+export type ProgressSettings = { revision: number; prompt: string; gateway_model?: GatewayModelRef | null; enabled_tools: string[] };
 export type ProgressMessage = AgentMessage & { node_id?: string | null };

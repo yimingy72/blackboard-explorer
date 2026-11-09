@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from bbx_runtime import models
 from bbx_runtime.model_errors import ModelStreamError, model_error_metadata
-from bbx_runtime.models import load_runtime_profile, make_client
+from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.pi import Message
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 
 pytestmark = pytest.mark.integration
 

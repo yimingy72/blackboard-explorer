@@ -17,7 +17,7 @@ import httpx
 from bbx_contracts.billing import effective_price
 from bbx_contracts.models import ModelConfig
 
-from bbx_runtime.billing import _input_tokens, _usage
+from bbx_runtime.billing import _input_tokens, _token_usage, _usage
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.context import (
@@ -299,8 +299,10 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
         context_threshold: int = 128000,
         *,
         fixed_input_tokens: int = 0,
+        gateway_review: bool = False,
     ) -> None:
         super().__init__(checkpoint)
+        self.gateway_review = gateway_review
         self.service, self.turn, self.model = service, turn, model
         self.context_threshold = context_threshold
         self.input_limit = input_token_limit(model, context_threshold)
@@ -1016,9 +1018,14 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
             }
         successful_usage = None
         if details:
-            price, _ = effective_price(self.model, datetime.now(UTC))
-            usage, _ = _usage(details, price, self.model.provider)
-            successful_usage = usage.model_dump(mode="json")
+            if self.gateway_review:
+                successful_usage = _token_usage(details, self.model.provider).model_dump(
+                    mode="json", exclude={"cost"}
+                )
+            else:
+                price, _ = effective_price(self.model, datetime.now(UTC))
+                usage, _ = _usage(details, price, self.model.provider)
+                successful_usage = usage.model_dump(mode="json")
             session.state["ctf_last_provider_usage"] = {
                 "turn_id": str(self.turn["id"]),
                 "step": step,
@@ -1030,18 +1037,19 @@ class CtfHistoryProvider(CheckpointHistoryProvider):
                 "response_id": response.response_id if response is not None else None,
                 "context_view": timing.get("context_view", {}),
             }
-            # Persist request identity and usage alongside history before billing. Recovery
-            # flushes this outbox idempotently, including a lost billing response.
-            session.state.setdefault(self.usage_key, []).append(
-                {
-                    "request_id": str(uuid4()),
-                    "reservation_id": f"{self.turn['id']}:{step}",
-                    "agent_id": self.checkpoint.agent_id,
-                    "turn_id": str(self.turn["id"]),
-                    "generation": self.turn["generation"],
-                    "usage": successful_usage,
-                }
-            )
+            if not self.gateway_review:
+                # Persist request identity and usage alongside history before billing. Recovery
+                # flushes this outbox idempotently, including a lost billing response.
+                session.state.setdefault(self.usage_key, []).append(
+                    {
+                        "request_id": str(uuid4()),
+                        "reservation_id": f"{self.turn['id']}:{step}",
+                        "agent_id": self.checkpoint.agent_id,
+                        "turn_id": str(self.turn["id"]),
+                        "generation": self.turn["generation"],
+                        "usage": successful_usage,
+                    }
+                )
         await super().after_run(agent=agent, session=session, context=context, state=state)
         await self.flush_usage(defer_cleanup=True)
         if response is not None:

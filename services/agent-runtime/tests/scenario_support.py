@@ -466,9 +466,7 @@ async def scenario(
                 await board.start_task(tid)
                 handle = ExecEnvHandle(UUID(tid), "fake-envd", "fake", "http://fake", fake.token)
                 manager = FakeManager(handle, envd_http, objects)
-                settings = Settings.model_construct(
-                    deepseek_api_key=SecretStr("scripted-model"), max_running_tasks=1
-                )
+                settings = Settings.model_construct(max_running_tasks=1)
                 runner = ScenarioRunner(settings, board, objects, manager, envd_http, fake, factory)
                 owner = TaskSupervisor(
                     settings,

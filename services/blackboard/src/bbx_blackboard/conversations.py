@@ -11,11 +11,13 @@ from bbx_contracts.heartbeat import usage_receipt_support
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import Text, and_, delete, exists, func, or_, select, update
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from bbx_blackboard.domain.rules import dispute_fields, event, pending_claims
+from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import agent_execution_matches
@@ -65,6 +67,28 @@ async def require_settled_progress(conn, tid):
 
 def _public(row: Any) -> dict[str, Any]:
     return {key: row[key] for key in MESSAGE_FIELDS}
+
+
+def _review_dispatched():
+    return exists(
+        select(s.gateway_execution_attempts.c.id).where(
+            s.gateway_execution_attempts.c.task_id == s.agent_messages.c.task_id,
+            s.gateway_execution_attempts.c.purpose == "review",
+            s.gateway_execution_attempts.c.attributes["bbx_conversation_id"].astext
+            == sql_cast(s.agent_messages.c.id, Text),
+        )
+    )
+
+
+def _require_original_review(task, agent, message):
+    if (
+        message["purpose"] != "review"
+        or agent["status"] not in {"finished", "failed"}
+        or message["request_run_number"] != task["run_number"]
+        or message["request_started_at"] != agent["started_at"]
+        or message["request_derive_round"] != agent["derive_round"]
+    ):
+        raise HTTPException(409, "The original review incarnation changed")
 
 
 class Conversations:
@@ -368,7 +392,7 @@ class Conversations:
         written = []
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            _, agent = await self._task_agent(conn, tid, aid, writable=True)
+            task, agent = await self._task_agent(conn, tid, aid, writable=True)
             if (
                 agent["task_type"] == "derive"
                 and agent["status"] in ACTIVE
@@ -378,6 +402,7 @@ class Conversations:
             if review_claim is not None:
                 message = await self._message(conn, tid, aid, review_claim["id"])
                 self._check_claim(message, review_claim["claim_token"])
+                _require_original_review(task, agent, message)
             if agent["status"] in ACTIVE or review_claim is None or expected_started_at is not None:
                 if not await agent_execution_matches(conn, tid, agent, expected_started_at):
                     raise HTTPException(
@@ -386,6 +411,8 @@ class Conversations:
             for delivery in deliveries:
                 message = await self._message(conn, tid, aid, delivery["id"])
                 self._check_claim(message, delivery["claim_token"])
+                if message["purpose"] == "review":
+                    raise HTTPException(409, "Review cannot be delivered to execution")
                 await conn.execute(
                     update(s.agent_messages)
                     .where(s.agent_messages.c.id == delivery["id"])
@@ -414,12 +441,22 @@ class Conversations:
 
     async def list_messages(self, tid: UUID, aid: str, status: str | None = None) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:
-            _, agent = await self._task_agent(conn, tid, aid)
+            task, agent = await self._task_agent(conn, tid, aid)
             stmt = select(s.agent_messages).where(
                 s.agent_messages.c.task_id == tid, s.agent_messages.c.agent_id == aid
             )
             if status is not None:
                 stmt = stmt.where(s.agent_messages.c.status == status)
+            if status == "queued":
+                stmt = stmt.where(
+                    s.agent_messages.c.purpose.is_(None)
+                    | (
+                        (s.agent_messages.c.purpose == "active")
+                        & (s.agent_messages.c.request_run_number == task["run_number"])
+                        & (s.agent_messages.c.request_started_at == agent["started_at"])
+                        & (s.agent_messages.c.request_derive_round == agent["derive_round"])
+                    )
+                )
             rows = (
                 (
                     await conn.execute(
@@ -444,15 +481,42 @@ class Conversations:
             "messages": [_public(row) for row in rows],
             "session_available": session is not None,
             "session_origin": session["origin"] if session else None,
-            "mode": "active" if agent["status"] in ACTIVE else "review",
+            "mode": (
+                "active"
+                if agent["status"] in ACTIVE
+                else "review"
+                if agent["status"] in {"finished", "failed"}
+                else "unavailable"
+            ),
         }
 
-    async def post_message(self, tid: UUID, aid: str, mid: UUID, content: str) -> dict[str, Any]:
+    async def post_message(
+        self,
+        tid: UUID,
+        aid: str,
+        mid: UUID,
+        content: str,
+        *,
+        review_model=None,
+        review_generation=None,
+        review_origin=None,
+    ) -> dict[str, Any]:
         content = storage_safe(content)
         written = []
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            await self._task_agent(conn, tid, aid, writable=True)
+            task, agent = await self._task_agent(conn, tid, aid, writable=True)
+            review = agent["status"] in {"finished", "failed"}
+            if review:
+                if review_model is None or review_origin != {
+                    "started_at": agent["started_at"],
+                    "derive_round": agent["derive_round"],
+                    "run_number": task["run_number"],
+                }:
+                    raise HTTPException(409, "No original terminal review scope is available")
+                await admission(conn, review_generation)
+            elif agent["status"] not in ACTIVE or review_origin is not None:
+                raise HTTPException(409, "This Agent cannot be reviewed while the Task is active")
             result = await conn.execute(
                 insert(s.agent_messages)
                 .values(
@@ -460,6 +524,13 @@ class Conversations:
                     task_id=tid,
                     agent_id=aid,
                     role="user",
+                    purpose="review" if review else "active",
+                    request_run_number=task["run_number"],
+                    request_started_at=agent["started_at"],
+                    request_derive_round=agent["derive_round"],
+                    review_model=review_model.model_dump(mode="json")
+                    if review_model is not None
+                    else None,
                     content=content,
                     status="queued",
                 )
@@ -535,11 +606,14 @@ class Conversations:
     async def claim(self, tid: UUID, aid: str, mid: UUID, mode: str) -> dict[str, Any]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            _, agent = await self._task_agent(conn, tid, aid, writable=True)
+            task, agent = await self._task_agent(conn, tid, aid, writable=True)
             active = agent["status"] in ACTIVE
             if (mode == "active") != active:
                 raise HTTPException(409, "Agent mode changed")
             if mode == "review":
+                await admission(conn)
+                if agent["status"] not in {"finished", "failed"}:
+                    raise HTTPException(409, "Review requires a finished Agent")
                 processing = await conn.execute(
                     select(s.agent_messages.c.id)
                     .where(
@@ -554,6 +628,30 @@ class Conversations:
                 if processing.first():
                     raise HTTPException(409, "Agent review is already processing")
             message = await self._message(conn, tid, aid, mid)
+            if mode == "review" and (
+                message["purpose"] != "review"
+                or message["request_run_number"] != task["run_number"]
+                or not message["review_model"]
+                or message["request_started_at"] != agent["started_at"]
+                or message["request_derive_round"] != agent["derive_round"]
+            ):
+                raise HTTPException(409, "Original terminal review is unavailable")
+            if mode == "review" and await conn.scalar(
+                select(s.agent_messages.c.id).where(
+                    s.agent_messages.c.id == mid, _review_dispatched()
+                )
+            ):
+                raise HTTPException(409, "The original review request cannot be sent again")
+            if mode == "active" and (
+                message["purpose"] == "review"
+                or message["purpose"] == "active"
+                and (
+                    message["request_run_number"] != task["run_number"]
+                    or message["request_started_at"] != agent["started_at"]
+                    or message["request_derive_round"] != agent["derive_round"]
+                )
+            ):
+                raise HTTPException(409, "Review cannot be injected into active execution")
             if message["status"] != "queued" and not (
                 message["status"] == "processing" and message["lease_until"] <= _now()
             ):
@@ -571,7 +669,11 @@ class Conversations:
                 )
                 .returning(s.agent_messages)
             )
-            return {"message": _public(result.mappings().one()), "claim_token": token}
+            return {
+                "message": _public(result.mappings().one()),
+                "claim_token": token,
+                **({"gateway_model": message["review_model"]} if mode == "review" else {}),
+            }
 
     async def complete(
         self,
@@ -592,7 +694,7 @@ class Conversations:
         usage = storage_safe(usage)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            _, agent = await self._task_agent(conn, tid, aid, writable=True)
+            task, agent = await self._task_agent(conn, tid, aid, writable=True)
             message = await self._message(conn, tid, aid, mid)
             if message["status"] == "completed" and message["claim_token"] == token:
                 reply = (
@@ -606,6 +708,8 @@ class Conversations:
                 )
                 return _public(reply)
             self._check_claim(message, token)
+            if message["purpose"] == "review":
+                _require_original_review(task, agent, message)
             if agent["status"] in ACTIVE or expected_started_at is not None:
                 if not await agent_execution_matches(conn, tid, agent, expected_started_at):
                     raise HTTPException(
@@ -713,6 +817,12 @@ class Conversations:
                         )
                         .where(
                             s.tasks.c.deleting.is_(False),
+                            s.agent_messages.c.purpose == "review",
+                            s.agent_messages.c.request_run_number == s.tasks.c.run_number,
+                            s.agent_messages.c.request_started_at == s.agent_runs.c.started_at,
+                            s.agent_messages.c.request_derive_round == s.agent_runs.c.derive_round,
+                            s.agent_messages.c.review_model.is_not(None),
+                            ~_review_dispatched(),
                             s.agent_runs.c.status.not_in(ACTIVE),
                             or_(
                                 s.agent_messages.c.status == "queued",
@@ -751,6 +861,19 @@ class Conversations:
                     await self.repo.lock(conn, tid)
                 except KeyError:
                     continue
+                await conn.execute(
+                    update(s.agent_messages)
+                    .where(
+                        s.agent_messages.c.task_id == tid,
+                        s.agent_messages.c.status == "processing",
+                        _review_dispatched(),
+                    )
+                    .values(
+                        status="failed",
+                        error="Original review result is unconfirmed",
+                        updated_at=_now(),
+                    )
+                )
                 result = await conn.execute(
                     update(s.agent_messages)
                     .where(
@@ -993,10 +1116,19 @@ class Conversations:
                 await self.repo.lock(conn, tid)
             except KeyError:
                 return {"purged": True}
+            # Review billing remains in the gateway-wide accounting ledger after a Task deletion.
+            await conn.execute(
+                delete(s.native_request_costs).where(
+                    s.native_request_costs.c.task_id == tid,
+                    func.coalesce(
+                        s.native_request_costs.c.evidence["attributes"]["bbx_purpose"].astext, ""
+                    )
+                    != "review",
+                )
+            )
             for table in (
                 s.task_runner_resources,
                 s.native_task_mcp_routes,
-                s.native_request_costs,
                 s.native_task_budgets,
                 s.sandbox_command_records,
                 s.runner_calls,

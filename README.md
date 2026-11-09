@@ -208,6 +208,6 @@ docker compose --project-name blackboard-explorer up -d --wait
 
 ## 验证与进一步阅读
 
-`make check` 使用假模型，不调用 DeepSeek；`make test-integration` 使用 Docker，也不调用 DeepSeek。`make e2e`、`make eval-run` 和从工作台启动真实任务会调用模型并产生费用。任务选择与评分见 [评测任务](eval/tasks/README.md) 和 [评测运行器](eval/runner/README.md)。
+`make check` 使用假模型；`make test-integration` 使用隔离 Docker 环境。真实任务使用 AgentGateway 已发布模型，并按该模型费用记录。任务选择与评分见 [评测任务](eval/tasks/README.md) 和 [评测运行器](eval/runner/README.md)。
 
 设计正本见 [概念设计](docs/design/黑板式探索架构设计.md)及 [实现架构](docs/design/黑板系统实现架构.md)，当前进度见 [HANDOFF](docs/HANDOFF.md)。运行时实现见 [Agent runtime](services/agent-runtime/README.md)，前端见 [Web](web/README.md)。

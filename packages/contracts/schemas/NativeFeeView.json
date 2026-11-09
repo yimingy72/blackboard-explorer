@@ -81,8 +81,12 @@
         {
           "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
           "type": "string"
+        },
+        {
+          "type": "null"
         }
       ],
+      "default": null,
       "title": "Converted Cny"
     },
     "threshold_usd": {
@@ -126,7 +130,15 @@
       "title": "Hold Reason"
     },
     "exchange_rate": {
-      "$ref": "#/$defs/FrozenExchangeRate"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrozenExchangeRate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "catalog_revision": {
       "title": "Catalog Revision",
@@ -147,16 +159,27 @@
       ],
       "default": null,
       "title": "Native Used High Water Usd"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
     }
   },
   "required": [
     "accounting_source_id",
     "confirmed_usd",
-    "converted_cny",
     "threshold_usd",
     "overage_usd",
     "pending_attempts",
-    "exchange_rate",
     "catalog_revision"
   ],
   "title": "NativeFeeView",

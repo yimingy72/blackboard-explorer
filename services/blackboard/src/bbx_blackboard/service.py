@@ -45,6 +45,9 @@ from bbx_blackboard.domain import (
     pending_claims,
 )
 from bbx_blackboard.domain.rules import event
+from bbx_blackboard.gateway_budgets import GatewayBudgets
+from bbx_blackboard.gateway_maintenance import admission
+from bbx_blackboard.gateway_tasks import freeze_gateway_model
 from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
 from bbx_blackboard.legacy_network import require_run_ready, require_run_retired
 from bbx_blackboard.profiles import ProfileStore
@@ -73,6 +76,7 @@ class BoardService:
         input_owner: str | None = None,
         create_request_hash: str | None = None,
         legacy_network: LegacyNetworkSnapshot | None = None,
+        gateway_model=None,
     ) -> UUID:
         spec = TaskSpec.model_validate(spec)
         if len({x.id for x in spec.acceptance}) != len(spec.acceptance):
@@ -142,6 +146,8 @@ class BoardService:
                         raise RuleViolation("input_missing", "初始附件尚未保存，请重新上传。")
                 payload["initial_attachments"] = files
             await conn.execute(insert(s.tasks).values(id=tid, **payload))
+            if gateway_model is not None:
+                await freeze_gateway_model(conn, tid, *gateway_model)
             if legacy_network is not None:
                 await conn.execute(
                     insert(s.legacy_execution_networks).values(
@@ -185,9 +191,12 @@ class BoardService:
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
         expected_started_at: datetime | None = None,
+        gateway_generation: int | None = None,
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
+            if gateway_generation is not None:
+                await admission(conn, gateway_generation)
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
             if command in {
                 "heartbeat",
@@ -296,9 +305,21 @@ class BoardService:
             raise RuleViolation("stale_agent_round", "推导轮次已变化，旧请求不能写入本轮。")
 
     async def transition(
-        self, tid: UUID, status: str, *, actor: str = "scheduler", reason: str | None = None
+        self,
+        tid: UUID,
+        status: str,
+        *,
+        actor: str = "scheduler",
+        reason: str | None = None,
+        gateway_generation: int | None = None,
     ) -> list[dict[str, Any]]:
-        return await self._write(tid, "transition", actor, {"status": status, "reason": reason})
+        return await self._write(
+            tid,
+            "transition",
+            actor,
+            {"status": status, "reason": reason},
+            gateway_generation=gateway_generation,
+        )
 
     async def record_archive(
         self, tid: UUID, uri: str, size: int, fallback: str
@@ -327,6 +348,8 @@ class BoardService:
         additional_minutes: int,
         refresh_tools: bool = False,
         actor: str = "user",
+        *,
+        gateway_generation: int | None = None,
     ) -> None:
         # Known historical charges commit even if the requested new budget is insufficient.
         async with self.repo.engine.begin() as conn:
@@ -410,6 +433,21 @@ class BoardService:
                 str(task["usage"].get("cost", 0))
             ):
                 raise RuleViolation("resume_budget_exhausted", "追加后仍需留有可探索金额。")
+            if gateway_generation is not None:
+                await admission(conn, gateway_generation)
+                await GatewayBudgets.confirm_platform_limit(
+                    conn,
+                    tid,
+                    "ordinary",
+                    Decimal(budget["max_cost"]),
+                    request_id if additional_cost else None,
+                    {
+                        "operation": "resume",
+                        "currency": "USD",
+                        "minutes": additional_minutes,
+                        "refresh_tools": refresh_tools,
+                    },
+                )
             run = int(task.get("run_number") or 1) + 1
             profile_version = task["agent_profile_version"]
             if refresh_tools:
@@ -482,6 +520,9 @@ class BoardService:
         additional_cost: Decimal,
         max_minutes: int | None,
         actor: str = "user",
+        *,
+        gateway_generation: int | None = None,
+        request_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Extend an active ordinary task without changing its run or Agent sessions."""
         if additional_cost < 0 or (max_minutes is not None and max_minutes < 1):
@@ -491,6 +532,23 @@ class BoardService:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if task["status"] not in {"provisioning", "running", "closing"}:
                 raise RuleViolation("budget_task_inactive", "仅运行中的任务可以调整预算。")
+            if gateway_generation is not None:
+                await admission(conn, gateway_generation)
+                if additional_cost and request_id is None:
+                    raise HTTPException(422, "A budget change requires an original request ID")
+                receipt = (
+                    await GatewayBudgets.request_receipt(conn, tid, "ordinary", request_id)
+                    if request_id is not None
+                    else None
+                )
+                if receipt and "platform_payload" in receipt:
+                    if (
+                        receipt["platform_payload"]
+                        != {"operation": "adjust", "minutes": max_minutes, "currency": "USD"}
+                        or Decimal(receipt["additional_usd"]) != additional_cost
+                    ):
+                        raise HTTPException(409, "The original platform budget request changed")
+                    return []
             previous = dict(task["budget"])
             budget = dict(previous)
             budget["max_cost"] = str(Decimal(str(previous["max_cost"])) + additional_cost)
@@ -499,7 +557,9 @@ class BoardService:
                 raise RuleViolation("budget_unchanged", "预算没有变化。")
             spent = Decimal(str(task["usage"].get("cost", 0) or 0))
             reserve = Params.model_validate(task["params"]).close_reserve_ratio
-            if Decimal(budget["max_cost"]) * (1 - reserve) <= spent:
+            if (gateway_generation is None or not additional_cost) and Decimal(
+                budget["max_cost"]
+            ) * (1 - reserve) <= spent:
                 raise RuleViolation("budget_exhausted", "追加后仍需留有可探索金额。")
             active_seconds = int(task.get("active_seconds") or 0)
             if task.get("active_since") is not None:
@@ -508,6 +568,15 @@ class BoardService:
                 )
             if int(budget["max_minutes"]) * 60 <= active_seconds:
                 raise RuleViolation("budget_time_exhausted", "追加后的总时长仍不足以继续运行。")
+            if gateway_generation is not None:
+                await GatewayBudgets.confirm_platform_limit(
+                    conn,
+                    tid,
+                    "ordinary",
+                    Decimal(budget["max_cost"]),
+                    request_id if additional_cost else None,
+                    {"operation": "adjust", "minutes": max_minutes, "currency": "USD"},
+                )
             written = await self.repo.append(
                 conn,
                 tid,

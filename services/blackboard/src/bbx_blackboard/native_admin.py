@@ -17,6 +17,8 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 5
 KEYS_PATH = "/api/config/resources/llm.apiKey"
 ROUTES_PATH = "/api/config/resources/traffic.route"
+MODELS_PATH = "/api/config/resources/llm.model"
+CATALOG_PATH = "/api/config/resources/modelCatalog"
 
 
 def unavailable() -> HTTPException:
@@ -115,6 +117,30 @@ class NativeAdmin:
 
     async def put_route(self, value: dict) -> None:
         await self.request("PUT", ROUTES_PATH, body={"resources": [{"value": value}]})
+
+    async def put_model_config(
+        self, path: str, value: dict, *, resource_id: str | None = None
+    ) -> dict:
+        if path not in {MODELS_PATH, CATALOG_PATH}:
+            raise unavailable()
+        if resource_id is None:
+            result = await self.request("PUT", path, body={"resources": [{"value": value}]})
+        else:
+            result = await self.request(
+                "PUT", path + "/" + quote(resource_id, safe=""), body={"value": value}
+            )
+        resources = result.get("resources") if isinstance(result, dict) else None
+        if not isinstance(resources, list) or len(resources) != 1:
+            raise unavailable()
+        written = resources[0]
+        if not isinstance(written, dict) or type(written.get("revision")) is not int:
+            raise unavailable()
+        return written
+
+    async def delete_model_config(self, resource_id: str) -> None:
+        if not resource_id or len(resource_id) > 128:
+            raise unavailable()
+        await self.request("DELETE", MODELS_PATH + "/" + quote(resource_id, safe=""))
 
     async def delete_route(self, resource_id: str) -> None:
         if not resource_id or len(resource_id) > 512:

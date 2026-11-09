@@ -266,8 +266,9 @@ async def test_actual_pi_agent_stream_is_not_waiting_for_capture_upload() -> Non
     from pathlib import Path
 
     import httpx2
-    from bbx_runtime.models import load_runtime_profile, make_client
+    from bbx_runtime.models import load_runtime_profile
     from bbx_runtime.pi import Agent, tool
+    from bbx_runtime.testing.pi_client import make_test_client as make_client
     from test_runtime_streaming import chat_chunk, sse
 
     @tool

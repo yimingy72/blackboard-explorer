@@ -122,7 +122,6 @@ async def test_real_ctf_execution_chain_repeats_without_target(ctf_vertical_data
             ).status_code == 200
 
             runtime_settings = Settings.model_construct(
-                deepseek_api_key=SecretStr("unused-scripted"),
                 service_token=SecretStr("ctf-real-service"),
                 envd_token_secret=SecretStr("ctf-real-envd-secret-32"),
                 minio_root_password=SecretStr("unused-test"),

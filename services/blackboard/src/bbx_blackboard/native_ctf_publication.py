@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from bbx_contracts.models import ContractModel
-from bbx_contracts.native_gateway import FrozenExchangeRate, native_budget_threshold_usd
+from bbx_contracts.native_gateway import native_usd_amount
 from bbx_contracts.runner import Digest
 from bbx_contracts.runner_bootstrap import (
     BINDING_CAPTURE_CONFIG_FIELDS,
@@ -48,13 +48,11 @@ class AcceptanceReference(ContractModel):
 
 
 class CaptureAcceptance(ContractModel):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     base_source: Literal["original", "reconstructed"]
     base_tool_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
     recipe_sha256: Digest | None = None
     traffic_sandbox_image: str
-    catalog_revision: str = Field(min_length=1)
-    model: PublishedModel
     public_create_and_archive: Literal[True]
     inputs_profile: Literal["shared-inputs-v1"] | None = None
     inputs_host_image: str | None = None
@@ -72,8 +70,8 @@ class NativeCtfPublication(ContractModel):
     label: str = Field(min_length=1, max_length=100)
     release: Literal["verified", "test_only"]
     ctf_profile_version: int = Field(ge=1, strict=True)
-    model: PublishedModel
-    exchange_rate: FrozenExchangeRate
+    model: PublishedModel | None = Field(default=None, exclude_if=lambda value: value is None)
+    budget_currency: Literal["USD"] = "USD"
     runtime_resource_config: dict[str, Any]
     acceptance: AcceptanceReference | None = None
     inputs_profile: Literal["shared-inputs-v1"] | None = Field(
@@ -94,8 +92,6 @@ class NativeCtfPublication(ContractModel):
             revision=self.revision,
             publication_stamp=stamp,
             label=self.label,
-            model_id=self.model.id,
-            model_version=self.model.version,
             vpn=NativeVpnCapability(profile=vpn.profile, id=vpn.id, label=vpn.label)
             if vpn
             else None,
@@ -113,9 +109,9 @@ class NativeCtfPublication(ContractModel):
             **({"vpn_profile": self.vpn_profile} if self.vpn_profile else {}),
         }
 
-    def validate_budget(self, cny: Decimal) -> None:
+    def validate_budget(self, usd: Decimal) -> None:
         try:
-            native_budget_threshold_usd(cny, self.exchange_rate.rate_cny_per_usd)
+            native_usd_amount(usd)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
@@ -163,7 +159,7 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 raise ValueError("Fixture publications are not accepted by the application")
         else:
             ref = publication.acceptance
-            if ref is None:
+            if publication.model is not None or ref is None:
                 raise ValueError("Original image publication requires acceptance evidence")
             raw = _bounded_file(path.parent / ref.file)
             if hashlib.sha256(raw).hexdigest() != ref.sha256:
@@ -181,8 +177,6 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 != publication.runtime_resource_config.get("traffic_sandbox_image")
                 or accepted.base_tool_image.rsplit("@", 1)[-1]
                 == accepted.traffic_sandbox_image.rsplit("@", 1)[-1]
-                or accepted.catalog_revision != settings.native_gateway_catalog_revision
-                or accepted.model != publication.model
                 or accepted.inputs_profile != publication.inputs_profile
                 or accepted.vpn_profile != publication.vpn_profile
                 or (
@@ -206,8 +200,6 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 )
             ):
                 raise ValueError("Original image acceptance does not match this deployment")
-        if publication.exchange_rate.observed_at.tzinfo is None:
-            raise ValueError("Native publication exchange rate must have a timezone")
         config = publication.runtime_resource_config
         if "retirement_single_apiserver" in config:
             raise ValueError("Expected the exact Runtime claim configuration")

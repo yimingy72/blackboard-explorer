@@ -3,6 +3,7 @@ import { formatTime } from '../pages/format';
 import { Alert, Avatar, Button, Collapse, Empty, Modal } from 'antd';
 import { Sender } from '@ant-design/x';
 import ConversationBubbles from '../components/ConversationBubbles';
+import ReviewFees from '../components/ReviewFees';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ctfApi } from './api';
@@ -28,7 +29,7 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
     onDraftChange?:(value:string)=>void;
 }) {
     const queryClient = useQueryClient();
-    const review = isReviewPhase(phase);
+    const review = isReviewPhase(phase) || member.lifecycle === "stopped" || member.lifecycle === "removed";
     const [localDraft,setLocalDraft]=useState('');
     const fallback=useRef(createAgentClientState());const client=clientState??fallback.current;
     const draft=draftValue??localDraft;const setDraft=useCallback((value:string)=>{client.draftRevision+=1;(onDraftChange??setLocalDraft)(value);},[client,onDraftChange]);
@@ -82,6 +83,7 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
       {error && <Alert type="error" title={error.message} action={<Button onClick={() => { void messages.refetch(); void session.refetch(); }}>重新读取会话</Button>} />}
       {(messages.isLoading || session.isLoading) && <LoadingState label="正在读取会话…" />}
       {!entries.length && !messages.isLoading && !session.isLoading && <div className={styles.conversationEmpty}><Empty description={member.role === 'lead' ? '与 Lead 开始协作' : '尚无对话记录'} /></div>}
+      {review && <ReviewFees taskId={taskId} agentId={member.id} />}
       <ConversationBubbles className={styles.chatList} autoScroll items={items} />
       <div className={styles.composer}><Sender aria-label={`发给 ${member.display_name} 的消息`} value={draft} onChange={(value) => setDraft(value.slice(0,20000))} onSubmit={() => void send()} submitType="enter" autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:"8px 10px",gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} disabled={sendAction.busy || !canSend(phase,member)} placeholder={review ? '询问结论、证据或下一步建议…' : `发给 ${member.display_name}…`} onKeyDown={event=>{if(event.key!=='Enter')return;if(event.nativeEvent.isComposing||event.keyCode===229)return false;if(event.ctrlKey||event.metaKey){event.preventDefault();void send();return false;}}} suffix={(_, {components}) => <components.SendButton aria-label={sendAction.error ? '重试发送' : review ? '发送复盘消息' : '发送消息'} loading={sendAction.busy} disabled={sendAction.busy || !draft.trim() || !canSend(phase,member)} />} />
         <div className={styles.composerFooter}><span>{review ? '复盘问答' : phase === 'closing' ? '收尾后待处理' : member.lifecycle === 'stopped' ? '恢复后送达' : '直接发给此 Agent'}</span><span>Enter 发送 · Shift+Enter 换行</span></div>{sendAction.error && <Alert type="error" title={`${sendAction.error} 消息内容已保留。`} />}

@@ -61,12 +61,16 @@ def pagination_app(monkeypatch):
     )
     monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
     token = issue_agent_token(config, tid, "member-1", generation=2, turn_id=turn)
+    review = issue_agent_token(
+        config, tid, "member-1", generation=2, turn_id=turn, purpose="review"
+    )
     return SimpleNamespace(
         app=app,
         backend=backend,
         tid=tid,
         cid=cid,
         agent_headers={"Authorization": f"Bearer {token}"},
+        review_headers={"Authorization": f"Bearer {review}"},
         user_headers={"Authorization": f"Bearer {issue_user_token(config, 'alice')}"},
     )
 
@@ -104,7 +108,9 @@ async def test_routes_pass_pagination_to_database_method(
             if operation == "list_records":
                 body["challenge_id"] = str(setup.cid)
             response = await client.post(
-                f"{prefix}/tools/{operation}", json=body, headers=setup.agent_headers
+                f"{prefix}/tools/{operation}",
+                json=body,
+                headers=setup.review_headers if route == "review_tool" else setup.agent_headers,
             )
     assert response.status_code == 200, response.text
     method = getattr(setup.backend, operation)

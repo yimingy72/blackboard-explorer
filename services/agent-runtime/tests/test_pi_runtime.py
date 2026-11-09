@@ -9,11 +9,12 @@ import httpx2
 import pytest
 from bbx_runtime.clients import RemoteError
 from bbx_runtime.model_errors import ModelRequestValidationError
-from bbx_runtime.models import load_runtime_profile, make_client
+from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.pi import Agent, AgentSession, ChatMiddleware, Content, Message, tool
 from bbx_runtime.pi.client import usage_details
 from bbx_runtime.pi.data import from_pi_message, pi_messages
 from bbx_runtime.pi.stream import queued_stream
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
 

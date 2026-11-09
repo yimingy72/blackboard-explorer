@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "alias": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "title": "Alias",
+      "type": "string"
+    },
+    "catalog_revision": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Catalog Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "alias",
+    "catalog_revision"
+  ],
+  "title": "GatewayModelRef",
+  "type": "object"
+}

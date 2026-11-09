@@ -1,22 +1,15 @@
 """Pinned model policy and native Pi provider construction, without network."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.providers import PROVIDERS
-from bbx_runtime import models as runtime_models
-from bbx_runtime.models import (
-    close_model_client,
-    load_runtime_profile,
-    make_client,
-    model_api_key,
-    model_run_options,
-    resolve_model_credentials,
-)
+from bbx_runtime.models import close_model_client, load_runtime_profile, model_run_options
 from bbx_runtime.pi import PiChatClient
 from bbx_runtime.pi.client import API_BY_PROVIDER
+from bbx_runtime.testing import pi_client as runtime_models
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles" / "default"
 
@@ -162,35 +155,6 @@ def test_only_responses_providers_disable_service_side_history(provider, effort)
             assert options == {}
 
 
-async def test_model_credentials_use_pinned_version_and_environment_only_for_deepseek():
-    model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
-        update={"platform_id": "model-a", "platform_version": 3}
-    )
-    service = AsyncMock()
-    service.get_model_credentials.return_value = {
-        "secret": "stored-test-key",
-        "credential_source": "stored",
-    }
-    assert await model_api_key(service, model, "legacy-test-key") == "stored-test-key"
-    service.get_model_credentials.assert_awaited_once_with("model-a", 3)
-    service.get_model_credentials.return_value = {
-        "secret": None,
-        "credential_source": "environment",
-    }
-    assert await model_api_key(service, model, "legacy-test-key") == "legacy-test-key"
-    service.get_model_credentials.return_value = {"secret": None, "credential_source": "none"}
-    assert await model_api_key(service, model, "legacy-test-key") == "not-required"
-    service.get_model_credentials.return_value = {
-        "secret": None,
-        "credential_source": "environment",
-    }
-    with pytest.raises(ValueError, match="DeepSeek"):
-        await model_api_key(service, model.model_copy(update={"provider": "openai_chat"}), "legacy")
-    service.get_model_credentials.return_value = {"secret": None, "credential_source": "stored"}
-    with pytest.raises(ValueError, match="unavailable"):
-        await model_api_key(service, model, "legacy")
-
-
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
 async def test_provider_auth_requirement_matches_catalog(provider):
     model = load_runtime_profile(PROFILE_DIR).models.explore.model_copy(
@@ -223,18 +187,3 @@ async def test_provider_auth_requirement_matches_catalog(provider):
                 conclude_grace_calls=0,
                 max_duration_seconds=10,
             )
-
-
-async def test_structured_credentials_and_legacy_deepseek_reference():
-    model = load_runtime_profile(PROFILE_DIR).models.explore
-    service = AsyncMock()
-    service.get_model_credentials.return_value = {
-        "secret": None,
-        "credential_source": "stored",
-        "credentials": {"access_key_id": "test-access", "secret_access_key": "test-secret"},
-    }
-    assert await resolve_model_credentials(service, model, "legacy") == {
-        "access_key_id": "test-access",
-        "secret_access_key": "test-secret",
-    }
-    service.get_model_credentials.assert_awaited_once_with("deepseek-default", 1)

@@ -63,7 +63,15 @@
       "type": "string"
     },
     "exchange_rate": {
-      "$ref": "#/$defs/FrozenExchangeRate"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrozenExchangeRate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "helper_foreground": {
       "default": false,
@@ -87,12 +95,24 @@
       ],
       "default": null,
       "title": "Traffic Profile"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
     }
   },
   "required": [
     "request_id",
-    "model_alias",
-    "exchange_rate"
+    "model_alias"
   ],
   "title": "NativeRunnerLaunch",
   "type": "object"

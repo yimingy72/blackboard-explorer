@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 from bbx_runtime.middleware import append_board_update
-from bbx_runtime.models import close_model_client, load_runtime_profile, make_client
+from bbx_runtime.models import close_model_client, load_runtime_profile
 from bbx_runtime.pi import AgentSession, Content, Message, PiChatClient
 from bbx_runtime.pi.data import from_pi_message, pi_messages
 from bbx_runtime.responses_history import project_tool_observations
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 
 PROFILE = Path(__file__).resolve().parents[3] / "profiles" / "default"
 

@@ -72,6 +72,11 @@ class Board:
             "expected_derive_round": 1,
             "expected_run_number": 1,
             "expected_agent_run_id": "agent-1",
+            **(
+                {"expected_started_at": self.snapshot["agents"][agent_id]["started_at"]}
+                if self.snapshot["agents"][agent_id].get("started_at")
+                else {}
+            ),
         }
         if self.mode in {"ok", "committed"}:
             self.snapshot["agents"][agent_id].update(
@@ -251,8 +256,6 @@ async def test_resource_cleanup_error_preserves_original_result_or_cancellation(
 ):
     import asyncio
 
-    from pydantic import SecretStr
-
     original = asyncio.CancelledError("heartbeat")
     calls = []
 
@@ -277,14 +280,28 @@ async def test_resource_cleanup_error_preserves_original_result_or_cancellation(
 
     board = Board("ok")
     monkeypatch.setattr("bbx_runtime.runner.Agent", Agent)
-    monkeypatch.setattr("bbx_runtime.runner.resolve_model_credentials", AsyncMock(return_value={}))
-    monkeypatch.setattr(
-        "bbx_runtime.runner.make_client", lambda *args, **kwargs: ScriptedChatClient([])
+    from bbx_contracts.models import ModelConfig
+    from bbx_runtime.testing.pi_client import gateway_test_snapshot
+
+    board.snapshot["agents"]["agent-1"]["started_at"] = "2026-11-09T00:00:00+00:00"
+    profile = board.get_profile.return_value["models"]["derive"]
+    board.snapshot["task"]["gateway_model"] = gateway_test_snapshot(
+        ModelConfig.model_validate(profile)
     )
+
+    class BoundScript(ScriptedChatClient):
+        model: ModelConfig
+
+    def make_scripted(model, **_kwargs):
+        client = BoundScript([])
+        client.model = model
+        return client
+
+    monkeypatch.setattr("bbx_runtime.runner.make_gateway_client", make_scripted)
     close = AsyncMock(side_effect=RuntimeError("private synthetic cleanup failure"))
     monkeypatch.setattr("bbx_runtime.runner.close_model_client", close)
     runner = AgentRunner(
-        Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted")),
+        Settings.model_construct(),
         cast(Any, board),
         Mock(),
         Mock(),

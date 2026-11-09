@@ -397,33 +397,56 @@ async def test_client_cleanup_failure_keeps_completed_native_answer_and_settles_
     from unittest.mock import AsyncMock
 
     import httpx2
+    from bbx_contracts.models import ModelConfig
+    from bbx_runtime.testing.pi_client import gateway_test_snapshot
     from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
-    from pydantic import SecretStr
     from test_ctf_provider_boundary import DispatchService
     from test_ctf_runtime import TURN as scripted_turn
 
-    service = DispatchService()
+    class ReviewDispatch(DispatchService):
+        async def runtime_state(self, _):
+            result = await super().runtime_state(_)
+            result["task"]["run_number"] = 1
+            return result
+
+        async def runtime(self, task_id, operation, **body):
+            if operation == "authorize_review":
+                return {}
+            return await super().runtime(task_id, operation, **body)
+
+    service = ReviewDispatch()
     service.profile.options.context_threshold = 100000
-    client = ScriptedChatClient([ScriptStep(text="synthetic completed answer")])
+
+    class OwnedReviewScript(ScriptedChatClient):
+        model: ModelConfig
+
+    client = OwnedReviewScript([ScriptStep(text="synthetic completed answer")])
     close_error = (
         httpx2.ReadError("private synthetic cleanup error")
         if cleanup_type == "transport"
         else RuntimeError("private synthetic cleanup error")
     )
-    monkeypatch.setattr(
-        "bbx_runtime.ctf.runner.resolve_model_credentials", AsyncMock(return_value={})
-    )
-    monkeypatch.setattr("bbx_runtime.ctf.runner.make_client", lambda *args, **kwargs: client)
+
+    def make_scripted(model, **_kwargs):
+        client.model = model
+        return client
+
+    monkeypatch.setattr("bbx_runtime.ctf.runner.make_gateway_client", make_scripted)
     close = AsyncMock(side_effect=close_error)
     monkeypatch.setattr("bbx_runtime.ctf.runner.close_model_client", close)
     runner = CtfRunner(
         cast(Any, service),
-        cast(Any, SimpleNamespace(deepseek_api_key=SecretStr("unused-scripted"))),
+        cast(Any, SimpleNamespace(runner_gateway_url="http://gateway.invalid")),
     )
     await runner.run(
         "task",
         {"id": "member-1", "display_name": "Alice", "role": "teammate"},
-        {**scripted_turn, "token": "fake"},
+        {
+            **scripted_turn,
+            "token": "fake",
+            "purpose": "review",
+            "gateway_model": gateway_test_snapshot(service.profile.model),
+        },
     )
     assert len(client.received_options) == 1
     assert len(service.finished) == 1
@@ -442,7 +465,6 @@ async def test_client_cleanup_error_does_not_mask_primary_exception_or_cancellat
     from unittest.mock import AsyncMock
 
     from bbx_runtime.testing.scripted_client import ScriptedChatClient
-    from pydantic import SecretStr
     from test_ctf_provider_boundary import DispatchService
     from test_ctf_runtime import TURN as scripted_turn
 
@@ -463,16 +485,13 @@ async def test_client_cleanup_error_does_not_mask_primary_exception_or_cancellat
     service.profile.options.context_threshold = 100000
     client = FailingClient([])
     monkeypatch.setattr(
-        "bbx_runtime.ctf.runner.resolve_model_credentials", AsyncMock(return_value={})
-    )
-    monkeypatch.setattr("bbx_runtime.ctf.runner.make_client", lambda *args, **kwargs: client)
-    monkeypatch.setattr(
         "bbx_runtime.ctf.runner.close_model_client",
         AsyncMock(side_effect=RuntimeError("synthetic cleanup failure")),
     )
     runner = CtfRunner(
         cast(Any, service),
-        cast(Any, SimpleNamespace(deepseek_api_key=SecretStr("unused-scripted"))),
+        cast(Any, SimpleNamespace()),
+        client_factory=lambda *_args: client,
     )
     with pytest.raises(type(original)) as raised:
         await runner.run(

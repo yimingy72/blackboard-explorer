@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, DecimalException, InvalidOperation
+from decimal import Decimal, DecimalException
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -18,6 +18,7 @@ from bbx_contracts.native_gateway import (
     NativeModelDispatchRequest,
     NativeTransportObservation,
     native_budget_threshold_usd,
+    native_usd_amount,
 )
 from bbx_contracts.runner import (
     BACKGROUND_HELPER_TOOLS,
@@ -32,6 +33,9 @@ from fastapi import HTTPException
 from sqlalchemy import Numeric, cast, exists, func, insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
+from bbx_blackboard.gateway_cost_evidence import gateway_cost_evidence
+from bbx_blackboard.gateway_maintenance import admission, observed_generation
+from bbx_blackboard.gateway_tasks import require_original_model, task_gateway_model
 from bbx_blackboard.native_admin import NativeAdmin
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import fence, row
@@ -59,11 +63,18 @@ def budget_failure_hold(hold_id):
     return {"task_wide": True, "source": "native_gateway", "budget_hold_id": hold_id}
 
 
+if TYPE_CHECKING:
+    from bbx_blackboard.gateway_execution import GatewayExecution
+    from bbx_blackboard.gateway_models import GatewayModels
+
+
 class NativeFees:
     def __init__(self, gateway):
         self.gateway = gateway
         self.repo, self.control, self.settings = gateway.repo, gateway.control, gateway.settings
         self.admin = NativeAdmin(self.settings)
+        self.gateway_models: GatewayModels | None = None
+        self.auxiliary_execution: GatewayExecution | None = None
         self.clock = lambda: datetime.now(UTC)
         self.pause_control: NativePause | None = None
 
@@ -73,7 +84,8 @@ class NativeFees:
                 self.settings.native_gateway_accounting_source_id,
                 self.settings.native_gateway_admin_url,
                 self.settings.native_gateway_data_url,
-                self.settings.native_gateway_catalog_revision,
+                self.settings.native_gateway_catalog_revision
+                or self.settings.gateway_catalog_read_key,
             )
         ):
             raise HTTPException(503, "Native gateway deployment is not configured")
@@ -107,7 +119,11 @@ class NativeFees:
             "key_fingerprint": budget["key_fingerprint"],
             "native_resource_id": budget["native_resource_id"],
             "threshold_usd": config["threshold_usd"],
-            "exchange_rate": config["exchange_rate"],
+            **(
+                {"budget_currency": "USD"}
+                if config.get("budget_currency") == "USD"
+                else {"exchange_rate": config["exchange_rate"]}
+            ),
             "selected_models": config["selected_models"],
             "publication_state": budget["publication_state"],
         }
@@ -144,7 +160,7 @@ class NativeFees:
 
         self._configured()
         body, _ = decode(NativeBudgetPrepare, raw, 65536)
-        if body.exchange_rate.observed_at.tzinfo is None:
+        if body.exchange_rate is not None and body.exchange_rate.observed_at.tzinfo is None:
             raise HTTPException(422, "Exchange rate timestamp requires a timezone")
         if body.accounting_source_id != self.settings.native_gateway_accounting_source_id or len(
             set(body.selected_models)
@@ -154,6 +170,18 @@ class NativeFees:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             task = await self.control._task(conn, tid, live=True)
+            model_scope = (
+                await task_gateway_model(conn, tid) if self.gateway_models is not None else None
+            )
+            if self.gateway_models is not None and (
+                model_scope is None
+                or body.selected_models != [model_scope[0].alias]
+                or body.budget_currency != model_scope[1]
+                or task["budget"].get("currency") != model_scope[1]
+            ):
+                raise HTTPException(
+                    409, "Native budget requires the Task's original model and currency"
+                )
             owner = await self.control._current_owner(conn, tid)
             if owner["epoch"] != body.expected_epoch:
                 raise HTTPException(409, "Runner owner changed")
@@ -171,9 +199,20 @@ class NativeFees:
                     raise HTTPException(409, "Frozen Task budget cannot be replaced")
                 return self._public(original)
             try:
-                usd = native_budget_threshold_usd(
-                    Decimal(str(task["budget"]["max_cost"])), body.exchange_rate.rate_cny_per_usd
-                )
+                amount = Decimal(str(task["budget"]["max_cost"]))
+                if body.budget_currency == "USD":
+                    if task["budget"].get("currency") != "USD":
+                        raise ValueError("Native direct USD requires the original USD budget")
+                    usd = native_usd_amount(amount)
+                    currency = {"budget_currency": "USD"}
+                else:
+                    if body.exchange_rate is None or task["budget"].get("currency") == "USD":
+                        raise ValueError("Historical CNY requires the original exchange rate")
+                    usd = native_budget_threshold_usd(amount, body.exchange_rate.rate_cny_per_usd)
+                    currency = {
+                        "threshold_cny": str(amount),
+                        "exchange_rate": body.exchange_rate.model_dump(mode="json"),
+                    }
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
             key = "bbx-task-" + secrets.token_urlsafe(32)
@@ -205,10 +244,13 @@ class NativeFees:
                 config={
                     "preparation": frozen,
                     "threshold_usd": str(usd),
-                    "threshold_cny": str(task["budget"]["max_cost"]),
-                    "exchange_rate": body.exchange_rate.model_dump(mode="json"),
+                    **currency,
                     "selected_models": body.selected_models,
-                    "catalog_revision": self.settings.native_gateway_catalog_revision,
+                    "catalog_revision": (
+                        model_scope[0].catalog_revision
+                        if model_scope
+                        else self.settings.native_gateway_catalog_revision
+                    ),
                     "native_value": value,
                     "models": {},
                 },
@@ -521,6 +563,17 @@ class NativeFees:
             "bbx_sdk_session_id": data["sdk_session_id"],
         }
 
+    async def original_model_guard(self, tid):
+        if self.gateway_models is None:
+            return None
+        generation = await observed_generation(self.repo.engine)
+        async with self.repo.engine.connect() as conn:
+            scope = await task_gateway_model(conn, tid)
+        if scope is None:
+            raise HTTPException(409, "Native execution requires an original AgentGateway model")
+        await require_original_model(self.gateway_models, scope[0])
+        return generation, scope
+
     async def dispatch_model(self, tid, attempt_id, identity, raw):
         from bbx_blackboard.runner_gateway import decode
 
@@ -531,6 +584,8 @@ class NativeFees:
             or body.binding_id != identity.binding_id
         ):
             raise HTTPException(403, "Dispatch capability scope changed")
+        guarded = await self.original_model_guard(tid)
+        generation, model_scope = guarded if guarded is not None else (None, None)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             call = await self._call(conn, tid, attempt_id, identity)
@@ -549,6 +604,9 @@ class NativeFees:
             }
             if call["state"] != "admitted":
                 return {**public, "send_allowed": False}
+            await admission(conn, generation)
+            if model_scope and await task_gateway_model(conn, tid) != model_scope:
+                raise HTTPException(409, "The Task's original AgentGateway model changed")
             budget = await self._budget(conn, tid)
             if budget["hold_reason"] or budget["publication_state"] != "ready":
                 raise HTTPException(409, "Native Task admission is held")
@@ -583,7 +641,9 @@ class NativeFees:
                 "state": "dispatched",
                 "send_allowed": True,
                 "dispatch_id": dispatch_id,
-                "native_gateway_url": self.settings.native_gateway_data_url.rstrip("/"),
+                "native_gateway_url": (
+                    self.settings.gateway_runtime_data_url or self.settings.native_gateway_data_url
+                ).rstrip("/"),
                 "task_gateway_key": self.gateway.cipher.decrypt(
                     budget["key_ciphertext"].encode()
                 ).decode(),
@@ -797,6 +857,7 @@ class NativeFees:
                 ).where(
                     s.native_request_costs.c.task_id == tid,
                     s.native_request_costs.c.state == "known",
+                    s.native_request_costs.c.evidence["attributes"]["bbx_purpose"].astext.is_(None),
                 )
             )
         ).scalar_one()
@@ -941,47 +1002,10 @@ class NativeFees:
                 raise HTTPException(409, "Native log conflicts with a proven unsent attempt")
             known = True
             for record in records:
-                attrs = record.get("attributes", {})
-                if not isinstance(attrs, dict) or not isinstance(record.get("id"), str):
-                    raise ValueError("Native log has an unsupported shape")
-                if any(str(attrs.get(key)) != value for key, value in expected.items()):
-                    raise HTTPException(
-                        409, "Native log attribution does not match its original attempt"
-                    )
-                if attrs.get("agw.api_key.name") != budget["key_name"]:
-                    raise HTTPException(409, "Native log belongs to another Task key")
-                usage = record.get("usage") or {}
-                if not isinstance(usage, dict):
-                    raise ValueError("Native log usage has an unsupported shape")
-                try:
-                    amount = Decimal(str(record["cost"]))
-                    complete = (
-                        amount.is_finite()
-                        and amount >= 0
-                        and all(
-                            type(usage.get(field)) is int and usage[field] >= 0
-                            for field in ("inputTokens", "outputTokens", "totalTokens")
-                        )
-                    )
-                except (KeyError, InvalidOperation):
-                    complete, amount = False, None
+                evidence, amount = gateway_cost_evidence(record, expected, budget["key_name"])
+                complete = amount is not None
                 known &= complete
-                evidence = {
-                    key: record.get(key)
-                    for key in (
-                        "id",
-                        "startedAt",
-                        "completedAt",
-                        "httpStatus",
-                        "error",
-                        "genAi",
-                        "usage",
-                        "cost",
-                    )
-                }
-                evidence.update(
-                    attributes=expected, catalog_revision=call["data"]["catalog_revision"]
-                )
+                evidence["catalog_revision"] = call["data"]["catalog_revision"]
                 original = (
                     (
                         await conn.execute(
@@ -1064,12 +1088,20 @@ class NativeFees:
                 "accounting_source_id": budget["accounting_source_id"],
                 "currency": "USD",
                 "confirmed_usd": str(total),
-                "converted_cny": str(total * Decimal(config["exchange_rate"]["rate_cny_per_usd"])),
+                **(
+                    {"budget_currency": "USD"}
+                    if config.get("budget_currency") == "USD"
+                    else {
+                        "converted_cny": str(
+                            total * Decimal(config["exchange_rate"]["rate_cny_per_usd"])
+                        ),
+                        "exchange_rate": config["exchange_rate"],
+                    }
+                ),
                 "threshold_usd": config["threshold_usd"],
                 "overage_usd": str(max(Decimal(0), total - Decimal(config["threshold_usd"]))),
                 "pending_attempts": pending,
                 "hold_reason": budget["hold_reason"],
-                "exchange_rate": config["exchange_rate"],
                 "catalog_revision": config["catalog_revision"],
                 "native_used_high_water_usd": (budget["status_snapshot"] or {}).get(
                     "used_high_water_usd"
@@ -1212,6 +1244,8 @@ class NativeFees:
                         .scalars()
                         .all()
                     )
+                if self.auxiliary_execution is not None:
+                    await self.auxiliary_execution.consume_costs()
                 after = tids[-1] if tids else None
                 for tid in tids:
                     try:

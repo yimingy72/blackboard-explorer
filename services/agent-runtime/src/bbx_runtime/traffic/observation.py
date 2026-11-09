@@ -20,7 +20,7 @@ _sensitive_pipeline = False
 
 def runtime_secrets(settings: Any, *extra: str) -> tuple[str, ...]:
     values = list(extra)
-    for name in ("service_token", "envd_token_secret", "deepseek_api_key", "minio_root_password"):
+    for name in ("service_token", "envd_token_secret", "minio_root_password"):
         secret = getattr(settings, name, None)
         if secret is not None and hasattr(secret, "get_secret_value"):
             values.append(secret.get_secret_value())

@@ -31,7 +31,8 @@ def worker_path() -> Path:
 
 
 class PiBridge:
-    def __init__(self) -> None:
+    def __init__(self, *, use_env_proxy: bool = True) -> None:
+        self._use_env_proxy = use_env_proxy
         self.process: asyncio.subprocess.Process | None = None
         self._reader: asyncio.Task | None = None
         self._stderr: asyncio.Task | None = None
@@ -57,14 +58,15 @@ class PiBridge:
             # to Node as ambient provider auth or user configuration.
             allowed = {"PATH", "SYSTEMROOT", "TMPDIR", "LANG", "NODE_EXTRA_CA_CERTS"}
             environment = {key: value for key, value in os.environ.items() if key in allowed}
-            environment.update(
-                {
-                    key: value
-                    for key, value in os.environ.items()
-                    if key.lower() in {"http_proxy", "https_proxy", "no_proxy"}
-                }
-            )
-            environment["NODE_USE_ENV_PROXY"] = "1"
+            if self._use_env_proxy:
+                environment.update(
+                    {
+                        key: value
+                        for key, value in os.environ.items()
+                        if key.lower() in {"http_proxy", "https_proxy", "no_proxy"}
+                    }
+                )
+                environment["NODE_USE_ENV_PROXY"] = "1"
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     os.environ.get("BBX_PI_NODE", "node"),

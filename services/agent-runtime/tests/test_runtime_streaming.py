@@ -16,7 +16,6 @@ from bbx_runtime.models import (
     close_model_client,
     ctf_model_run_options,
     load_runtime_profile,
-    make_client,
     model_run_options,
 )
 from bbx_runtime.pi import (
@@ -27,6 +26,7 @@ from bbx_runtime.pi import (
     ResponseStream,
 )
 from bbx_runtime.pi.exceptions import ChatClientContentFilterException
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from bbx_runtime.testing.pi_client import patch_transport
 from bbx_runtime.trace import model_content
 

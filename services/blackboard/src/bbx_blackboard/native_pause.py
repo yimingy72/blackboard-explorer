@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
+from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.native_fees import threshold_hold_id
 from bbx_blackboard.native_vpn import require_vpn_resume
 from bbx_blackboard.runner_control import row
@@ -409,6 +410,7 @@ class NativePause:
             require_vpn_resume(record, request.pause_id)
             budget = await self.native._budget(conn, tid)
             budget_resume = self._resume_budget(task, snapshot, budget)
+        guarded = await self.native.original_model_guard(tid)
         if budget_resume:
             await self.native.verified_key(budget, budget["config"]["native_value"], exact=True)
         native, used, exceeded = await self.native.threshold_status(budget)
@@ -416,6 +418,8 @@ class NativePause:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
+            if guarded is not None:
+                await admission(conn, guarded[0])
             task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
             require_vpn_resume(record, request.pause_id)
             current = await self.native._budget(conn, tid)

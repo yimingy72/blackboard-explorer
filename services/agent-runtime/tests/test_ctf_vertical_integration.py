@@ -197,9 +197,7 @@ async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_databa
             await board.start_task(tid)
             ctf = CtfClient(board)
             await ctf.runtime(tid, "start")
-            runtime_settings = Settings.model_construct(
-                deepseek_api_key=SecretStr("unused-scripted")
-            )
+            runtime_settings = Settings.model_construct()
             runner = CtfRunner(ctf, runtime_settings, client_factory=factory)
             drain = SimulatedDrain()
             coordinator = CtfCoordinator(board, runtime_settings, runner=runner, envd=drain)
@@ -437,7 +435,7 @@ async def test_replacement_uses_persisted_execution_boot_over_restarted_daemon(
             manager.provision = AsyncMock(side_effect=provision)
             manager.start_traffic = AsyncMock()
             supervisor = TaskSupervisor(
-                Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted")),
+                Settings.model_construct(),
                 board,
                 manager,
                 Mock(),

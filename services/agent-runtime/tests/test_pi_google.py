@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from bbx_runtime.model_errors import ModelStreamError, model_error_metadata
-from bbx_runtime.models import load_runtime_profile, make_client, model_run_options
+from bbx_runtime.models import load_runtime_profile, model_run_options
 from bbx_runtime.pi import Message
+from bbx_runtime.testing.pi_client import make_test_client as make_client
 from test_ctf_provider_recovery import RecoveryService
 from test_ctf_runner_budget_retry import MEMBER, TURN, runner
 

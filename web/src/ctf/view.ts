@@ -13,14 +13,12 @@ export function deliveryLabel(message: CtfMessage): string {
   return ({ queued: '等待送达', leased: '正在投递', delivered: '已送达', cancelled: '已取消', failed: '投递失败' } as Record<string, string>)[message.status] ?? message.status;
 }
 export function composeHint(phase: string, member: CtfMember): string {
-  if (isReviewPhase(phase)) return '只读复盘：可查阅记录与证据，费用单独记录；消息不会续跑任务或恢复成员。';
-  if (member.lifecycle === 'removed') return '该成员已移除，仅保留会话历史。';
+  if (isReviewPhase(phase) || member.lifecycle === 'stopped' || member.lifecycle === 'removed') return '只读复盘：可查阅记录与证据，费用单独记录；消息不会续跑任务或恢复成员。';
   if (phase === 'closing') return '任务正在收尾，新消息会保留为待处理，不再启动执行。';
-  if (member.lifecycle === 'stopped') return '消息会排队保留；成员只有在明确恢复后才继续执行。';
   return member.role === 'lead' ? '告诉 Lead 下一步目标、补充信息或调整方向。' : '消息直接送达此成员，不需要经 Lead 转发。';
 }
 export function canSend(phase: string, member: CtfMember): boolean {
-  return isReviewPhase(phase) || member.lifecycle !== 'removed' && ['created', 'provisioning', 'running', 'closing'].includes(phase);
+  return isReviewPhase(phase) || member.lifecycle === 'stopped' || member.lifecycle === 'removed' || ['created', 'provisioning', 'running', 'closing'].includes(phase);
 }
 export function verificationLabel(verification: Record<string, unknown>): string {
   const status = String(verification.status ?? 'unknown');

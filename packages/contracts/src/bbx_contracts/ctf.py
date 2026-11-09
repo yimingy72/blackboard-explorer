@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from .gateway_models import GatewayModelRef
 from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
 from .providers import reasoning_efforts
@@ -88,6 +89,9 @@ _PLACEHOLDER = re.compile(r"{{\s*([a-z_]+)\s*}}")
 
 
 class CtfBudget(ContractModel):
+    currency: Literal["USD", "CNY"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     max_cost: Decimal = Field(gt=0)
     max_minutes: int = Field(gt=0)
 
@@ -249,6 +253,9 @@ class CtfTaskSpec(ContractModel):
 
 
 class CtfTaskCreate(CtfTaskSpec):
+    gateway_model: GatewayModelRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     native_environment: NativeCtfEnvironmentRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )

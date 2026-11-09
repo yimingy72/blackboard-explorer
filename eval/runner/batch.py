@@ -11,8 +11,8 @@ import shutil
 from pathlib import Path
 
 import httpx
-from bbx_runtime.e2e import ComposeCheckpoint, redact
 
+from .checkpoint import ComposeCheckpoint, evaluation_model, redact
 from .interfaces import changed_interfaces
 from .run import run_batch
 
@@ -67,6 +67,7 @@ async def run(out: Path, n: int, timeout: float | None) -> None:
                 out=out / profile,
                 base_url=base,
                 token=checkpoint.environment["SERVICE_TOKEN"],
+                gateway_model=evaluation_model(checkpoint.environment),
                 exec_image="bbx-eval-env:latest",
                 timeout=timeout,
             )

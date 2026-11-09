@@ -296,6 +296,9 @@ class Usage(ContractModel):
 
 
 class Budget(ContractModel):
+    currency: Literal["USD", "CNY"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     max_concurrent_agents: int = Field(default=5, ge=1, description="并发探索和推导上限")
     max_cost: Decimal = Field(gt=0, description="同价格表币种的金额上限")
     max_minutes: int = Field(gt=0, description="时间上限，分钟")

@@ -26,74 +26,10 @@ def settings():
     )
 
 
-@pytest.mark.asyncio
-async def test_ctf_start_is_idempotent_for_in_progress_tasks(monkeypatch):
+async def test_historical_ctf_cannot_create_or_restart_execution(monkeypatch):
     tid = uuid4()
-    task = {"id": tid, "mode": "ctf", "status": "provisioning", "deleting": False}
-    backend = SimpleNamespace(provision=AsyncMock())
     app = api.create_app(settings())
-    app.state.ctf_service = backend
-    monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
-    headers = {"Authorization": f"Bearer {issue_user_token(settings(), 'alice')}"}
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(f"/api/tasks/{tid}/start", headers=headers)
-        assert response.status_code == 200
-        assert response.json() == {"status": "provisioning", "events": []}
-        task["status"] = "running"
-        response = await client.post(f"/api/tasks/{tid}/start", headers=headers)
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "running", "events": []}
-    backend.provision.assert_awaited_once_with(tid)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "overrides,expected,status",
-    [
-        (None, {"max_steps": 90, "max_teammates": 5, "context_threshold": 1_000_000}, 200),
-        (
-            {"max_teammates": 0},
-            {"max_steps": 90, "max_teammates": 0, "context_threshold": 1_000_000},
-            200,
-        ),
-        (
-            {"max_steps": 4000, "max_teammates": 12, "context_threshold": 400000},
-            {"max_steps": 4000, "max_teammates": 12, "context_threshold": 400000},
-            200,
-        ),
-        ({"context_threshold": 1_000_001}, None, 422),
-    ],
-)
-async def test_ctf_create_auto_provisions_task(monkeypatch, overrides, expected, status):
-    tid = uuid4()
-    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
-    profile.options.max_steps = 90
-    profile.options.max_teammates = 5
-    profile.model.context_window = 1_000_000
-    profile_row = {"name": "ctf", "version": 1}
-    model = profile.model.model_dump(mode="json")
-    profiles = SimpleNamespace(
-        get=AsyncMock(return_value=profile_row),
-        create=AsyncMock(return_value={"name": "ctf-task-settings", "version": 2}),
-    )
-    platform = SimpleNamespace(
-        default_model_name=AsyncMock(return_value="test-model"),
-        get=AsyncMock(return_value={"enabled": True, "config": model}),
-        public=lambda row: row,
-    )
-    backend = SimpleNamespace(
-        create_task=AsyncMock(return_value=tid),
-        provision=AsyncMock(),
-    )
-    app = api.create_app(settings())
-    app.state.profile_store = profiles
-    app.state.platform_store = platform
-    app.state.ctf_service = backend
-    monkeypatch.setattr(api, "ctf_profile", lambda _row: profile)
+    app.state.ctf_service = SimpleNamespace(provision=AsyncMock(), create_task=AsyncMock())
     monkeypatch.setattr(
         api,
         "_task",
@@ -101,41 +37,28 @@ async def test_ctf_create_auto_provisions_task(monkeypatch, overrides, expected,
             return_value={
                 "id": tid,
                 "mode": "ctf",
-                "status": "created",
-                "agent_profile": "ctf-task-settings",
-                "agent_profile_version": 2,
+                "status": "provisioning",
+                "deleting": False,
             }
         ),
     )
     headers = {"Authorization": f"Bearer {issue_user_token(settings(), 'alice')}"}
-
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(
+        assert (await client.post(f"/api/tasks/{tid}/start", headers=headers)).status_code == 409
+        result = await client.post(
             "/api/tasks",
             headers=headers,
             json={
                 "mode": "ctf",
-                "goal": "Observe a target",
-                "budget": {"max_cost": "1", "max_minutes": 1},
-                "agent_profile": "ctf",
-                "model_id": "test-model",
-                **({"ctf_options": overrides} if overrides is not None else {}),
+                "goal": "Never start old CTF",
+                "budget": {"max_cost": 1, "max_minutes": 10},
             },
         )
-
-    assert response.status_code == status, response.text
-    if status == 422:
-        assert "context_window" in response.text
-        profiles.create.assert_not_awaited()
-        backend.create_task.assert_not_awaited()
-        backend.provision.assert_not_awaited()
-        return
-    backend.create_task.assert_awaited_once()
-    assert backend.create_task.call_args.args[0]["ctf_options"] == expected
-    assert profiles.create.call_args.args[1].options.model_dump() == expected
-    backend.provision.assert_awaited_once_with(tid)
+        assert result.status_code == 409
+    app.state.ctf_service.provision.assert_not_awaited()
+    app.state.ctf_service.create_task.assert_not_awaited()
 
 
 async def test_ctf_http_boundaries_and_token_authority(monkeypatch):
@@ -814,54 +737,34 @@ async def test_ctf_creation_retry_uses_original_profile_before_current_settings_
     app.state.profile_store.create.assert_not_awaited()
     app.state.platform_store.get.assert_not_awaited()
     app.state.ctf_service.create_task.assert_not_awaited()
-    if status in {"created", "provisioning"}:
-        app.state.ctf_service.provision.assert_awaited_once_with(tid)
-    else:
-        app.state.ctf_service.provision.assert_not_awaited()
+    app.state.ctf_service.provision.assert_not_awaited()
 
 
-async def test_ctf_concurrent_creation_retry_returns_profile_persisted_by_winner(monkeypatch):
-    config = settings()
-    app = api.create_app(config)
-    tid = uuid4()
-    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
-    app.state.input_groups = SimpleNamespace(prior_task=AsyncMock(return_value=None))
-    app.state.profile_store = SimpleNamespace(
-        get=AsyncMock(return_value={}),
-        create=AsyncMock(return_value={"name": "ctf-task-settings", "version": 9}),
-    )
-    app.state.platform_store = SimpleNamespace(
-        default_model_name=AsyncMock(return_value="fixture"),
-        get=AsyncMock(return_value={"enabled": True, "config": profile.model.model_dump()}),
-        public=lambda row: row,
-    )
-    app.state.ctf_service = SimpleNamespace(create_task=AsyncMock(return_value=tid))
-    monkeypatch.setattr(api, "ctf_profile", lambda row: profile)
+async def test_ctf_review_token_cannot_enter_solver_routes(monkeypatch):
+    options = settings()
+    app = api.create_app(options)
+    tid, turn = uuid4(), uuid4()
+    token = issue_agent_token(options, tid, "lead", generation=2, turn_id=turn, purpose="review")
+    authority = AsyncMock(return_value={"purpose": "review"})
+    read = AsyncMock(return_value={"text": "saved"})
+    app.state.ctf_service = SimpleNamespace(authorize_tool=authority, read_saved_tool_result=read)
     monkeypatch.setattr(
-        api,
-        "_task",
-        AsyncMock(
-            return_value={
-                "id": tid,
-                "status": "running",
-                "agent_profile": "ctf-task-settings",
-                "agent_profile_version": 7,
-            }
-        ),
+        api, "_task", AsyncMock(return_value={"id": tid, "mode": "ctf", "status": "running"})
     )
+    headers = {"Authorization": "Bearer " + token}
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.post(
-            "/api/tasks",
-            headers={"Authorization": f"Bearer {issue_user_token(config, 'alice')}"},
-            json={
-                "mode": "ctf",
-                "input_group_id": str(tid),
-                "goal": "Original input",
-                "budget": {"max_cost": 2, "max_minutes": 10},
-                "agent_profile": "ctf",
-            },
+        denied = await client.post(
+            f"/api/tasks/{tid}/ctf/tools/execute_command", headers=headers, json={}
         )
-    assert response.status_code == 200, response.text
-    assert response.json()["agent_profile_version"] == 7
+        assert denied.status_code == 403
+        assert (await client.get(f"/api/tasks/{tid}/state", headers=headers)).status_code == 403
+        allowed = await client.post(
+            f"/api/tasks/{tid}/ctf/tools/read_saved_tool_result",
+            headers=headers,
+            json={"call_id": "test-call"},
+        )
+        assert allowed.status_code == 200
+    authority.assert_awaited_once_with(tid, "lead", 2, turn)
+    read.assert_awaited_once()

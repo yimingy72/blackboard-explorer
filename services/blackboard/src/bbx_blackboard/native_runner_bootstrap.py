@@ -263,7 +263,7 @@ class NativeRunnerBootstrap:
             return await self.queue_locked(conn, tid, body, digest)
 
     async def queue_locked(self, conn, tid, body, digest, *, publication=None):
-        if body.exchange_rate.observed_at.tzinfo is None:
+        if body.exchange_rate is not None and body.exchange_rate.observed_at.tzinfo is None:
             raise HTTPException(422, "Frozen exchange rate requires a timezone")
         task = await self.control._task(conn, tid, live=True)
         old = await self._get(conn, tid)
@@ -1326,7 +1326,11 @@ class NativeRunnerBootstrap:
                         "expected_epoch": owner["epoch"],
                         "accounting_source_id": self.settings.native_gateway_accounting_source_id,
                         "selected_models": [record["request"]["model_alias"]],
-                        "exchange_rate": record["request"]["exchange_rate"],
+                        **(
+                            {"budget_currency": "USD"}
+                            if record["request"].get("budget_currency") == "USD"
+                            else {"exchange_rate": record["request"]["exchange_rate"]}
+                        ),
                     }
                 ).encode(),
             )

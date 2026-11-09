@@ -343,9 +343,7 @@ async def test_seed_fanout_and_restart_reassigns_without_attempts(
         await board.start_task(tid)
         handle = ExecEnvHandle(UUID(tid), "fake-envd", "fake", "http://fake", fake.token)
         manager = FakeManager(handle, envd_http)
-        settings = Settings.model_construct(
-            deepseek_api_key=SecretStr("fake-model"), max_running_tasks=1
-        )
+        settings = Settings.model_construct(max_running_tasks=1)
 
         first_gate = Barrier(3)
         runner = ScriptedRunner(

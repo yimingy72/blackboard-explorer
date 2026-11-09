@@ -3,7 +3,7 @@
 from copy import deepcopy
 from decimal import Decimal, DecimalException
 
-from bbx_contracts.native_gateway import native_budget_threshold_usd
+from bbx_contracts.native_gateway import native_budget_threshold_usd, native_usd_amount
 from fastapi import HTTPException
 from sqlalchemy import update
 
@@ -11,20 +11,30 @@ from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.store import schema as s
 
 
-def increase_value(config, value, additional_cny):
+def update_native_limit(value, usd):
+    desired = deepcopy(value)
+    desired["budgets"][0]["limit"]["amount"] = float(usd)
+    return {"threshold_usd": str(usd), "native_value": desired}
+
+
+def increase_value(config, value, additional):
     try:
-        cny = Decimal(config["threshold_cny"]) + additional_cny
-        usd = native_budget_threshold_usd(cny, Decimal(config["exchange_rate"]["rate_cny_per_usd"]))
-        amount = float(usd)
+        if config.get("budget_currency") == "USD":
+            usd = native_usd_amount(Decimal(config["threshold_usd"]) + additional)
+            currency = {}
+        else:
+            cny = Decimal(config["threshold_cny"]) + additional
+            usd = native_budget_threshold_usd(
+                cny, Decimal(config["exchange_rate"]["rate_cny_per_usd"])
+            )
+            currency = {"threshold_cny": str(cny)}
         if usd <= Decimal(config["threshold_usd"]):
             raise ValueError
     except (DecimalException, ValueError, OverflowError) as error:
         raise HTTPException(
             422, "Added amount does not produce a representable increase"
         ) from error
-    desired = deepcopy(value)
-    desired["budgets"][0]["limit"]["amount"] = amount
-    return {"threshold_cny": str(cny), "threshold_usd": str(usd), "native_value": desired}
+    return {**currency, **update_native_limit(value, usd)}
 
 
 async def increase_budget(pause, tid, request):
@@ -53,7 +63,14 @@ async def increase_budget(pause, tid, request):
         value = await native.verified_key(
             budget, config["native_value"], exact=bool(config.get("last_increase_hold_id"))
         )
-        desired = increase_value(config, value, request.additional_cny)
+        additional = (
+            request.additional_usd
+            if config.get("budget_currency") == "USD"
+            else request.additional_cny
+        )
+        if additional is None:
+            raise HTTPException(422, "The increase must match the original budget currency")
+        desired = increase_value(config, value, additional)
         _, used, _ = await native.threshold_status(budget)
         async with repo.engine.begin() as conn:
             await repo.lock(conn, tid)
@@ -92,7 +109,11 @@ async def increase_budget(pause, tid, request):
         except HTTPException:
             pass
 
-    desired = {key: intent[key] for key in ("threshold_cny", "threshold_usd", "native_value")}
+    desired = {
+        key: intent[key]
+        for key in ("threshold_cny", "threshold_usd", "native_value")
+        if key in intent
+    }
     await native.verified_key(budget, desired["native_value"], exact=True)
     status, used, exceeded = await native.threshold_status({**budget, "config": desired})
     async with repo.engine.begin() as conn:
@@ -132,7 +153,11 @@ async def increase_budget(pause, tid, request):
             {
                 "request_id": str(request.request_id),
                 "pause_id": str(request.pause_id),
-                "threshold_cny": desired["threshold_cny"],
+                **(
+                    {"threshold_cny": desired["threshold_cny"]}
+                    if "threshold_cny" in desired
+                    else {"budget_currency": "USD"}
+                ),
                 "threshold_usd": desired["threshold_usd"],
             },
         )

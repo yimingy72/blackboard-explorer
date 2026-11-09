@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     native_gateway_data_url: str = ""
     native_gateway_admin_token: SecretStr = SecretStr("")
     native_gateway_catalog_revision: str = ""
+    gateway_catalog_read_key: SecretStr = SecretStr("")
+    gateway_review_key_owner: bool = False
+    gateway_model_management_url: str = ""
+    gateway_site_id: str = Field(default="", pattern=r"^[a-z0-9][a-z0-9_.-]{0,63}$|^$")
+    gateway_review_key: SecretStr = SecretStr("")
+    gateway_review_key_id: str = ""
+    gateway_runtime_data_url: str = ""
+    gateway_maintenance_key: SecretStr = SecretStr("")
+    gateway_maintenance_peers: dict[str, str] = Field(default_factory=dict)
     runner_mcp_signing_key: SecretStr = SecretStr("")
     runner_mcp_backend_token: SecretStr = SecretStr("")
     native_mcp_gateway_url: str = ""

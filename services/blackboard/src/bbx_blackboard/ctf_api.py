@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from bbx_blackboard.auth import (
+    CTF_REVIEW_TOOLS,
     issue_agent_token,
     require_agent_writer,
     require_service,
@@ -259,13 +260,16 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
             result["agent_id"],
             generation=result["generation"],
             turn_id=result["id"],
+            purpose="review" if operation == "claim_review_turn" else "solver",
         )
     return result
 
 
 @router.post("/tools/{operation}")
 async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, Any]) -> Any:
-    identity = require_agent_writer(request, task_id)
+    identity = require_task_reader(request, task_id)
+    if identity.purpose != "review":
+        identity = require_agent_writer(request, task_id)
     if identity.mode != "ctf" or identity.generation is None or identity.turn_id is None:
         raise HTTPException(403, "CTF execution token required")
     context = await service(request).authorize_tool(
@@ -275,15 +279,7 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
         identity.turn_id,
     )
     if context["purpose"] == "review":
-        if operation not in {
-            "list_challenges",
-            "get_challenge",
-            "get_record",
-            "list_records",
-            "read_artifact",
-            "read_saved_tool_result",
-            "read_command_result",
-        }:
+        if identity.purpose != "review" or operation not in CTF_REVIEW_TOOLS:
             raise HTTPException(403, "Tool is unavailable during review")
         if operation == "read_command_result":
             if "command_id" not in body or set(body) - {"command_id", "offset", "limit"}:
@@ -316,6 +312,8 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
                 **body,
             )
         return await board_tool(request, task_id, operation, body, identity)
+    if identity.purpose == "review":
+        raise HTTPException(403, "Review capability cannot enter an execution turn")
     task, member = context["task"], context["member"]
     profile = await request.app.state.profile_store.get(
         task["agent_profile"],

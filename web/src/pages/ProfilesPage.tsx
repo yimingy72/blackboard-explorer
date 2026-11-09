@@ -8,7 +8,8 @@ const CtfSettings = lazy(() => import('../ctf/CtfSettings'));
 const ProgressSettings = lazy(() => import('../progress/ProgressSettings'));
 import { defaultTools, workers } from '../components/workerOptions';
 const PlatformCatalog = lazy(() => import('../components/PlatformCatalog'));
-import { api, ApiError, type ProfileInput, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
+const GatewayCatalog = lazy(() => import('../components/GatewayCatalog'));
+import { api, ApiError, type WorkerSettingsProfile, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from './ProfilesPage.module.css';
 type WorkerDraft = {
@@ -26,14 +27,13 @@ const paramLabels: Record<string, string> = {
     max_consecutive_failures: '连续运行错误上限', seed_max_steps: '种子探索最大步数',
     snapshot_max_lines: 'YAML 快照最大行数',
 };
-const workerDraft = (profile: ProfileInput, role: WorkerRole): WorkerDraft => ({
+const workerDraft = (profile: WorkerSettingsProfile, role: WorkerRole): WorkerDraft => ({
     prompt: profile.prompt_templates[role], tools: profile.worker_tools?.[role] ?? defaultTools(role),
 });
-const runtimeDraft = (profile: ProfileInput): RuntimeInput => ({
-    params: profile.params, exec_image: profile.exec_image, exec_resources: profile.exec_resources,
-    privileged_allowlist: profile.privileged_allowlist ?? [],
+const runtimeDraft = (profile: WorkerSettingsProfile): RuntimeInput => ({
+    params: profile.params, exec_resources: profile.exec_resources,
 });
-const draftsFrom = (profile: ProfileInput): Drafts => ({ explore: workerDraft(profile, 'explore'), derive: workerDraft(profile, 'derive'), close: workerDraft(profile, 'close') });
+const draftsFrom = (profile: WorkerSettingsProfile): Drafts => ({ explore: workerDraft(profile, 'explore'), derive: workerDraft(profile, 'derive'), close: workerDraft(profile, 'close') });
 const message = (error: unknown) => error instanceof Error ? error.message : '操作失败，请稍后重试。';
 export default function ProfilesPage() {
     const { modal } = App.useApp();
@@ -147,8 +147,8 @@ export default function ProfilesPage() {
     return <div className={styles.page} onChangeCapture={()=>setNotice('')}>
       <Modal title="离开配置页？" open={blocker.state==='blocked'} onCancel={()=>blocker.reset?.()} onOk={()=>{if(!busy)blocker.proceed?.();}} okText="放弃修改并离开" cancelText="继续编辑" okButtonProps={{disabled:busy}}><p>{busy?'配置正在保存，请稍候。':'尚未保存的修改会丢失。'}</p></Modal>
       <header className={styles.pageHeader}><h1>Agent 配置</h1></header>
-      <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'progress', label: '成果整理', disabled: saving || catalogBusy }, { key: 'models', label: '模型配置', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
-      <Suspense fallback={<LoadingState label="配置内容加载中" lines={6} />}>{section === 'ctf' ? <CtfSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'progress' ? <ProgressSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <PlatformCatalog key="models" kind="models" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog key="mcp" kind="mcp" onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
+      <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'progress', label: '成果整理', disabled: saving || catalogBusy }, { key: 'models', label: 'AgentGateway 模型', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
+      <Suspense fallback={<LoadingState label="配置内容加载中" lines={6} />}>{section === 'ctf' ? <CtfSettings /> : section === 'progress' ? <ProgressSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <GatewayCatalog /> : section === 'mcp' ? <PlatformCatalog onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
         {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void reload()}>重新读取</Button>} className={styles.feedback} />}
         {notice && <Alert role="status" type="success" showIcon title={notice} className={styles.feedback} />}
         {settings.isLoading && !snapshot && <LoadingState label="Worker 配置加载中" lines={7} />}
@@ -160,7 +160,7 @@ export default function ProfilesPage() {
           </section>
           <Collapse className={styles.runtimeDetails} items={[{ key: 'runtime', label: `全局调度与执行环境${runtimeDirty ? ' · 未保存' : ''}`, children: <Form component={false} disabled={saving}><div className={styles.formGrid}>
             {Object.entries(runtime.params).map(([key, value]) => key === 'derive_enabled' ? <Checkbox key={key} checked={Boolean(value)} onChange={(event) => setRuntime({ ...runtime, params: { ...runtime.params, derive_enabled: event.target.checked } })}>启用主动并行推导</Checkbox> : typeof value === 'number' || key === 'close_reserve_ratio' ? <label className={controls.field} key={key}><span className={controls.label}>{paramLabels[key] ?? key}</span><Input type="number" min="0" step={key === 'close_reserve_ratio' ? 'any' : '1'} value={String(value)} onChange={(event) => setRuntime({ ...runtime, params: { ...runtime.params, [key]: Number(event.target.value) } })} /></label> : null)}
-            <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>执行镜像</span><Input value={runtime.exec_image} onChange={(event) => setRuntime({ ...runtime, exec_image: event.target.value })} /></label>
+            <label className={`${controls.field} ${styles.wideField}`}><span className={controls.label}>执行镜像</span><Input value={snapshot.profile.exec_image} readOnly /><small className={controls.hint}>由部署固定，受保护任务不允许提权。</small></label>
             <label className={controls.field}><span className={controls.label}>CPU</span><Input type="number" min="0.1" step="any" value={runtime.exec_resources.cpus} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, cpus: Number(event.target.value) } })} /></label>
             <label className={controls.field}><span className={controls.label}>内存</span><Input value={runtime.exec_resources.mem} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, mem: event.target.value } })} /></label>
             <label className={controls.field}><span className={controls.label}>进程上限</span><Input type="number" min="1" step="1" value={runtime.exec_resources.pids} onChange={(event) => setRuntime({ ...runtime, exec_resources: { ...runtime.exec_resources, pids: Number(event.target.value) } })} /></label>

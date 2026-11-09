@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
+from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
 from bbx_blackboard.native_vpn import vpn_enabled, vpn_exit_data, vpn_state
@@ -362,10 +363,13 @@ class NativeRecovery:
     async def request(self, tid, request):
         body = request.model_dump(mode="json")
         hashed = digest({"operation": "native_user_recovery", **body})
+        guarded = await self.native.original_model_guard(tid)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
+            if guarded is not None:
+                await admission(conn, guarded[0])
             task, record = await self.control._task(conn, tid), await self.bootstrap._get(conn, tid)
             if not record:
                 raise HTTPException(409, "Original recovery is unavailable")
@@ -554,6 +558,11 @@ class NativeRecovery:
 
     async def act(self, tid, body):
         proof = body.proof
+        guarded = (
+            await self.native.original_model_guard(tid)
+            if body.action == "recovery_replace"
+            else None
+        )
         async with self.repo.engine.begin() as conn:
             record, task = await self.bootstrap._checked(conn, tid, body)
             if body.action == "recovery_verifier_observe":
@@ -695,6 +704,8 @@ class NativeRecovery:
                 return await self._blocked(
                     conn, tid, record, incident, "original_route_unconfirmed"
                 )
+            if guarded is not None:
+                await admission(conn, guarded[0])
             await self.record_usage(conn, tid, native, used)
             return await self._replace(conn, tid, record, task, incident, manifest, proof, route)
 

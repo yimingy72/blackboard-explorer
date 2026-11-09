@@ -19,8 +19,12 @@
         {
           "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
           "type": "string"
+        },
+        {
+          "type": "null"
         }
       ],
+      "default": null,
       "title": "Threshold Cny"
     },
     "threshold_usd": {
@@ -34,12 +38,24 @@
         }
       ],
       "title": "Threshold Usd"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
     }
   },
   "required": [
     "request_id",
     "pause_id",
-    "threshold_cny",
     "threshold_usd"
   ],
   "title": "NativeBudgetIncreaseStatus",

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from bbx_runtime.pi.bridge import PiBridge
 from bbx_runtime.pi.data import (
@@ -20,6 +21,10 @@ from bbx_runtime.pi.exceptions import (
     ChatClientContentFilterException,
 )
 from bbx_runtime.pi.stream import ResponseStream, queued_stream
+
+if TYPE_CHECKING:
+    from bbx_runtime.gateway_model import GatewayDispatch
+
 
 FunctionInvocationConfiguration = dict[str, Any]
 
@@ -137,8 +142,20 @@ class PiChatClient(BaseChatClient):
         credentials: Mapping[str, str],
         function_invocation_configuration: dict[str, Any],
         max_retries: int = 4,
+        gateway: GatewayDispatch | None = None,
     ) -> None:
         super().__init__(function_invocation_configuration=function_invocation_configuration)
+        if gateway is not None:
+            if (
+                credentials
+                or model.provider != "openai_compatible"
+                or model.model != gateway.ref.alias
+                or model.base_url != gateway.origin + "/v1"
+                or max_retries != 0
+            ):
+                raise ValueError("Invalid AgentGateway Pi model binding")
+            self.bridge = PiBridge(use_env_proxy=False)
+        self.gateway = gateway
         self.model = model
         self.credentials = dict(credentials)
         self.max_retries = max_retries
@@ -274,8 +291,13 @@ class PiChatClient(BaseChatClient):
                 outgoing = project_tool_observations(outgoing)
         model = self.model_definition()
         request_credentials = await self._cloud_credentials(model)
+        max_tokens = options.get("max_tokens", model["maxTokens"])
+        if self.gateway is not None:
+            if type(max_tokens) is not int or max_tokens < 1:
+                raise ValueError("AgentGateway output limit is invalid")
+            max_tokens = min(max_tokens, model["maxTokens"])
         run_options: dict[str, Any] = {
-            "maxTokens": options.get("max_tokens", model["maxTokens"]),
+            "maxTokens": max_tokens,
             "timeoutMs": min(
                 120, self.function_invocation_configuration.get("max_duration_seconds", 120)
             )
@@ -284,7 +306,9 @@ class PiChatClient(BaseChatClient):
             "sessionId": options.get("session_id"),
             "cacheRetention": "short",
             "transport": "sse",
-            "env": {
+            "env": {}
+            if self.gateway is not None
+            else {
                 key: value
                 for key, value in os.environ.items()
                 if key.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
@@ -332,7 +356,24 @@ class PiChatClient(BaseChatClient):
                 )
                 await queue.put(ChatResponseUpdate(contents=[content]))
 
+        attempt_id = uuid4()
+        body_sha256 = None
+
         async def transport_callback(method, params):
+            nonlocal body_sha256
+            if method == "gateway_dispatch":
+                if self.gateway is None or body_sha256 is not None:
+                    raise ValueError("AgentGateway dispatch cannot be replayed")
+                from bbx_runtime.clients.blackboard import RemoteError
+
+                body_sha256 = params["body_sha256"]
+                try:
+                    return await self.gateway.claim(attempt_id, body_sha256)
+                except RemoteError as error:
+                    if error.status == 429 and error.code == "gateway_budget_exhausted":
+                        body_sha256 = None
+                    raise
+
             import base64
 
             import httpx2
@@ -360,27 +401,48 @@ class PiChatClient(BaseChatClient):
             finally:
                 await response.aclose()
 
-        result = await self.bridge.call(
-            "model",
-            {
-                "model": model,
-                "context": {
-                    "messages": pi_messages(
-                        outgoing, api=model["api"], provider=model["provider"], model=model["id"]
-                    ),
-                    "systemPrompt": options.get("instructions", ""),
-                    "tools": definitions,
+        result = None
+        try:
+            result = await self.bridge.call(
+                "model",
+                {
+                    "model": model,
+                    "context": {
+                        "messages": pi_messages(
+                            outgoing,
+                            api=model["api"],
+                            provider=model["provider"],
+                            model=model["id"],
+                        ),
+                        "systemPrompt": options.get("instructions", ""),
+                        "tools": definitions,
+                    },
+                    "options": run_options,
+                    "api_key": secrets.get("api_key", "not-required"),
+                    "adapter": self.model.provider,
+                    "provider_options": native_options,
+                    "credentials": secrets,
+                    "custom_transport": self.request_transport is not None,
+                    **({"gateway": self.gateway.url} if self.gateway is not None else {}),
                 },
-                "options": run_options,
-                "api_key": secrets.get("api_key", "not-required"),
-                "adapter": self.model.provider,
-                "provider_options": native_options,
-                "credentials": secrets,
-                "custom_transport": self.request_transport is not None,
-            },
-            on_event=on_event,
-            callback=transport_callback,
-        )
+                on_event=on_event,
+                callback=transport_callback,
+            )
+        finally:
+            if self.gateway is not None and body_sha256 is not None:
+                status = None
+                if result is not None:
+                    code = result.get("status")
+                    reason = result.get("message", {}).get("stopReason")
+                    if type(code) is int and (code >= 400 or reason in {"stop", "toolUse"}):
+                        status = code
+                try:
+                    async with asyncio.timeout(3):
+                        await self.gateway.result(attempt_id, body_sha256, status)
+                except Exception:
+                    # The durable claim can be reconciled independently; never resend.
+                    pass
+        assert result is not None
         from bbx_runtime.pi.observability import record_native_model
 
         record_native_model(result, model=self.model, messages=outgoing)

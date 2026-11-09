@@ -9,10 +9,14 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from .models import ContractModel
-from .native_gateway import FrozenExchangeRate
+from .native_gateway import (
+    NativeBudgetCurrency,
+    NativeBudgetExchange,
+    require_native_budget_currency,
+)
 from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
 from .runner_inputs import NativeSharedInputLimits
 from .runner_vpn import VPN_DYNAMIC_PROFILE, NativeVpnCapability
@@ -137,8 +141,6 @@ class NativeCtfEnvironmentRef(ContractModel):
 
 class NativeCtfEnvironment(NativeCtfEnvironmentRef):
     label: str = Field(min_length=1, max_length=100)
-    model_id: str
-    model_version: int
     shared_inputs: NativeSharedInputLimits | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -166,10 +168,16 @@ def retirement_manifest_digest(manifest: dict) -> str:
 class NativeRunnerLaunch(ContractModel):
     request_id: UUID
     model_alias: str = Field(min_length=1, max_length=512)
-    exchange_rate: FrozenExchangeRate
+    exchange_rate: NativeBudgetExchange = None
     helper_foreground: bool = False
     helper_background: bool = False
     traffic_profile: Literal["binding-pcap-v1"] | None = None
+    budget_currency: NativeBudgetCurrency = None
+
+    @model_validator(mode="after")
+    def exact_currency(self):
+        require_native_budget_currency(self.exchange_rate, self.budget_currency)
+        return self
 
 
 def native_pause_state(task):
@@ -199,14 +207,28 @@ class NativeResumeRequest(ContractModel):
 class NativeBudgetIncreaseRequest(ContractModel):
     request_id: UUID
     pause_id: UUID
-    additional_cny: Decimal = Field(gt=0, max_digits=16, decimal_places=9)
+    additional_cny: Decimal | None = Field(
+        default=None, gt=0, max_digits=16, decimal_places=9, exclude_if=lambda value: value is None
+    )
+    additional_usd: Decimal | None = Field(
+        default=None, gt=0, max_digits=16, decimal_places=9, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def exact_currency(self):
+        if (self.additional_cny is None) == (self.additional_usd is None):
+            raise ValueError("Specify exactly one budget amount")
+        return self
 
 
 class NativeBudgetIncreaseStatus(ContractModel):
     request_id: UUID
     pause_id: UUID
-    threshold_cny: Decimal
+    threshold_cny: Decimal | None = Field(default=None, exclude_if=lambda value: value is None)
     threshold_usd: Decimal
+    budget_currency: Literal["USD"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class NativePauseStatus(ContractModel):

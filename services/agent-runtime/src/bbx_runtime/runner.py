@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
@@ -29,9 +30,8 @@ from bbx_runtime.model_errors import OPENAI_PROVIDERS, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
-    make_client,
+    make_gateway_client,
     model_run_options,
-    resolve_model_credentials,
 )
 from bbx_runtime.opening import OpeningContextProvider
 from bbx_runtime.pi import (
@@ -328,7 +328,6 @@ class AgentRunner:
         expected_started_at: str | None = None,
     ) -> RunResult:
         owned_client = None
-        credentials: dict[str, str] = {}
         observation_secrets: list[str] = []
         envd = None
         mcp_http = envd_http_client
@@ -442,17 +441,28 @@ class AgentRunner:
             # The scheduler stops exploration at the budget deadline; this is only a hard guard.
             run_limit = (task["budget"]["max_minutes"] + ctx.params.grace_timeout + 1) * 60
             if client is None:
-                credentials = await resolve_model_credentials(
-                    self.service, model, self.settings.deepseek_api_key.get_secret_value()
-                )
-                owned_client = make_client(
+                if started_fence is None or run_number is None:
+                    raise ValueError("Original Agent execution scope is unavailable")
+                snapshot = GatewayModelSnapshot.model_validate(task.get("gateway_model"))
+                owned_client = make_gateway_client(
                     model,
-                    credentials=credentials,
+                    snapshot=snapshot,
+                    service=self.service,
+                    task_id=task_id,
+                    purpose="ordinary",
+                    gateway_url=self.settings.runner_gateway_url,
+                    proof={
+                        "agent_id": agent_id,
+                        "run_number": run_number,
+                        "expected_started_at": started_fence,
+                        "expected_derive_round": round_fence,
+                    },
                     explore_max_steps=ctx.params.explore_max_steps,
                     conclude_grace_calls=ctx.params.conclude_grace_calls,
                     max_duration_seconds=run_limit,
                 )
                 client = owned_client
+                model = owned_client.model
             tools: list[FunctionTool | MCPStreamableHTTPTool] = list(make_board_tools(ctx))
             worker = profile.worker_tools.get(task_type)
             if envd is not None and (worker is None or "execute_command" in worker.builtin):
@@ -491,7 +501,6 @@ class AgentRunner:
                 agent_id,
                 secrets=runtime_secrets(
                     self.settings,
-                    *credentials.values(),
                     *observation_secrets,
                     envd.token if envd is not None else "",
                 ),
