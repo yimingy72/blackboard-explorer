@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import mimetypes
 import os
 import re
 import ssl
@@ -39,6 +41,75 @@ REPLY_HEADERS = {
     "www-authenticate",
 }
 LIMIT = 16 * 1024 * 1024
+
+UI_SECURITY_HEADERS = {
+    "content-security-policy",
+    "content-security-policy-report-only",
+    "cross-origin-embedder-policy",
+    "cross-origin-opener-policy",
+    "cross-origin-resource-policy",
+    "permissions-policy",
+    "referrer-policy",
+    "strict-transport-security",
+    "x-content-type-options",
+    "x-frame-options",
+}
+UI_PATH = re.compile(r"/ui(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*/?")
+UPSTREAM_UI_COMMIT = "26f5aebe99a36a037fe54f8080a608aca5547e15"
+
+
+class LocalizedUI:
+    """One verified build of the native UI; no filesystem lookup on a request."""
+
+    def __init__(self, bundle: Path):
+        if bundle.is_symlink():
+            raise ValueError("Invalid localized native UI bundle")
+        bundle = bundle.resolve(strict=True)
+        manifest_file = bundle / "assets-manifest.json"
+        if (
+            manifest_file.resolve(strict=True) != manifest_file
+            or manifest_file.stat().st_size > LIMIT
+        ):
+            raise ValueError("Invalid localized native UI manifest")
+        manifest = json.loads(manifest_file.read_text())
+        root = bundle / "dist"
+        if (
+            manifest["upstream_commit"] != UPSTREAM_UI_COMMIT
+            or root.resolve(strict=True) != root
+            or not root.is_dir()
+            or len(manifest["files"]) > 512
+        ):
+            raise ValueError("Invalid localized native UI bundle")
+        self.assets: dict[str, tuple[bytes, str]] = {}
+        total = 0
+        for name, expected in manifest["files"].items():
+            if not UI_PATH.fullmatch("/ui/" + name) or name.endswith("/"):
+                raise ValueError("Invalid localized native UI asset path")
+            path = root / name
+            if (
+                path.resolve(strict=True) != path
+                or not path.is_file()
+                or path.stat().st_size > LIMIT
+            ):
+                raise ValueError("Unexpected localized native UI file")
+            data = path.read_bytes()
+            total += len(data)
+            if total > 64 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError("Localized native UI asset integrity check failed")
+            media = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            self.assets["/ui/" + name] = (data, media)
+        self.index = self.assets["/ui/index.html"]
+        self.pages = frozenset(manifest["spa_paths"])
+        if "/ui" not in self.pages or not all(
+            UI_PATH.fullmatch(page) and "." not in page and not page.endswith("/")
+            for page in self.pages
+        ):
+            raise ValueError("Invalid localized native UI pages")
+
+    def asset(self, path: str) -> tuple[bytes, str] | None:
+        if path.rstrip("/") in self.pages:
+            return self.index
+        return self.assets.get(path)
 
 
 def origin(raw: str) -> str:
@@ -153,7 +224,9 @@ class NativeRestart:
 
 
 class AdminUI:
-    def __init__(self, upstream, public, peers, key, restart):
+    def __init__(
+        self, upstream, public, peers, key, restart, *, localized: LocalizedUI | None = None
+    ):
         self.upstream = origin(upstream)
         self.public = origin(public)
         self.peers = {name: origin(address) for name, address in peers.items()}
@@ -162,6 +235,7 @@ class AdminUI:
         self.key = key
         self.restart = restart
         self.lock = asyncio.Lock()
+        self.localized = localized
 
     async def fence(self, http, request_id, action):
         async def one(site, address):
@@ -184,7 +258,7 @@ class AdminUI:
         )
         return all(result is True for result in results)
 
-    async def forward(self, http, method, path, headers, *, query="", body=None):
+    async def forward(self, http, method, path, headers, *, query="", body=None, ui_security=False):
         headers = {**headers}
         if "origin" in headers:
             # Browser origin was checked at our public boundary. The native
@@ -204,7 +278,9 @@ class AdminUI:
             return httpx.Response(
                 response.status_code,
                 headers={
-                    name: value for name, value in response.headers.items() if name in REPLY_HEADERS
+                    name: value
+                    for name, value in response.headers.items()
+                    if name in REPLY_HEADERS or (ui_security and name in UI_SECURITY_HEADERS)
                 },
                 content=bytes(data),
             )
@@ -287,12 +363,48 @@ class AdminUI:
                 return self.unavailable(request_id)
             return self.reply(native)
 
+    async def localized_reply(self, request: Request, path: str, headers: dict) -> Response:
+        assert self.localized is not None
+        if not UI_PATH.fullmatch(path):
+            return Response(status_code=404)
+        try:
+            auth = await self.forward(
+                request.app.state.http,
+                "GET",
+                "/api/runtime",
+                {k: v for k, v in headers.items() if k != "if-none-match"},
+                ui_security=True,
+            )
+            if auth.status_code != 200:
+                return self.reply(auth)
+            if auth.json()["build"]["gitRevision"] != UPSTREAM_UI_COMMIT:
+                return Response(status_code=503)
+        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+            return Response(status_code=503)
+        asset = self.localized.asset(path)
+        if asset is None:
+            return Response(status_code=404)
+        data, media = asset
+        security = {k: v for k, v in auth.headers.items() if k in UI_SECURITY_HEADERS}
+        security.setdefault("x-content-type-options", "nosniff")
+        return Response(
+            b"" if request.method == "HEAD" else data,
+            media_type=media,
+            headers={**security, "cache-control": "no-store", "content-length": str(len(data))},
+        )
+
     async def handle(self, request: Request) -> Response:
         raw = request.scope.get("raw_path", b"")
         if not raw.startswith(b"/") or raw.startswith(b"//") or b"\\" in raw:
             return Response(status_code=404)
         path = raw.decode("ascii", errors="replace")
         headers = {name: value for name, value in request.headers.items() if name in HEADERS}
+        if (
+            self.localized is not None
+            and request.method in {"GET", "HEAD"}
+            and (path == "/ui" or path.startswith(("/ui/", "/ui%")))
+        ):
+            return await self.localized_reply(request, path, headers)
         match = MUTATION.fullmatch(raw)
         writing = request.method in {"PUT", "DELETE"} and match is not None
         if writing and request.method == "DELETE" and raw.count(b"/") != 5:
@@ -337,6 +449,7 @@ class AdminUI:
 
 def build() -> Starlette:
     service_account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+    bundle = os.environ.get("BBX_NATIVE_LOCALIZED_UI_DIR")
     proxy = AdminUI(
         os.environ["BBX_NATIVE_ADMIN_UI_URL"],
         os.environ["BBX_NATIVE_ADMIN_PUBLIC_ORIGIN"],
@@ -350,6 +463,7 @@ def build() -> Starlette:
             os.environ["BBX_NATIVE_PVC_UID"],
             service_account / "token",
         ),
+        localized=LocalizedUI(Path(bundle)) if bundle else None,
     )
 
     @asynccontextmanager
