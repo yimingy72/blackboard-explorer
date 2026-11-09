@@ -30,6 +30,7 @@ from bbx_runtime.execenv.archive import (
     build_archive,
     initial_attachments,
 )
+from bbx_runtime.execenv.protected import ProtectedExecution
 from bbx_runtime.settings import Settings
 from bbx_runtime.traffic.collector import TrafficCollector
 
@@ -41,12 +42,22 @@ LOGGER = logging.getLogger(__name__)
 
 # One fixed destination per relay, supplied when the container starts.
 RELAY = """
+import json
 import select
 import socket
 import socketserver
+import subprocess
 import sys
 
 target = sys.argv[1]
+listen = '0.0.0.0'
+if sys.argv[2:] == ['protected']:
+    route_args = ['/usr/sbin/ip', '-j', '-4', 'route', 'get', target]
+    (route,) = json.loads(subprocess.check_output(route_args))
+    backend = route['prefsrc']
+    addresses = json.loads(subprocess.check_output(['/usr/sbin/ip', '-j', '-4', 'addr', 'show']))
+    (listen,) = [addr['local'] for interface in addresses for addr in interface.get('addr_info', [])
+                 if addr.get('scope') == 'global' and addr['local'] != backend]
 
 class Forward(socketserver.BaseRequestHandler):
     def handle(self):
@@ -65,7 +76,7 @@ class Forward(socketserver.BaseRequestHandler):
 
 socketserver.ThreadingTCPServer.allow_reuse_address = True
 socketserver.ThreadingTCPServer.daemon_threads = True
-with socketserver.ThreadingTCPServer(('0.0.0.0', 8080), Forward) as server:
+with socketserver.ThreadingTCPServer((listen, 8080), Forward) as server:
     server.serve_forever()
 """
 
@@ -84,6 +95,7 @@ class ExecEnvHandle:
     token: str = field(repr=False)
     relay_id: str | None = None
     traffic_required: bool = False
+    protected: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,6 +133,7 @@ class ExecEnvManager:
         self.docker = docker_client or docker.from_env()
         self.objects = objects or object_store(settings)
         self.traffic_collectors: dict[str, TrafficCollector] = {}
+        self.protected = ProtectedExecution(self)
 
     @staticmethod
     def _task(task_id: UUID | str) -> UUID:
@@ -353,25 +366,26 @@ class ExecEnvManager:
             handle = await self._handle(task, envd, relay)
             await self.wait_healthy(handle)
             if restore_uri:
-                async with EnvdClient(handle.base_url, handle.token) as client:
-                    status = await client.restore_status()
-                    if not status["restored"]:
-                        result = await client.restore(self.objects.stream(restore_uri))
-                    else:
-                        result = status
-                    if result.get("restored") is not True:
-                        raise RuntimeError("Task archive restore did not complete")
-                    if result.get("skipped_links"):
-                        LOGGER.warning(
-                            "Task %s restored without %s archive links",
-                            task,
-                            result["skipped_links"],
-                        )
+                await self.restore(handle, restore_uri)
             return handle
         except BaseException:
             for container in reversed(created):
                 await asyncio.to_thread(container.remove, force=True)
             raise
+
+    async def restore(self, handle: ExecEnvHandle, uri: str) -> None:
+        async with EnvdClient(handle.base_url, handle.token) as client:
+            result = await client.restore_status()
+            if not result["restored"]:
+                result = await client.restore(self.objects.stream(uri))
+            if result.get("restored") is not True:
+                raise RuntimeError("Task archive restore did not complete")
+            if result.get("skipped_links"):
+                LOGGER.warning(
+                    "Task %s restored without %s archive links",
+                    handle.task_id,
+                    result["skipped_links"],
+                )
 
     async def find(self, task_id: UUID | str) -> ExecEnvHandle | None:
         task = self._task(task_id)
@@ -412,7 +426,7 @@ class ExecEnvManager:
                     )
                 await client.close()
                 return
-            if not self.settings.traffic_enabled:
+            if not self.settings.traffic_enabled and not handle.protected:
                 status = await client.traffic("status")
                 if (
                     not status.get("source_id")
@@ -429,6 +443,7 @@ class ExecEnvManager:
                 run,
                 poll_seconds=self.settings.traffic_poll_seconds,
                 max_bytes=self.settings.traffic_max_bytes,
+                raw_only=handle.protected,
             )
             await collector.start()
         except BaseException:
@@ -529,7 +544,14 @@ class ExecEnvManager:
                         uri, size, response.headers.get("X-Archive-Fallback", "none")
                     )
 
-    async def archive_task(self, task_id: UUID | str, data: dict[str, Any]) -> ArchiveResult:
+    async def archive_task(
+        self,
+        task_id: UUID | str,
+        data: dict[str, Any],
+        *,
+        protected: bool = False,
+        original_handle: ExecEnvHandle | None = None,
+    ) -> ArchiveResult:
         task = self._task(task_id)
         await self.finish_traffic(task)
         run_number = data.get("run_number")
@@ -540,7 +562,14 @@ class ExecEnvManager:
             if run_number == 1
             else f"workspace/{task}/run-{run_number}.tar.zst"
         )
-        data = {**data, "runtime_audit": await self._archive_audit(task, run_number)}
+        audit = (
+            await self._archive_audit(
+                task, run_number, protected=True, original_handle=original_handle
+            )
+            if protected
+            else await self._archive_audit(task, run_number)
+        )
+        data = {**data, "runtime_audit": audit}
         with tempfile.TemporaryDirectory(prefix="bbx-task-archive-") as temporary:
             output = Path(temporary) / "workspace.tar.zst"
             await build_archive(self.objects, task, data, output)
@@ -551,14 +580,18 @@ class ExecEnvManager:
                 await self.objects.put(uri, file, length=size, content_type="application/zstd")
         return ArchiveResult(uri, size, "none")
 
-    async def _archive_audit(self, task: UUID, run_number: int) -> dict[str, Any]:
+    async def _archive_audit(
+        self, task: UUID, run_number: int, *, protected=False, original_handle=None
+    ) -> dict[str, Any]:
         uri = f"toolcalls/{task}/runtime-audit-run-{run_number}.txt"
         # A lost container must not prevent archiving evidence already in MinIO.
-        if await self._role(task, "envd") is None:
+        if (protected and original_handle is None) or (
+            not protected and await self._role(task, "envd") is None
+        ):
             if await self.objects.exists(uri):
                 return {"status": "saved", "result_uri": uri}
             return {"status": "unavailable", "reason": "runtime_missing"}
-        handle = await self.find(task)
+        handle = original_handle if protected else await self.find(task)
         if handle is None:
             raise RuntimeError("Execution environment disappeared during audit collection")
         async with EnvdClient(handle.base_url, handle.token) as envd:

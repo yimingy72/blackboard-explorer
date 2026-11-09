@@ -61,6 +61,11 @@ class EnvdClient:
     async def health(self) -> dict[str, Any]:
         return (await self._response("GET", "/health")).json()
 
+    async def protected_network(self, action: str, **body: Any) -> dict[str, Any]:
+        if action not in {"link", "probe", "renew", "fence"}:
+            raise ValueError("Unknown protected execution network action")
+        return (await self._response("POST", f"/execution-network/{action}", json=body)).json()
+
     async def audit(self) -> dict[str, Any]:
         return (await self._response("GET", "/audit")).json()
 

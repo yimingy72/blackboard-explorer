@@ -164,6 +164,12 @@ export default function BlackboardWorkbenchPage() {
         return <div className={styles.errorState} role="alert"><h1>无法打开任务</h1><p>{taskQuery.error instanceof ApiError ? taskQuery.error.message : '请稍后重试。'}</p><div><Button className={controls.button} onClick={() => void taskQuery.refetch()} htmlType={"button"}>重试</Button><Link to="/tasks" className={controls.button}>返回任务列表</Link></div></div>;
     const task = taskQuery.data;
     const boardTask = viewState.task;
+    const network = version === null ? task?.legacy_network : undefined;
+    const networkMode = network && { default: '默认网络', vpn: '平台 VPN', socks5: '平台 SOCKS5' }[network.mode];
+    const networkStage = network && {
+        pending: '待准备', prepared: '待就绪', starting: '连接中', ready: '已就绪',
+        fenced: '已撤权', exited: '已停止', absent: '未启动', unknown: '未确认',
+    }[network.state];
     const status = boardTask?.status ?? task?.status ?? 'created';
     const usedCost = boardTask?.usage.cost ?? (version === null ? task?.usage?.cost : 0) ?? 0;
     const maxCost = boardTask?.budget.max_cost;
@@ -187,7 +193,7 @@ export default function BlackboardWorkbenchPage() {
         <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
-        <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{formatMoney(usedCost,task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span></div>
+        <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{formatMoney(usedCost,task?.cost_currency)}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span>{networkMode && <Tag title="逐 Agent 流量采集必需">{networkMode} · {networkStage}</Tag>}</div>
         <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')openRecords();if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
           {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
           {['finished','failed','stopped'].includes(status) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}

@@ -301,10 +301,11 @@ async def list_traffic(
         else None,
         has_more=has_more,
         files=[item for item in manifest.files if agent_id is None or item.agent_id == agent_id],
+        raw_only=manifest.raw_only,
         native_bound=manifest.native_bound,
         native_sources=(
             [ref for ref in manifest.native if agent_id is None or ref.agent_id == agent_id]
-            if manifest.native_bound
+            if manifest.native_bound or manifest.raw_only
             else None
         ),
     )

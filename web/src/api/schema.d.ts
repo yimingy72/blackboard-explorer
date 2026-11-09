@@ -1962,6 +1962,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/execution-network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge Execution Network */
+        post: operations["acknowledge_execution_network_api_tasks__task_id__execution_network_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/facts": {
         parameters: {
             query?: never;
@@ -5388,6 +5405,82 @@ export interface components {
              */
             turn_id: string;
         };
+        /** LegacyNetworkAbsentReceipt */
+        LegacyNetworkAbsentReceipt: {
+            /**
+             * Phase
+             * @constant
+             */
+            phase: "absent";
+            /** Policy Digest */
+            policy_digest: string;
+            /** Run Number */
+            run_number: number;
+        };
+        /** LegacyNetworkReceipt */
+        LegacyNetworkReceipt: {
+            /**
+             * Capture Closed
+             * @default false
+             */
+            capture_closed: boolean;
+            /**
+             * Capture Ready
+             * @default false
+             */
+            capture_ready: boolean;
+            /** Envd Id */
+            envd_id: string;
+            /** Envd Started At */
+            envd_started_at: string;
+            /** Gateway Id */
+            gateway_id?: string | null;
+            /** Gateway Network Id */
+            gateway_network_id?: string | null;
+            /** Gateway Started At */
+            gateway_started_at?: string | null;
+            /** Network Id */
+            network_id: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "prepared" | "starting" | "ready" | "fenced" | "exited" | "unknown";
+            /** Policy Digest */
+            policy_digest: string;
+            /**
+             * Probe Ready
+             * @default false
+             */
+            probe_ready: boolean;
+            /** Relay Id */
+            relay_id?: string | null;
+            /** Relay Network Id */
+            relay_network_id?: string | null;
+            /** Relay Started At */
+            relay_started_at?: string | null;
+            /** Run Number */
+            run_number: number;
+        };
+        /** LegacyNetworkView */
+        LegacyNetworkView: {
+            /**
+             * Capture Required
+             * @default true
+             * @constant
+             */
+            capture_required: true;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "default" | "vpn" | "socks5";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "prepared" | "starting" | "ready" | "fenced" | "exited" | "unknown" | "absent";
+        };
         /** LoginBody */
         LoginBody: {
             /** Password */
@@ -7615,6 +7708,7 @@ export interface components {
             initial_attachment_state?: ("pending" | "ready" | "blocked") | null;
             /** Initial Attachments */
             initial_attachments?: components["schemas"]["InitialAttachment"][];
+            legacy_network?: components["schemas"]["LegacyNetworkView"] | null;
             /** Members */
             members?: {
                 [key: string]: unknown;
@@ -7905,6 +7999,8 @@ export interface components {
             next_after?: number | null;
             /** Next Before */
             next_before?: number | null;
+            /** Raw Only */
+            raw_only?: true | null;
             /** Records */
             records?: components["schemas"]["TrafficRecordSummary"][];
             /** Run */
@@ -12976,6 +13072,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": (components["schemas"]["Event"] | components["schemas"]["CtfEvent"])[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_execution_network_api_tasks__task_id__execution_network_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegacyNetworkReceipt"] | components["schemas"]["LegacyNetworkAbsentReceipt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

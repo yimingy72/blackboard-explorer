@@ -19,6 +19,7 @@ from bbx_contracts.challenge_board import (
     native_scope_updates_enabled,
 )
 from bbx_contracts.heartbeat import HeartbeatRequest
+from bbx_contracts.legacy_network import LegacyNetworkSnapshot
 from bbx_contracts.models import (
     AgentProfile,
     ModelConfig,
@@ -45,6 +46,7 @@ from bbx_blackboard.domain import (
 )
 from bbx_blackboard.domain.rules import event
 from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
+from bbx_blackboard.legacy_network import require_run_ready, require_run_retired
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
@@ -70,6 +72,7 @@ class BoardService:
         input_file_ids: list[UUID] | None = None,
         input_owner: str | None = None,
         create_request_hash: str | None = None,
+        legacy_network: LegacyNetworkSnapshot | None = None,
     ) -> UUID:
         spec = TaskSpec.model_validate(spec)
         if len({x.id for x in spec.acceptance}) != len(spec.acceptance):
@@ -139,6 +142,12 @@ class BoardService:
                         raise RuleViolation("input_missing", "初始附件尚未保存，请重新上传。")
                 payload["initial_attachments"] = files
             await conn.execute(insert(s.tasks).values(id=tid, **payload))
+            if legacy_network is not None:
+                await conn.execute(
+                    insert(s.legacy_execution_networks).values(
+                        task_id=tid, snapshot=legacy_network.model_dump(mode="json")
+                    )
+                )
             written = await self.repo.append(
                 conn,
                 tid,
@@ -196,6 +205,12 @@ class BoardService:
                 raise HTTPException(409, "mode_mismatch")
             if state.task["deleting"]:
                 raise RuleViolation("task_deleting", "任务正在删除。")
+            if (command == "register_agent" and data["task_type"] == "explore") or (
+                command == "transition" and data["status"] == "running"
+            ):
+                await require_run_ready(conn, state.task)
+            elif command == "record_cleanup":
+                await require_run_retired(conn, state.task)
             self._check_derive_round(state.agents.get(target), expected_derive_round)
             if command in {"finish_agent", "heartbeat"} and (agent := state.agents.get(target)):
                 if not await agent_execution_matches(conn, tid, agent, expected_started_at):
@@ -363,6 +378,7 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             if task["status"] not in {"finished", "failed", "stopped"}:
                 raise RuleViolation("resume_not_terminal", "任务尚未结束。")
+            await require_run_retired(conn, task)
             source_uri = task.get("workspace_uri") or task.get("resume_workspace_uri")
             if not task.get("cleanup_ready") or not source_uri:
                 raise RuleViolation(

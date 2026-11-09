@@ -104,6 +104,29 @@ native_vpn_assets = Table(
 )
 
 
+legacy_execution_networks = Table(
+    "legacy_execution_networks",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("snapshot", JSONB, nullable=False),
+)
+
+legacy_execution_receipts = Table(
+    "legacy_execution_receipts",
+    metadata,
+    Column(
+        "task_id",
+        UUID(as_uuid=True),
+        ForeignKey("legacy_execution_networks.task_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    col("run_number", Integer, primary_key=True),
+    col("receipt", JSONB, nullable=False),
+)
+
+
 task_runs = Table(
     "task_runs",
     metadata,

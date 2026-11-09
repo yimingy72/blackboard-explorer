@@ -27,10 +27,10 @@ Python 依赖使用项目配置的阿里云索引；镜像的 `DEBIAN_MIRROR`、
 - 服务 token 用于系统接口、配置和上传。
 - 登记 Agent 时返回绑定任务与 Agent ID 的 JWT。Agent 写入身份只取自此 token；服务身份写事实时也应使用登记得到的 Agent token。
 
-平台启动后，可通过纯 HTTP 模拟器检查事件流，不会调用 DeepSeek：
+在隔离的开发库中，可对预先准备、尚未启动的旧版黑板示例任务运行纯 HTTP 模拟器来检查事件流；不会调用 DeepSeek。新受保护任务必须由真实 Runtime 启动并确认采集，模拟器不会替代：
 
 ```sh
-.venv/bin/python -m bbx_blackboard.simulator --base-url http://127.0.0.1:58000 --scenario demo --interval 0.5
+.venv/bin/python -m bbx_blackboard.simulator --base-url http://127.0.0.1:58000 --scenario demo --task-id <历史示例任务ID> --interval 0.5
 curl -N -H "Authorization: Bearer $SERVICE_TOKEN" \
   "http://127.0.0.1:58000/api/tasks/<task-id>/stream?since=0"
 ```

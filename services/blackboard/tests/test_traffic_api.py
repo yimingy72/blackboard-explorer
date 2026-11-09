@@ -371,7 +371,8 @@ async def test_purge_deletes_all_traffic_runs_and_retries_before_database_delete
     tid, other = uuid4(), uuid4()
     conn = SimpleNamespace(execute=AsyncMock())
     result = MagicMock()
-    result.mappings.return_value.one.return_value = {"deleting": True}
+    result.mappings.return_value.one.return_value = {"id": tid, "deleting": True}
+    result.scalar_one_or_none.return_value = None
     conn.execute.return_value = result
     engine = MagicMock()
     engine.begin.return_value.__aenter__.return_value = conn
@@ -579,3 +580,38 @@ async def test_legacy_records_do_not_become_packets_and_after_not_recorded_stays
     assert response.json()["records"] == [] and response.json()["next_after"] == 3
     response = await t.client.get(t.path + "?run=2&kind=packet&after=0", headers=t.headers)
     assert response.json()["availability"] == "not_recorded" and response.json()["next_after"] == 0
+
+
+async def test_protected_raw_archive_exposes_agent_sources_without_p4i_file_layout(traffic):
+    t = traffic
+    key = t.root + "manifest.json"
+    manifest = json.loads(t.objects.data[key])
+    manifest.update(
+        raw_only=True,
+        https="unavailable",
+        record_count=0,
+        chunks=[],
+        native=[
+            {
+                "source_id": source,
+                "agent_id": agent,
+                "revision": marker * 64,
+                "available_bytes": 42,
+                "packet_count": count,
+                "complete": True,
+            }
+            for source, agent, marker, count in (
+                ("raw-a", "a", "a", 3),
+                ("raw-b", "b", "b", 5),
+            )
+        ],
+    )
+    t.objects.data[key] = json.dumps(manifest).encode()
+    response = await t.client.get(t.path, headers=t.headers, params={"run": 1, "agent_id": "b"})
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert page["raw_only"] is True and "native_bound" not in page
+    assert page["records"] == []
+    assert [(ref["agent_id"], ref["packet_count"]) for ref in page["native_sources"]] == [("b", 5)]
+    raw = await t.client.get(t.path + "/files/raw", headers=t.headers, params={"run": 1})
+    assert raw.status_code == 200 and raw.content == b"raw-pcap"

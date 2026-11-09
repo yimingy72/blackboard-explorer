@@ -505,6 +505,19 @@
       "title": "Native",
       "type": "array"
     },
+    "raw_only": {
+      "anyOf": [
+        {
+          "const": true,
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Raw Only"
+    },
     "native_bound": {
       "anyOf": [
         {

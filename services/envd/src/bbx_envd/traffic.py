@@ -379,11 +379,13 @@ class TrafficCapture:
                     self.persist()
                     raise
                 self.proxy_host = self.networks.gateway
-            await self.start_raw()
+            if self.networks is None or not self.networks.protected:
+                await self.start_raw()
             if self.networks is not None:
                 for linux_agent in self.networks.agents:
                     await self.start_raw(linux_agent)
-            await self.start_proxy()
+            if self.networks is None or not self.networks.protected:
+                await self.start_proxy()
             self.poller = asyncio.create_task(self.poll())
             self.persist()
             return self.status()
@@ -647,6 +649,16 @@ class TrafficCapture:
             if self.state is not None and self.state["status"] == "collecting":
                 await self.start_raw(linux_agent_id)
 
+    def original_raw_live(self, linux_agent_id: str) -> bool:
+        role = f"raw:{linux_agent_id}"
+        process = self.processes.get(role)
+        return (
+            not self.limited
+            and role in self.raw_ready
+            and process is not None
+            and process.returncode is None
+        )
+
     def redact_output(self, value: bytes) -> bytes:
         for identity in self.credentials.values():
             value = value.replace(identity["password"].encode(), b"[redacted]")
@@ -808,6 +820,11 @@ class TrafficCapture:
                 "error" in text.lower() or "permission denied" in text.lower()
             ) and " INFO]" not in text:
                 self.partial("Raw capture reported an error")
+        if self.networks is not None and self.networks.protected:
+            self.raw_ready.discard(role)
+            if not self.stopping:
+                self.partial("Original Agent capture exited; protected forwarding closed")
+                await self.networks.fence()
         previous = self.active_raw.pop(role, None)
         if previous:
             try:
@@ -977,8 +994,10 @@ class TrafficCapture:
                     )
                     if self.native:
                         self.native.error = "Private TLS keylog capacity reached"
-                if self.networks is not None and (
-                    self.networks.dns is None or self.networks.dns.returncode is not None
+                if (
+                    self.networks is not None
+                    and not self.networks.forced
+                    and (self.networks.dns is None or self.networks.dns.returncode is not None)
                 ):
                     self.partial("Task gateway DNS is unavailable; command execution disabled")
                 for role, process in self.processes.items() if not self.stopping else []:
@@ -1058,7 +1077,11 @@ class TrafficCapture:
                 raise ValueError("Capture not started")
             if self.limited or self.state["status"] != "collecting":
                 return self.status()
-            self.partial("Traffic capacity reached; forwarding remains available")
+            if self.networks is not None and self.networks.protected:
+                self.partial("Traffic capacity reached; protected forwarding closed")
+                await self.networks.fence()
+            else:
+                self.partial("Traffic capacity reached; forwarding remains available")
             assert self.directory is not None
             (self.directory / "control" / "disabled").touch(mode=0o600)
             self.stopping = True

@@ -40,6 +40,9 @@ class CommandInputError(ValueError):
         "invalid_timeout": "timeout_sec must be a positive integer within the execution limit.",
         "invalid_command": "command cannot contain a NUL character. "
         "Write binary data through a file or escaped script instead.",
+        "privileged_disabled": "Protected commands do not support sudo or privileged mode. "
+        "Install tools in your user or workspace directory.",
+        "capture_unavailable": "Original Agent capture unavailable; command was not run.",
     }
 
     def __init__(self, code: str) -> None:
@@ -224,6 +227,9 @@ async def execute_command(
     process_started: Callable[[asyncio.subprocess.Process], None] | None = None,
     traffic: TrafficCapture | None = None,
 ) -> dict[str, object]:
+    protected = settings.envd_protected_network is not None
+    if protected and privileged:
+        raise CommandInputError("privileged_disabled")
     home = agent_home(agent_id)
     if type(timeout_sec) is not int or not 1 <= timeout_sec <= settings.command_timeout_max:
         raise CommandInputError("invalid_timeout")
@@ -245,6 +251,13 @@ async def execute_command(
         "started_at": utc_now(),
     }
     network_prefix: list[str] = []
+    if protected and (
+        traffic is None
+        or traffic.networks is None
+        or not traffic.original_raw_live(agent_id)
+        or not traffic.networks.permitted()
+    ):
+        raise CommandInputError("capture_unavailable")
     if traffic is not None and traffic.networks is not None:
         if traffic.state is None or (
             traffic.state["status"] != "collecting" and not traffic.limited
@@ -259,7 +272,22 @@ async def execute_command(
     exit_code: int | None = None
     try:
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-            args = [*network_prefix, "runuser", "-u", agent_id, "--"]
+            if protected:
+                owner = pwd.getpwnam(agent_id)
+                args = [
+                    *network_prefix,
+                    "/usr/bin/setpriv",
+                    f"--reuid={owner.pw_uid}",
+                    f"--regid={owner.pw_gid}",
+                    "--clear-groups",
+                    "--bounding-set=-all",
+                    "--inh-caps=-all",
+                    "--ambient-caps=-all",
+                    "--no-new-privs",
+                    "--",
+                ]
+            else:
+                args = [*network_prefix, "runuser", "-u", agent_id, "--"]
             if privileged:
                 args += ["sudo", "-n", "--"]
             args += ["bash", "-lc", command]
@@ -274,12 +302,22 @@ async def execute_command(
                     "MITMPROXY_SSLKEYLOGFILE",
                 }
             }
+            if protected:
+                environment = {
+                    key: value
+                    for key, value in environment.items()
+                    if not key.upper().startswith(("ENVD_", "LD_"))
+                    and key.lower()
+                    not in {"http_proxy", "https_proxy", "all_proxy", "no_proxy", "bash_env", "env"}
+                }
+                environment.update(HOME=str(home), USER=agent_id, LOGNAME=agent_id)
             if traffic is not None:
                 if traffic.networks is not None:
                     environment.update(traffic.networks.environment(agent_id))
-                environment.update(
-                    traffic.command_environment(agent_id, str(execution["command_id"]))
-                )
+                if not protected:
+                    environment.update(
+                        traffic.command_environment(agent_id, str(execution["command_id"]))
+                    )
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     *args,

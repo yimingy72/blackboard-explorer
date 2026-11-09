@@ -17,6 +17,7 @@ from bbx_runtime.clients.blackboard import is_control_transport_error
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
 from bbx_runtime.execenv.archive import ArchiveCapacityError
+from bbx_runtime.execenv.protected import ProtectedExecution
 from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.runner import AgentRunner
 from bbx_runtime.scheduler.executor import ActionExecutor
@@ -42,6 +43,7 @@ class TaskSupervisor:
         self.runner = runner
         self.loops: dict[str, SchedulerLoop] = {}
         self.loop_tasks: dict[str, asyncio.Task[None]] = {}
+        self.network_tasks: dict[str, asyncio.Task[None]] = {}
         self.cleanups: dict[str, asyncio.Task[None]] = {}
         self.cleaned: set[str] = set()
         self.archive_blocked: set[str] = set()
@@ -189,10 +191,14 @@ class TaskSupervisor:
         tid = str(state["task"]["id"])
         if tid in self.loops or self.stopping.is_set():
             return
-        if hasattr(self.manager, "start_traffic"):
+        protected = bool(state["task"].get("legacy_network"))
+        closing = protected and state["task"]["status"] == "closing"
+        if closing:
+            await self.manager.protected.fence(state["task"], self.service)
+        if not closing and hasattr(self.manager, "start_traffic"):
             await self.manager.start_traffic(handle, state["task"])
         attachments = state["task"].get("initial_attachments", [])
-        if attachments:
+        if not protected and attachments:
             await self.manager.ensure_initial_inputs(handle, attachments)
         if self.stopping.is_set():
             return
@@ -200,6 +206,26 @@ class TaskSupervisor:
         loop = SchedulerLoop(executor, self.service, Params.model_validate(state["task"]["params"]))
         self.loops[tid] = loop
         self.loop_tasks[tid] = asyncio.create_task(loop.run(), name=f"scheduler:{tid}")
+        if protected and not closing:
+            self.network_tasks[tid] = asyncio.create_task(
+                self._renew_protected(tid, handle), name=f"network:{tid}"
+            )
+
+    async def _renew_protected(self, tid: str, handle: ExecEnvHandle) -> None:
+        while not self.stopping.is_set():
+            try:
+                async with asyncio.timeout(5):
+                    task = (await self.service.state(tid))["task"]
+                    if task["status"] != "running" or task.get("deleting"):
+                        await self.manager.protected.fence(task, self.service)
+                        return
+                    await self.manager.protected.renew(task, handle)
+            except Exception as error:
+                if not is_control_transport_error(error) and not isinstance(error, TimeoutError):
+                    LOGGER.error("Protected execution lease lost: %s", type(error).__name__)
+                    await self._fail_if_active(tid, "执行网络或采集已不可用")
+                    return
+            await asyncio.sleep(2)
 
     async def recover(self) -> None:
         for listed in await self.service.list_tasks():
@@ -246,7 +272,21 @@ class TaskSupervisor:
             if status not in {"provisioning", "running", "closing"}:
                 continue
             try:
-                handle = await self.manager.find(tid)
+                task = state["task"]
+                if task.get("legacy_network"):
+                    if status == "closing":
+                        handle = await self.manager.protected.fence(task, self.service)
+                    elif status == "provisioning":
+                        # The queue owns the prepared/starting receipt handshake.
+                        continue
+                    else:
+                        self.manager.protected.configured(task)
+                        resources = await self.manager.protected.find(task)
+                        handle = (
+                            await self.manager.protected.handle(resources) if resources else None
+                        )
+                else:
+                    handle = await self.manager.find(tid)
                 if handle is None:
                     if status == "provisioning":
                         continue
@@ -349,6 +389,8 @@ class TaskSupervisor:
             raise
 
     async def _cleanup_task(self, tid: str, state: dict[str, Any]) -> None:
+        protected = bool(state["task"].get("legacy_network"))
+        original_handle = None
         if state["task"].get("mode") == "ctf":
             state = await self.service.state(tid)
             task = state["task"]
@@ -377,14 +419,21 @@ class TaskSupervisor:
                 await asyncio.gather(future, return_exceptions=True)
             await self._ctf().detach(tid)
         else:
+            if protected:
+                original_handle = await self.manager.protected.fence(state["task"], self.service)
             await self._drain(tid, state)
         state = await self.service.state(tid)
         ctf = state["task"].get("mode") == "ctf"
         # Recover capture ownership after a runtime restart, including terminal tasks.
         if hasattr(self.manager, "start_traffic"):
-            handle = await self.manager.find(tid)
+            handle = original_handle if protected else await self.manager.find(tid)
             if handle is not None:
-                await self.manager.start_traffic(handle, state["task"])
+                if protected:
+                    async with EnvdClient(handle.base_url, handle.token) as client:
+                        if (await client.traffic("status")).get("source_id"):
+                            await self.manager.start_traffic(handle, state["task"])
+                else:
+                    await self.manager.start_traffic(handle, state["task"])
         if hasattr(self.manager, "finish_traffic"):
             await self.manager.finish_traffic(
                 tid, run_number=int(state["task"].get("run_number") or 1)
@@ -394,7 +443,13 @@ class TaskSupervisor:
                 await self._ctf().service.runtime(tid, "cleanup_status", phase="archiving")
             data = await self.service.archive_data(tid)
             try:
-                archive = await self.manager.archive_task(tid, data)
+                archive = (
+                    await self.manager.archive_task(
+                        tid, data, protected=True, original_handle=original_handle
+                    )
+                    if protected
+                    else await self.manager.archive_task(tid, data)
+                )
             except ArchiveCapacityError:
                 LOGGER.error(
                     "Task %s archive exceeds capacity; execution environment retained.", tid
@@ -420,11 +475,23 @@ class TaskSupervisor:
             await self.service.record_archive(tid, archive.uri, archive.size, archive.fallback)
         if ctf:
             await self._ctf().service.runtime(tid, "cleanup_status", phase="destroying")
-        await self.manager.destroy(tid)
+        if protected:
+            await self.manager.protected.destroy(state["task"], self.service, capture_closed=True)
+        else:
+            await self.manager.destroy(tid)
         await self.service.record_cleanup(tid)
         self.cleaned.add(tid)
 
     async def _purge_deleted(self, tid: str) -> None:
+        task = (
+            (await self.service.state(tid))["task"]
+            if isinstance(getattr(self.manager, "protected", None), ProtectedExecution)
+            else {}
+        )
+        protected = bool(task.get("legacy_network"))
+        if protected:
+            await self.manager.protected.fence(task, self.service)
+            task = (await self.service.state(tid))["task"]
         self.ctf_wait_warnings.pop(tid, None)
         if cleanup := self.cleanups.pop(tid, None):
             cleanup.cancel()
@@ -439,7 +506,10 @@ class TaskSupervisor:
             await self.loop_tasks.pop(tid)
         if hasattr(self.manager, "finish_traffic"):
             await self.manager.finish_traffic(tid, discard=True)
-        await self.manager.destroy(tid)
+        if protected:
+            await self.manager.protected.destroy(task, self.service, capture_closed=True)
+        else:
+            await self.manager.destroy(tid)
         # Purge can commit before its HTTP response is lost. The destroyed handle
         # must not keep a deleted task's slot reserved in the startup cache.
         self.pending_starts.pop(tid, None)
@@ -497,6 +567,17 @@ class TaskSupervisor:
             tid = str(task["id"])
             if task.get("mode") == "ctf" and business_contract(task) != BOARD_LEGACY:
                 continue
+            if (
+                isinstance(getattr(self.manager, "protected", None), ProtectedExecution)
+                and task.get("mode", "blackboard") == "blackboard"
+                and task["status"] == "closing"
+            ):
+                current = (await self.service.state(tid))["task"]
+                if current.get("legacy_network"):
+                    try:
+                        await self.manager.protected.fence(current, self.service)
+                    except Exception as error:
+                        LOGGER.error("Protected network fence deferred: %s", type(error).__name__)
             if task.get("mode", "blackboard") == "ctf":
                 if task["status"] == "running" and tid not in self.ctf_tasks:
                     # A coordinator can exit while its durable task still owns capacity.
@@ -587,11 +668,21 @@ class TaskSupervisor:
                         )
                     )
                     restore_uri = task.get("resume_workspace_uri")
-                    handle = (
-                        await self.manager.provision(tid, profile, restore_uri)
-                        if restore_uri
-                        else await self.manager.provision(tid, profile)
+                    trusted = (
+                        (await self.service.state(tid))["task"]
+                        if isinstance(getattr(self.manager, "protected", None), ProtectedExecution)
+                        else {}
                     )
+                    if trusted.get("legacy_network"):
+                        handle = await self.manager.protected.provision(
+                            trusted, profile, self.service
+                        )
+                    else:
+                        handle = (
+                            await self.manager.provision(tid, profile, restore_uri)
+                            if restore_uri
+                            else await self.manager.provision(tid, profile)
+                        )
                     # A successful handle includes restore/readiness confirmation.
                     # Retain it across control failures instead of provisioning again.
                     self.pending_starts[tid] = handle
@@ -599,7 +690,7 @@ class TaskSupervisor:
                 fresh = await self.service.state(tid)
                 if fresh["task"]["status"] == "provisioning":
                     attachments = fresh["task"].get("initial_attachments", [])
-                    if attachments:
+                    if not getattr(handle, "protected", False) and attachments:
                         await self.manager.ensure_initial_inputs(handle, attachments)
                     try:
                         await self.service.transition(tid, "running")
@@ -676,6 +767,10 @@ class TaskSupervisor:
             await self._stop()
 
     async def _stop(self) -> None:
+        for future in self.network_tasks.values():
+            future.cancel()
+        await asyncio.gather(*self.network_tasks.values(), return_exceptions=True)
+        self.network_tasks.clear()
         if self.ctf is not None:
             await self.ctf.close()
         await asyncio.gather(*self.ctf_tasks.values(), return_exceptions=True)

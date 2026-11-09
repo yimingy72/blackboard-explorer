@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installMockApi, TASK_ID } from './fixtures';
-import { expectSelectedOption } from './ui';
+import { expectSelectedOption, selectOption } from './ui';
 
 async function installTraffic(page: Page, options: { failBuild?: boolean; expireFrame?: boolean; failCheck?: boolean } = {}) {
   const mock = await installMockApi(page);
@@ -82,4 +82,53 @@ test('相同解析版本切包后清空字段及解密数据源选择', async ({
   await expect(drawer.locator('mark')).toHaveCount(0);
   await expect(drawer.getByRole('button', { name: '使用选中字段过滤' })).toBeDisabled();
   await expectSelectedOption(page, drawer.getByRole('combobox', { name: '字节数据源' }), 'Frame');
+});
+
+test('仅原始流量默认展示包，来源选择保持原 source_id', async ({ page }) => {
+  const mock = await installMockApi(page);
+  const requested: Array<string | null> = [];
+  const refs = [
+    { source_id: 'source-a', agent_id: 'agent-1', packet_count: 1 },
+    { source_id: 'source-b', agent_id: 'agent-2', packet_count: 1 },
+  ];
+  const packets = refs.map((ref) => ({
+    ...ref, source_number: 1, attribution: 'exact',
+    columns: ['1', '1792285201', '192.0.2.1', '192.0.2.2', 'TCP', '4', ref.source_id],
+  }));
+  const view = (id: string) => ({
+    id, status: 'ready', revision: 'r1', requested_revision: 'r1',
+    matched_packets: id === 'query-b' ? 1 : 2, coverage: [],
+    results_truncated: false, engine_version: 'fixture', error: null,
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/traffic**`, route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/native/queries') && request.method() === 'POST') {
+      const body = request.postDataJSON() as { source_id?: string | null; display_filter: string };
+      expect(body.display_filter).toBe('');
+      requested.push(body.source_id ?? null);
+      return route.fulfill({ status: 202, json: view(body.source_id === 'source-b' ? 'query-b' : 'query-all') });
+    }
+    const id = path.includes('/query-b') ? 'query-b' : 'query-all';
+    if (path.endsWith('/packets')) return route.fulfill({
+      json: { revision: 'r1', records: id === 'query-b' ? [packets[1]] : packets, total: id === 'query-b' ? 1 : 2 },
+    });
+    if (path.includes('/native/queries/')) return route.fulfill({ json: view(id) });
+    return route.fulfill({ json: {
+      task_id: TASK_ID, run: 1, availability: 'recorded', raw_only: true,
+      capture: { status: 'archived', record_count: 0, captured_bytes: 8, finished_at: '2026-10-18T01:00:01Z' },
+      records: [], native_sources: refs, files: [], has_more: false, snapshot_seq: 0,
+    } });
+  });
+  await page.goto(`/tasks/${TASK_ID}`);
+  await page.getByRole('button', { name: '流量', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '任务流量' });
+  await expect(drawer.getByRole('button', { name: '查看流量 p:source-a:1' })).toBeVisible();
+  await expect(drawer.getByRole('button', { name: '查看流量 p:source-b:1' })).toBeVisible();
+  expect(requested).toEqual([null]);
+  await selectOption(page, drawer.getByRole('combobox', { name: '采集来源' }), / · source-b$/);
+  await expect(drawer.getByRole('button', { name: '查看流量 p:source-b:1' })).toBeVisible();
+  await expect(drawer.getByRole('button', { name: '查看流量 p:source-a:1' })).toHaveCount(0);
+  expect(requested).toEqual([null, 'source-b']);
+  expect(mock.unexpected).toEqual([]);
 });

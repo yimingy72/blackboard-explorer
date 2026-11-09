@@ -403,6 +403,7 @@ class TrafficManifest(TrafficCapture):
     chunks: list[TrafficChunk] = Field(default_factory=list, max_length=100000)
     files: list[TrafficFile] = Field(default_factory=list, max_length=10000)
     native: list[TrafficNativeSourceRef] = Field(default_factory=list, max_length=256)
+    raw_only: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     native_bound: bool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
@@ -441,6 +442,7 @@ class TrafficListResponse(ContractModel):
     next_after: int | None = Field(default=None, ge=0)
     has_more: bool = False
     files: list[TrafficFile] = Field(default_factory=list)
+    raw_only: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     native_bound: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     native_sources: list[TrafficNativeSourceRef] | None = Field(
         default=None, exclude_if=lambda value: value is None

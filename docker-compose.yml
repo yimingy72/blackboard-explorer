@@ -104,6 +104,7 @@ services:
       ENVD_TOKEN_SECRET: ${ENVD_TOKEN_SECRET}
       EXEC_NETWORK: ${EXEC_NETWORK:-${COMPOSE_PROJECT_NAME:-blackboard-explorer}_exec}
       EXEC_ACCESS_MODE: network
+      LEGACY_CONTROL_NETWORK: ${LEGACY_CONTROL_NETWORK:-${COMPOSE_PROJECT_NAME:-blackboard-explorer}_internal}
       EXEC_EGRESS_MODE: ${EXEC_EGRESS_MODE:-direct}
       EXEC_MIN_PIDS: ${EXEC_MIN_PIDS:-1024}
       EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8888}

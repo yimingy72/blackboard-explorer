@@ -875,13 +875,14 @@ class Conversations:
             await self.repo.notify(tid, written[-1]["version"])
         return {"task_id": tid, "deleting": True}
 
-    async def deletions(self) -> list[UUID]:
+    async def deletions(self, *, include_protected=False) -> list[UUID]:
+        from bbx_blackboard.legacy_network import protected_task
+
         async with self.repo.engine.connect() as conn:
-            return list(
-                (
-                    await conn.execute(select(s.tasks.c.id).where(s.tasks.c.deleting.is_(True)))
-                ).scalars()
-            )
+            statement = select(s.tasks.c.id).where(s.tasks.c.deleting.is_(True))
+            if not include_protected:
+                statement = statement.where(~protected_task())
+            return list((await conn.execute(statement)).scalars())
 
     async def purge(self, tid: UUID, objects: Any) -> dict[str, bool]:
         from bbx_blackboard.native_traffic import close_archive_for_purge, traffic_purge_guard
@@ -895,6 +896,9 @@ class Conversations:
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
             if not task["deleting"]:
                 raise HTTPException(409, "Task deletion was not requested")
+            from bbx_blackboard.legacy_network import require_run_retired
+
+            await require_run_retired(conn, task)
             if task.get("mode") == "ctf" and business_contract(task) == BOARD_CONTRACT:
                 retired = False
                 native_resources = (

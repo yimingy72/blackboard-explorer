@@ -365,6 +365,20 @@ class AgentRunner:
             profile = load_runtime_profile(
                 await self.service.get_profile(task["agent_profile"], task["agent_profile_version"])
             )
+            if task_type == "explore" and task.get("legacy_network"):
+                instruction = (
+                    "执行环境不提供 sudo 或 privileged 模式。"
+                    "需要依赖时，请安装到用户目录、虚拟环境或工作区。\n\n"
+                )
+                profile = profile.model_copy(
+                    update={
+                        "prompt_templates": profile.prompt_templates.model_copy(
+                            update={
+                                "explore": instruction + profile.prompt_templates.explore,
+                            }
+                        ),
+                    }
+                )
             if task_type == "explore":
                 handle = handle or await self.manager.find(task_id)
                 if handle is None:

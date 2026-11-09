@@ -28,6 +28,7 @@ from bbx_contracts.ctf import (
     resolve_ctf_options,
 )
 from bbx_contracts.heartbeat import HeartbeatRequest, ReceiptHeartbeatRequest
+from bbx_contracts.legacy_network import LegacyNetworkView
 from bbx_contracts.models import (
     AgentProfile,
     Event,
@@ -76,6 +77,22 @@ from bbx_blackboard.ctf_api import router as ctf_router
 from bbx_blackboard.domain import RuleViolation
 from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
 from bbx_blackboard.input_groups import router as inputs_router
+from bbx_blackboard.legacy_network import (
+    deployment_snapshot,
+    protected_task,
+    public_network,
+    require_runtime_version,
+    runtime_compatible,
+)
+from bbx_blackboard.legacy_network import (
+    router as legacy_network_router,
+)
+from bbx_blackboard.legacy_network import (
+    run_receipt as legacy_run_receipt,
+)
+from bbx_blackboard.legacy_network import (
+    task_snapshot as legacy_task_snapshot,
+)
 from bbx_blackboard.native import NativeAnalysisCache
 from bbx_blackboard.native_api import router as native_router
 from bbx_blackboard.native_ctf_publication import (
@@ -152,6 +169,9 @@ class TaskView(BaseModel):
     business_contract: str | None = None
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
+    legacy_network: LegacyNetworkView | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     native_network: NativeTaskNetworkStatus | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -636,7 +656,9 @@ def create_app(
     app.include_router(inputs_router)
     app.include_router(traffic_router)
     app.include_router(native_router)
+    app.include_router(legacy_network_router)
     app.state.settings = settings
+    app.state.legacy_network_publication = deployment_snapshot(settings)
     app.state.native_ctf_publication = PublicationState(
         exclusive=settings.native_ctf_publication_file is not None
     )
@@ -667,6 +689,23 @@ def create_app(
     )
     app.state.workspace_cache = WorkspaceArchiveCache()
     app.state.native_cache = NativeAnalysisCache()
+
+    async def protected_snapshot(request, tid):
+        engine = request.app.state.engine
+        if engine is None:
+            return None
+        async with engine.connect() as conn:
+            return await legacy_task_snapshot(conn, tid)
+
+    async def legacy_start_boundary(request, tid, task):
+        if task.get("mode", "blackboard") != "blackboard":
+            return
+        current = request.app.state.legacy_network_publication
+        prior = await protected_snapshot(request, tid)
+        if prior is not None and prior != current:
+            raise HTTPException(409, "原黑板网络配置不可用，不能改用其他出口")
+        if prior is None and (current is None or current.mode != "default"):
+            raise HTTPException(409, "此部署不能以未冻结的旧版网络启动或恢复历史任务")
 
     async def ctf_boundary(request: Request) -> Response | None:
         # Presentation capabilities never enter a solver endpoint, including future routes.
@@ -721,6 +760,17 @@ def create_app(
                 )
                 request.state.business_contract = business_contract(task)
                 suffix = (match[2] or "") if match else "/evidence"
+                if (
+                    mode == "blackboard"
+                    and identity.kind == "service"
+                    and not runtime_compatible(request)
+                    and (
+                        suffix in {"/state", "/archive-data", "/execution-network"}
+                        or request.method != "GET"
+                    )
+                    and await protected_snapshot(request, tid) is not None
+                ):
+                    require_runtime_version(request)
                 if identity.kind == "agent" and identity.mode != mode:
                     raise HTTPException(409, "mode_mismatch")
                 if mode != "ctf" and suffix.startswith("/ctf/"):
@@ -1106,6 +1156,9 @@ def create_app(
                 agent_profile=task["agent_profile"],
                 agent_profile_version=task["agent_profile_version"],
             )
+        legacy_network = request.app.state.legacy_network_publication
+        if legacy_network is None:
+            raise HTTPException(503, "黑板执行网络配置不可用")
         profiles = _profiles(request)
         if body.model_version is not None and body.model_id is None:
             raise HTTPException(422, "模型版本需要同时指定模型")
@@ -1162,6 +1215,7 @@ def create_app(
         task_id = await _service(request).create_task(
             spec,
             profile_version=row["version"],
+            legacy_network=legacy_network,
             **(
                 {
                     "input_group_id": body.input_group_id,
@@ -1191,7 +1245,9 @@ def create_app(
     @app.get("/api/tasks/deletions", tags=["tasks"])
     async def pending_deletions(request: Request) -> list[UUID]:
         require_service(request)
-        return await _conversations(request).deletions()
+        return await _conversations(request).deletions(
+            include_protected=runtime_compatible(request)
+        )
 
     async def task_views(conn: AsyncConnection, tasks: list[dict[str, Any]]) -> list[TaskView]:
         if not tasks:
@@ -1310,7 +1366,7 @@ def create_app(
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> list[TaskView]:
-        require_user_or_service(request)
+        identity = require_user_or_service(request)
         async with request.app.state.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
             rows = (
@@ -1321,6 +1377,13 @@ def create_app(
                         .where(s.task_progress.c.task_id == s.tasks.c.id)
                         .scalar_subquery()
                         .label("progress_cost"),
+                    )
+                    .where(
+                        *(
+                            [~protected_task()]
+                            if identity.kind == "service" and not runtime_compatible(request)
+                            else []
+                        )
                     )
                     .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
                     .limit(limit)
@@ -1408,7 +1471,13 @@ def create_app(
             )
             if task is None:
                 raise HTTPException(404, "Task not found")
-            return (await task_views(conn, [dict(task)]))[0]
+            view = (await task_views(conn, [dict(task)]))[0]
+            if task["mode"] == "blackboard" and (
+                policy := await legacy_task_snapshot(conn, task_id)
+            ):
+                receipt = await legacy_run_receipt(conn, task_id, task["run_number"])
+                view.legacy_network = public_network(policy, receipt)
+            return view
 
     @app.post("/api/tasks/{task_id}/resume", response_model=TaskView, tags=["tasks"])
     async def resume_task(request: Request, task_id: UUID, body: ResumeBody) -> TaskView:
@@ -1431,6 +1500,7 @@ def create_app(
                 identity.name,
             )
             return await task_detail(request, task_id)
+        await legacy_start_boundary(request, task_id, task)
         await _service(request).resume(
             task_id,
             body.request_id,
@@ -1475,6 +1545,7 @@ def create_app(
             if task["status"] == "running":
                 return StatusResult(status="running")
             raise HTTPException(409, f"CTF task cannot start from {task['status']}")
+        await legacy_start_boundary(request, task_id, task)
         if task["status"] != "created":
             raise HTTPException(409, "Task is not created")
         events = await _service(request).transition(task_id, "provisioning", actor="user")
@@ -1756,13 +1827,29 @@ def create_app(
 
     @app.get("/api/tasks/{task_id}/state", tags=["board"])
     async def state(request: Request, task_id: UUID) -> dict[str, Any]:
-        require_task_reader(request, task_id)
+        identity = require_task_reader(request, task_id)
         task = await _task(request, task_id)
         if task.get("mode") == "ctf":
             from bbx_blackboard.ctf_api import state as ctf_state
 
             return await ctf_state(request, task_id)
-        return await _service(request).state(task_id)
+        board = await _service(request).state(task_id)
+        engine = request.app.state.engine
+        if engine is None:
+            return board
+        async with engine.connect() as conn:
+            policy = await legacy_task_snapshot(conn, task_id)
+            if policy is not None:
+                receipt = await legacy_run_receipt(conn, task_id, board["task"]["run_number"])
+                if identity.kind == "service":
+                    require_runtime_version(request)
+                    board["task"]["legacy_network"] = policy.model_dump(mode="json")
+                    board["task"]["legacy_network_receipt"] = receipt
+                else:
+                    board["task"]["legacy_network"] = public_network(policy, receipt).model_dump(
+                        mode="json"
+                    )
+        return board
 
     @app.get("/api/tasks/{task_id}/snapshot", tags=["board"], response_class=PlainTextResponse)
     async def snapshot(

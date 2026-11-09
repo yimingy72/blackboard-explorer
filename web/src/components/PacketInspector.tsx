@@ -114,16 +114,24 @@ function PacketSession({ taskId, filters, agents, expression, onFilter, active }
   const table = useRef<TableRef>(null), userScrollAt = useRef(0);
   const tableSize = useSize(), lowerSize = useSize();
   const filtered = Boolean(expression);
-  const nativeMode = filtered || Boolean(feed.page?.native_bound);
+  const rawArchive = Boolean(feed.page?.native_bound || feed.page?.raw_only);
+  const nativeMode = filtered || rawArchive;
   const capture = feed.page?.capture;
   const ended = Boolean(capture?.finished_at);
-  const previewOnly = !feed.page?.native_bound && capture?.status === 'partial' && Boolean(capture.preview_dropped) && !capture.dropped_packets && (!capture.error || capture.error === 'Capture incomplete');
-  const owner = (agentId: string | null, attribution: TrafficRow['attribution']) => attribution === 'shared' ? '共享网关' : agentId ? agents.find(agent => agent.id === agentId)?.name ?? agentId : '未归属';
+  const previewOnly = !rawArchive && capture?.status === 'partial' && Boolean(capture.preview_dropped) && !capture.dropped_packets && (!capture.error || capture.error === 'Capture incomplete');
+  const owner = (agentId: string | null, attribution: TrafficRow['attribution']) => {
+    if (attribution === 'shared') return '共享网关';
+    if (feed.page?.raw_only && (agentId === 'system-network-probe' || agentId === 'agent-999999')) return '系统网络预检';
+    return agentId ? agents.find(agent => agent.id === agentId)?.name ?? agentId : '未归属';
+  };
   const sources = feed.page?.native_sources ?? [];
   const sourceOptions = sources.map(source => ({
-    value: source.source_id, label: source.scope ? `${source.scope.role} · ${owner(source.agent_id ?? null, 'exact')} · 代次 ${source.scope.epoch}/${source.scope.generation} · ${source.scope.interface}` : source.source_id,
+    value: source.source_id,
+    label: source.scope
+      ? `${source.scope.role} · ${owner(source.agent_id ?? null, 'exact')} · 代次 ${source.scope.epoch}/${source.scope.generation} · ${source.scope.interface}`
+      : source.agent_id ? `${owner(source.agent_id, 'exact')} · ${source.source_id}` : source.source_id,
   }));
-  const awaitingArchive = Boolean(feed.page?.native_bound && !sources.some(source => !sourceId || source.source_id === sourceId));
+  const awaitingArchive = Boolean(rawArchive && !sources.some(source => !sourceId || source.source_id === sourceId));
   const nativeQuery = useTrafficNative(taskId, filters.run, filters.agentId || '', expression, nativeMode && !awaitingArchive, active && !feed.paused && !ended, sourceId);
   const nativeState = nativeQuery.data;
   const revision = nativeState?.revision;
@@ -162,9 +170,9 @@ function PacketSession({ taskId, filters, agents, expression, onFilter, active }
   const firstSeq = before === undefined ? feed.rows[0]?.seq : history.data?.records?.at(-1)?.seq;
   return <div className={styles.session}>
     <div className={styles.toolbar}>
-      <div className={styles.liveState} role="status"><i data-live={!ended && !feed.paused} /><strong>{feed.paused ? '已暂停查看' : previewOnly ? '预览不完整' : capture ? captureLabels[capture.status] : '任务流量'}</strong>{capture && <span>{feed.page?.native_bound ? `${sources.reduce((sum, source) => sum + source.packet_count, 0).toLocaleString()} 个已归档包` : `${capture.record_count.toLocaleString()} 条`} · {bytes(capture.captured_bytes)}</span>}{capture?.preview_dropped ? <Tag color="warning">预览丢弃 {capture.preview_dropped}</Tag> : null}{capture?.dropped_packets ? <Tag color="warning">原始丢包 {capture.dropped_packets}</Tag> : null}</div>
+      <div className={styles.liveState} role="status"><i data-live={!ended && !feed.paused} /><strong>{feed.paused ? '已暂停查看' : previewOnly ? '预览不完整' : capture ? captureLabels[capture.status] : '任务流量'}</strong>{capture && <span>{rawArchive ? (sources.length ? `${sources.reduce((sum, source) => sum + source.packet_count, 0).toLocaleString()} 个已归档包` : '暂无可读归档包') : `${capture.record_count.toLocaleString()} 条`} · {bytes(capture.captured_bytes)}</span>}{capture?.preview_dropped ? <Tag color="warning">预览丢弃 {capture.preview_dropped}</Tag> : null}{capture?.dropped_packets ? <Tag color="warning">原始丢包 {capture.dropped_packets}</Tag> : null}</div>
       {feed.unseen > 0 && !nativeMode && <Button type="link" size="small" onClick={latest}>{feed.unseen.toLocaleString()} 条新流量</Button>}
-      {feed.page?.native_bound && <Select size="small" aria-label="采集来源" value={sourceId} options={[{ value: '', label: '全部来源' }, ...sourceOptions]} onChange={value => { setSelectedRow(null); setSourceId(value); latest(); }} />}
+      {rawArchive && <Select size="small" aria-label="采集来源" value={sourceId} options={[{ value: '', label: '全部来源' }, ...sourceOptions]} onChange={value => { setSelectedRow(null); setSourceId(value); latest(); }} />}
       <div className={styles.toolActions}><Tooltip title="暂停画面，采集继续"><Button size="small" type="text" icon={feed.paused ? <PlayCircleOutlined aria-hidden="true" /> : <PauseOutlined aria-hidden="true" />} onClick={() => feed.pause(!feed.paused)}>{feed.paused ? '继续' : '暂停'}</Button></Tooltip><Tooltip title="跟随最新流量"><Button size="small" type={follow ? 'primary' : 'text'} ghost={follow} icon={<ArrowDownOutlined aria-hidden="true" />} aria-label="跟随最新流量" aria-pressed={follow} onClick={() => { latest(); setFollow(!follow || before !== undefined); }} /></Tooltip><Tooltip title="刷新流量与解析"><Button size="small" type="text" icon={<ReloadOutlined aria-hidden="true" />} aria-label="刷新流量" onClick={refresh} /></Tooltip></div>
     </div>
     {nativeMode && <div className={styles.analysisStatus} role="status"><FilterOutlined aria-hidden="true" /><code title={expression}>{expression || '逐 Agent 捕获'}</code><span>{awaitingArchive ? (ended ? '无可读归档' : '等待封存') : nativeState?.status === 'building' ? '分析中' : nativeState?.status === 'partial' ? '部分结果' : nativeState?.status === 'error' ? '分析失败' : revision ? `${nativeState?.matched_packets.toLocaleString()} 个匹配包` : '准备分析'}</span><Tooltip title={(nativeState?.coverage ?? []).map(source => `${owner(source.agent_id ?? null, source.agent_id ? 'exact' : 'shared')}：${source.analyzed === false ? '解析失败' : `已分析 ${source.packet_count} 包`}${source.error ? ` · ${source.error}` : ''}`).join('\n') || '正在读取完整捕获数据'}><span className={styles.engine}>Wireshark {nativeState?.engine_version || ''}</span></Tooltip>{filtered && <Button size="small" type="text" aria-label="清除显示过滤器" onClick={() => onFilter('')}>清除</Button>}</div>}

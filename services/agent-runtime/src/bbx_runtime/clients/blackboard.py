@@ -10,6 +10,12 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from bbx_contracts.legacy_network import (
+    LEGACY_NETWORK_HEADER,
+    LEGACY_NETWORK_VERSION,
+    LegacyNetworkAbsentReceipt,
+    LegacyNetworkReceipt,
+)
 from bbx_contracts.tool_errors import solution_validation_details
 from pydantic import BaseModel
 
@@ -73,7 +79,10 @@ class BlackboardClient:
         response = await self._http.request(
             method,
             f"{self.base_url}/api{path}",
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                LEGACY_NETWORK_HEADER: LEGACY_NETWORK_VERSION,
+            },
             **kwargs,
         )
         return await self._check(response)
@@ -151,6 +160,13 @@ class BlackboardClient:
     @staticmethod
     def _task(task_id: UUID | str) -> str:
         return f"/tasks/{quote(str(task_id), safe='')}"
+
+    async def legacy_execution_network(
+        self, task_id: UUID | str, receipt: LegacyNetworkReceipt | LegacyNetworkAbsentReceipt
+    ) -> dict[str, Any]:
+        return await self._json(
+            "POST", self._task(task_id) + "/execution-network", json=_body(receipt)
+        )
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         tasks: list[dict[str, Any]] = []

@@ -22,7 +22,8 @@ from alembic.config import Config
 from bbx_blackboard.api import create_app
 from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.settings import Settings
-from bbx_blackboard.simulator import run_demo
+from bbx_blackboard.simulator import demo_task_spec, run_demo
+from bbx_contracts.legacy_network import LEGACY_NETWORK_HEADER, LEGACY_NETWORK_VERSION
 from bbx_objects import ObjectStore
 from pydantic import SecretStr
 from sqlalchemy.engine import make_url
@@ -254,9 +255,15 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
         else:
             raise AssertionError("Uvicorn did not start")
         base_url = f"http://{host}:{port}"
-        summary = await asyncio.to_thread(run_demo, base_url, SERVICE_TOKEN, 0)
+        historical_demo = await app.state.board_service.create_task(demo_task_spec())
+        summary = await asyncio.to_thread(
+            run_demo, base_url, SERVICE_TOKEN, 0, task_id=historical_demo
+        )
         tid = summary["task_id"]
-        headers = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+        headers = {
+            "Authorization": f"Bearer {SERVICE_TOKEN}",
+            LEGACY_NETWORK_HEADER: LEGACY_NETWORK_VERSION,
+        }
         async with httpx.AsyncClient(base_url=base_url, headers=headers, trust_env=False) as client:
             profiles = (await client.get("/api/profiles")).json()
             assert {item["name"] for item in profiles} >= {"default", "single"}
@@ -347,17 +354,14 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
                     assert int(item["id"]) == version
                     assert item["event"] == kind
 
-            other = (
-                await client.post(
-                    "/api/tasks",
-                    json={
-                        "goal": "Other task",
-                        "acceptance": [{"id": "A1", "desc": "Separate evidence"}],
-                        "budget": {"max_cost": "1", "max_minutes": 10},
-                        "agent_profile": "default",
-                    },
-                )
-            ).json()["id"]
+            other = await app.state.board_service.create_task(
+                {
+                    "goal": "Other task",
+                    "acceptance": [{"id": "A1", "desc": "Separate evidence"}],
+                    "budget": {"max_cost": "1", "max_minutes": 10},
+                    "agent_profile": "default",
+                }
+            )
             other_agent = (
                 await client.post(f"/api/tasks/{other}/agents", json={"task_type": "explore"})
             ).json()
@@ -368,17 +372,14 @@ async def test_full_http_demo_and_sse_resume(infrastructure) -> None:
             )
             assert denied.status_code == 403
 
-            stream_task = (
-                await client.post(
-                    "/api/tasks",
-                    json={
-                        "goal": "SSE task",
-                        "acceptance": [{"id": "A1", "desc": "Observe transitions"}],
-                        "budget": {"max_cost": "1", "max_minutes": 10},
-                        "agent_profile": "default",
-                    },
-                )
-            ).json()["id"]
+            stream_task = await app.state.board_service.create_task(
+                {
+                    "goal": "SSE task",
+                    "acceptance": [{"id": "A1", "desc": "Observe transitions"}],
+                    "budget": {"max_cost": "1", "max_minutes": 10},
+                    "agent_profile": "default",
+                }
+            )
             path = f"/api/tasks/{stream_task}/stream"
             async with client.stream("GET", path, params={"since": 0}) as response:
                 assert response.status_code == 200

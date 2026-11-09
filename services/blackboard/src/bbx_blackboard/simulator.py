@@ -9,9 +9,21 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from uuid import UUID
 
 
-def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
+def demo_task_spec() -> dict:
+    return {
+        "goal": "Find and verify the cause of a gateway failure",
+        "acceptance": [{"id": "A1", "desc": "Show a supported root cause"}],
+        "budget": {"max_cost": "10", "max_minutes": 60},
+        "agent_profile": "default",
+    }
+
+
+def run_demo(
+    base_url: str, service_token: str, interval: float = 0, *, task_id: UUID | str | None = None
+) -> dict:
     base_url = base_url.rstrip("/")
 
     def call(
@@ -43,18 +55,18 @@ def run_demo(base_url: str, service_token: str, interval: float = 0) -> dict:
             time.sleep(interval)
         return status, result
 
-    _, created = call(
-        "POST",
-        "/api/tasks",
-        body={
-            "goal": "Find and verify the cause of a gateway failure",
-            "acceptance": [{"id": "A1", "desc": "Show a supported root cause"}],
-            "budget": {"max_cost": "10", "max_minutes": 60},
-            "agent_profile": "default",
-        },
-    )
-    tid = created["id"]
+    if task_id is None:
+        _, created = call("POST", "/api/tasks", body=demo_task_spec())
+        task_id = created["id"]
+    tid = str(UUID(str(task_id)))
     task = f"/api/tasks/{tid}"
+    _, current = call("GET", task)
+    if current.get("legacy_network") is not None:
+        raise RuntimeError(
+            f"Task {tid} requires a real Runtime and capture; the HTTP simulator cannot start it."
+        )
+    if current.get("mode", "blackboard") != "blackboard" or current["status"] != "created":
+        raise RuntimeError("The HTTP simulator needs an unstarted historical blackboard fixture.")
     call("POST", f"{task}/start")
     call("POST", f"{task}/status", body={"status": "running"})
 
@@ -227,13 +239,18 @@ def main() -> None:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--scenario", choices=["demo"], default="demo")
     parser.add_argument("--interval", type=float, default=0.25)
+    parser.add_argument("--task-id", type=UUID, help="Existing unstarted historical demo Task")
     args = parser.parse_args()
     if args.interval < 0:
         parser.error("--interval must be nonnegative")
     token = os.environ.get("SERVICE_TOKEN")
     if not token:
         parser.error("SERVICE_TOKEN is required")
-    print(json.dumps(run_demo(args.base_url, token, args.interval), ensure_ascii=False, indent=2))
+    try:
+        result = run_demo(args.base_url, token, args.interval, task_id=args.task_id)
+    except RuntimeError as error:
+        parser.exit(1, f"{error}\n")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

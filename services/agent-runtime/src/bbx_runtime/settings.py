@@ -25,6 +25,9 @@ class Settings(ControlSettings):
     exec_network: str = "blackboard-explorer_exec"
     exec_access_mode: Literal["network", "relay"] = "network"
     exec_egress_mode: Literal["direct", "proxy"] = "direct"
+    legacy_network_policy_file: Path | None = None
+    legacy_control_network: str | None = None
+    legacy_envd_image: str = "bbx-exec-env:latest"
     exec_min_pids: int = Field(default=1024, ge=64)
     exec_apparmor_profile: str | None = Field(
         default=None, pattern=r"^bbx-[a-z0-9][a-z0-9_.-]{0,62}$"

@@ -305,7 +305,8 @@ async def test_task_inherits_selected_profile_params_with_task_override() -> Non
             self.spec = None
             self.profile_version = None
 
-        async def create_task(self, spec, *, profile_version):
+        async def create_task(self, spec, *, profile_version, legacy_network):
+            assert legacy_network.mode == "default"
             self.spec = spec
             self.profile_version = profile_version
             return uuid4()
@@ -358,7 +359,8 @@ async def test_task_uses_smallest_explicit_profile_context_window() -> None:
             return {"name": name, "version": 1, **snapshot.model_dump(mode="json")}
 
     class Service:
-        async def create_task(self, spec, *, profile_version):
+        async def create_task(self, spec, *, profile_version, legacy_network):
+            assert legacy_network.mode == "default"
             assert spec["params"]["context_threshold"] == 120000
             assert profile_version == 1
             return uuid4()
