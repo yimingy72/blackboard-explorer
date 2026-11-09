@@ -2260,6 +2260,18 @@
               }
             ]
           },
+          "native_vpn_source_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Vpn Source Id"
+          },
           "profile_version": {
             "anyOf": [
               {
@@ -7189,6 +7201,9 @@
               "sandbox_host_material",
               "sandbox_host_ready",
               "vpn_material",
+              "vpn_peer_ready",
+              "vpn_prepare_source",
+              "network_default_ready",
               "recovery_exit",
               "recovery_prepare",
               "recovery_verifier_admit",
@@ -7383,6 +7398,38 @@
         "title": "NativeSharedInputLimits",
         "type": "object"
       },
+      "NativeTaskNetworkStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "unselected",
+              "default",
+              "vpn"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "unselected",
+              "preparing",
+              "ready",
+              "failed",
+              "disconnected",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "state"
+        ],
+        "title": "NativeTaskNetworkStatus",
+        "type": "object"
+      },
       "NativeTransportObservation": {
         "additionalProperties": false,
         "properties": {
@@ -7484,7 +7531,10 @@
             "type": "string"
           },
           "profile": {
-            "const": "openvpn-ipv4-tcp-v1",
+            "enum": [
+              "openvpn-ipv4-tcp-v1",
+              "openvpn-task-ipv4-tcp-v1"
+            ],
             "title": "Profile",
             "type": "string"
           }
@@ -8053,6 +8103,20 @@
           }
         },
         "title": "Price",
+        "type": "object"
+      },
+      "PrivateVpnSourceView": {
+        "properties": {
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "title": "PrivateVpnSourceView",
         "type": "object"
       },
       "ProfileDocument": {
@@ -10819,6 +10883,16 @@
               }
             ],
             "title": "Name"
+          },
+          "native_network": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeTaskNetworkStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "report_uri": {
             "anyOf": [
@@ -15028,6 +15102,49 @@
           }
         },
         "summary": "Download File",
+        "tags": [
+          "inputs"
+        ]
+      }
+    },
+    "/api/task-input-groups/{group_id}/private-vpn-source": {
+      "put": {
+        "operationId": "upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivateVpnSourceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Private Vpn Source",
         "tags": [
           "inputs"
         ]

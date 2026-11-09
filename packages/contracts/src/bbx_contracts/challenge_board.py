@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import Field, SecretStr, model_validator
 
 from .models import ContractModel, Event, Fact, Intent, KnowledgeAssignment, PostFactRequest
-from .runner_vpn import VPN_TOOLS
+from .runner_vpn import NETWORK_USE_DEFAULT, VPN_TOOLS
 
 BOARD_CONTRACT = "challenge-board-v1"
 BOARD_LEGACY = "legacy"
@@ -51,7 +51,7 @@ def native_scope_updates_enabled(task) -> bool:
     )
 
 
-def business_manifest(*, automatic=False, vpn=False) -> dict:
+def business_manifest(*, automatic=False, vpn=False, task_network=False) -> dict:
     common = [
         "board_read",
         "board_search",
@@ -71,6 +71,7 @@ def business_manifest(*, automatic=False, vpn=False) -> dict:
                 "board_create_challenge",
                 *([DISPATCH_TOOL, UPDATE_CHALLENGE_TOOL] if automatic else []),
                 *(VPN_TOOLS if vpn else ()),
+                *([NETWORK_USE_DEFAULT] if task_network else []),
                 "board_submit_flag",
                 "board_finish_task",
             ],

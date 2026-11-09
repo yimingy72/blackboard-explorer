@@ -8,6 +8,7 @@ import re
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import time
@@ -30,6 +31,10 @@ RENEW_PORT = 47655
 SANDBOX_ROOT = Path("/var/lib/bbx/control/vpn")
 EGRESS_ROOT = Path("/var/run/bbx-vpn/state")
 CONFIG = Path("/var/run/bbx-vpn/config")
+DYNAMIC_PROFILE = "openvpn-task-ipv4-tcp-v1"
+MANAGEMENT = EGRESS_ROOT / "openvpn.sock"
+MATERIAL_LIMIT = 256 * 1024
+MATERIAL_FILES = {"ca": "ca.crt", "cert": "tls.crt", "key": "tls.key", "tls_crypt": "tls-crypt.key"}
 PUB = re.compile(r"[A-Za-z0-9+/]{43}=\Z")
 DEADLINE_MS, SKEW_MS = 10000, 1000
 LOG_LIMIT = 16 * 1024
@@ -141,10 +146,14 @@ def persist(path, value):
         os.close(fd)
 
 
-def operation(config, scope, vpn_operation_id):
+def operation(config, scope, vpn_operation_id, network=None):
     require(scope == config["scope"])
     require(str(UUID(vpn_operation_id)) == vpn_operation_id)
-    return {"scope": scope, "vpn_operation_id": vpn_operation_id}
+    result = {"scope": scope, "vpn_operation_id": vpn_operation_id}
+    if config.get("profile") == DYNAMIC_PROFILE:
+        require(re.fullmatch(r"[a-f0-9]{64}", network["network_digest"]))
+        result["network_digest"] = network["network_digest"]
+    return result
 
 
 def link_key(root):
@@ -259,25 +268,56 @@ def install_drop_hooks(links, *, edge=False):
         )
 
 
-def route_policy(table, targets, link):
-    command(IP, "route", "add", "unreachable", "default", "table", str(table))
-    for address, _ in targets:
-        command(IP, "route", "replace", address + "/32", "dev", link, "table", str(table))
+def network_routes(value):
+    require(set(value) == {"allow_cidrs", "deny_cidrs"})
+    for entries in value.values():
+        require(
+            isinstance(entries, list)
+            and 1 <= len(entries) <= 128
+            and len(set(entries)) == len(entries)
+            and all(str(ipaddress.IPv4Network(item)) == item for item in entries)
+        )
+    return value
+
+
+def route_policy(table, targets, link, *, routes=None):
+    fallback = ["metric", "32767"] if routes else []
+    command(IP, "route", "add", "unreachable", "default", *fallback, "table", str(table))
+    cidrs = routes["allow_cidrs"] if routes else [address + "/32" for address, _ in targets]
+    for cidr in cidrs:
+        command(IP, "route", "replace", cidr, "dev", link, "table", str(table))
     command(IP, "rule", "add", "priority", str(table), "from", SOURCE, "lookup", str(table))
 
 
-def route_unchanged(table, targets, link):
-    routes = json.loads(command(IP, "-j", "route", "show", "table", str(table)).stdout)
+def route_unchanged(table, targets, link, *, routes=None):
+    installed = json.loads(command(IP, "-j", "route", "show", "table", str(table)).stdout)
     rules = json.loads(command(IP, "-j", "-4", "rule", "show").stdout)
     matched = [rule for rule in rules if rule.get("priority") == table]
     if matched != [{"priority": table, "src": "198.19.0.0", "srclen": 16, "table": str(table)}]:
         return False
+    if routes:
+        expected = set(routes["allow_cidrs"])
+        normalized = {
+            "0.0.0.0/0" if route["dst"] == "default" else str(ipaddress.IPv4Network(route["dst"]))
+            for route in installed
+            if route.get("dev") == link
+        }
+        return (
+            len(installed) == len(expected) + 1
+            and normalized == expected
+            and any(
+                route.get("type") == "unreachable"
+                and route.get("dst") == "default"
+                and route.get("metric") == 32767
+                for route in installed
+            )
+        )
     return any(
-        route.get("type") == "unreachable" and route.get("dst") == "default" for route in routes
+        route.get("type") == "unreachable" and route.get("dst") == "default" for route in installed
     ) and all(
         any(
             route.get("dst") in {addr, addr + "/32"} and route.get("dev") == link
-            for route in routes
+            for route in installed
         )
         for addr, _ in targets
     )
@@ -311,19 +351,31 @@ def edge_fence():
     )
 
 
-def forwarding_rules(grant, targets):
+def forwarding_rules(grant, targets, routes=None):
     mask = f"-m recent --name {grant['mark']} --rcheck --seconds 10 --mask 0.0.0.0"
     timing = f"-m time --datestop {grant['end']}"
     source = PROBE_IP + "/32" if grant["mode"] == "probe" else SOURCE
-    selected = targets[:1] if grant["mode"] == "probe" else targets
+    selected = [
+        (addr + "/32", port)
+        for addr, port in (targets[:1] if grant["mode"] == "probe" else targets)
+    ]
+    if routes and grant["mode"] == "solver":
+        selected = [(cidr, None) for cidr in routes["allow_cidrs"]]
     rules = []
-    for addr, port in selected:
+    for cidr in routes["deny_cidrs"] if routes else ():
         rules += [
-            f"-A {EDGE_CHAIN} -i {WG_LINK} -o {TUN} -s {source} -d {addr}/32 -p tcp "
-            f"--dport {port} {mask} --rsource {timing} "
+            f"-A {EDGE_CHAIN} -i {WG_LINK} -d {cidr} -j DROP",
+            f"-A {EDGE_CHAIN} -i {TUN} -s {cidr} -j DROP",
+        ]
+    for cidr, port in selected:
+        out_port = f" --dport {port}" if port is not None else ""
+        in_port = f" --sport {port}" if port is not None else ""
+        rules += [
+            f"-A {EDGE_CHAIN} -i {WG_LINK} -o {TUN} -s {source} -d {cidr} -p tcp{out_port} "
+            f"{mask} --rsource {timing} "
             "-m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
-            f"-A {EDGE_CHAIN} -i {TUN} -o {WG_LINK} -s {addr}/32 -d {source} -p tcp "
-            f"--sport {port} {mask} --rdest {timing} -m conntrack --ctstate ESTABLISHED -j ACCEPT",
+            f"-A {EDGE_CHAIN} -i {TUN} -o {WG_LINK} -s {cidr} -d {source} -p tcp{in_port} "
+            f"{mask} --rdest {timing} -m conntrack --ctstate ESTABLISHED -j ACCEPT",
         ]
     return rules
 
@@ -340,7 +392,7 @@ def confirm_local_renewal():
     require(source == endpoint and observed == nonce)
 
 
-def edge_grant(lease, sampled, targets, prior):
+def edge_grant(lease, sampled, targets, prior, *, routes=None):
     require(lease["mode"] in {"probe", "solver"})
     issued, until = lease["issued_at_ms"], lease["authority_until_ms"]
     require(type(issued) is int and type(until) is int)
@@ -356,7 +408,7 @@ def edge_grant(lease, sampled, targets, prior):
     grant = {"mark": mark, "end": end, "mode": lease["mode"]}
     rules = ["*filter", f"-F {EDGE_CHAIN}", f"-F {RENEW}", f"-F {SET_MARK}"]
     if prior:
-        rules += forwarding_rules(prior, targets)
+        rules += forwarding_rules(prior, targets, routes)
         # A delayed root process cannot arm the inactive marker once the old one expired.
         rules.append(
             f"-A {RENEW} -m time --datestop {prior['end']} "
@@ -366,7 +418,7 @@ def edge_grant(lease, sampled, targets, prior):
     else:
         rules.append(f"-A {RENEW} -j {SET_MARK}")
     rules += [
-        *forwarding_rules(grant, targets),
+        *forwarding_rules(grant, targets, routes),
         f"-A {EDGE_CHAIN} -j DROP",
         f"-A {RENEW} -j DROP",
         f"-A {SET_MARK} -m time --datestop {end} -m recent --name {mark} "
@@ -391,10 +443,14 @@ def openvpn(config):
     remote, port, server = (
         ipv4(peer_config["ipv4"]),
         peer_config["port"],
-        peer_config["server_name"],
+        peer_config.get("server_name"),
     )
     require(type(port) is int and 1 <= port <= 65535)
-    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,127}", server))
+    dynamic = config.get("profile") == DYNAMIC_PROFILE
+    require(
+        (server is None and dynamic) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,127}", server)
+    )
+    material = EGRESS_ROOT if dynamic else CONFIG
     args = [
         OPENVPN,
         "--client",
@@ -436,9 +492,6 @@ def openvpn(config):
         "SIGTERM",
         "--remote-cert-tls",
         "server",
-        "--verify-x509-name",
-        server,
-        "name",
         "--script-security",
         "0",
         "--tmp-dir",
@@ -457,12 +510,18 @@ def openvpn(config):
         "--data-ciphers",
         "AES-256-GCM:AES-128-GCM",
         "--ca",
-        str(CONFIG / "ca.crt"),
+        str(material / "ca.crt"),
         "--cert",
-        str(CONFIG / "tls.crt"),
+        str(material / "tls.crt"),
         "--key",
-        str(CONFIG / "tls.key"),
+        str(material / "tls.key"),
     ]
+    if server is not None:
+        args += ["--verify-x509-name", server, "name"]
+    if dynamic:
+        args += ["--management", str(MANAGEMENT), "unix", "--management-client-user", "root"]
+        if (material / "tls-crypt.key").is_file():
+            args += ["--tls-crypt", str(material / "tls-crypt.key")]
     return subprocess.Popen(
         args,
         env={},
@@ -498,10 +557,78 @@ class Control:
     def call(self, action, data=None):
         raw = None if data is None else json.dumps(data, separators=(",", ":")).encode()
         request = urllib.request.Request(self.path + action, data=raw, headers=self.headers)
+        limit = MATERIAL_LIMIT if action == "claim" else LOG_LIMIT
         with self.client.open(request, timeout=3) as response:
-            payload = response.read(LOG_LIMIT + 1)
-        require(len(payload) <= LOG_LIMIT)
+            payload = response.read(limit + 1)
+        require(len(payload) <= limit)
         return json.loads(payload)
+
+
+def store_material(material):
+    require(
+        isinstance(material, dict) and set(material) in ({"ca", "cert", "key"}, set(MATERIAL_FILES))
+    )
+    for field, value in material.items():
+        require(isinstance(value, str) and 0 < len(value) <= 64 * 1024)
+        fd = os.open(
+            EGRESS_ROOT / MATERIAL_FILES[field], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+        with os.fdopen(fd, "w", encoding="ascii") as output:
+            output.write(value)
+
+
+def assigned_address(child, peer_config):
+    # OpenVPN 2.7.8 reports the negotiated address even with --ifconfig-noexec.
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(0.5)
+        conn.connect(str(MANAGEMENT))
+        pid, uid, _ = struct.unpack(
+            "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+        )
+        require(pid == child.pid and uid == 0)
+        conn.sendall(b"state\n")
+        with conn.makefile("rb") as response:
+            result = None
+            for _ in range(12):
+                line = response.readline(512)
+                require(line.endswith(b"\n"))
+                line = line.rstrip(b"\r\n")
+                if line == b"END":
+                    return result
+                fields = line.split(b",")
+                if fields[0].isdigit() and fields[1:2] == [b"CONNECTED"]:
+                    require(
+                        len(fields) >= 6
+                        and fields[2] == b"SUCCESS"
+                        and fields[4].decode("ascii") == peer_config["ipv4"]
+                        and fields[5].decode("ascii") == str(peer_config["port"])
+                    )
+                    result = ipv4(fields[3].decode("ascii"))
+            raise ValueError("Original OpenVPN state is unconfirmed")
+
+
+def check_tun(config, address, targets, routes=None):
+    require(
+        address not in {a for a, _ in targets}
+        and address != config["peer"]["ipv4"]
+        and not local_address(address)
+        and not any(
+            ipaddress.IPv4Address(address) in ipaddress.ip_network(network)
+            for network in (
+                SOURCE,
+                "198.18.0.0/16",
+                *config.get("deny_cidrs", ()),
+                *(routes["deny_cidrs"] if routes else ()),
+            )
+        )
+    )
+
+
+def install_tun_address(config, address, targets, routes):
+    if routes:
+        check_tun(config, address, targets, routes)
+    command(IP, "address", "add", address + "/32", "dev", TUN, "noprefixroute")
+    command(IP, "link", "set", "dev", TUN, "mtu", "1280", "up")
 
 
 def terminal(child):
@@ -520,25 +647,27 @@ def edge_close(child):
         edge_fence()
     finally:
         terminal(child)
+        for name in MATERIAL_FILES.values():
+            (EGRESS_ROOT / name).unlink(missing_ok=True)
 
 
 def edge_run(config, stop):
     control = Control(config)
     scope = config["scope"]
     require(local_address(ipv4(scope["runner_pod_ipv4"])))
-    targets = target_pairs(config["targets"])
-    approved = ipv4(config["tun_ipv4"])
-    require(
-        approved not in {a for a, _ in targets}
-        and approved != config["peer"]["ipv4"]
-        and not local_address(approved)
-    )
+    dynamic = config.get("profile") == DYNAMIC_PROFILE
+    targets, approved = [], None
+    if not dynamic:
+        targets = target_pairs(config["targets"])
+        approved = ipv4(config["tun_ipv4"])
+        check_tun(config, approved, targets)
     require(Path("/proc/sys/net/ipv4/ip_forward").read_text().strip() == "1")
     install_drop_hooks((WG_LINK, TUN), edge=True)
     child = op = link = key = tunnel = None
     last_revision, applied_boot = 0, None
     active_grant = None
     held = closed = pending = None
+    network = routes = None
     last_work = time.monotonic()
     hard_deadline = int(datetime.fromisoformat(config["hard_deadline"]).timestamp() * 1000)
     try:
@@ -566,15 +695,53 @@ def edge_run(config, stop):
                 if closed or state in {"failed", "unknown", "stopped", "closed", "disconnected"}:
                     time.sleep(0.8)
                     continue
-                if view.get("vpn_operation_id") and op is None and state != "held":
-                    candidate = operation(config, view["scope"], view["vpn_operation_id"])
-                    claim = control.call("claim", candidate)
-                    if claim.get("launch_allowed") is True:
+                if view.get("vpn_operation_id") and op is None and state == "requested":
+                    candidate = operation(
+                        config, view["scope"], view["vpn_operation_id"], view.get("network")
+                    )
+                    if dynamic:
+                        network = view["network"]
+                        targets = target_pairs([network["preflight"]])
+                        routes = network_routes(network["route_policy"])
+                        probe = ipaddress.IPv4Address(targets[0][0])
+                        require(
+                            any(
+                                probe in ipaddress.IPv4Network(cidr)
+                                for cidr in routes["allow_cidrs"]
+                            )
+                            and not any(
+                                probe in ipaddress.IPv4Network(cidr)
+                                for cidr in routes["deny_cidrs"]
+                            )
+                        )
+                        config = {**config, "peer": network["peer"]}
+                        # A lost response may have consumed the only claim. Never repeat it.
                         op = candidate
                         persist(EGRESS_ROOT / "claimed.json", op)
+                    try:
+                        claim = control.call("claim", candidate)
+                    except (OSError, ValueError):
+                        if not dynamic:
+                            raise
+                        closed = "unknown"
+                        pending = {**candidate, "phase": "unknown", "forwarding_closed": True}
+                        continue
+                    if claim.get("launch_allowed") is True:
+                        if dynamic:
+                            store_material(claim["material"])
+                        else:
+                            op = candidate
+                            persist(EGRESS_ROOT / "claimed.json", op)
                         link = install_wg(EGRESS_ROOT)
+                    elif dynamic:
+                        closed = "unknown"
+                        pending = {**candidate, "phase": "unknown", "forwarding_closed": True}
+                        continue
                 if op:
-                    require(view.get("vpn_operation_id") == op["vpn_operation_id"])
+                    require(
+                        view.get("vpn_operation_id") == op["vpn_operation_id"]
+                        and (not dynamic or view.get("network") == network)
+                    )
                     if link and key is None:
                         control.call("observe", {**op, "phase": "link", "link": link})
                     if link and remote and key is None and state != "held":
@@ -590,13 +757,29 @@ def edge_run(config, stop):
                     ):
                         raise ValueError("Original VPN process or link stopped")
                     idx = ifindex(TUN) if child else None
-                    if child and idx is None and (tunnel or time.monotonic() - last_work > 25):
+                    if child and (
+                        (idx is None and tunnel)
+                        or (not tunnel and time.monotonic() - last_work > 25)
+                    ):
                         raise ValueError("Original VPN TUN route is unavailable")
                     if child and idx and tunnel is None:
-                        command(IP, "address", "add", approved + "/32", "dev", TUN, "noprefixroute")
-                        command(IP, "link", "set", "dev", TUN, "mtu", "1280", "up")
-                        route_policy(119, targets, TUN)
-                        for address, port in targets:
+                        if dynamic:
+                            try:
+                                approved = assigned_address(child, config["peer"])
+                            except (FileNotFoundError, ConnectionRefusedError):
+                                approved = None
+                            if approved is None:
+                                time.sleep(0.8)
+                                continue
+                        require(approved is not None)
+                        install_tun_address(config, approved, targets, routes)
+                        route_policy(119, targets, TUN, routes=routes)
+                        destinations = (
+                            [(cidr, None) for cidr in routes["allow_cidrs"]]
+                            if routes
+                            else [(address + "/32", port) for address, port in targets]
+                        )
+                        for cidr, port in destinations:
                             command(
                                 IPT,
                                 "-w",
@@ -610,11 +793,10 @@ def edge_run(config, stop):
                                 "-s",
                                 SOURCE,
                                 "-d",
-                                address + "/32",
+                                cidr,
                                 "-p",
                                 "tcp",
-                                "--dport",
-                                str(port),
+                                *(["--dport", str(port)] if port is not None else []),
                                 "-j",
                                 "SNAT",
                                 "--to-source",
@@ -634,7 +816,8 @@ def edge_run(config, stop):
                             idx == tunnel["tun_ifindex"]
                             and local_address(approved, TUN)
                             and process_ticks(tunnel["pid"]) == tunnel["start_ticks"]
-                            and route_unchanged(119, targets, TUN)
+                            and (not dynamic or assigned_address(child, config["peer"]) == approved)
+                            and route_unchanged(119, targets, TUN, routes=routes)
                         )
                         if state == "held":
                             pause_id = str(UUID(view["pause_id"]))
@@ -665,7 +848,11 @@ def edge_run(config, stop):
                         require(type(revision) is int and revision > last_revision)
                         last_revision = revision
                         active_grant, applied_boot, applied_until = edge_grant(
-                            lease, sampled, targets, active_grant
+                            lease,
+                            sampled,
+                            targets,
+                            active_grant,
+                            **({"routes": routes} if routes else {}),
                         )
                         held = None
                         control.call(
@@ -718,28 +905,31 @@ def sandbox_state(request):
     return link
 
 
-def sandbox_peer(request, key, targets):
+def sandbox_peer(request, key, targets, routes=None):
     link = sandbox_state(request)
     marker = SANDBOX_ROOT / "peer.json"
+    expected = {
+        "key": key,
+        **({"route_policy": routes} if routes else {"targets": [list(x) for x in targets]}),
+    }
     if marker.exists():
-        require(
-            json.loads(marker.read_text()) == {"key": key, "targets": [list(x) for x in targets]}
-        )
+        require(json.loads(marker.read_text()) == expected)
         require(
             live_link(link, key, request["scope"]["runner_pod_ipv4"])
-            and route_unchanged(118, targets, WG_LINK)
+            and route_unchanged(118, targets, WG_LINK, routes=routes)
         )
         return link
     with (SANDBOX_ROOT / "peer.claim").open("x") as output:
         output.write("claimed\n")
-    peer(key, request["scope"]["runner_pod_ipv4"], [addr + "/32" for addr, _ in targets])
-    route_policy(118, targets, WG_LINK)
-    persist(marker, {"key": key, "targets": targets})
+    cidrs = routes["allow_cidrs"] if routes else [addr + "/32" for addr, _ in targets]
+    peer(key, request["scope"]["runner_pod_ipv4"], cidrs)
+    route_policy(118, targets, WG_LINK, routes=routes)
+    persist(marker, expected)
     return link
 
 
-def sandbox_probe(request, key, targets):
-    link = sandbox_peer(request, key, targets)
+def sandbox_probe(request, key, targets, routes=None):
+    link = sandbox_peer(request, key, targets, routes)
     # A distinct system-only low-UID veth exercises the actual nested Sandbox FORWARD path.
     marker = SANDBOX_ROOT / "probe.claim"
     with marker.open("x") as output:
@@ -835,6 +1025,9 @@ def sandbox(args):
     mode, encoded = args
     body = json.loads(base64.urlsafe_b64decode(encoded))
     request = {"scope": body["scope"], "vpn_operation_id": body["vpn_operation_id"]}
+    if "network_digest" in body:
+        require(re.fullmatch(r"[a-f0-9]{64}", body["network_digest"]))
+        request["network_digest"] = body["network_digest"]
     sandbox_context(request["scope"])
     if mode == "key":
         return sandbox_key(request)
@@ -854,11 +1047,12 @@ def sandbox(args):
         if ifindex(WG_LINK) is not None:
             command(IP, "link", "del", "dev", WG_LINK)
         return {"state": "fenced"}
-    targets = target_pairs(body["targets"])
+    routes = network_routes(body["route_policy"]) if "network_digest" in request else None
+    targets = target_pairs([body["preflight"]] if routes else body["targets"])
     if mode == "peer":
-        return sandbox_peer(request, body["remote_public_key"], targets)
+        return sandbox_peer(request, body["remote_public_key"], targets, routes)
     require(mode == "probe")
-    return sandbox_probe(request, body["remote_public_key"], targets)
+    return sandbox_probe(request, body["remote_public_key"], targets, routes)
 
 
 def main():
@@ -868,6 +1062,7 @@ def main():
         print(json.dumps(sandbox(sys.argv[2:]), separators=(",", ":")))
         return
     require(sys.argv[1:] == ["egress"])
+    EGRESS_ROOT.chmod(0o700)
     closing = False
 
     def terminate(*_):

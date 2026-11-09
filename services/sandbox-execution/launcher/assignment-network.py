@@ -131,12 +131,19 @@ def init():
 
 
 VPN_MARKER = Path("/opt/bbx/control/task-vpn-v1")
+CHOICE_MARKER = Path("/opt/bbx/control/task-network-choice-v1")
 VPN_STATE = Path("/var/lib/bbx/control/vpn")
 VPN_INTERFACE = "bbxwg"
 
 
-def check_vpn(proof, targets):
-    require(set(proof) == {"vpn_operation_id", "link_ifindex"})
+def check_vpn(proof, record):
+    require(
+        set(proof)
+        in (
+            {"vpn_operation_id", "link_ifindex"},
+            {"vpn_operation_id", "link_ifindex", "network_digest"},
+        )
+    )
     require(str(UUID(proof["vpn_operation_id"])) == proof["vpn_operation_id"])
     require(type(proof["link_ifindex"]) is int and proof["link_ifindex"] > 0)
     require(not (VPN_STATE / "fenced").exists())
@@ -146,9 +153,32 @@ def check_vpn(proof, targets):
     actual_index = int((Path("/sys/class/net") / VPN_INTERFACE / "ifindex").read_text())
     require(
         operation["vpn_operation_id"] == proof["vpn_operation_id"]
+        and operation.get("network_digest") == proof.get("network_digest")
         and link["ifindex"] == proof["link_ifindex"] == actual_index
-        and peer["targets"] == [[item["ipv4"], item["port"]] for item in targets]
+        and (
+            peer.get("route_policy") == record["route_policy"]
+            if "route_policy" in record
+            else peer.get("targets") == [[item["ipv4"], item["port"]] for item in record["targets"]]
+        )
     )
+
+
+def route_policy(value):
+    require(set(value) == {"allow_cidrs", "deny_cidrs"})
+    for entries in value.values():
+        require(
+            isinstance(entries, list)
+            and 1 <= len(entries) <= 128
+            and len(set(entries)) == len(entries)
+            and all(str(ipaddress.IPv4Network(item)) == item for item in entries)
+        )
+    return value
+
+
+def destinations(record):
+    if "route_policy" in record:
+        return [(cidr, None) for cidr in record["route_policy"]["allow_cidrs"]]
+    return [(item["ipv4"] + "/32", item["port"]) for item in record["targets"]]
 
 
 def plan(value):
@@ -158,10 +188,12 @@ def plan(value):
         "namespace",
         "network_identity",
         "ipv4",
-        "targets",
+        "route_policy" if "route_policy" in value else "targets",
         "scope_id",
     }
-    if VPN_MARKER.is_file():
+    if VPN_MARKER.is_file() and not (
+        CHOICE_MARKER.is_file() and "route_policy" in value and "vpn" not in value
+    ):
         fields.add("vpn")
     require(set(value) == fields)
     ordinal = value["ordinal"]
@@ -176,8 +208,11 @@ def plan(value):
     )
     host = POOL.network_address + ordinal * 4 + 1
     require(value["ipv4"] == str(host + 1) and value["namespace"] == f"bbx{ordinal:03x}")
-    require(isinstance(value["targets"], list) and 1 <= len(value["targets"]) <= 8)
-    for item in value["targets"]:
+    if "route_policy" in value:
+        route_policy(value["route_policy"])
+    else:
+        require(isinstance(value["targets"], list) and 1 <= len(value["targets"]) <= 8)
+    for item in value.get("targets", ()):
         require(set(item) == {"ipv4", "port"})
         target = ipaddress.IPv4Address(item["ipv4"])
         require(
@@ -193,7 +228,7 @@ def plan(value):
         )
         require(type(item["port"]) is int and 1 <= item["port"] <= 65535)
     if "vpn" in value:
-        check_vpn(value["vpn"], value["targets"])
+        check_vpn(value["vpn"], value)
     return value | {
         "veth": f"{PREFIX}{ordinal:03x}",
         "gateway": str(host),
@@ -285,7 +320,7 @@ def prepare(directory, requested):
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-i", veth, "-j", chain)
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-o", veth, "-j", chain)
     if not record.get("vpn"):
-        for target in record["targets"]:
+        for destination, port in destinations(record):
             command(
                 IP4,
                 "-w",
@@ -297,11 +332,10 @@ def prepare(directory, requested):
                 "-s",
                 address + "/32",
                 "-d",
-                target["ipv4"] + "/32",
+                destination,
                 "-p",
                 "tcp",
-                "--dport",
-                str(target["port"]),
+                *(["--dport", str(port)] if port is not None else ["-o", "eth0"]),
                 "-j",
                 "MASQUERADE",
             )
@@ -340,7 +374,7 @@ def renew(directory, record, value):
     identity(directory, record)
     ttl = 5000 if record.get("vpn") else TTL_MS
     if record.get("vpn"):
-        check_vpn(record["vpn"], record["targets"])
+        check_vpn(record["vpn"], record)
     if value["grant_revision"] == record["grant_revision"]:
         return read(directory, record)
     require(value["grant_revision"] > record.get("attempted_revision", record["grant_revision"]))
@@ -365,14 +399,23 @@ def renew(directory, record, value):
     rules = ["*filter", f"-F {chain}"]
     outbound = f"-o {VPN_INTERFACE}" if record.get("vpn") else f"! -o {PREFIX}+"
     inbound = f"-i {VPN_INTERFACE}" if record.get("vpn") else f"! -i {PREFIX}+"
-    for target in record["targets"]:
-        dst, port = target["ipv4"], target["port"]
+    if "route_policy" in record:
+        if not record.get("vpn"):
+            outbound, inbound = "-o eth0", "-i eth0"
+        for cidr in record["route_policy"]["deny_cidrs"]:
+            rules += [
+                f"-A {chain} -i {veth} -d {cidr} -j DROP",
+                f"-A {chain} -o {veth} -s {cidr} -j DROP",
+            ]
+    for cidr, port in destinations(record):
+        out_port = f" --dport {port}" if port is not None else ""
+        in_port = f" --sport {port}" if port is not None else ""
         rules += [
-            f"-A {chain} -i {veth} {outbound} -s {address}/32 -d {dst}/32 -p tcp "
-            f"--dport {port} {common} --rsource {timing} "
+            f"-A {chain} -i {veth} {outbound} -s {address}/32 -d {cidr} -p tcp{out_port} "
+            f"{common} --rsource {timing} "
             "-m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
-            f"-A {chain} {inbound} -o {veth} -s {dst}/32 -d {address}/32 -p tcp "
-            f"--sport {port} {common} --rdest {timing} "
+            f"-A {chain} {inbound} -o {veth} -s {cidr} -d {address}/32 -p tcp{in_port} "
+            f"{common} --rdest {timing} "
             "-m conntrack --ctstate ESTABLISHED -j ACCEPT",
         ]
     command(

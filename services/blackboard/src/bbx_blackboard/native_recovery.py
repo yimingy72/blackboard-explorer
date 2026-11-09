@@ -882,7 +882,11 @@ class NativeRecovery:
                     if opted_in(record)
                     else {}
                 ),
-                **{key: data[key] for key in ("inputs_profile", "inputs_receipt") if key in data},
+                **{
+                    key: data[key]
+                    for key in ("inputs_profile", "inputs_receipt", "native_network")
+                    if key in data
+                },
                 **(
                     {"vpn_profile": data["vpn_profile"], "vpn": {"state": "idle"}}
                     if vpn_enabled(record)

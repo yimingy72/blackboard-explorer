@@ -15,7 +15,7 @@ from .models import ContractModel
 from .native_gateway import FrozenExchangeRate
 from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
 from .runner_inputs import NativeSharedInputLimits
-from .runner_vpn import NativeVpnCapability
+from .runner_vpn import VPN_DYNAMIC_PROFILE, NativeVpnCapability
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -83,6 +83,8 @@ def validate_binding_capture_deployment(config: dict) -> None:
             raise ValueError("The native execd ingress authority is invalid")
     if type(config.get("journal_writer_lock", False)) is not bool:
         raise ValueError("Journal writer locking requires an explicit boolean")
+    vpn = config.get("vpn")
+    dynamic_vpn = isinstance(vpn, dict) and vpn.get("profile") == VPN_DYNAMIC_PROFILE
     targets = config.get("traffic_targets")
     namespace = config.get("traffic_target_namespace")
     image = config.get("traffic_sandbox_image")
@@ -90,7 +92,7 @@ def validate_binding_capture_deployment(config: dict) -> None:
     if (
         config.get("runner_profile") != "node-sandbox-host-v1"
         or not isinstance(targets, list)
-        or not 1 <= len(targets) <= 8
+        or not (targets == [] if dynamic_vpn else 1 <= len(targets) <= 8)
         or not isinstance(namespace, str)
         or not labels.fullmatch(namespace)
         or namespace
@@ -346,6 +348,9 @@ class NativeRunnerAction(ContractModel):
         "sandbox_host_material",
         "sandbox_host_ready",
         "vpn_material",
+        "vpn_peer_ready",
+        "vpn_prepare_source",
+        "network_default_ready",
         "recovery_exit",
         "recovery_prepare",
         "recovery_verifier_admit",

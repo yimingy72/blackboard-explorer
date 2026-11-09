@@ -623,6 +623,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/task-input-groups/{group_id}/private-vpn-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload Private Vpn Source */
+        put: operations["upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -4302,6 +4319,8 @@ export interface components {
             /** Name */
             name?: string | null;
             native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
+            /** Native Vpn Source Id */
+            native_vpn_source_id?: string | null;
             /** Profile Version */
             profile_version?: number | null;
             /** Public Input Ids */
@@ -6125,7 +6144,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "vpn_material" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
+            action: "sandbox_create" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "vpn_material" | "vpn_peer_ready" | "vpn_prepare_source" | "network_default_ready" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
             /** Controller Generation */
             controller_generation: number;
             /** Controller Id */
@@ -6220,6 +6239,19 @@ export interface components {
              */
             profile: "shared-inputs-v1";
         };
+        /** NativeTaskNetworkStatus */
+        NativeTaskNetworkStatus: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "unselected" | "default" | "vpn";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "unselected" | "preparing" | "ready" | "failed" | "disconnected" | "stopped";
+        };
         /** NativeTransportObservation */
         NativeTransportObservation: {
             /** Attempt Id */
@@ -6266,9 +6298,9 @@ export interface components {
             label: string;
             /**
              * Profile
-             * @constant
+             * @enum {string}
              */
-            profile: "openvpn-ipv4-tcp-v1";
+            profile: "openvpn-ipv4-tcp-v1" | "openvpn-task-ipv4-tcp-v1";
         };
         /** OperationAck */
         OperationAck: {
@@ -6569,6 +6601,14 @@ export interface components {
              * @description 每百万输出 token 单价
              */
             output_per_m?: string | null;
+        };
+        /** PrivateVpnSourceView */
+        PrivateVpnSourceView: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
         };
         /** ProfileDocument */
         ProfileDocument: {
@@ -7587,6 +7627,7 @@ export interface components {
             mode: "blackboard" | "ctf";
             /** Name */
             name?: string | null;
+            native_network?: components["schemas"]["NativeTaskNetworkStatus"] | null;
             /** Report Uri */
             report_uri: string | null;
             /**
@@ -9759,6 +9800,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivateVpnSourceView"];
                 };
             };
             /** @description Validation Error */

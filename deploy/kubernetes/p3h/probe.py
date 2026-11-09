@@ -723,6 +723,11 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                         return result
                     except ResourceUnknown as error:
                         evidence["last_resource_failure"] = {"step": name, "reason": str(error)}
+                        if getattr(workers, "prefix", None) == "p4m":
+                            private_json(
+                                directory / "last-resource-failure.json",
+                                evidence["last_resource_failure"],
+                            )
                         raise
 
                 return observed
@@ -732,6 +737,8 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                 "sandbox_host_context",
                 "publish_sandbox_host",
                 "wait_sandbox_host_ready",
+                "ensure_default_network_policy",
+                "ensure_vpn_peer_policy",
                 "stop",
             ):
                 setattr(resources, step, diagnostic(step, getattr(resources, step)))
@@ -825,7 +832,11 @@ async def main(candidate, resume, stop_only=False, fresh=False, retire_only=Fals
                     )
                     if response.status_code != 200:
                         raise RuntimeError("Trusted H launch refused: " + str(response.status_code))
-            tid = UUID(state["task_id"])
+            tid = UUID(
+                getattr(workers, "stop_task_id", None) or state["task_id"]
+                if stop_only
+                else state["task_id"]
+            )
             evidence["task_id"] = str(tid)
             if retire_only:
                 stage = "original H Task DELETE and retirement"

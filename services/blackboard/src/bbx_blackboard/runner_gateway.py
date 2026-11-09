@@ -20,7 +20,7 @@ from bbx_contracts.runner import (
     runner_payload_digest,
 )
 from bbx_contracts.runner_bootstrap import native_resume_pending
-from bbx_contracts.runner_vpn import VPN_TOOLS
+from bbx_contracts.runner_vpn import NETWORK_USE_DEFAULT, VPN_TOOLS
 from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS, SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
@@ -379,8 +379,8 @@ class RunnerGateway:
                 try:
                     if resource:
                         vpn_solver_deadline(resource)
-                except HTTPException:
-                    result = vpn_result({"error": "The original Task VPN is not ready"}, error=True)
+                except HTTPException as error:
+                    result = vpn_result({"error": error.detail}, error=True)
                     await self._save_tool_result(conn, tid, value, result)
                     return self._permit(await self._call(conn, tid, value["id"]))
             return self._permit(value)
@@ -408,7 +408,7 @@ class RunnerGateway:
             if data["authorized_wait_until_ms"] <= int(datetime.now(UTC).timestamp() * 1000):
                 raise HTTPException(409, "Tool permit expired")
             # Enqueue VPN management and complete the original MCP call in one Task transaction.
-            if name in VPN_TOOLS:
+            if name in VPN_TOOLS or name == NETWORK_USE_DEFAULT:
                 if target != "business" or self.vpn is None:
                     raise HTTPException(403, "Original VPN management is unavailable")
                 value = await self.vpn.tool(conn, tid, owner, binding, name, original)
@@ -418,8 +418,8 @@ class RunnerGateway:
                 resource = await self.sandbox.resource(conn, tid)
                 try:
                     vpn_solver_deadline(resource)
-                except HTTPException:
-                    value = vpn_result({"error": "The original Task VPN is not ready"}, error=True)
+                except HTTPException as error:
+                    value = vpn_result({"error": error.detail}, error=True)
                     await self._save_tool_result(conn, tid, call, value)
                     return None, self._permit(await self._call(conn, tid, call["id"]))
             await conn.execute(

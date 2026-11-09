@@ -10,6 +10,7 @@ FROM ${TOOL_IMAGE}
 USER root
 ARG ASSIGNMENT_NETWORK_V1=0
 ARG TASK_VPN_V1=0
+ARG TASK_NETWORK_CHOICE_V1=0
 COPY --from=official /execd /opt/bbx/control/execd
 COPY --from=launcher-build /tmp/launcher /opt/bbx/control/launcher
 COPY --chmod=0555 launcher/kubernetes-setup.sh launcher/assignment-network.py launcher/materialize-inputs.py launcher/task-vpn.py /opt/bbx/control/
@@ -23,6 +24,12 @@ RUN case "$TASK_VPN_V1" in \
        && dpkg -i /tmp/bbx-wg.deb \
        && rm /tmp/bbx-wg.deb \
        && install -m 0444 /dev/null /opt/bbx/control/task-vpn-v1 ;; \
+    *) exit 1 ;; \
+    esac
+RUN case "$TASK_NETWORK_CHOICE_V1" in \
+    0) ;; \
+    1) test "$TASK_VPN_V1" = 1 && test "$ASSIGNMENT_NETWORK_V1" = 1 \
+       && install -m 0444 /dev/null /opt/bbx/control/task-network-choice-v1 ;; \
     *) exit 1 ;; \
     esac
 

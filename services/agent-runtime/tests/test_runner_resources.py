@@ -2,9 +2,11 @@
 
 import base64
 import copy
+import json
 from uuid import uuid4
 
 import pytest
+from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, NativeTaskVpnProfile
 from bbx_runtime.runner_resources import ResourceUnknown, RunnerResources
 
 
@@ -59,6 +61,56 @@ def object_with(adapter, kind, name, labels, uid, **fields):
     obj = adapter._document(kind, name, labels, "synthetic-task", **fields)
     obj["metadata"].update(uid=uid, resourceVersion="original-rv")
     return obj
+
+
+async def test_vpn_source_is_blocked_until_cluster_ipv4_boundaries_are_known(monkeypatch):
+    adapter = configured()
+    adapter.vpn = NativeTaskVpnProfile(
+        profile=VPN_DYNAMIC_PROFILE,
+        id="synthetic",
+        label="Synthetic",
+        egress_image="egress@sha256:" + "c" * 64,
+        sandbox_image="sandbox@sha256:" + "d" * 64,
+        tun_resource="devic.es/tun",
+        source_origins=["https://vpn.example.test"],
+        source_cidrs=["0.0.0.0/0"],
+        peer_cidrs=["0.0.0.0/0"],
+        target_cidrs=["0.0.0.0/0"],
+        default_cidrs=["0.0.0.0/0"],
+        deny_cidrs=["10.216.0.0/16", "172.30.0.2/32"],
+    )
+    monkeypatch.setattr(adapter, "vpn_enabled", lambda _: True)
+    pod_cidrs = []
+
+    async def kubectl(*args):
+        if args[:2] == ("get", "namespace"):
+            return json.dumps({"metadata": {"uid": "synthetic-cluster"}})
+        if args[1] == "nodes":
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "spec": {"podCIDRs": pod_cidrs},
+                            "status": {
+                                "addresses": [{"type": "InternalIP", "address": "172.30.0.2"}]
+                            },
+                        }
+                    ]
+                }
+            )
+        assert args[1] == "servicecidrs"
+        return json.dumps({"items": [{"spec": {"cidrs": ["10.217.0.0/16"]}}]})
+
+    monkeypatch.setattr(adapter, "_kubectl", kubectl)
+    with pytest.raises(ResourceUnknown, match="boundary is unavailable"):
+        await adapter.verify_vpn_source_boundary({})
+    pod_cidrs.append("10.216.0.0/24")
+    with pytest.raises(ResourceUnknown, match="omits Kubernetes addresses"):
+        await adapter.verify_vpn_source_boundary({})
+    adapter.vpn = adapter.vpn.model_copy(
+        update={"deny_cidrs": [*adapter.vpn.deny_cidrs, "10.217.0.0/16"]}
+    )
+    await adapter.verify_vpn_source_boundary({})
 
 
 async def test_retirement_accepts_only_events_about_positively_exited_recovery_resources(

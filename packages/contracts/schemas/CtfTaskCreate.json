@@ -185,6 +185,19 @@
       ],
       "default": null
     },
+    "native_vpn_source_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Vpn Source Id"
+    },
     "input_group_id": {
       "anyOf": [
         {

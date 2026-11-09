@@ -88,6 +88,22 @@ task_input_groups = Table(
 )
 
 
+native_vpn_assets = Table(
+    "native_vpn_assets",
+    metadata,
+    col("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "group_id",
+        UUID(as_uuid=True),
+        ForeignKey("task_input_groups.id", ondelete="CASCADE"),
+        unique=True,
+    ),
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE")),
+    col("digest", Text, nullable=False),
+    col("ciphertext", Text, nullable=False),
+)
+
+
 task_runs = Table(
     "task_runs",
     metadata,

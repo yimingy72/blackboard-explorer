@@ -35,6 +35,7 @@ export default function NewTaskPage() {
     const [reasoningEffort, setReasoningEffort] = useState('');
     const [pending, setPending] = useState(false);
     const [formError, setFormError] = useState('');
+    const [privateVpnFile, setPrivateVpnFile] = useState<File | null>(null);
     const [uploadsBusy, setUploadsBusy] = useState(false);
     const [uploadsInvalid, setUploadsInvalid] = useState(false);
     const group = useRef<Promise<string> | null>(null);
@@ -66,6 +67,7 @@ export default function NewTaskPage() {
     const capabilities = useQuery({ queryKey: ['task-creation-capabilities'], queryFn: api.taskCreationCapabilities });
     const nativeDeployment = capabilities.data?.mode === 'native-ctf';
     const nativeEnvironment = capabilities.data?.native_ctf;
+    const taskNetwork = nativeEnvironment?.vpn?.profile === 'openvpn-task-ipv4-tcp-v1';
     const sharedInputs = nativeEnvironment?.shared_inputs;
     const creationBlocked = !capabilities.isSuccess || nativeDeployment && !nativeEnvironment;
     const mode = nativeDeployment ? 'ctf' : selectedMode;
@@ -96,6 +98,10 @@ export default function NewTaskPage() {
         if (pending || uploadsBusy || (!submitted.current && creationBlocked))
             return;
         setFormError('');
+        if (!submitted.current && taskNetwork && privateVpnFile && privateVpnFile.size > 128 * 1024) {
+            setFormError('VPN 配置不能超过 128 KiB。');
+            return;
+        }
         if (uploadsInvalid) {
             setFormError('请重试或移除上传失败的附件。');
             return;
@@ -156,7 +162,10 @@ export default function NewTaskPage() {
         }
         setPending(true);
         try {
-            const ready = submitted.current ?? { ...input, input_group_id: await ensureGroup(), input_file_ids: inputIds, ...(sharedInputs && inputIds.length ? { public_input_ids: inputIds } : {}) };
+            const inputGroupId = submitted.current?.input_group_id ?? await ensureGroup();
+            const privateSource = !submitted.current && taskNetwork && privateVpnFile
+                ? await api.uploadPrivateVpnSource(inputGroupId, privateVpnFile) : undefined;
+            const ready = submitted.current ?? { ...input, input_group_id: inputGroupId, input_file_ids: inputIds, ...(sharedInputs && inputIds.length ? { public_input_ids: inputIds } : {}), ...(privateSource && { native_vpn_source_id: privateSource.source_id }) };
             if (!alive.current)
                 return;
             submitted.current = ready;
@@ -211,7 +220,12 @@ export default function NewTaskPage() {
               </section>}
             </section>
             <aside className={styles.sidebar} aria-label="任务设置"><h2>运行设置</h2>
-              {nativeEnvironment && <Alert type="info" title={nativeEnvironment.label} description={nativeEnvironment.vpn ? '此环境由 Lead 配置已发布的 VPN，仅开放已配置的数字 IPv4 TCP 目标。断开后模型、平台控制与文件读取仍可用，求解命令不可用；凭据占用保留到原任务容器全部结束。' : '此环境使用管理员配置的 IPv4 TCP 目标。已封存的逐 Agent 流量可在任务内查看。'} />}
+              {taskNetwork && <section className={styles.attachments} aria-label="私有 VPN 配置">
+                <label htmlFor="private-vpn-config">私有 VPN 配置（可选）</label>
+                <input id="private-vpn-config" type="file" accept=".ovpn" disabled={pending || locked} onChange={(event) => setPrivateVpnFile(event.target.files?.[0] ?? null)} />
+                <p className={controls.hint}>Lead 按任务说明选择默认网络或共享 VPN。可以在说明中提供无凭据的 HTTPS 下载地址；上传的配置不会放到共享工作区。</p>
+              </section>}
+              {nativeEnvironment && <Alert type="info" title={nativeEnvironment.label} description={taskNetwork ? '同一任务入口支持默认网络与 Lead 配置的共享 VPN，Agent 流量均按来源采集。' : nativeEnvironment.vpn ? '此环境由 Lead 配置已发布的 VPN，仅开放已配置的数字 IPv4 TCP 目标。断开后模型、平台控制与文件读取仍可用，求解命令不可用；凭据占用保留到原任务容器全部结束。' : '此环境使用管理员配置的 IPv4 TCP 目标。已封存的逐 Agent 流量可在任务内查看。'} />}
               <Form.Item label={`金额上限（${currencyLabel}）`} htmlFor="max-cost" required><Input id="max-cost" type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required prefix="¥" /></Form.Item>
               <div className={styles.settingsGrid}><Form.Item label="时长上限（分钟）" htmlFor="max-minutes" required><Input id="max-minutes" type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required /></Form.Item>
               {mode === 'ctf' ? <Form.Item label="队友上限（不含 Lead）" htmlFor="max-teammates"><Input id="max-teammates" type="number" min={nativeDeployment ? 1 : 0} max={nativeDeployment ? 20 : undefined} step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required /></Form.Item> : <Form.Item label="并发 Agent 上限" htmlFor="max-agents" required><Input id="max-agents" type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required /></Form.Item>}</div>

@@ -1,18 +1,29 @@
 """One original, explicitly configured VPN session and short forwarding authority."""
 
+import asyncio
 import hashlib
 import hmac
+import ipaddress
+import json
 import secrets
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from anyio import BrokenWorkerProcess, CapacityLimiter
 from bbx_contracts.runner import runner_json_text
 from bbx_contracts.runner_bootstrap import management_document_digest, native_resume_pending
 from bbx_contracts.runner_vpn import (
+    NETWORK_USE_DEFAULT,
     VPN_CONFIGURE,
     VPN_DISCONNECT,
-    VPN_PROFILE,
+    VPN_DYNAMIC_PROFILE,
+    VPN_PROFILES,
     VPN_STATUS,
+    NativeTaskNetworkStatus,
+    NativeTaskRoutePolicy,
+    NativeTaskVpnConfigure,
+    NativeTaskVpnNetwork,
+    NativeTaskVpnProfile,
     NativeVpnConfigure,
     NativeVpnDisconnect,
     NativeVpnLinkReport,
@@ -22,9 +33,21 @@ from bbx_contracts.runner_vpn import (
     NativeVpnScope,
     NativeVpnStatus,
 )
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import select, text
+from httpx import HTTPError
+from sqlalchemy import insert, select, text, update
 
+from bbx_blackboard.native_vpn_sources import (
+    BUILTIN_DENY,
+    checked_address,
+    fetch_vpn_configuration,
+    parse_private_configuration,
+    pin_address,
+    require_source_origin,
+    resolve_vpn_ipv4,
+    vpn_asset_cipher,
+)
 from bbx_blackboard.store import schema as s
 
 # One deployment-wide slot, even if an administrator changes the cert or publication revision.
@@ -32,6 +55,7 @@ VPN_SLOT_LOCK = 0x42425856504E
 OBSERVED_MS = 18000
 LEASE_MS = 15000
 KERNEL_MS = 10000
+SOURCE_ACQUIRE_MS = 16000
 VPN_RECORD = "vpn"
 
 router = APIRouter(prefix="/api/tasks/{task_id}", tags=["runner"])
@@ -42,7 +66,64 @@ def millis():
 
 
 def vpn_enabled(record):
-    return record["request"].get("publication", {}).get("vpn_profile") == VPN_PROFILE
+    return record["request"].get("publication", {}).get("vpn_profile") in VPN_PROFILES
+
+
+def dynamic_vpn(record):
+    return record["request"].get("publication", {}).get("vpn_profile") == VPN_DYNAMIC_PROFILE
+
+
+def vpn_selected(record):
+    return vpn_enabled(record) and (
+        not dynamic_vpn(record) or record["data"].get("native_network") == "vpn"
+    )
+
+
+def default_network(record):
+    data = record["data"]
+    if (
+        dynamic_vpn(record)
+        and data.get("native_network") == "default"
+        and data.get("network_policy", {}).get("network_digest") == data.get("network_digest")
+        and data.get("network_digest")
+        and data.get("route_policy")
+    ):
+        return {key: data[key] for key in ("network_digest", "route_policy")}
+    return None
+
+
+def vpn_network(record):
+    return vpn_state(record).get("network", {})
+
+
+def _dynamic_denied(record, profile):
+    config = record["config"]
+    observation = record["observation"]
+    infrastructure = {
+        config["sandbox_network"]["ipv4"],
+        observation.get("runner", {}).get("pod_ip"),
+        observation.get("sandbox", {}).get("pod_ip"),
+    }
+    return [
+        *profile.deny_cidrs,
+        *[
+            cidr
+            for entry in config.get("runner_control_egress", ())
+            for cidr in entry["cidrs"]
+            if ipaddress.ip_network(cidr).version == 4
+        ],
+        *[f"{ip}/32" for ip in infrastructure if ip],
+    ]
+
+
+def _route_policy(record, profile, allowed, extra_denied=()):
+    def normalize(values):
+        return [str(value) for value in sorted({ipaddress.IPv4Network(value) for value in values})]
+
+    return NativeTaskRoutePolicy(
+        allow_cidrs=normalize(allowed),
+        deny_cidrs=normalize([*BUILTIN_DENY, *_dynamic_denied(record, profile), *extra_denied]),
+    )
 
 
 def vpn_state(record):
@@ -58,16 +139,20 @@ def vpn_applied(record, mode):
 
 
 def vpn_solver_deadline(record):
-    if not vpn_enabled(record):
+    if dynamic_vpn(record) and not vpn_selected(record):
+        if default_network(record) is None:
+            raise HTTPException(409, "The original Task network is not ready")
+        return None
+    if not vpn_selected(record):
         return None
     applied = vpn_applied(record, "solver")
     if vpn_state(record).get("state") != "ready" or applied is None:
-        raise HTTPException(409, "Original Task VPN forwarding is not confirmed")
+        raise HTTPException(409, "The original Task VPN is not ready")
     return applied["applied_until_ms"]
 
 
 def vpn_retired(record):
-    return vpn_enabled(record) and vpn_state(record).get("state") in {
+    return vpn_selected(record) and vpn_state(record).get("state") in {
         "disconnecting",
         "disconnected",
         "failed",
@@ -127,7 +212,7 @@ def _pause(task):
 def require_vpn_resume(record, pause_id):
     state = vpn_state(record)
     if (
-        vpn_enabled(record)
+        vpn_selected(record)
         and state.get("credential_reserved")
         and (
             state.get("state") != "ready"
@@ -158,6 +243,14 @@ class NativeVpn:
     def __init__(self, bootstrap):
         self.bootstrap, self.repo, self.control = bootstrap, bootstrap.repo, bootstrap.control
         self.gateway = bootstrap.gateway
+        self.asset_cipher = vpn_asset_cipher(bootstrap.gateway.settings)
+        self.parse_slots = CapacityLimiter(2)
+        self.resolve_source = resolve_vpn_ipv4
+        self.source_tls = None
+        self.source_jobs = set()
+
+    async def parse_source(self, raw):
+        return await parse_private_configuration(raw, self.parse_slots)
 
     @staticmethod
     def _scope(record):
@@ -166,7 +259,7 @@ class NativeVpn:
         config = record["config"]
         try:
             ips = {runner.get("pod_ip"), sandbox.get("pod_ip")}
-            if (
+            if not dynamic_vpn(record) and (
                 any(target["ipv4"] in ips for target in config["traffic_targets"])
                 or config["vpn"]["peer"]["ipv4"] in ips
                 or config["vpn"]["tun_ipv4"] in ips
@@ -194,8 +287,38 @@ class NativeVpn:
         except (ValueError, TypeError, KeyError) as error:
             raise HTTPException(409, "Original VPN resource identity is unavailable") from error
 
-    async def _write(self, conn, tid, record, state):
-        await self.bootstrap._set(conn, tid, data={**record["data"], VPN_RECORD: state})
+    async def _write(self, conn, tid, record, state, **data):
+        await self.bootstrap._set(conn, tid, data={**record["data"], **data, VPN_RECORD: state})
+
+    def default_route_fields(self, record):
+        profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
+        policy = _route_policy(record, profile, profile.default_cidrs).model_dump(mode="json")
+        scope = self._scope(record).model_dump(mode="json")
+        return {
+            "route_policy": policy,
+            "network_digest": management_document_digest({"scope": scope, "route_policy": policy}),
+        }
+
+    async def default_ready(self, conn, tid, record, proof):
+        if not dynamic_vpn(record) or record["data"].get("native_network") != "default":
+            raise HTTPException(409, "The original Task did not select the default network")
+        expected = self.default_route_fields(record)
+        try:
+            valid = (
+                set(proof) == {"network_digest", "policy_name", "policy_uid"}
+                and proof["policy_name"] == "bbx-binding-direct"
+                and str(UUID(proof["policy_uid"])) == proof["policy_uid"]
+                and proof["network_digest"] == expected["network_digest"]
+                and all(record["data"].get(key) == value for key, value in expected.items())
+            )
+        except (ValueError, TypeError, AttributeError):
+            valid = False
+        prior = record["data"].get("network_policy")
+        if not valid or (prior is not None and prior != proof):
+            raise HTTPException(409, "The original default network policy changed")
+        if prior is None:
+            await self._write(conn, tid, record, vpn_state(record), network_policy=proof)
+        return self.bootstrap._public(await self.bootstrap._get(conn, tid))
 
     async def material(self, conn, tid, record):
         if not vpn_enabled(record):
@@ -226,13 +349,35 @@ class NativeVpn:
 
     @staticmethod
     def _status(record, state):
+        if dynamic_vpn(record) and not vpn_selected(record):
+            mode = record["data"].get("native_network", "unselected")
+            ready = default_network(record) is not None
+            return {
+                "native_network": mode,
+                "state": "ready" if ready else "preparing" if mode == "default" else "unselected",
+                "allowed_actions": (
+                    ["status", "use_default", "configure"] if mode == "unselected" else ["status"]
+                ),
+                "credential_reserved": False,
+                "solver_exec": ready,
+            }
         phase = state.get("state", "idle")
         if phase == "ready" and vpn_applied(record, "solver") is None:
             phase = "unconfirmed"
         actions = ["status"]
         if phase == "idle":
             actions.append("configure")
-        elif phase in {"requested", "starting", "ready", "unconfirmed", "unknown", "failed"}:
+        elif phase in {
+            "source_pending",
+            "acquiring",
+            "awaiting_policy",
+            "requested",
+            "starting",
+            "ready",
+            "unconfirmed",
+            "unknown",
+            "failed",
+        }:
             actions.append("disconnect")
         return {
             "state": phase,
@@ -243,6 +388,24 @@ class NativeVpn:
             "credential_release": "after_original_task_containers_exit",
             "solver_exec": phase == "ready",
         }
+
+    def status_projection(self, record):
+        if not record or not dynamic_vpn(record):
+            return None
+        mode = record["data"]["native_network"]
+        if record["state"] in {"stopped", "exited", "retired"}:
+            state = "stopped"
+        elif record["data"].get("recovery"):
+            state = "failed"
+        else:
+            phase = self._status(record, vpn_state(record))["state"]
+            if phase in {"unselected", "ready", "disconnected"}:
+                state = phase
+            elif phase in {"failed", "unknown", "unconfirmed"}:
+                state = "failed"
+            else:
+                state = "preparing"
+        return NativeTaskNetworkStatus(mode=mode, state=state)
 
     async def tool(self, conn, tid, owner, binding, name, arguments):
         record = await self.bootstrap._get(conn, tid)
@@ -260,12 +423,64 @@ class NativeVpn:
             )
         state = vpn_state(record)
         try:
-            if name == VPN_STATUS:
+            if name == NETWORK_USE_DEFAULT:
+                NativeVpnStatus.model_validate(arguments)
+                if not dynamic_vpn(record) or vpn_selected(record):
+                    return vpn_result(
+                        {"error": "The Task network cannot switch to default"}, error=True
+                    )
+                if record["data"].get("native_network") == "unselected":
+                    fields = self.default_route_fields(record)
+                    await self._write(conn, tid, record, state, native_network="default", **fields)
+                    record = {
+                        **record,
+                        "data": {**record["data"], **fields, "native_network": "default"},
+                    }
+            elif name == VPN_STATUS:
                 NativeVpnStatus.model_validate(arguments)
             elif name == VPN_CONFIGURE:
-                body = NativeVpnConfigure.model_validate(arguments)
-                if body.profile_id != record["config"]["vpn"]["id"]:
-                    raise ValueError("VPN profile is not published")
+                if dynamic_vpn(record):
+                    body = NativeTaskVpnConfigure.model_validate(arguments)
+                    profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
+                    if record["data"].get("native_network") == "default":
+                        return vpn_result(
+                            {"error": "The Task already selected the default network"}, error=True
+                        )
+                    checked_address(
+                        body.preflight.ipv4, profile.target_cidrs, _dynamic_denied(record, profile)
+                    )
+                    if body.https_url is not None:
+                        require_source_origin(body.https_url, profile)
+                    source_request = body.model_dump(mode="json", exclude_none=True)
+                    intent_digest = management_document_digest(source_request)
+                    if (
+                        state.get("state", "idle") != "idle"
+                        and state.get("source_intent_digest") != intent_digest
+                    ):
+                        return vpn_result(
+                            {"error": "Task VPN source and targets are already frozen"}, error=True
+                        )
+                    if (
+                        body.source_id is not None
+                        and not (
+                            await conn.execute(
+                                select(s.native_vpn_assets.c.id).where(
+                                    s.native_vpn_assets.c.id == body.source_id,
+                                    s.native_vpn_assets.c.task_id == tid,
+                                    s.native_vpn_assets.c.group_id.is_not(None),
+                                )
+                            )
+                        ).first()
+                    ):
+                        return vpn_result(
+                            {"error": "Private VPN source is not available for this Task"},
+                            error=True,
+                        )
+                else:
+                    body = NativeVpnConfigure.model_validate(arguments)
+                    if body.profile_id != record["config"]["vpn"]["id"]:
+                        raise ValueError("VPN profile is not published")
+                    source_request, intent_digest = None, None
                 if state.get("state", "idle") == "idle":
                     material = state.get("material")
                     if not material or material["scope"] != self._scope(record).model_dump(
@@ -295,20 +510,36 @@ class NativeVpn:
                             {"error": "The published VPN slot is still occupied"}, error=True
                         )
                     scope = material["scope"]
+                    operation_id = uuid5(
+                        NAMESPACE_URL,
+                        f"bbx-task-vpn:{record['operation_id']}:{scope['resource_generation']}",
+                    )
                     state = {
                         **state,
-                        "state": "requested",
+                        "state": "requested" if source_request is None else "source_pending",
                         "credential_reserved": True,
-                        "operation_id": str(
-                            uuid5(
-                                NAMESPACE_URL,
-                                f"bbx-task-vpn:{record['operation_id']}:{scope['resource_generation']}",
-                            )
-                        ),
+                        "operation_id": str(operation_id),
                         "owner_epoch": owner["epoch"],
                     }
-                    await self._write(conn, tid, record, state)
+                    if source_request is not None:
+                        state["source_intent_digest"] = intent_digest
+                        await conn.execute(
+                            insert(s.native_vpn_assets).values(
+                                id=operation_id,
+                                task_id=tid,
+                                digest=intent_digest,
+                                ciphertext=self.asset_cipher.encrypt(
+                                    runner_json_text(source_request).encode()
+                                ).decode(),
+                            )
+                        )
+                    mode = {"native_network": "vpn"} if dynamic_vpn(record) else {}
+                    await self._write(conn, tid, record, state, **mode)
+                    if mode:
+                        record = {**record, "data": {**record["data"], **mode}}
             elif name == VPN_DISCONNECT:
+                if not vpn_selected(record):
+                    return vpn_result({"error": "The Task has no selected VPN"}, error=True)
                 body = NativeVpnDisconnect.model_validate(arguments)
                 if str(body.operation_id) != state.get("operation_id"):
                     raise ValueError("VPN operation is not original")
@@ -320,6 +551,187 @@ class NativeVpn:
                 {"error": "VPN tool arguments do not match the frozen operation"}, error=True
             )
         return vpn_result(self._status(record, state))
+
+    async def _asset(self, conn, tid, asset_id, *, upload=False):
+        table = s.native_vpn_assets
+        row = (
+            await conn.execute(
+                select(table.c.digest, table.c.ciphertext).where(
+                    table.c.id == UUID(str(asset_id)),
+                    table.c.task_id == tid,
+                    table.c.group_id.is_not(None) if upload else table.c.group_id.is_(None),
+                )
+            )
+        ).first()
+        if row is None:
+            raise ValueError("Original VPN source is unavailable")
+        return row.digest, self.asset_cipher.decrypt(row.ciphertext.encode())
+
+    async def prepare_source(self, tid, action):
+        async with self.repo.engine.begin() as conn:
+            record, task = await self.bootstrap._checked(conn, tid, action, live=True)
+            state = vpn_state(record)
+            if not dynamic_vpn(record) or action.proof != {
+                "vpn_operation_id": state.get("operation_id")
+            }:
+                raise HTTPException(409, "Original VPN acquisition identity changed")
+            if state.get("state") == "acquiring":
+                acquisition = state.get("source_acquisition", {})
+                if (
+                    acquisition.get("controller_generation") != record["controller_generation"]
+                    or acquisition.get("deadline_ms", 0) <= millis()
+                ):
+                    await self._write(conn, tid, record, {**state, "state": "unknown"})
+                    return self.bootstrap._public(await self.bootstrap._get(conn, tid))
+                return self.bootstrap._public(record)
+            if state.get("state") != "source_pending":
+                return self.bootstrap._public(record)
+            await self._live(conn, tid, record, task, state)
+            await self._write(
+                conn,
+                tid,
+                record,
+                {
+                    **state,
+                    "state": "acquiring",
+                    "source_acquisition": {
+                        "controller_generation": record["controller_generation"],
+                        "deadline_ms": min(
+                            millis() + SOURCE_ACQUIRE_MS,
+                            int(record["hard_deadline"].timestamp() * 1000),
+                        ),
+                    },
+                },
+            )
+            pending = self.bootstrap._public(await self.bootstrap._get(conn, tid))
+        job = asyncio.create_task(self._acquire_source(tid, action))
+        self.source_jobs.add(job)
+        job.add_done_callback(self.source_jobs.discard)
+        return pending
+
+    async def _acquiring(self, conn, tid, action):
+        record, task = await self.bootstrap._checked(conn, tid, action, live=True)
+        state = vpn_state(record)
+        acquisition = state.get("source_acquisition", {})
+        if (
+            state.get("state") != "acquiring"
+            or action.proof != {"vpn_operation_id": state.get("operation_id")}
+            or acquisition.get("controller_generation") != record["controller_generation"]
+            or acquisition.get("deadline_ms", 0) <= millis()
+        ):
+            raise HTTPException(409, "Original VPN acquisition is closed")
+        await self._live(conn, tid, record, task, state)
+        return record, state
+
+    async def _acquire_source(self, tid, action):
+        operation_id = UUID(action.proof["vpn_operation_id"])
+        result = None
+        failure = "unknown"
+        try:
+            async with self.repo.engine.begin() as conn:
+                record, state = await self._acquiring(conn, tid, action)
+                digest, document = await self._asset(conn, tid, operation_id)
+                request = NativeTaskVpnConfigure.model_validate_json(document)
+                if digest != state.get(
+                    "source_intent_digest"
+                ) or digest != management_document_digest(
+                    request.model_dump(mode="json", exclude_none=True)
+                ):
+                    raise ValueError("Original VPN source request changed")
+                upload = (
+                    await self._asset(conn, tid, request.source_id, upload=True)
+                    if request.source_id is not None
+                    else None
+                )
+                profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
+                denied = _dynamic_denied(record, profile)
+            if upload:
+                payload = upload[1]
+                if hashlib.sha256(payload).hexdigest() != upload[0]:
+                    raise ValueError("Original private VPN source changed")
+            else:
+                assert request.https_url is not None
+                payload = await fetch_vpn_configuration(
+                    request.https_url,
+                    profile,
+                    denied,
+                    resolver=self.resolve_source,
+                    tls=self.source_tls,
+                )
+            (host, port), server_name, material = await self.parse_source(payload)
+            async with asyncio.timeout(4):
+                ip = await pin_address(host, port, profile.peer_cidrs, denied, self.resolve_source)
+            policy = _route_policy(record, profile, profile.target_cidrs, [f"{ip}/32"])
+            checked_address(request.preflight.ipv4, policy.allow_cidrs, policy.deny_cidrs)
+            material_json = runner_json_text(material)
+            material_sha = hashlib.sha256(material_json.encode()).hexdigest()
+            document = {
+                "peer": {"ipv4": ip, "port": port, "server_name": server_name},
+                "route_policy": policy.model_dump(mode="json"),
+                "preflight": request.preflight.model_dump(mode="json"),
+            }
+            network_digest = management_document_digest(
+                {**document, "material_sha256": material_sha}
+            )
+            network = NativeTaskVpnNetwork.model_validate(
+                {**document, "network_digest": network_digest}
+            ).model_dump(mode="json")
+            result = (
+                network,
+                material_sha,
+                self.asset_cipher.encrypt(material_json.encode()).decode(),
+            )
+        except HTTPException:
+            return
+        except (ValueError, TypeError, InvalidToken):
+            failure = "failed"
+        except (BrokenWorkerProcess, TimeoutError, OSError, HTTPError):
+            pass
+        try:
+            async with self.repo.engine.begin() as conn:
+                record, state = await self._acquiring(conn, tid, action)
+                if result is None:
+                    await self._write(conn, tid, record, {**state, "state": failure, "applied": {}})
+                    return
+                network, material_sha, ciphertext = result
+                await conn.execute(
+                    update(s.native_vpn_assets)
+                    .where(
+                        s.native_vpn_assets.c.id == operation_id,
+                        s.native_vpn_assets.c.task_id == tid,
+                    )
+                    .values(digest=material_sha, ciphertext=ciphertext)
+                )
+                await self._write(
+                    conn, tid, record, {**state, "state": "awaiting_policy", "network": network}
+                )
+        except HTTPException:
+            return
+
+    async def peer_ready(self, conn, tid, record, task, proof):
+        state = vpn_state(record)
+        network = vpn_network(record)
+        try:
+            valid = (
+                dynamic_vpn(record)
+                and set(proof)
+                == {"network_digest", "policy_name", "policy_uid", "vpn_operation_id"}
+                and proof["vpn_operation_id"] == state.get("operation_id")
+                and proof["network_digest"] == network.get("network_digest")
+                and proof["policy_name"] == "bbx-vpn-peer"
+                and str(UUID(proof["policy_uid"])) == proof["policy_uid"]
+            )
+        except (ValueError, TypeError, AttributeError):
+            valid = False
+        if not valid or not network:
+            raise HTTPException(409, "Original VPN policy receipt changed")
+        if state.get("policy") == proof:
+            return self.bootstrap._public(record)
+        if state.get("state") != "awaiting_policy":
+            raise HTTPException(409, "Original VPN policy cannot reopen")
+        await self._live(conn, tid, record, task, state)
+        await self._write(conn, tid, record, {**state, "state": "requested", "policy": proof})
+        return self.bootstrap._public(await self.bootstrap._get(conn, tid))
 
     async def _authenticated(self, conn, tid, key, *, host=False):
         await self.repo.lock(conn, tid)
@@ -358,6 +770,7 @@ class NativeVpn:
         if (
             body.scope.model_dump(mode="json") != state["material"]["scope"]
             or str(body.vpn_operation_id) != state.get("operation_id")
+            or body.network_digest != vpn_network(record).get("network_digest")
             or state["material"]["scope"] != self._scope(record).model_dump(mode="json")
         ):
             raise HTTPException(409, "Original VPN operation identity changed")
@@ -382,6 +795,20 @@ class NativeVpn:
     async def desired(self, tid, key, *, host=False):
         async with self.repo.engine.begin() as conn:
             record, task, state = await self._authenticated(conn, tid, key, host=host)
+            if dynamic_vpn(record) and not vpn_selected(record):
+                result = {
+                    "state": "idle",
+                    "scope": state["material"]["scope"],
+                    "vpn_operation_id": None,
+                    "remote_public_key": None,
+                    "can_probe": False,
+                    "tunnel": None,
+                }
+                if host:
+                    result["native_network"] = record["data"]["native_network"]
+                    if network := default_network(record):
+                        result["default_network"] = network
+                return result
             phase = state.get("state", "idle")
             pause = _pause(task)
             pause_id = None
@@ -410,6 +837,8 @@ class NativeVpn:
                 "remote_public_key": peer.get("public_key") if peer else None,
                 "can_probe": phase == "starting" and vpn_applied(record, "probe") is not None,
                 "tunnel": state.get("tunnel"),
+                **({"network": state["network"]} if state.get("network") else {}),
+                **({"native_network": "vpn"} if host and dynamic_vpn(record) else {}),
                 **({"pause_id": pause_id} if pause_id else {}),
                 **({"resume_pause_id": resume_pause_id} if resume_pause_id else {}),
             }
@@ -418,11 +847,25 @@ class NativeVpn:
         async with self.repo.engine.begin() as conn:
             record, task, state = await self._authenticated(conn, tid, key)
             self._operation(record, state, body)
-            if state.get("state") != "requested":
+            if not vpn_selected(record) or state.get("state") != "requested":
                 return {"launch_allowed": False, "state": state["state"]}
             await self._live(conn, tid, record, task, state)
+            result = {"launch_allowed": True, "state": "starting"}
+            if dynamic_vpn(record):
+                network = vpn_network(record)
+                if not state.get("policy") or not network:
+                    raise HTTPException(409, "Original VPN policy is not confirmed")
+                digest, material = await self._asset(conn, tid, state["operation_id"])
+                safe = {key: value for key, value in network.items() if key != "network_digest"}
+                if (
+                    hashlib.sha256(material).hexdigest() != digest
+                    or management_document_digest({**safe, "material_sha256": digest})
+                    != body.network_digest
+                ):
+                    raise HTTPException(409, "Original VPN material changed")
+                result["material"] = json.loads(material)
             await self._write(conn, tid, record, {**state, "state": "starting"})
-            return {"launch_allowed": True, "state": "starting"}
+            return result
 
     async def observe(self, tid, key, body):
         async with self.repo.engine.begin() as conn:
@@ -452,7 +895,9 @@ class NativeVpn:
                     return {"state": phase}
                 state = {**state, "hold": {"pause_id": str(body.pause_id)}, "applied": {}}
             elif body.phase in {"failed", "unknown"}:
-                if phase in {"starting", "ready"}:
+                if phase in {"starting", "ready"} or (
+                    phase == "requested" and dynamic_vpn(record) and body.phase == "unknown"
+                ):
                     state = {**state, "state": body.phase, "applied": {}}
             else:
                 if phase not in {"starting", "ready"}:
@@ -470,7 +915,7 @@ class NativeVpn:
                     tunnel = body.tunnel.model_dump(mode="json")
                     if (
                         state.get("egress_link") != tunnel["link"]
-                        or body.tunnel.tun_ipv4 != record["config"]["vpn"]["tun_ipv4"]
+                        or not self._valid_tunnel_address(record, body.tunnel.tun_ipv4)
                         or state.get("tunnel") not in (None, tunnel)
                     ):
                         state = {**state, "state": "unknown", "applied": {}}
@@ -501,6 +946,20 @@ class NativeVpn:
             await self._write(conn, tid, record, state)
             return {"state": state["state"]}
 
+    @staticmethod
+    def _valid_tunnel_address(record, value):
+        if not dynamic_vpn(record):
+            return value == record["config"]["vpn"]["tun_ipv4"]
+        profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
+        network = vpn_network(record)
+        denied = _dynamic_denied(record, profile)
+        denied += [f"{network[key]['ipv4']}/32" for key in ("peer", "preflight")]
+        try:
+            checked_address(value, ["0.0.0.0/0"], denied)
+        except ValueError:
+            return False
+        return True
+
     async def link(self, tid, key, body):
         async with self.repo.engine.begin() as conn:
             record, task, state = await self._authenticated(conn, tid, key, host=True)
@@ -521,7 +980,11 @@ class NativeVpn:
             record, task, state = await self._authenticated(conn, tid, key, host=True)
             self._operation(record, state, body)
             await self._live(conn, tid, record, task, state)
-            target = record["config"]["traffic_targets"][0]
+            target = (
+                vpn_network(record)["preflight"]
+                if dynamic_vpn(record)
+                else record["config"]["traffic_targets"][0]
+            )
             proof = body.model_dump(mode="json")
             if state.get("preflight") == proof:
                 return {"state": state["state"]}
@@ -609,7 +1072,8 @@ async def vpn_egress_desired(request: Request, response: Response, task_id: UUID
 
 
 @router.post("/runner-vpn/claim")
-async def vpn_egress_claim(request: Request, task_id: UUID):
+async def vpn_egress_claim(request: Request, response: Response, task_id: UUID):
+    response.headers["Cache-Control"] = "no-store"
     body, key = await _body(request, NativeVpnOperation)
     return await _service(request).claim(task_id, key, body)
 

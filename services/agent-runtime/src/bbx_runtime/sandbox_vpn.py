@@ -5,7 +5,13 @@ import base64
 import json
 from datetime import UTC, datetime, timedelta
 
-from bbx_contracts.runner_vpn import NativeVpnLink, NativeVpnOperation, NativeVpnTunnel
+from bbx_contracts.runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    NativeTaskVpnNetwork,
+    NativeVpnLink,
+    NativeVpnOperation,
+    NativeVpnTunnel,
+)
 from opensandbox import Sandbox
 from opensandbox.models.execd import ExecutionHandlers, ExecutionInit, RunCommandOpts
 
@@ -60,17 +66,44 @@ async def root_vpn(sandbox: Sandbox, action, body):
 
 async def supervise_sandbox_vpn(host, sandbox):
     deadline = datetime.fromisoformat(host.config["hard_deadline"])
+    dynamic = host.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
     key_attempted = probe_attempted = False
     operation_id = None
     while datetime.now(UTC) < deadline:
         try:
             view = await host.control("GET", "vpn")
             state = view["state"]
-            if not view.get("vpn_operation_id"):
+            if dynamic and view.get("native_network") == "default":
+                default = view.get("default_network")
+                if default:
+                    if operation_id is not None:
+                        raise ValueError("Original Task default network identity changed")
+                    host.observe_default_network(default)
+                await asyncio.sleep(0.8)
+                continue
+            if not view.get("vpn_operation_id") or (
+                dynamic
+                and state in {"idle", "source_pending", "acquiring", "awaiting_policy", "requested"}
+            ):
                 await asyncio.sleep(1)
                 continue
+            network = view.get("network")
+            if dynamic and not network:
+                await asyncio.sleep(1)
+                continue
+            if dynamic:
+                network = NativeTaskVpnNetwork.model_validate(network).model_dump(
+                    mode="json", exclude_none=True
+                )
+            if dynamic and host.default_network is not None:
+                raise ValueError("Original Task default network cannot become a VPN")
+            preflight = network["preflight"] if dynamic else host.config["traffic_targets"][0]
             operation = NativeVpnOperation.model_validate(
-                {"scope": view["scope"], "vpn_operation_id": view["vpn_operation_id"]}
+                {
+                    "scope": view["scope"],
+                    "vpn_operation_id": view["vpn_operation_id"],
+                    **({"network_digest": network["network_digest"]} if dynamic else {}),
+                }
             )
             scope = operation.scope.model_dump(mode="json")
             for field in ("task_id", "operation_id", "sandbox_pod_uid"):
@@ -82,7 +115,11 @@ async def supervise_sandbox_vpn(host, sandbox):
             if operation_id not in {None, operation.vpn_operation_id}:
                 raise ValueError("A new VPN login cannot replace the original Task link")
             operation_id = operation.vpn_operation_id
-            body = operation.model_dump(mode="json")
+            body = operation.model_dump(mode="json", exclude_none=True)
+            if dynamic:
+                if host.vpn_network not in (None, network):
+                    raise ValueError("Original Task VPN network configuration changed")
+                host.vpn_network = network
             if state in {"disconnecting", "disconnected", "failed", "unknown", "closed", "stopped"}:
                 host.vpn_link = None
                 await root_vpn(sandbox, "fence", body)
@@ -100,7 +137,11 @@ async def supervise_sandbox_vpn(host, sandbox):
                     with_peer = {
                         **body,
                         "remote_public_key": remote,
-                        "targets": host.config["traffic_targets"],
+                        **(
+                            {"preflight": preflight, "route_policy": network["route_policy"]}
+                            if dynamic
+                            else {"targets": host.config["traffic_targets"]}
+                        ),
                     }
                     installed = NativeVpnLink.model_validate(
                         await root_vpn(sandbox, "peer", with_peer)
@@ -110,6 +151,7 @@ async def supervise_sandbox_vpn(host, sandbox):
                     host.vpn_link = {
                         "vpn_operation_id": str(operation_id),
                         "link_ifindex": link["ifindex"],
+                        **({"network_digest": network["network_digest"]} if dynamic else {}),
                     }
                     if view.get("can_probe"):
                         tunnel = NativeVpnTunnel.model_validate(view["tunnel"]).model_dump(
@@ -128,7 +170,7 @@ async def supervise_sandbox_vpn(host, sandbox):
                             "vpn/preflight",
                             {
                                 **body,
-                                **host.config["traffic_targets"][0],
+                                **preflight,
                                 "link": link,
                                 "tunnel": tunnel,
                                 "passed": proof["passed"],

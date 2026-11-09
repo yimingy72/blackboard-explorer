@@ -12,7 +12,7 @@ import httpx
 import uvicorn
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import retirement_manifest_digest
-from bbx_contracts.runner_vpn import VPN_PROFILE
+from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_PROFILE
 
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
@@ -189,7 +189,9 @@ class NativeRunnerController:
                             )
                             and (
                                 key != "vpn"
-                                or initial.get("data", {}).get("vpn_profile") == VPN_PROFILE
+                                or initial.get("data", {}).get("vpn_profile")
+                                in {VPN_PROFILE, VPN_DYNAMIC_PROFILE}
+                                or initial.get("data", {}).get("native_network") is not None
                             )
                         },
                         "retirement_single_apiserver": self.retirement_authority,
@@ -437,7 +439,8 @@ class NativeRunnerController:
                                                 "egress_container_id"
                                             ),
                                         }
-                                        if operation["data"].get("vpn_profile") == VPN_PROFILE
+                                        if operation["data"].get("vpn_profile")
+                                        in {VPN_PROFILE, VPN_DYNAMIC_PROFILE}
                                         else {}
                                     ),
                                     "observation_digest": runner_payload_digest(
@@ -537,7 +540,7 @@ class NativeRunnerController:
                     await self._prepare_sandbox_host(tid, operation, tenant_key)
                 generation = operation["data"].get("resource_generation", 1)
                 if (
-                    operation["data"].get("vpn_profile") == VPN_PROFILE
+                    operation["data"].get("vpn_profile") in {VPN_PROFILE, VPN_DYNAMIC_PROFILE}
                     and published_vpn_generation != generation
                 ):
                     material = await self.action(tid, operation, "vpn_material")
@@ -549,6 +552,43 @@ class NativeRunnerController:
                         ),
                     )
                     published_vpn_generation = generation
+                if (
+                    operation["data"].get("vpn_profile") == VPN_DYNAMIC_PROFILE
+                    and not control_only
+                    and operation["data"].get("pause_state")
+                    not in {"draining", "paused", "resuming"}
+                ):
+                    data = operation["data"]
+                    vpn = data["vpn"]
+                    if data.get("native_network") == "default" and not data.get("network_policy"):
+                        receipt = await self.guarded(
+                            tid, operation, self.resources.ensure_default_network_policy(operation)
+                        )
+                        operation.update(
+                            await self.action(
+                                tid, operation, "network_default_ready", proof=receipt
+                            )
+                        )
+                    elif vpn["state"] in {"source_pending", "acquiring"}:
+                        if vpn["state"] == "source_pending":
+                            await self.guarded(
+                                tid, operation, self.resources.verify_vpn_source_boundary(operation)
+                            )
+                        operation.update(
+                            await self.action(
+                                tid,
+                                operation,
+                                "vpn_prepare_source",
+                                proof={"vpn_operation_id": vpn["operation_id"]},
+                            )
+                        )
+                    elif vpn["state"] == "awaiting_policy":
+                        receipt = await self.guarded(
+                            tid, operation, self.resources.ensure_vpn_peer_policy(operation)
+                        )
+                        operation.update(
+                            await self.action(tid, operation, "vpn_peer_ready", proof=receipt)
+                        )
                 now = asyncio.get_running_loop().time()
                 if (
                     not operation["data"].get("credentials_issued")

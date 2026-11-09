@@ -638,3 +638,109 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             replacement["observation"]["workspace_pvc"] = {"uid": str(uuid4())}
             with pytest.raises(HTTPException, match="not confirmed"):
                 require_inputs_confirmed(replacement)
+
+        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
+        from test_native_vpn_integration import task_openvpn_file
+
+        app.state.settings = options
+        user = {"Authorization": f"Bearer {issue_user_token(options, 'alice')}"}
+        other = {"Authorization": f"Bearer {issue_user_token(options, 'bob')}"}
+        path.write_text(
+            json.dumps(
+                {
+                    **publication,
+                    "vpn_profile": VPN_DYNAMIC_PROFILE,
+                    "runtime_resource_config": {
+                        **resource,
+                        "traffic_targets": [],
+                        "vpn": {
+                            "profile": VPN_DYNAMIC_PROFILE,
+                            "id": "isolated-task-vpn",
+                            "label": "Task network",
+                            "tun_resource": "devic.es/tun",
+                            "egress_image": "fixture-egress@sha256:" + "a" * 64,
+                            "sandbox_image": "fixture-vpn@sha256:" + "e" * 64,
+                            "peer_cidrs": ["10.14.0.0/24"],
+                            "default_cidrs": ["10.12.0.0/24"],
+                            "target_cidrs": ["10.31.0.0/24"],
+                            "deny_cidrs": ["10.15.0.0/24"],
+                        },
+                    },
+                }
+            )
+        )
+        app.state.native_ctf_publication = load_publication(options, allow_test_only=True)
+        capabilities = (await http.get("/api/task-creation-capabilities", headers=user)).json()
+        environment = capabilities["native_ctf"]
+        assert environment["vpn"]["profile"] == VPN_DYNAMIC_PROFILE
+        reference = {key: environment[key] for key in ("id", "revision", "publication_stamp")}
+        private_group = await group()
+        source_url = f"/api/task-input-groups/{private_group}/private-vpn-source"
+        raw = task_openvpn_file()
+        assert (await http.put(source_url, headers=other, content=raw)).status_code == 403
+
+        async def broken_parser(_):
+            from anyio import BrokenWorkerProcess
+
+            raise BrokenWorkerProcess("private-worker-startup-detail")
+
+        with monkeypatch.context() as failing:
+            failing.setattr(app.state.native_runner_bootstrap.vpn, "parse_source", broken_parser)
+            unavailable = await http.put(source_url, headers=user, content=raw)
+            assert unavailable.status_code == 503
+            assert "private-worker-startup-detail" not in unavailable.text
+        upload = await http.put(source_url, headers=user, content=raw)
+        assert upload.status_code == 200, upload.text
+        source_id = upload.json()["source_id"]
+        replay_upload = await http.put(source_url, headers=user, content=raw)
+        assert replay_upload.json() == {"source_id": source_id}
+        listed = (await http.get(f"/api/task-input-groups/{private_group}", headers=user)).json()
+        assert listed["files"] == [] and source_id not in json.dumps(listed)
+        private_create = {
+            **create,
+            "input_group_id": private_group,
+            "native_environment": reference,
+            "native_vpn_source_id": source_id,
+        }
+        wrong_group = await http.post(
+            "/api/tasks", headers=user, json={**private_create, "input_group_id": await group()}
+        )
+        assert wrong_group.status_code == 422
+        created = await http.post("/api/tasks", headers=user, json=private_create)
+        assert created.status_code == 200, created.text
+        tid = UUID(created.json()["id"])
+        state = (await http.get(f"/api/tasks/{tid}/ctf/state", headers=user)).json()
+        assert state["task"]["native_network"] == {"mode": "unselected", "state": "unselected"}
+        assert state["task"]["initial_attachments"] == [] and source_id not in json.dumps(state)
+        async with ctf.repo.engine.connect() as conn:
+            asset = (
+                (
+                    await conn.execute(
+                        select(s.native_vpn_assets).where(
+                            s.native_vpn_assets.c.id == UUID(source_id)
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert asset["task_id"] == tid and "PRIVATE KEY" not in asset["ciphertext"]
+            bootstrap = app.state.native_runner_bootstrap
+            assert bootstrap.vpn.asset_cipher.decrypt(asset["ciphertext"].encode()) == raw
+            instructions = (
+                (
+                    await conn.execute(
+                        select(s.ctf_messages.c.body).where(
+                            s.ctf_messages.c.task_id == tid, s.ctf_messages.c.recipient_id == "lead"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(instructions) == 1
+            assert all(
+                expected in instructions[0]
+                for expected in (source_id, "network_use_default", create["goal"])
+            )
+            assert all("PRIVATE KEY" not in text for text in instructions)

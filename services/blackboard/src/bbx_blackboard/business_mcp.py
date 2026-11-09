@@ -9,6 +9,7 @@ from uuid import UUID
 
 import mcp.types as types
 from bbx_contracts.runner import ToolInvocation, runner_json_text
+from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
 from fastapi import HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from mcp.server import Server
@@ -29,10 +30,10 @@ class BusinessMCP:
 
         @self.server.list_tools()
         async def list_tools():
-            tid, identity, _ = request_scope.get()
+            tid, identity, _, dynamic = request_scope.get()
             gateway = self.application.state.runner_gateway
             allowed = await gateway.catalog(tid, identity)
-            catalog = schemas()
+            catalog = schemas(dynamic_vpn=dynamic)
             return [
                 types.Tool(
                     name=name,
@@ -45,7 +46,7 @@ class BusinessMCP:
 
         @self.server.call_tool(validate_input=False)
         async def call_tool(name, arguments):
-            tid, identity, sdk = request_scope.get()
+            tid, identity, sdk, _ = request_scope.get()
             meta = self.server.request_context.meta
             envelope = getattr(meta, "bbx", None)
             if not isinstance(envelope, dict):
@@ -120,13 +121,14 @@ class BusinessMCP:
             if gateway is None:
                 raise HTTPException(503, "Business MCP is unavailable")
             async with gateway.repo.engine.connect() as conn:
-                _, _, binding = await gateway._scope(conn, tid, identity, metadata=True)
+                task, _, binding = await gateway._scope(conn, tid, identity, metadata=True)
                 sdk = request.headers.get("x-bbx-sdk-session-id", "")
                 if not sdk or (
                     binding["sdk_session_id"] is not None and sdk != binding["sdk_session_id"]
                 ):
                     raise HTTPException(403, "MCP SDK identity changed")
-            token = request_scope.set((tid, identity, sdk))
+            dynamic = task["ctf_control"].get("vpn_profile") == VPN_DYNAMIC_PROFILE
+            token = request_scope.set((tid, identity, sdk, dynamic))
             try:
                 await self.manager.handle_request(scope, receive, send)
             finally:

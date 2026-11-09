@@ -199,6 +199,10 @@ export const api = {
     if (filters.status !== 'all') params.set('status', filters.status);
     return request<TaskPage>(`/tasks/page?${params}`, { signal });
   },
+  uploadPrivateVpnSource: (id: string, file: File) => request<{ source_id: string }>(
+    `/task-input-groups/${encodeURIComponent(id)}/private-vpn-source`,
+    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+  ),
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),

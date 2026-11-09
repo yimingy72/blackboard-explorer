@@ -6,6 +6,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import ssl
 import time
 from contextlib import asynccontextmanager, suppress
@@ -19,7 +20,7 @@ import mcp.types as types
 import uvicorn
 from bbx_contracts.runner import ToolInvocation, runner_json_text
 from bbx_contracts.runner_inputs import INPUT_PROFILE
-from bbx_contracts.runner_vpn import VPN_PROFILE
+from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_PROFILE, NativeTaskRoutePolicy
 from bbx_contracts.sandbox_tools import sandbox_schemas
 from bbx_sandbox_execution.connect import connect_bound_execd, read_execution_context
 from bbx_sandbox_execution.execution import AssignmentBinding
@@ -47,7 +48,7 @@ def load_configuration(path):
         or task != config["task_id"]
         or config.get("inbound_key") == config.get("report_key")
         or config.get("inputs_profile") not in {None, INPUT_PROFILE}
-        or config.get("vpn_profile") not in {None, VPN_PROFILE}
+        or config.get("vpn_profile") not in {None, VPN_PROFILE, VPN_DYNAMIC_PROFILE}
         or any(
             not isinstance(config.get(key), str) or not config[key]
             for key in ("inbound_key", "report_key", "execd_token")
@@ -72,6 +73,8 @@ class SandboxMCP:
         self.manager = StreamableHTTPSessionManager(self.server, json_response=True, stateless=True)
         self.http: httpx.AsyncClient
         self.sandbox = None
+        self.default_network: dict | None = None
+        self.vpn_network: dict | None = None
         self.vpn_link: dict | None = None
         self.network_locks: dict[str, asyncio.Lock] = {}
         self.acknowledged_networks: set[str] = set()
@@ -119,8 +122,14 @@ class SandboxMCP:
                 binding = AssignmentBinding(**claim["binding"])
                 self.check_binding(binding)
                 network = claim.get("network")
-                if self.config.get("traffic_targets") and name == "exec_command" and not network:
+                if self.binding_network and name == "exec_command" and not network:
                     raise ValueError("An original per-Assignment network is required")
+                if (
+                    network
+                    and self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
+                    and not network["scope"].get("vpn_operation_id")
+                ):
+                    self.observe_default_network(network["scope"])
                 sandbox = self.sandbox
                 if sandbox is None:
                     raise ValueError("Original Sandbox is unavailable")
@@ -197,6 +206,28 @@ class SandboxMCP:
                     isError=True,
                 )
 
+    @property
+    def binding_network(self):
+        return bool(
+            self.config.get("traffic_targets")
+            or self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
+        )
+
+    def observe_default_network(self, original):
+        value = {
+            "network_digest": original["network_digest"],
+            "route_policy": NativeTaskRoutePolicy.model_validate(
+                original["route_policy"]
+            ).model_dump(mode="json"),
+        }
+        if (
+            not re.fullmatch(r"[a-f0-9]{64}", value["network_digest"])
+            or self.vpn_network is not None
+            or self.default_network not in (None, value)
+        ):
+            raise ValueError("Original Task default network identity changed")
+        self.default_network = value
+
     def check_binding(self, binding):
         expected = {
             "task_id": self.config["task_id"],
@@ -204,7 +235,7 @@ class SandboxMCP:
             "pod_uid": self.config["sandbox_pod_uid"],
             "environment_revision": self.config["environment_revision"],
             "execution_context_id": self.config["execution_context_id"],
-            **(self.config["network"] if not self.config.get("traffic_targets") else {}),
+            **(self.config["network"] if not self.binding_network else {}),
         }
         if any(getattr(binding, key) != value for key, value in expected.items()):
             raise ValueError("Original Task execution binding changed")
@@ -213,9 +244,21 @@ class SandboxMCP:
         scope = item["scope"]
         source = scope["source_id"]
         ordinal = int(scope["host_interface"][2:], 16)
+        if self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE:
+            vpn = bool(scope.get("vpn_operation_id"))
+            network = self.vpn_network if vpn else self.default_network
+            if (
+                network is None
+                or network["network_digest"]
+                != scope.get("vpn_network_digest" if vpn else "network_digest")
+                or network["route_policy"] != scope.get("route_policy")
+            ):
+                raise ValueError("Original Sandbox network digest or policy changed")
+        else:
+            if self.config.get("traffic_targets") != scope.get("targets"):
+                raise ValueError("Original Sandbox traffic target changed")
         if (
-            self.config.get("traffic_targets") != scope["targets"]
-            or item["binding"] != json.loads(binding.scope_request()[1])
+            item["binding"] != json.loads(binding.scope_request()[1])
             or scope["task_id"] != binding.task_id
             or scope["agent_id"] != binding.agent_id
             or scope["role"] != binding.role
@@ -239,8 +282,11 @@ class SandboxMCP:
         scope, binding = item["scope"], AssignmentBinding(**item["binding"])
         source = self.network_scope(item, binding)
         path = f"network/{source}"
-        if self.config.get("vpn_profile") == VPN_PROFILE and (
-            not self.vpn_link or self.vpn_link["vpn_operation_id"] != scope.get("vpn_operation_id")
+        vpn = self.config.get("vpn_profile") == VPN_PROFILE or bool(scope.get("vpn_operation_id"))
+        if vpn and (
+            not self.vpn_link
+            or self.vpn_link["vpn_operation_id"] != scope.get("vpn_operation_id")
+            or self.vpn_link.get("network_digest") != scope.get("vpn_network_digest")
         ):
             raise ValueError("Original Task VPN link is unavailable")
         if prepare and item.get("prepare_allowed"):
@@ -254,13 +300,13 @@ class SandboxMCP:
                     "namespace": binding.namespace,
                     "network_identity": binding.network_identity,
                     "ipv4": binding.ipv4,
-                    "targets": scope["targets"],
-                    "scope_id": binding.scope_request()[0],
                     **(
-                        {"vpn": self.vpn_link}
-                        if self.config.get("vpn_profile") == VPN_PROFILE
-                        else {}
+                        {"route_policy": scope["route_policy"]}
+                        if "route_policy" in scope
+                        else {"targets": scope["targets"]}
                     ),
+                    "scope_id": binding.scope_request()[0],
+                    **({"vpn": self.vpn_link} if vpn else {}),
                 },
             )
         observed = await root_network(sandbox, "read", source)
@@ -493,9 +539,9 @@ class SandboxMCP:
                 cleanup = [asyncio.create_task(self.scopes())]
                 if not self.ready:
                     cleanup.append(asyncio.create_task(self.prepare_inputs(self.sandbox)))
-                if self.config.get("traffic_targets"):
+                if self.binding_network:
                     cleanup.append(asyncio.create_task(self.networks()))
-                if self.config.get("vpn_profile") == VPN_PROFILE:
+                if self.config.get("vpn_profile") in {VPN_PROFILE, VPN_DYNAMIC_PROFILE}:
                     cleanup.append(asyncio.create_task(supervise_sandbox_vpn(self, self.sandbox)))
                 try:
                     yield

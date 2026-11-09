@@ -32,7 +32,10 @@
       "additionalProperties": false,
       "properties": {
         "profile": {
-          "const": "openvpn-ipv4-tcp-v1",
+          "enum": [
+            "openvpn-ipv4-tcp-v1",
+            "openvpn-task-ipv4-tcp-v1"
+          ],
           "title": "Profile",
           "type": "string"
         },

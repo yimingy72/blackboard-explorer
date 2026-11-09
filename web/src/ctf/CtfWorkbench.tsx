@@ -219,6 +219,13 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         </div>
       </header>
       <div className={styles.runSummary} role="status"><span>{activeItems.length} 个题目 · {members.length} 个 Agent</span>{verified > 0 && <Tag color="success">{verified} 已验证</Tag>}{candidates > 0 && <Tag color="warning">{candidates} 候选待验</Tag>}<span className={styles.endReason}>{failure ? String(failure.summary ?? '系统执行失败') : terminal ? conclusionLabels[conclusionReason] ?? conclusionReason : phase === 'closing' ? '正在保存结果' : ''}</span>{failure && <code title={String(failure.correlation_id ?? '')}>追踪 {String(failure.correlation_id ?? '').slice(0,8)}</code>}</div>
+      {task.native_network && <Tag>
+        {task.native_network.state === 'stopped' ? '任务网络已停止'
+          : task.native_network.mode === 'unselected' ? '等待 Lead 确定任务网络'
+          : task.native_network.mode === 'default'
+            ? task.native_network.state === 'ready' ? '默认网络已就绪' : task.native_network.state === 'failed' ? '默认网络状态未确认' : '正在准备默认网络'
+            : task.native_network.state === 'ready' ? '共享 VPN 已连接' : task.native_network.state === 'disconnected' ? '共享 VPN 已断开' : task.native_network.state === 'failed' ? '共享 VPN 未就绪' : '正在准备共享 VPN'}
+      </Tag>}
       {task.initial_attachment_state === 'pending' && !terminal && <Tag color="processing">正在准备初始附件</Tag>}
       {(task.initial_attachment_state === 'blocked' || task.initial_attachment_state === 'pending' && terminal) && <Alert type="warning" title="初始附件写入未确认，原文件仍保留" showIcon />}
       {statusAction.error && <Alert type="error" title={statusAction.error} showIcon />}{state.error && <Alert type="error" title={state.error.message} action={<Button onClick={() => void state.refetch()}>重试</Button>} />}

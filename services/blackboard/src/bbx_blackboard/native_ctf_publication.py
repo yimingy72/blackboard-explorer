@@ -17,7 +17,12 @@ from bbx_contracts.runner_bootstrap import (
     management_document_digest,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE, NativeSharedInputLimits
-from bbx_contracts.runner_vpn import VPN_PROFILE, NativeVpnCapability, NativeVpnProfile
+from bbx_contracts.runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    VPN_PROFILES,
+    NativeVpnCapability,
+    vpn_deployment,
+)
 from fastapi import HTTPException
 from pydantic import Field
 
@@ -53,11 +58,12 @@ class CaptureAcceptance(ContractModel):
     public_create_and_archive: Literal[True]
     inputs_profile: Literal["shared-inputs-v1"] | None = None
     inputs_host_image: str | None = None
-    vpn_profile: Literal["openvpn-ipv4-tcp-v1"] | None = None
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1", "openvpn-task-ipv4-tcp-v1"] | None = None
     vpn_egress_image: str | None = None
     vpn_sandbox_image: str | None = None
     vpn_host_image: str | None = None
     vpn_roundtrip_and_disconnect: Literal[True] | None = None
+    task_network_default_and_vpn: Literal[True] | None = None
 
 
 class NativeCtfPublication(ContractModel):
@@ -73,14 +79,14 @@ class NativeCtfPublication(ContractModel):
     inputs_profile: Literal["shared-inputs-v1"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    vpn_profile: Literal["openvpn-ipv4-tcp-v1"] | None = Field(
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1", "openvpn-task-ipv4-tcp-v1"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
     def public(self, stamp: str) -> NativeCtfEnvironment:
         vpn = (
-            NativeVpnProfile.model_validate(self.runtime_resource_config["vpn"])
-            if self.vpn_profile == VPN_PROFILE
+            vpn_deployment(self.runtime_resource_config["vpn"])
+            if self.vpn_profile in VPN_PROFILES
             else None
         )
         return NativeCtfEnvironment(
@@ -147,10 +153,11 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
     try:
         publication = NativeCtfPublication.model_validate_json(_bounded_file(path))
         vpn = publication.runtime_resource_config.get("vpn")
-        if (vpn is not None) != (publication.vpn_profile == VPN_PROFILE):
+        if (vpn is not None) != (publication.vpn_profile in VPN_PROFILES):
             raise ValueError("VPN deployment and publication must be enabled together")
         if vpn is not None:
-            NativeVpnProfile.model_validate(vpn)
+            if vpn_deployment(vpn).profile != publication.vpn_profile:
+                raise ValueError("VPN deployment and publication profiles differ")
         if publication.release == "test_only":
             if not allow_test_only or publication.acceptance is not None:
                 raise ValueError("Fixture publications are not accepted by the application")
@@ -178,6 +185,10 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 or accepted.model != publication.model
                 or accepted.inputs_profile != publication.inputs_profile
                 or accepted.vpn_profile != publication.vpn_profile
+                or (
+                    publication.vpn_profile == VPN_DYNAMIC_PROFILE
+                    and accepted.task_network_default_and_vpn is not True
+                )
                 or (
                     vpn is not None
                     and (

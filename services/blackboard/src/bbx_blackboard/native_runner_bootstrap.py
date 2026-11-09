@@ -39,7 +39,13 @@ from bbx_contracts.runner_bootstrap import (
     validate_binding_capture_deployment,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE
-from bbx_contracts.runner_vpn import VPN_PROFILE, NativeVpnProfile, vpn_targets_compatible
+from bbx_contracts.runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    VPN_PROFILES,
+    NativeVpnProfile,
+    vpn_deployment,
+    vpn_targets_compatible,
+)
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import insert, or_, select, text, update
@@ -323,8 +329,16 @@ class NativeRunnerBootstrap:
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
                 **(
-                    {"vpn_profile": VPN_PROFILE, "vpn": {"state": "idle"}}
-                    if (publication or {}).get("vpn_profile") == VPN_PROFILE
+                    {
+                        "vpn_profile": publication["vpn_profile"],
+                        "vpn": {"state": "idle"},
+                        **(
+                            {"native_network": "unselected"}
+                            if publication["vpn_profile"] == VPN_DYNAMIC_PROFILE
+                            else {}
+                        ),
+                    }
+                    if publication and publication.get("vpn_profile") in VPN_PROFILES
                     else {}
                 ),
             },
@@ -392,23 +406,24 @@ class NativeRunnerBootstrap:
         if "vpn" in value:
             try:
                 validate_binding_capture_deployment(value)
-                profile = NativeVpnProfile.model_validate(value["vpn"])
+                profile = vpn_deployment(value["vpn"])
                 if profile.sandbox_image.rsplit("@", 1)[-1] in {
                     value["traffic_sandbox_image"].rsplit("@", 1)[-1],
                     value["sandbox_image"].rsplit("@", 1)[-1],
                 }:
                     raise ValueError("VPN requires a distinct frozen Sandbox image")
-                vpn_targets_compatible(
-                    profile, value["traffic_targets"], value.get("runner_control_egress", ())
-                )
-                if profile.peer_namespace and profile.peer_namespace in {
-                    value.get("system_namespace"),
-                    "default",
-                    "kube-system",
-                    "kube-public",
-                    "kube-node-lease",
-                }:
-                    raise ValueError("VPN peer namespace overlaps a control namespace")
+                if isinstance(profile, NativeVpnProfile):
+                    vpn_targets_compatible(
+                        profile, value["traffic_targets"], value.get("runner_control_egress", ())
+                    )
+                    if profile.peer_namespace and profile.peer_namespace in {
+                        value.get("system_namespace"),
+                        "default",
+                        "kube-system",
+                        "kube-public",
+                        "kube-node-lease",
+                    }:
+                        raise ValueError("VPN peer namespace overlaps a control namespace")
             except (ValueError, TypeError, KeyError) as error:
                 raise HTTPException(422, "Trusted native VPN deployment is invalid") from error
         return value
@@ -790,6 +805,16 @@ class NativeRunnerBootstrap:
 
     async def act(self, tid, raw):
         body, _ = decode(NativeRunnerAction, raw, 262144)
+        if body.action == "network_default_ready":
+            async with self.repo.engine.begin() as conn:
+                record, _ = await self._checked(conn, tid, body, live=True)
+                return await self.vpn.default_ready(conn, tid, record, body.proof)
+        if body.action == "vpn_prepare_source":
+            return await self.vpn.prepare_source(tid, body)
+        if body.action == "vpn_peer_ready":
+            async with self.repo.engine.begin() as conn:
+                record, task = await self._checked(conn, tid, body, live=True)
+                return await self.vpn.peer_ready(conn, tid, record, task, body.proof)
         if body.action == "vpn_material":
             async with self.repo.engine.begin() as conn:
                 record, _ = await self._checked(conn, tid, body, live=True)
@@ -873,6 +898,14 @@ class NativeRunnerBootstrap:
                         data = await native_recovery.capture(
                             self.repo, conn, tid, record, task, reason, instant()
                         )
+                if (
+                    ready
+                    and not stopping
+                    and not data.get("recovery")
+                    and data.get("native_network") == "default"
+                    and not data.get("route_policy")
+                ):
+                    data.update(self.vpn.default_route_fields({**record, "observation": observed}))
                 if ready and not stopping and not data.get("recovery"):
                     await self._lead(conn, tid, record)
                     data.setdefault(

@@ -583,6 +583,7 @@ class CtfService(
         native_queue=None,
         native_inputs_profile=None,
         native_vpn_profile=None,
+        native_vpn_source_id=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
         from bbx_contracts.runner_inputs import INPUT_PROFILE
@@ -629,12 +630,18 @@ class CtfService(
                 "completion_requirements": data.get("completion_requirements"),
             },
         )
+        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
+
+        if native_queue is not None and native_vpn_profile == VPN_DYNAMIC_PROFILE:
+            fields["ctf_control"]["vpn_profile"] = native_vpn_profile
         if business_contract == BOARD_CONTRACT:
             fields["ctf_control"].update(
                 business_contract=BOARD_CONTRACT,
                 business_tools=business_manifest(
                     automatic=native_workers,
                     vpn=native_queue is not None and bool(native_vpn_profile),
+                    task_network=native_queue is not None
+                    and native_vpn_profile == VPN_DYNAMIC_PROFILE,
                 ),
             )
         async with self.repo.engine.begin() as conn:
@@ -698,6 +705,21 @@ class CtfService(
                     .values(files=files, create_request_hash=create_request_hash)
                 )
             await conn.execute(insert(s.tasks).values(id=tid, **fields))
+            if native_vpn_source_id is not None:
+                if native_vpn_profile != VPN_DYNAMIC_PROFILE or input_group_id is None:
+                    raise HTTPException(422, "Private VPN source is not supported by this Task")
+                matched = await conn.execute(
+                    update(s.native_vpn_assets)
+                    .where(
+                        s.native_vpn_assets.c.id == native_vpn_source_id,
+                        s.native_vpn_assets.c.group_id == input_group_id,
+                        s.native_vpn_assets.c.task_id.is_(None),
+                    )
+                    .values(task_id=tid)
+                    .returning(s.native_vpn_assets.c.id)
+                )
+                if matched.scalar_one_or_none() is None:
+                    raise HTTPException(422, "Private VPN source is not available for this Task")
             if input_group_id is not None:
                 await conn.execute(
                     update(s.task_input_groups)
@@ -728,7 +750,24 @@ class CtfService(
                         str(uuid5(NAMESPACE_URL, f"native-worker-seat:{tid}:{index}")),
                         "teammate",
                     )
-            for body in initial_input_parts(fields):
+            initial_parts = initial_input_parts(fields)
+            if native_queue is not None and native_vpn_profile == VPN_DYNAMIC_PROFILE:
+                network_instruction = (
+                    "Platform execution guidance: choose the Task network before the first "
+                    "solver command, based on the Task instructions. "
+                    "If no VPN is required, call network_use_default with no arguments. "
+                    "If VPN is required, call vpn_configure with the private source ID or the "
+                    "plain HTTPS configuration URL and a TCP preflight address. "
+                    "The probe does not limit later solver destinations within the Task network. "
+                    "Never pass credentials or signed URLs in tool arguments."
+                )
+                if native_vpn_source_id is not None:
+                    network_instruction += (
+                        " The private configuration source_id for this Task is "
+                        f"{native_vpn_source_id}."
+                    )
+                initial_parts[0] = network_instruction + "\n\n" + initial_parts[0]
+            for body in initial_parts:
                 await self._message(conn, tid, "user", "lead", body, str(uuid4()), "instruction")
             if native_queue is not None:
                 await native_queue(conn, tid)

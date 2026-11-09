@@ -43,6 +43,7 @@ from bbx_contracts.models import (
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import NativeRunnerLaunch, TaskCreationCapabilities
 from bbx_contracts.runner_inputs import INPUT_PROFILE
+from bbx_contracts.runner_vpn import NativeTaskNetworkStatus
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -151,6 +152,9 @@ class TaskView(BaseModel):
     business_contract: str | None = None
     name: str | None = None
     initial_attachments: list[InitialAttachment] = Field(default_factory=list)
+    native_network: NativeTaskNetworkStatus | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     initial_attachment_state: Literal["pending", "ready", "blocked"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1027,6 +1031,11 @@ def create_app(
         elif isinstance(body, CtfTaskCreate) and body.native_environment is not None:
             raise HTTPException(409, "当前部署未发布原生 CTF 环境")
 
+        if isinstance(body, CtfTaskCreate) and body.native_vpn_source_id is not None:
+            from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
+
+            if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
+                raise HTTPException(422, "Private VPN source is not supported by this Task")
         if isinstance(body, CtfTaskCreate):
             profile = await resolve_ctf_creation(request, body, publication)
             try:
@@ -1052,6 +1061,7 @@ def create_app(
                     "profile_version",
                     "reasoning_effort",
                     "native_environment",
+                    "native_vpn_source_id",
                 }
             )
             spec["agent_profile"] = row["name"]
@@ -1067,6 +1077,7 @@ def create_app(
                         if publication
                         else None,
                         "native_vpn_profile": publication.vpn_profile if publication else None,
+                        "native_vpn_source_id": body.native_vpn_source_id,
                     }
                     if native_queue is not None
                     else {}

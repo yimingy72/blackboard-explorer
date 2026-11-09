@@ -81,6 +81,12 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     public["task"]["ctf_phase"] = data["task"].get("ctf_control", {}).get("phase")
     if attachment_state := data["task"].get("ctf_control", {}).get("initial_attachment_state"):
         public["task"]["initial_attachment_state"] = attachment_state
+    bootstrap = request.app.state.native_runner_bootstrap
+    if bootstrap is not None and data["task"].get("ctf_control", {}).get("vpn_profile"):
+        async with bootstrap.repo.engine.connect() as conn:
+            record = await bootstrap._get(conn, task_id)
+        if network := bootstrap.vpn.status_projection(record):
+            public["task"]["native_network"] = network.model_dump(mode="json")
     public["task"]["ctf_cleanup"] = data["task"].get("ctf_control", {}).get("cleanup", {})
     public["task"]["ctf_review_usage"] = data["task"].get("ctf_control", {}).get("review_usage", {})
     if identity.kind == "user":

@@ -24,7 +24,15 @@ from pydantic import Field, model_validator
 from sqlalchemy import select, text, update
 
 from bbx_blackboard.native import NativeUnavailable, object_bytes
-from bbx_blackboard.native_vpn import vpn_enabled, vpn_retired, vpn_solver_deadline, vpn_state
+from bbx_blackboard.native_vpn import (
+    default_network,
+    dynamic_vpn,
+    vpn_network,
+    vpn_retired,
+    vpn_selected,
+    vpn_solver_deadline,
+    vpn_state,
+)
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 
@@ -269,6 +277,28 @@ class NativeTraffic:
                 "namespace": f"bbx{ordinal:03x}",
                 "ipv4": str(gateway + 1),
             }
+            if dynamic_vpn(record):
+                vpn_solver_deadline(record)
+                if vpn_selected(record):
+                    network = vpn_network(record)
+                    path = {
+                        "route_policy": network["route_policy"],
+                        "vpn_operation_id": vpn_state(record)["operation_id"],
+                        "vpn_network_digest": network["network_digest"],
+                    }
+                else:
+                    path = default_network(record)
+                    if path is None:
+                        raise HTTPException(409, "Original default network policy is not confirmed")
+            else:
+                path = {
+                    "targets": context["traffic_targets"],
+                    **(
+                        {"vpn_operation_id": vpn_state(record)["operation_id"]}
+                        if vpn_selected(record)
+                        else {}
+                    ),
+                }
             scope = {
                 **{
                     key: bound[key]
@@ -292,12 +322,7 @@ class NativeTraffic:
                 "runner_pod_uid": context["runner_pod_uid"],
                 "host_interface": f"bv{ordinal:03x}",
                 "host_ipv4": str(gateway),
-                "targets": context["traffic_targets"],
-                **(
-                    {"vpn_operation_id": vpn_state(record)["operation_id"]}
-                    if vpn_enabled(record)
-                    else {}
-                ),
+                **path,
             }
             task = await row(conn, s.tasks, tid)
             entry = {
@@ -397,6 +422,16 @@ class NativeTraffic:
                 entry["scope"].get("vpn_operation_id") != vpn_state(record).get("operation_id")
             ):
                 raise HTTPException(409, "Original capture source VPN identity changed")
+            if dynamic_vpn(record):
+                path = vpn_network(record) if vpn_selected(record) else default_network(record)
+                if path is None or (
+                    entry["scope"].get("route_policy") != path.get("route_policy")
+                    or entry["scope"].get(
+                        "vpn_network_digest" if vpn_selected(record) else "network_digest"
+                    )
+                    != path.get("network_digest")
+                ):
+                    raise HTTPException(409, "Original capture source route policy changed")
             until = min(
                 vpn_deadline or now + 12000,
                 now + 12000,

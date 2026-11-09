@@ -14,6 +14,7 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import anyio
+from anyio import BrokenWorkerProcess
 from bbx_contracts.models import InitialAttachment
 from bbx_contracts.runner_inputs import INPUT_FILE_LIMIT, INPUT_PROFILE, INPUT_TOTAL_LIMIT
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -338,6 +339,73 @@ async def create_group(request: Request) -> dict[str, Any]:
 @router.get("/{group_id}", response_model=InputGroupView)
 async def get_group(request: Request, group_id: UUID) -> dict[str, Any]:
     return await readable(request, group_id)
+
+
+class PrivateVpnSourceView(BaseModel):
+    source_id: UUID
+
+
+@router.put("/{group_id}/private-vpn-source", response_model=PrivateVpnSourceView)
+async def upload_private_vpn_source(request: Request, group_id: UUID) -> PrivateVpnSourceView:
+    from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_SOURCE_LIMIT
+
+    identity = require_user_or_service(request)
+    publication = request.app.state.native_ctf_publication.publication
+    if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
+        raise HTTPException(404, "Private VPN configuration upload is not published")
+    store = groups(request)
+    owner = owner_key(identity)
+    check_mutable(await store.get(group_id), owner)
+    content = bytearray()
+    try:
+        async with asyncio.timeout(10):
+            async for chunk in request.stream():
+                if len(content) + len(chunk) > VPN_SOURCE_LIMIT:
+                    raise HTTPException(413, "VPN configuration exceeds the upload limit")
+                content.extend(chunk)
+    except TimeoutError:
+        raise HTTPException(408, "VPN configuration upload timed out") from None
+    raw = bytes(content)
+    bootstrap = request.app.state.native_runner_bootstrap
+    if bootstrap is None:
+        raise HTTPException(503, "Private VPN configuration is unavailable")
+    try:
+        await bootstrap.vpn.parse_source(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(422, "Unsupported OpenVPN configuration") from None
+    except BrokenWorkerProcess:
+        raise HTTPException(503, "Private VPN configuration validation is unavailable") from None
+    except TimeoutError:
+        raise HTTPException(408, "VPN configuration validation timed out") from None
+    digest = hashlib.sha256(raw).hexdigest()
+    cipher = bootstrap.vpn.asset_cipher
+    async with store.engine.begin() as conn:
+        check_mutable(await store.row(conn, group_id, lock=True), owner)
+        existing = (
+            (
+                await conn.execute(
+                    select(s.native_vpn_assets).where(s.native_vpn_assets.c.group_id == group_id)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if existing and existing["digest"] == digest:
+            return PrivateVpnSourceView(source_id=existing["id"])
+        if existing:
+            await conn.execute(
+                delete(s.native_vpn_assets).where(s.native_vpn_assets.c.id == existing["id"])
+            )
+        source_id = uuid4()
+        await conn.execute(
+            insert(s.native_vpn_assets).values(
+                id=source_id,
+                group_id=group_id,
+                digest=digest,
+                ciphertext=cipher.encrypt(raw).decode(),
+            )
+        )
+    return PrivateVpnSourceView(source_id=source_id)
 
 
 @router.post(

@@ -57,3 +57,43 @@ test('原生 CTF 创建需要已发布环境，网络不明时重试同一输入
   expect(requests[0]).not.toHaveProperty('reasoning_effort');
   expect(mock.unexpected).toEqual([]);
 });
+
+test('私有 VPN 文件只作为可选引用随原生 CTF 创建', async ({ page }) => {
+  const mock = await installMockApi(page);
+  const native = {
+    id: 'task-network', revision: 1, publication_stamp: 'd'.repeat(64),
+    label: '任务网络', model_id: 'fixed-model', model_version: 8,
+    vpn: { profile: 'openvpn-task-ipv4-tcp-v1', id: 'task-vpn', label: '共享 VPN' },
+  };
+  const sourceId = '0bf43388-2878-469f-94d1-e91ac65dbbe8';
+  const marker = 'synthetic-private-config-bytes';
+  let uploadedTo: string | undefined;
+  let submitted: Record<string, unknown> | undefined;
+  await page.route('**/api/task-creation-capabilities', (route) =>
+    route.fulfill({ json: { mode: 'native-ctf', native_ctf: native } }));
+  await page.route('**/api/task-input-groups/*/private-vpn-source', (route) => {
+    expect(route.request().method()).toBe('PUT');
+    expect(route.request().postData()).toBe(marker);
+    uploadedTo = new URL(route.request().url()).pathname.split('/').at(-2);
+    return route.fulfill({ json: { source_id: sourceId } });
+  });
+  await page.route('**/api/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submitted = route.request().postDataJSON();
+    return route.fulfill({ json: { id: TASK_ID, agent_profile: 'ctf-task-settings', agent_profile_version: 1 } });
+  });
+  await page.goto('/tasks/new');
+  await expect(page.getByText('私有 VPN 配置（可选）')).toBeVisible();
+  await expect(page.getByText('此环境暂不支持初始附件。')).toBeVisible();
+  await page.getByLabel('私有 VPN 配置（可选）', { exact: true }).setInputFiles({
+    name: 'fixture.ovpn', mimeType: 'application/octet-stream', buffer: Buffer.from(marker),
+  });
+  await page.getByLabel('任务目标').fill('Lead 根据任务说明自行决定网络');
+  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page).toHaveURL(`/tasks/${TASK_ID}`);
+  expect(uploadedTo).toBeTruthy();
+  expect(submitted).toMatchObject({ native_vpn_source_id: sourceId, input_group_id: uploadedTo, input_file_ids: [] });
+  expect(submitted).not.toHaveProperty('native_network');
+  expect(JSON.stringify(submitted)).not.toContain(marker);
+  expect(mock.unexpected).toEqual([]);
+});

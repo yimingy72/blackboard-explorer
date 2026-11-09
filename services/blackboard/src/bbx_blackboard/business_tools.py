@@ -18,10 +18,12 @@ from bbx_contracts.challenge_board import (
     FlagSubmissionRequest,
 )
 from bbx_contracts.runner_vpn import (
+    NETWORK_USE_DEFAULT,
     VPN_CONFIGURE,
     VPN_DISCONNECT,
     VPN_STATUS,
     VPN_TOOLS,
+    NativeTaskVpnConfigure,
     NativeVpnConfigure,
     NativeVpnDisconnect,
     NativeVpnStatus,
@@ -124,7 +126,7 @@ class BusinessTools:
         raise HTTPException(404, "Unknown business tool")
 
 
-def schemas():
+def schemas(*, dynamic_vpn=False):
     models = {
         "board_announcements": AnnouncementReadRequest,
         "board_challenges": BoardPageRequest,
@@ -137,13 +139,17 @@ def schemas():
         "board_post_intent": ChallengeIntentRequest,
         "board_record_flag": FlagCandidateRequest,
         "board_submit_flag": FlagSubmissionRequest,
-        VPN_CONFIGURE: NativeVpnConfigure,
+        VPN_CONFIGURE: NativeTaskVpnConfigure if dynamic_vpn else NativeVpnConfigure,
         VPN_STATUS: NativeVpnStatus,
         VPN_DISCONNECT: NativeVpnDisconnect,
+        **({NETWORK_USE_DEFAULT: NativeVpnStatus} if dynamic_vpn else {}),
     }
     result = {}
     for name, model in models.items():
         schema = model.model_json_schema()
+        if name == VPN_CONFIGURE and dynamic_vpn:
+            target = schema.pop("$defs")["NativeVpnTarget"]
+            schema["properties"]["preflight"] = target
         schema["properties"].pop("request_id", None)
         schema["required"] = [item for item in schema.get("required", []) if item != "request_id"]
         if name in {

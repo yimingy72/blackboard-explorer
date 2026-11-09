@@ -252,6 +252,7 @@ class CtfTaskCreate(CtfTaskSpec):
     native_environment: NativeCtfEnvironmentRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    native_vpn_source_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
     public_input_ids: list[UUID] | None = Field(default=None, max_length=20)
@@ -262,6 +263,8 @@ class CtfTaskCreate(CtfTaskSpec):
 
     @model_validator(mode="after")
     def validate_selection(self) -> CtfTaskCreate:
+        if self.native_vpn_source_id is not None and self.input_group_id is None:
+            raise ValueError("A private VPN configuration requires an owned input group")
         if self.model_version is not None and self.model_id is None:
             raise ValueError("Model version requires a model ID")
         if self.input_file_ids is not None and self.input_group_id is None:
