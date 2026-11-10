@@ -1,9 +1,12 @@
+import hashlib
+import json
 import logging
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 
 import admin_ui_proxy
 import httpx
 import pytest
-from admin_ui_proxy import AdminUI
+from admin_ui_proxy import AdminUI, LocalizedUI
 from starlette.applications import Starlette
 from starlette.routing import Route
 
@@ -134,3 +137,145 @@ async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fau
             assert readbacks == 1
         if fault == "down":
             assert readbacks > 1
+
+
+@pytest.mark.asyncio
+async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monkeypatch):
+    key = "synthetic-playground-key"
+    path = admin_ui_proxy.PLAYGROUND_PATH.decode()
+    marker = admin_ui_proxy.PLAYGROUND_MARKER
+    digest = hashlib.sha256(key.encode()).hexdigest()
+    data_origin = "http://native.test:4000"
+    calls = []
+    mode = "ok"
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist/index.html").write_bytes(marker)
+    (tmp_path / "assets-manifest.json").write_text(
+        json.dumps(
+            {
+                "upstream_commit": admin_ui_proxy.UPSTREAM_UI_COMMIT,
+                "files": {"index.html": hashlib.sha256(marker).hexdigest()},
+                "spa_paths": ["/ui", "/ui/llm/playground"],
+            }
+        )
+    )
+
+    def native(request):
+        calls.append(request)
+        if str(request.url) == NATIVE + "/api/runtime":
+            assert "data=session" not in request.headers.get("cookie", "")
+            if request.headers.get("authorization") != "Basic fixture":
+                return httpx.Response(401)
+            return httpx.Response(
+                200,
+                json={"build": {"gitRevision": admin_ui_proxy.UPSTREAM_UI_COMMIT}},
+                headers={"set-cookie": "admin=session; Path=/"},
+            )
+        assert str(request.url) == data_origin + path
+        assert request.method == "POST"
+        assert request.headers["authorization"] == f"Bearer {key}"
+        assert request.headers["content-type"] == "application/json"
+        for header in ("origin", "cookie", "x-forwarded-for", "x-bbx-task-id"):
+            assert header not in request.headers
+        assert request.content == b'{"model":"fixture"}'
+        if mode == "timeout":
+            raise httpx.ReadTimeout("fixture timeout")
+        if mode == "redirect":
+            return httpx.Response(307, headers={"location": "https://unrelated.test"})
+        return httpx.Response(
+            200,
+            json={"result": "synthetic"},
+            headers={"set-cookie": "data=session; Path=/", "www-authenticate": "Basic ignored"},
+        )
+
+    peers = {"legacy": "http://legacy.test", "native": "http://secondary.test"}
+    enabled_ui = LocalizedUI(tmp_path, playground=True)
+    disabled_ui = LocalizedUI(tmp_path)
+    assert b'content="disabled"' in disabled_ui.index[0]
+    with pytest.raises(ValueError, match="requires a verified UI, data origin and key"):
+        AdminUI(NATIVE, PUBLIC, peers, "x" * 32, None, playground_data_url=data_origin)
+    proxy = AdminUI(
+        NATIVE,
+        PUBLIC,
+        peers,
+        "x" * 32,
+        None,
+        localized=enabled_ui,
+        playground_data_url=data_origin,
+        playground_key_sha256=digest,
+    )
+    app = Starlette(routes=[Route("/{path:path}", proxy.handle, methods=["GET", "POST", "PUT"])])
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(native)) as upstream,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(native),
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+        ) as playground_http,
+        httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=PUBLIC) as browser,
+    ):
+        app.state.http, app.state.playground_http = upstream, playground_http
+        assert (await browser.get("/ui/llm/playground")).status_code == 401
+        page = await browser.get("/ui/llm/playground", headers={"authorization": "Basic fixture"})
+        assert page.status_code == 200 and b'content="enabled"' in page.content
+        calls.clear()
+        headers = {"origin": PUBLIC, "authorization": f"Bearer {key}"}
+        for target, additional, status in (
+            (path, {"origin": "http://foreign.test"}, 403),
+            (path, {"authorization": "Basic fixture"}, 401),
+            (path, {"authorization": "Bearer synthetic-review-key"}, 401),
+            (path, {"authorization": "Bearer synthetic-task-key"}, 401),
+            (path, {"authorization": "Bearer synthetic-catalog-key"}, 401),
+            (path, {"content-type": "text/plain"}, 415),
+            (path + "?query=yes", {}, 403),
+            (path + "/", {}, 405),
+            ("/v1/chat/%63ompletions", {}, 405),
+            ("/v1/responses", {}, 405),
+        ):
+            response = await browser.post(
+                target, headers={**headers, **additional}, json={"model": "fixture"}
+            )
+            assert response.status_code == status
+        assert (await browser.get(path, headers=headers)).status_code == 405
+        assert (
+            await browser.put("/api/config/resources/llm.policy/cors", headers=headers, json={})
+        ).status_code == 405
+        assert (
+            await browser.put("/api/config/resources/llm.apiKey", headers=headers, json={})
+        ).status_code == 405
+        async with proxy.lock:
+            assert (
+                await browser.post(path, headers=headers, json={"model": "fixture"})
+            ).status_code == 409
+        with monkeypatch.context() as small:
+            small.setattr(admin_ui_proxy, "LIMIT", 1)
+            assert (
+                await browser.post(path, headers=headers, json={"model": "fixture"})
+            ).status_code == 413
+        assert calls == []
+        response = await browser.post(
+            path,
+            headers={
+                **headers,
+                "cookie": "ignored",
+                "x-forwarded-for": "ignored",
+                "x-bbx-task-id": "ignored",
+            },
+            json={"model": "fixture"},
+        )
+        assert response.json() == {"result": "synthetic"}
+        assert response.headers["cache-control"] == "no-store"
+        assert "www-authenticate" not in response.headers and "set-cookie" not in response.headers
+        for fault, status in (("timeout", 504), ("redirect", 502)):
+            mode = fault
+            response = await browser.post(path, headers=headers, json={"model": "fixture"})
+            assert response.status_code == status
+            assert "location" not in response.headers
+        assert len(calls) == 3
+        assert list(playground_http.cookies.jar) == []
+        assert (
+            await browser.get("/ui/llm/playground", headers={"authorization": "Basic fixture"})
+        ).status_code == 200
+
+        proxy.playground_data = None
+        response = await browser.post(path, headers=headers, json={"model": "fixture"})
+        assert response.status_code == 405 and len(calls) == 4

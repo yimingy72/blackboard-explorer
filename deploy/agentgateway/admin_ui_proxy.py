@@ -1,9 +1,10 @@
-"""Forward the original authenticated AgentGateway UI; fence only its model writes."""
+"""Forward the native AgentGateway UI, its fenced model writes and local chat."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -11,6 +12,7 @@ import os
 import re
 import ssl
 from contextlib import asynccontextmanager
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -69,12 +71,15 @@ UI_SECURITY_HEADERS = {
 }
 UI_PATH = re.compile(r"/ui(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*/?")
 UPSTREAM_UI_COMMIT = "26f5aebe99a36a037fe54f8080a608aca5547e15"
+PLAYGROUND_PATH = b"/v1/chat/completions"
+PLAYGROUND_MARKER = b'<meta name="bbx-native-playground" content="">'
+PLAYGROUND_TIMEOUT = httpx.Timeout(120, connect=5)
 
 
 class LocalizedUI:
     """One verified build of the native UI; no filesystem lookup on a request."""
 
-    def __init__(self, bundle: Path):
+    def __init__(self, bundle: Path, *, playground: bool = False):
         if bundle.is_symlink():
             raise ValueError("Invalid localized native UI bundle")
         bundle = bundle.resolve(strict=True)
@@ -111,7 +116,13 @@ class LocalizedUI:
                 raise ValueError("Localized native UI asset integrity check failed")
             media = mimetypes.guess_type(name)[0] or "application/octet-stream"
             self.assets["/ui/" + name] = (data, media)
-        self.index = self.assets["/ui/index.html"]
+        index, media = self.assets["/ui/index.html"]
+        if playground and index.count(PLAYGROUND_MARKER) != 1:
+            raise ValueError("The localized native UI does not support the local playground")
+        mode = b"enabled" if playground else b"disabled"
+        marker = PLAYGROUND_MARKER.replace(b'content=""', b'content="' + mode + b'"')
+        index = index.replace(PLAYGROUND_MARKER, marker)
+        self.index = self.assets["/ui/index.html"] = (index, media)
         self.pages = frozenset(manifest["spa_paths"])
         if "/ui" not in self.pages or not all(
             UI_PATH.fullmatch(page) and "." not in page and not page.endswith("/")
@@ -238,7 +249,16 @@ class NativeRestart:
 
 class AdminUI:
     def __init__(
-        self, upstream, public, peers, key, restart, *, localized: LocalizedUI | None = None
+        self,
+        upstream,
+        public,
+        peers,
+        key,
+        restart,
+        *,
+        localized: LocalizedUI | None = None,
+        playground_data_url: str | None = None,
+        playground_key_sha256: str | None = None,
     ):
         self.upstream = origin(upstream)
         self.public = origin(public)
@@ -249,6 +269,22 @@ class AdminUI:
         self.restart = restart
         self.lock = asyncio.Lock()
         self.localized = localized
+        self.playground_data = None
+        self.playground_key_sha256 = b""
+        if playground_data_url is not None or playground_key_sha256 is not None:
+            if (
+                localized is None
+                or playground_data_url is None
+                or not re.fullmatch(r"[a-f0-9]{64}", playground_key_sha256 or "")
+            ):
+                raise ValueError("The local playground requires a verified UI, data origin and key")
+            self.playground_data = origin(playground_data_url)
+            if urlsplit(self.playground_data).hostname != urlsplit(
+                self.upstream
+            ).hostname or self.playground_data in {self.upstream, self.public}:
+                raise ValueError("The local playground requires a separate native data origin")
+            assert playground_key_sha256 is not None
+            self.playground_key_sha256 = bytes.fromhex(playground_key_sha256)
 
     async def fence(self, http, request_id, action):
         async def one(site, address):
@@ -480,10 +516,75 @@ class AdminUI:
             headers={**security, "cache-control": "no-store", "content-length": str(len(data))},
         )
 
+    async def playground_chat(self, request: Request) -> Response:
+        if self.playground_data is None or request.method != "POST":
+            return Response(status_code=405)
+        if request.headers.getlist("origin") != [self.public] or request.url.query:
+            return Response(status_code=403)
+        authorizations = request.headers.getlist("authorization")
+        bearer = (
+            re.fullmatch(
+                r"Bearer ([A-Za-z0-9._~+/=-]{1,256})", authorizations[0], re.IGNORECASE | re.ASCII
+            )
+            if len(authorizations) == 1
+            else None
+        )
+        if bearer is None or not hmac.compare_digest(
+            hashlib.sha256(bearer[1].encode("ascii")).digest(), self.playground_key_sha256
+        ):
+            return Response(status_code=401, headers={"cache-control": "no-store"})
+        content_types = request.headers.getlist("content-type")
+        if len(content_types) != 1 or content_types[0].split(";", 1)[0] != "application/json":
+            return Response(status_code=415)
+        body = await bounded_body(request.stream())
+        if body is None:
+            return Response(status_code=413)
+        if self.lock.locked():
+            return Response(status_code=409)
+        try:
+            # Model saves can restart the native process; keep chat and saves apart.
+            async with (
+                self.lock,
+                asyncio.timeout(120),
+                request.app.state.playground_http.stream(
+                    "POST",
+                    self.playground_data + PLAYGROUND_PATH.decode(),
+                    headers={
+                        "authorization": "Bearer " + bearer[1],
+                        "content-type": "application/json",
+                    },
+                    content=body,
+                    timeout=PLAYGROUND_TIMEOUT,
+                    follow_redirects=False,
+                ) as native,
+            ):
+                if native.is_redirect:
+                    return Response(status_code=502)
+                result = await bounded_body(native.aiter_bytes())
+                if result is None:
+                    return Response(status_code=502)
+                return Response(
+                    result,
+                    native.status_code,
+                    media_type=(
+                        "application/json"
+                        if native.headers.get("content-type", "").split(";", 1)[0]
+                        == "application/json"
+                        else "text/plain"
+                    ),
+                    headers={"cache-control": "no-store", "x-content-type-options": "nosniff"},
+                )
+        except (httpx.TimeoutException, TimeoutError):
+            return Response(status_code=504)
+        except httpx.HTTPError:
+            return Response(status_code=502)
+
     async def handle(self, request: Request) -> Response:
         raw = request.scope.get("raw_path", b"")
         if not raw.startswith(b"/") or raw.startswith(b"//") or b"\\" in raw:
             return Response(status_code=404)
+        if raw == PLAYGROUND_PATH:
+            return await self.playground_chat(request)
         path = raw.decode("ascii", errors="replace")
         headers = {name: value for name, value in request.headers.items() if name in HEADERS}
         if (
@@ -505,12 +606,9 @@ class AdminUI:
             return Response(status_code=403)
         body = None
         if writing or request.method == "POST":
-            data = bytearray()
-            async for chunk in request.stream():
-                data.extend(chunk)
-                if len(data) > LIMIT:
-                    return Response(status_code=413)
-            body = bytes(data)
+            body = await bounded_body(request.stream())
+            if body is None:
+                return Response(status_code=413)
         if writing:
             if request.url.query:
                 return Response(status_code=403)
@@ -534,9 +632,20 @@ class AdminUI:
         return self.reply(native)
 
 
+async def bounded_body(chunks):
+    data = bytearray()
+    async for chunk in chunks:
+        if len(data) + len(chunk) > LIMIT:
+            return None
+        data.extend(chunk)
+    return bytes(data)
+
+
 def build() -> Starlette:
     service_account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
     bundle = os.environ.get("BBX_NATIVE_LOCALIZED_UI_DIR")
+    playground_data_url = os.environ.get("BBX_NATIVE_PLAYGROUND_DATA_URL")
+    playground_key_sha256 = os.environ.get("BBX_NATIVE_PLAYGROUND_KEY_SHA256")
     proxy = AdminUI(
         os.environ["BBX_NATIVE_ADMIN_UI_URL"],
         os.environ["BBX_NATIVE_ADMIN_PUBLIC_ORIGIN"],
@@ -550,7 +659,11 @@ def build() -> Starlette:
             os.environ["BBX_NATIVE_PVC_UID"],
             service_account / "token",
         ),
-        localized=LocalizedUI(Path(bundle)) if bundle else None,
+        localized=LocalizedUI(Path(bundle), playground=playground_data_url is not None)
+        if bundle
+        else None,
+        playground_data_url=playground_data_url,
+        playground_key_sha256=playground_key_sha256,
     )
 
     @asynccontextmanager
@@ -568,8 +681,14 @@ def build() -> Starlette:
             httpx.AsyncClient(
                 verify=ssl_kube, trust_env=False, follow_redirects=False, timeout=5
             ) as kube,
+            httpx.AsyncClient(
+                verify=ssl_ui,
+                trust_env=False,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+                limits=httpx.Limits(max_keepalive_connections=0),
+            ) as playground_http,
         ):
-            app.state.http, app.state.kube = http, kube
+            app.state.http, app.state.kube, app.state.playground_http = http, kube, playground_http
             yield
 
     return Starlette(
