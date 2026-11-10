@@ -72,6 +72,15 @@ async def runtime_state(request: Request, task_id: UUID) -> dict[str, Any]:
 async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     identity = require_task_reader(request, task_id)
     data = await service(request).state(task_id)
+    from bbx_blackboard.pi_ledger import task_pi_model
+
+    direct = None
+    if request.app.state.engine is not None:
+        async with request.app.state.engine.connect() as conn:
+            direct = await task_pi_model(conn, task_id)
+    if direct is not None:
+        model = direct[1]
+        data["task"]["pi_model"] = {"model_id": model.id, "model_revision": model.model_revision}
     if identity.kind == "service":
         return data
     public = {

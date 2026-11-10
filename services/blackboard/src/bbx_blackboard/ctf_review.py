@@ -6,6 +6,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from bbx_contracts.ctf import CtfFailureDiagnostic
+from bbx_contracts.pi_models import PiModelVersion
 from sqlalchemy import insert, select
 
 from bbx_blackboard.ctf_board import ensure
@@ -15,6 +16,13 @@ from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
 
 TERMINAL = {"finished", "failed", "stopped"}
+
+
+def review_projection(model):
+    if (model or {}).get("pi_model"):
+        reference = PiModelVersion.model_validate(model["pi_model"]).reference()
+        return {"pi_model": reference.model_dump(mode="json")}
+    return {"gateway_model": model}
 
 
 class CtfReviewMixin:
@@ -42,7 +50,6 @@ class CtfReviewMixin:
     async def claim_review_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
-            await admission(conn)
             member = await row(conn, s.ctf_members, tid, agent_id)
             if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
                 return None
@@ -63,7 +70,10 @@ class CtfReviewMixin:
                     and turn["agent_id"] == agent_id
                     and turn["generation"] == member["generation"]
                 ):
-                    return {**turn, "gateway_model": turn["review_model"]}
+                    selected = turn["review_model"]
+                    if not (selected or {}).get("pi_model"):
+                        await admission(conn)
+                    return {**turn, **review_projection(selected)}
                 return None
             source_generation = await ctf_review_generation(conn, tid, member)
             pending = (
@@ -86,6 +96,8 @@ class CtfReviewMixin:
             ).first()
             if pending is None:
                 return None
+            if not pending.review_model.get("pi_model"):
+                await admission(conn)
             values = dict(
                 id=str(uuid4()),
                 agent_id=agent_id,
@@ -112,7 +124,7 @@ class CtfReviewMixin:
                 agent_id,
             )
             await self._emit(conn, tid, "turn.started", "system", values)
-            return {**values, "gateway_model": pending.review_model}
+            return {**values, **review_projection(pending.review_model)}
 
     async def recover_reviews(
         self,
@@ -284,6 +296,17 @@ class CtfReviewMixin:
             )
             .limit(1)
         )
+        if dispatched is None:
+            dispatched = await conn.scalar(
+                select(s.pi_model_calls.c.call_id)
+                .where(
+                    s.pi_model_calls.c.task_id == tid,
+                    s.pi_model_calls.c.purpose == "review",
+                    s.pi_model_calls.c.turn_id == turn["id"],
+                    s.pi_model_calls.c.state.in_(("dispatched", "unknown", "complete")),
+                )
+                .limit(1)
+            )
         for message in messages:
             if message["status"] == "leased" and dispatched is None:
                 # Nothing durable consumed this input: leave it available to a new review.

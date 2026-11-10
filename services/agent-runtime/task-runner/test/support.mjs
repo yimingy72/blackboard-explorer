@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
+import { Readable } from "node:stream";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,18 +26,18 @@ export function sse(response, tool) {
   response.end("data: [DONE]\n\n");
 }
 
-export async function fixture(t, ids = ["one"]) {
+export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
   await mkdir(join(root, ".test-runs"), { recursive: true });
   const directory = await mkdtemp(join(root, ".test-runs/run-"));
-  const fence = { task_id: "task", runner_id: "runner", pod_uid: "pod", epoch: 1 };
+  const fence = { task_id: taskId, runner_id: "runner", pod_uid: "pod", epoch: 1 };
   const state = { commands: [], receipts: [], journal: new Map(), confirmations: [], leases: [], attempts: new Map(),
     modelCalls: [], modelReceipts: [], invocations: new Map(), toolResults: new Map(), toolCalls: [], connections: [], errors: [],
     prompts: new Map(), leaseStates: new Map(), renewalHistory: [], lateRenewals: [],
     holdApplied: false, appliedGate: deferred(), appliedEntered: deferred(), actors: [], dropPrepare: false, dropped: false };
   const token = (binding, audience) => `private-${audience}-${binding}`;
-  const credentials = { control: { audience: "runner-control", task_id: "task", expires_at: 4102444800, token: token("task", "control") } };
+  const credentials = { control: { audience: "runner-control", task_id: taskId, expires_at: 4102444800, token: token("task", "control") } };
   for (const id of ids) for (const audience of ["model", "mcp"]) credentials[`${audience}-${id}`] = {
-    audience, binding_id: id, task_id: "task", expires_at: 4102444800, token: token(id, audience),
+    audience, binding_id: id, task_id: taskId, expires_at: 4102444800, token: token(id, audience),
   };
   const send = (response, value, headers = {}) => { response.writeHead(200, { "content-type": "application/json", ...headers }); response.end(JSON.stringify(value)); };
   const server = createServer(async (request, response) => {
@@ -133,6 +134,25 @@ export async function fixture(t, ids = ["one"]) {
         }
         if (url.pathname.endsWith("/unknown")) { send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id,
           disposition: "unknown", arguments_digest: body.invocation.arguments_digest, result_digest: null, result_json: null }); return; }
+      }
+      if (url.pathname === "/model/messages" && state.directModelUrl) {
+        const proof = body.bbx.proof;
+        const bindingId = proof.binding.binding_id;
+        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, "model")}`);
+        assert.deepEqual(proof.fence, fence);
+        assert.equal(proof.sdk_session_id, state.journal.get(bindingId).sdk_session_id);
+        assert.deepEqual(proof.journal, state.journal.get(bindingId).cursor);
+        state.modelCalls.push({ bindingId, body: body.context, action: body.bbx.action,
+          callId: body.bbx.call_id, logicalCallId: body.bbx.logical_call_id });
+        const forwarded = await fetch(state.directModelUrl + "/messages", {
+          method: "POST", body: raw,
+          headers: { "content-type": "application/json", authorization: request.headers.authorization },
+          redirect: "error",
+        });
+        response.writeHead(forwarded.status, { "content-type": forwarded.headers.get("content-type") ?? "text/plain" });
+        if (!forwarded.body) response.end();
+        else Readable.fromWeb(forwarded.body).pipe(response);
+        return;
       }
       if (url.pathname.startsWith("/model/")) {
         const bindingId = body.binding?.binding_id ?? body.binding_id ?? request.headers["x-bbx-binding-id"];

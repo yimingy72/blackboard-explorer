@@ -15,6 +15,7 @@ from bbx_blackboard.board_events import digest, emit, prior
 from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.native_fees import threshold_hold_id
 from bbx_blackboard.native_vpn import require_vpn_resume
+from bbx_blackboard.pi_ledger import pi_budget_available, task_pi_model, uncertain
 from bbx_blackboard.runner_control import row
 from bbx_blackboard.store import schema as s
 
@@ -233,6 +234,19 @@ class NativePause:
             return "budget_or_failure_hold"
         if task["ctf_control"].get("unresolved_checkpoints"):
             return "original_checkpoint_unresolved"
+        if (
+            await conn.scalar(
+                select(s.pi_model_calls.c.call_id)
+                .where(
+                    s.pi_model_calls.c.task_id == tid,
+                    s.pi_model_calls.c.purpose == "solver",
+                    or_(s.pi_model_calls.c.state == "dispatched", uncertain()),
+                )
+                .limit(1)
+            )
+            is not None
+        ):
+            return "original_pi_call_unresolved"
         calls = s.runner_calls
         if (
             await conn.execute(
@@ -406,8 +420,14 @@ class NativePause:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            task, record, _, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
+            task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
             require_vpn_resume(record, request.pause_id)
+            if await task_pi_model(conn, tid) is not None:
+                if not await pi_budget_available(conn, tid, self.bootstrap.settings.pi_site_id):
+                    raise HTTPException(409, "Original Pi budget cannot authorize continuation")
+                return await self._continue(
+                    conn, tid, task, record, owner, snapshot, request, hashed
+                )
             budget = await self.native._budget(conn, tid)
             budget_resume = self._resume_budget(task, snapshot, budget)
         guarded = await self.native.original_model_guard(tid)

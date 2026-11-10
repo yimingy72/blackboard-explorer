@@ -1,6 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
+import { stream as streamPiMessages } from "@earendil-works/pi-ai/api/pi-messages";
 
 const frozenSessions = new WeakSet();
+
+function stableCallId(parts) {
+  const value = createHash("sha256").update(JSON.stringify(parts)).digest();
+  value[6] = (value[6] & 0x0f) | 0x50;
+  value[8] = (value[8] & 0x3f) | 0x80;
+  const hex = value.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 export function freezeSession(session) { frozenSessions.add(session); }
 export function assertSessionOpen(session) {
   if (!session || frozenSessions.has(session)) throw new Error("The session admission boundary is frozen");
@@ -28,12 +37,17 @@ function pushFailure(stream, model, signal) {
 /** Install only on host-owned sessions. Provider credentials never cross this boundary. */
 export function installModelBoundary(session, {
   gatewayUrl, credential, binding, confirm, admit, settle, createStream, prepareContext = async (context) => context,
-  assertActive = () => {}, fetch: transport = fetch,
+  assertActive = () => {}, fetch: transport = fetch, nativeModelRevision, nativeProof,
 }) {
   const base = new URL(gatewayUrl.endsWith("/") ? gatewayUrl : `${gatewayUrl}/`);
   if (!(base.protocol === "https:" || (base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)))
       || base.username || base.password || base.search || base.hash) throw new Error("A restricted gateway URL is required");
   if (typeof credential !== "function" || typeof createStream !== "function" || !binding.taskId || !binding.agentId) throw new Error("A gateway identity and native stream factory are required");
+  const direct = nativeModelRevision !== undefined && nativeModelRevision !== null;
+  if (direct && (!Number.isSafeInteger(nativeModelRevision) || nativeModelRevision < 1 || typeof nativeProof !== "function")) {
+    throw new Error("The frozen direct Pi model scope is incomplete");
+  }
+  const nativeEndpoint = new URL("messages", base);
   const original = session.agent.streamFunction;
   const selected = session.model;
   if (!selected || selected.api !== "openai-completions") throw new Error("The Runner requires its approved gateway model");
@@ -118,25 +132,76 @@ export function installModelBoundary(session, {
         attempt.httpStatus = response.status;
         return response;
       };
-      // A replacement StreamFn does not inherit Pi's private ModelRuntime auth marker.
-      // Drop pre-resolved summary auth and pin the final transport instead of importing it.
-      const source = await original({ ...selected, baseUrl: gatewayUrl }, preparedContext, {
-        ...options, apiKey: undefined, headers: undefined, env: {}, maxRetries: 0,
-        transport: "sse", fetch: fetchOnce, maxTokens: Math.min(options.maxTokens ?? selected.maxTokens, selected.maxTokens),
-      });
+      let source;
+      if (direct) {
+        const token = await credential();
+        const sdkModel = { ...selected, api: "pi-messages", baseUrl: gatewayUrl };
+        const action = session.isCompacting ? "summary" : "turn";
+        const proof = nativeProof(journal);
+        const logicalCallId = createHash("sha256").update(JSON.stringify([
+          "bbx-native-pi-v1", binding.taskId, proof.binding.platform_session_id,
+          session.sessionId, journal.leaf_id ?? journal.hash, journal.seq, action,
+        ])).digest("hex");
+        const directCallId = stableCallId([logicalCallId]);
+        const attemptId = stableCallId([directCallId, "provider-attempt-1"]);
+        let used = false;
+        source = streamPiMessages(sdkModel, preparedContext, {
+          signal: options.signal,
+          apiKey: token,
+          env: {},
+          reasoning: options.reasoning,
+          maxTokens: Math.min(options.maxTokens ?? selected.maxTokens, selected.maxTokens),
+          onPayload: (payload) => ({ ...payload, bbx: {
+            task_id: binding.taskId, call_id: directCallId, attempt_id: attemptId,
+            model_id: selected.id, model_revision: nativeModelRevision,
+            logical_call_id: logicalCallId, action, proof,
+          } }),
+          fetch: async (input, init) => {
+            assertSessionOpen(session);
+            assertActive();
+            init.signal?.throwIfAborted();
+            if (used || new URL(input).href !== nativeEndpoint.href || init.method !== "POST" ||
+                typeof init.body !== "string" || Buffer.byteLength(init.body) > 8 * 1024 * 1024) {
+              throw new Error("A duplicate or unapproved private Pi request was refused");
+            }
+            used = true;
+            return transport(nativeEndpoint, { ...init, redirect: "error" });
+          },
+        });
+      } else {
+        // The old frozen task still requires its original one-shot transport.
+        source = await original({ ...selected, baseUrl: gatewayUrl }, preparedContext, {
+          ...options, apiKey: undefined, headers: undefined, env: {}, maxRetries: 0,
+          transport: "sse", fetch: fetchOnce, maxTokens: Math.min(options.maxTokens ?? selected.maxTokens, selected.maxTokens),
+        });
+      }
       void (async () => {
         try {
           let terminal = false;
           for await (const event of source) {
+            if (direct) {
+              assertSessionOpen(session);
+              assertActive();
+              const logical = event.partial ?? event.message ?? event.error;
+              if (logical) {
+                // The session journal keeps its frozen logical model; pi-messages is only private transport.
+                Object.assign(logical, { api: selected.api, provider: selected.provider, model: selected.id });
+                if (event.type === "error") logical.errorMessage = "The trusted Pi model result was not confirmed";
+              }
+              if (event.type === "error") freezeSession(session);
+            }
             if (event.type === "done" || event.type === "error") {
               const message = event.type === "done" ? event.message : event.error;
-              await finish(message);
+              if (!direct) await finish(message);
               terminal = true;
             }
             stream.push(event);
           }
           const message = await source.result();
-          if (!terminal) await finish(message);
+          if (!terminal) {
+            if (direct) throw new Error("The trusted Pi model stream has no terminal event");
+            await finish(message);
+          }
           stream.end(message);
         } catch {
           frozenSessions.add(session);

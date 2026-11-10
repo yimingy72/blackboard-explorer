@@ -234,6 +234,19 @@
           "title": "Id",
           "type": "string"
         },
+        "model_revision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Revision"
+        },
         "api": {
           "const": "openai-completions",
           "title": "Api",

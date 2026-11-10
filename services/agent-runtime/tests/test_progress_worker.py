@@ -221,7 +221,7 @@ async def process(endpoint: ProgressEndpoint, script: ScriptedChatClient, monkey
     endpoint.job["gateway_model"] = gateway_test_snapshot(
         ModelConfig.model_validate(endpoint.job["model"])
     )
-    monkeypatch.setattr("bbx_runtime.progress.worker.make_gateway_client", client_factory)
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", client_factory)
     async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint.handle)) as http:
         service = BlackboardClient("http://test", "trusted-runtime", http)
         await ProgressWorker(Settings.model_construct(), service).process(endpoint.job)

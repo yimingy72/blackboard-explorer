@@ -8,6 +8,7 @@ from pydantic import Field
 
 from .gateway_models import GatewayModelRef
 from .models import ContractModel, Usage
+from .pi_models import PiModelRef
 
 
 class ProgressSourceRef(ContractModel):
@@ -41,6 +42,7 @@ class ProgressNode(ContractModel):
 
 
 class ProgressSettings(ContractModel):
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     currency: Literal["USD", "CNY"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -61,6 +63,7 @@ class ProgressSettings(ContractModel):
 
 
 class ProgressGlobalSettings(ContractModel):
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     gateway_model: GatewayModelRef | None = None
     revision: int | None = Field(default=None, ge=0)
     expected_revision: int = Field(ge=0)

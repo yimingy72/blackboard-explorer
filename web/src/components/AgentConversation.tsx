@@ -22,6 +22,8 @@ import EvidenceViewer from './EvidenceViewer';
 import { readableProse } from './readable';
 import styles from './AgentConversation.module.css';
 type Props = {
+  piFees?: boolean;
+  piFee?: import('../api/client').PiFeeSummary;
     taskId: string;
     agent: BoardAgent;
     label: string;
@@ -129,7 +131,7 @@ function ToolCall({call}:{call:BoardToolCall}) {
   const result=toolResultView(call.resultHead);
   return <><ToolSteps steps={[{id:call.id,name:call.tool,status:result.failed?'error':'success',label:result.failed?'失败':'已记录',content:<><h4>参数</h4><pre>{JSON.stringify(call.args,null,2)}</pre><h4>返回摘要</h4><pre>{result.text||'无摘要'}</pre></>}]} />{call.resultUri&&<EvidenceViewer evidence={{type:'command_output',summary:`${call.tool} 的完整结果`,uri:call.resultUri,call_id:call.id}} />}</>;
 }
-export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, onTraffic, contribution, color, onSelect, draftValue, onDraftChange, clientState }: Props) {
+export default function AgentConversation({ taskId, agent, label, events, state, historical, onClose, onTraffic, contribution, color, onSelect, draftValue, onDraftChange, clientState, piFees, piFee }: Props) {
     const currency = useContext(TaskCurrency);
     const heading = useRef<HTMLHeadingElement>(null);
     const queryClient = useQueryClient();
@@ -181,7 +183,11 @@ export default function AgentConversation({ taskId, agent, label, events, state,
     return <aside className={styles.panel} style={color} aria-label={`${label} 对话记录`}>
       <header className={styles.header}><Avatar size={28} shape="square" style={{background:'var(--agent-tint,#eaf0fb)',color:'var(--agent-accent,#386ac0)'}}>{label.split(' ').at(-1)}</Avatar><div className={styles.identity}><h2 tabIndex={-1} ref={heading} title={agent.id}>{label}<small>{agentRole(agent)}{historical?' · 历史快照':''}</small></h2><p>{agentStatusLabel[agent.status]} · 模型调用 {agent.steps} 次</p></div><InspectorActions onClose={onClose} onTraffic={onTraffic} closeLabel="关闭对话" menu={{items:[{key:'info',label:'运行信息'}],onClick:()=>setInfoOpen(true)}} /></header>
       {!hasTrace&&<p className={styles.empty}>{agent.status==='running'||agent.status==='concluding'?'对话记录尚未到达；工具调用会在此显示。':'此任务未记录 Agent 上下文与模型回复。已有的工具调用和结束回执仍可查看。'}</p>}
-      {agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
+      {!historical && piFees && piFee && <p className={styles.recordNote}>
+        {piFee.unknown_calls && Number(piFee.estimated_usd) === 0 ? '费用待核' : `模型费用估算 ${piFee.estimated_usd} USD`}
+        {piFee.unknown_calls > 0 && ` · ${piFee.unknown_calls} 笔待核`}
+      </p>}
+      {!piFees && agent.usageIncomplete&&<Alert type="warning" title="模型用量不完整，费用仅包含已记录部分。" />}
       {!historical && messages.data?.mode === 'review' && <ReviewFees taskId={taskId} agentId={agent.id} />}
       <ConversationBubbles className={styles.messages} autoScroll={!historical} items={items} />
       <div className={styles.composer}><Sender aria-label={historical?'历史回放 · 只读':review?'继续对话 · 只读复盘':`对 ${label} 说`} value={draft} onChange={value=>setDraft(value.slice(0,20000))} disabled={historical||unavailable||sending} autoSize={{minRows:1,maxRows:4}} styles={{content:{padding:'8px 10px',gap:6},input:{fontSize:'var(--input-font-size)',lineHeight:1.5}}} placeholder={historical?'返回实时视图后可发送消息':review?'询问结论、证据或下一步建议…':'补充信息、纠正方向或提出问题…'} submitType="enter" onSubmit={()=>void send()} onKeyDown={event=>{if(event.key!=='Enter')return;if(event.nativeEvent.isComposing||event.keyCode===229)return false;if(event.ctrlKey||event.metaKey){event.preventDefault();void send();return false;}}} suffix={(_, {components})=><components.SendButton aria-label={sendError?'重试发送':'发送'} loading={sending} disabled={historical||sending||!draft.trim()||messages.isLoading} />} />
@@ -189,6 +195,8 @@ export default function AgentConversation({ taskId, agent, label, events, state,
         {(sendError||messages.error)&&<Alert type="error" title={sendError||messages.error?.message} />}
         <div className={styles.composerHint}><span>{historical?'回放期间不可发送':unavailable?'任务结束后可以复盘':review?'只读复盘 · 费用单独记录':'下一轮模型调用时送达'}</span><span>Enter 发送 · Shift+Enter 换行</span></div>
       </div>
-      <Modal title={`${label} · 运行信息`} open={infoOpen} onCancel={()=>setInfoOpen(false)} footer={null}><dl className={styles.metrics}><dt>持续时间</dt><dd>{elapsed}</dd><dt>模型调用</dt><dd>{agent.steps}</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens??0).toLocaleString()} / {(agent.usage.reasoning_tokens??0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{formatMoney(agent.usage.cost,currency)}</dd><dt>会话</dt><dd>{messages.data?.session_available?'已保存':'未保存原生会话'}</dd></dl>{contribution&&<section><h3>产出 · {contribution.facts.length} Fact · {contribution.intents.length} Intent</h3><div className={styles.contribution}>{[...contribution.facts,...contribution.intents].map(id=><Button size="small" key={id} onClick={()=>{setInfoOpen(false);onSelect(id);}}>{id}</Button>)}</div>{contribution.judgments>0&&<p>裁定 {contribution.judgments} 次</p>}</section>}{agent.endReason&&<p>结束原因：{agentEndReasonLabel[agent.endReason]??agent.endReason}</p>}{agent.receipt!=null&&<Collapse ghost size="small" items={[{key:'receipt',label:'探索结束回执',children:<pre>{typeof agent.receipt==='string'?agent.receipt:JSON.stringify(agent.receipt,null,2)}</pre>}]} />}</Modal>
+      <Modal title={`${label} · 运行信息`} open={infoOpen} onCancel={()=>setInfoOpen(false)} footer={null}><dl className={styles.metrics}><dt>持续时间</dt><dd>{elapsed}</dd><dt>模型调用</dt><dd>{agent.steps}</dd><dt>当前上下文</dt><dd>{agent.contextTokens.toLocaleString()} token</dd><dt>输出 / 推理</dt><dd>{(agent.usage.output_tokens??0).toLocaleString()} / {(agent.usage.reasoning_tokens??0).toLocaleString()} token</dd><dt>估算费用</dt><dd>{piFees
+        ? !piFee || piFee.unknown_calls && Number(piFee.estimated_usd) === 0 ? '待核' : formatMoney(piFee.estimated_usd, 'USD')
+        : formatMoney(agent.usage.cost,currency)}{piFee?.unknown_calls ? ` · ${piFee.unknown_calls} 笔待核` : ''}</dd><dt>会话</dt><dd>{messages.data?.session_available?'已保存':'未保存原生会话'}</dd></dl>{contribution&&<section><h3>产出 · {contribution.facts.length} Fact · {contribution.intents.length} Intent</h3><div className={styles.contribution}>{[...contribution.facts,...contribution.intents].map(id=><Button size="small" key={id} onClick={()=>{setInfoOpen(false);onSelect(id);}}>{id}</Button>)}</div>{contribution.judgments>0&&<p>裁定 {contribution.judgments} 次</p>}</section>}{agent.endReason&&<p>结束原因：{agentEndReasonLabel[agent.endReason]??agent.endReason}</p>}{agent.receipt!=null&&<Collapse ghost size="small" items={[{key:'receipt',label:'探索结束回执',children:<pre>{typeof agent.receipt==='string'?agent.receipt:JSON.stringify(agent.receipt,null,2)}</pre>}]} />}</Modal>
     </aside>;
 }

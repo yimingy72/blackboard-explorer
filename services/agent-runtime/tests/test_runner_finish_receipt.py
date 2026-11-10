@@ -297,7 +297,7 @@ async def test_resource_cleanup_error_preserves_original_result_or_cancellation(
         client.model = model
         return client
 
-    monkeypatch.setattr("bbx_runtime.runner.make_gateway_client", make_scripted)
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", make_scripted)
     close = AsyncMock(side_effect=RuntimeError("private synthetic cleanup failure"))
     monkeypatch.setattr("bbx_runtime.runner.close_model_client", close)
     runner = AgentRunner(

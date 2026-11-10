@@ -23,6 +23,7 @@ from pydantic import (
 from .gateway_models import GatewayModelRef
 from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
+from .pi_models import PiModelRef
 from .providers import reasoning_efforts
 from .runner_bootstrap import NativeCtfEnvironmentRef
 
@@ -253,6 +254,7 @@ class CtfTaskSpec(ContractModel):
 
 
 class CtfTaskCreate(CtfTaskSpec):
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     gateway_model: GatewayModelRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )

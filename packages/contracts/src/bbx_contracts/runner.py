@@ -57,6 +57,7 @@ ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max
 
 class EffectiveRunnerModel(ContractModel):
     id: str = Field(min_length=1, max_length=512)
+    model_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api: Literal["openai-completions"]
     input: list[Literal["text", "image"]] = Field(min_length=1, max_length=2)
     reasoning: bool

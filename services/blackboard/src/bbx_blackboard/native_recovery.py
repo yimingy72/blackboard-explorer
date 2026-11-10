@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import (
@@ -18,6 +18,7 @@ from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
 from bbx_blackboard.native_vpn import vpn_enabled, vpn_exit_data, vpn_state
+from bbx_blackboard.pi_ledger import pi_pending, pi_totals, task_pi_model
 from bbx_blackboard.runner_gateway import cancel_admitted
 from bbx_blackboard.store import schema as s
 
@@ -477,6 +478,8 @@ class NativeRecovery:
             return None, "budget_or_failure_hold"
         if task["ctf_control"].get("unresolved_checkpoints"):
             return None, "original_checkpoint_unresolved"
+        if await pi_pending(conn, tid, solver_only=True):
+            return None, "original_pi_call_unresolved"
         if not incident.get("exit_proof"):
             return None, "original_exit_unconfirmed"
         epoch = incident["original_epoch"]
@@ -658,7 +661,7 @@ class NativeRecovery:
                 )
                 return {"create_allowed": True}
             self._work_copy(incident, manifest, manifest_hash, proof)
-            budget = await self.native._budget(conn, tid)
+            budget = await self.budget_snapshot(conn, tid)
             if not self._budget_available(budget):
                 return await self._blocked(
                     conn, tid, record, incident, "original_budget_unconfirmed"
@@ -672,7 +675,7 @@ class NativeRecovery:
                 return await self._blocked(
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
-        if not exceeded and used < Decimal(budget["config"]["threshold_usd"]):
+        if not exceeded and used < self._threshold(budget):
             try:
                 await self.bootstrap.gateway.routes.retire_for_recovery(
                     tid, body, self, budget, used, exceeded
@@ -709,11 +712,50 @@ class NativeRecovery:
             await self.record_usage(conn, tid, native, used)
             return await self._replace(conn, tid, record, task, incident, manifest, proof, route)
 
+    async def budget_snapshot(self, conn, tid):
+        if direct := await task_pi_model(conn, tid):
+            task = await self.control._task(conn, tid)
+            if (
+                task["budget"].get("currency") != "USD"
+                or direct[0] != self.bootstrap.settings.pi_model_authority
+            ):
+                raise HTTPException(409, "Frozen Pi budget authority changed")
+            return {
+                "pi_model": direct[1].model_dump(mode="json"),
+                "authority": direct[0],
+                "task_id": str(tid),
+                "threshold_usd": str(task["budget"]["max_cost"]),
+            }
+        return await self.native._budget(conn, tid)
+
+    @staticmethod
+    def _threshold(budget):
+        return Decimal(
+            budget["threshold_usd"] if "pi_model" in budget else budget["config"]["threshold_usd"]
+        )
+
     async def read_budget(self, budget):
+        if "pi_model" in budget:
+            async with self.repo.engine.connect() as conn:
+                amount, unknown = await pi_totals(
+                    conn, UUID(budget["task_id"]), self.bootstrap.settings.pi_site_id
+                )
+            if unknown:
+                raise HTTPException(409, "Original Pi costs are unresolved")
+            return {"source": "pi_ledger"}, amount, amount >= self._threshold(budget)
         await self.native.verified_key(budget, budget["config"]["native_value"])
         return await self.native.threshold_status(budget)
 
     async def matching_budget(self, conn, tid, budget, used, exceeded):
+        if "pi_model" in budget:
+            current = await self.budget_snapshot(conn, tid)
+            amount, unknown = await pi_totals(conn, tid, self.bootstrap.settings.pi_site_id)
+            return (
+                current == budget
+                and not exceeded
+                and not unknown
+                and used <= amount < self._threshold(current)
+            )
         current = await self.native._budget(conn, tid)
         return (
             self._budget_available(current)
@@ -727,6 +769,8 @@ class NativeRecovery:
 
     @staticmethod
     async def record_usage(conn, tid, native, used):
+        if native.get("source") == "pi_ledger":
+            return
         await conn.execute(
             update(s.native_task_budgets)
             .where(s.native_task_budgets.c.task_id == tid)
@@ -735,6 +779,8 @@ class NativeRecovery:
 
     @staticmethod
     def _budget_available(budget):
+        if "pi_model" in budget:
+            return bool(budget["pi_model"].get("usd_rates"))
         return bool(
             budget["publication_state"] == "ready"
             and budget["native_resource_id"]

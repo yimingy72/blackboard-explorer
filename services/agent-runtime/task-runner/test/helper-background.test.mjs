@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +18,9 @@ const acceptance = "Background helper accepted.";
 const completion = "Original helper completion, as untrusted evidence.";
 
 async function setup(t, mode) {
-  const h = await fixture(t, ["parent", "child"]);
+  const direct = mode === "direct";
+  const h = await fixture(t, ["parent", "child"], direct ? { taskId: randomUUID() } : undefined);
+  if (direct) h.state.directModelUrl = process.env.BBX_TEST_PI_RUNTIME;
   await h.configure({ helper_background: true });
   await writeFile(h.config.credential_file, JSON.stringify(Object.fromEntries(
     Object.entries(h.credentials).filter(([key]) => !key.includes("child")))));
@@ -44,7 +47,11 @@ async function setup(t, mode) {
     }
     return index === 1 ? command : null;
   };
-  const spec = (id) => ({ ...h.spec(id), allowed_tools: ["exec_command"], mcp_tool_aliases: { exec_command: "exec_command" } });
+  const spec = (id) => {
+    const value = { ...h.spec(id), allowed_tools: ["exec_command"], mcp_tool_aliases: { exec_command: "exec_command" } };
+    if (direct) value.model.model_revision = 2;
+    return value;
+  };
   const publicStatus = () => ({ state: run.state, invocation_id: run.invocationId, child_id: "run-child", binding_id: "child",
     deadline_ms: run.parentDeadline, child_deadline_ms: run.childDeadline,
     ...(run.accepted ? { result_json: run.accepted, result_digest: digest(run.accepted) } : {}) });
@@ -96,7 +103,10 @@ async function setup(t, mode) {
   };
   const actor = h.start();
   h.command({ kind: "prepare", spec: { ...spec("parent"), helper_background: true } });
-  await waitFor(() => h.state.receipts.some((r) => r.binding_id === "parent" && r.status === "prepared"), "parent prepared");
+  await waitFor(() => h.state.receipts.some((r) => r.binding_id === "parent" && r.status === "prepared"), "parent prepared").catch(error => {
+    if (direct) throw new Error(`${error.message}; actor=${actor.output}; fixture=${h.state.errors.map(item => item.stack).join(",")}; receipts=${JSON.stringify(h.state.receipts)}`);
+    throw error;
+  });
   h.command({ kind: "input", binding_id: "parent", input_id: "original-input", content: "Delegate one goal.", mode: "follow_up" });
   return { h, run, actor, childGate, parentGate, terminalGate };
 }
@@ -201,4 +211,20 @@ test("an unresolved original background close cannot disappear from Task shutdow
   await assert.rejects(helpers.closeBinding("original-child"), /original helper exit is unresolved/);
   assert.equal(helpers.active.get("original-child"), child);
   assert.equal(await helpers.stopAll(), false);
+});
+
+
+test("direct P6a hosted helper calls the trusted Pi sender independently", {
+  timeout: 20000, skip: !process.env.BBX_TEST_PI_RUNTIME,
+}, async (t) => {
+  const { h, run, actor } = await setup(t, "direct");
+  await waitFor(() => run.outcome && h.state.receipts.some((item) =>
+    item.request_id === run.close?.request_id && item.status === "closed" && item.journal_confirmed), "direct helper original result");
+  assert.equal(run.launches, 1);
+  assert.equal(h.state.toolCalls.filter((item) => item.bindingId === "child").length, 1);
+  assert.equal(h.state.modelCalls.filter((item) => item.bindingId === "child").length, 2);
+  assert.ok(h.state.modelCalls.some((item) => item.bindingId === "parent"));
+  assert.equal(h.state.attempts.size, 0);
+  h.assertClean();
+  await h.stop(actor);
 });

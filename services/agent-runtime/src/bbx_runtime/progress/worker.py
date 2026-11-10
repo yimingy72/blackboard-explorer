@@ -8,7 +8,6 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
 from bbx_contracts.progress import ProgressFailureDiagnostic
@@ -20,7 +19,7 @@ from bbx_runtime.ctf.provider_boundary import provider_call_boundary
 from bbx_runtime.model_errors import OPENAI_PROVIDERS, ModelStreamError, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
-    make_gateway_client,
+    make_task_model_client,
     model_run_options,
 )
 from bbx_runtime.pi import (
@@ -172,6 +171,7 @@ class ProgressWorker:
             max_input = effective_max_input_tokens(model)
             fixed_input = fixed_prompt_tokens(instructions, tools)
             active_request: dict[str, Any] | None = None
+            direct = job.get("pi_model") is not None
 
             async def before_send() -> None:
                 nonlocal active_request, request_started, budget_exhausted
@@ -190,6 +190,11 @@ class ProgressWorker:
                 }
                 checkpoint.session.state["bbx_progress_active_request"] = pending
                 await checkpoint.save()
+                if direct:
+                    pending.update(status="dispatching", pi_direct=True)
+                    await checkpoint.save()
+                    request_started = monotonic()
+                    return
                 try:
                     reservation = await bound.operation(
                         "reserve",
@@ -245,7 +250,7 @@ class ProgressWorker:
                     "job_id": str(job["job_id"]),
                     "claim_token": str(job["claim_token"]),
                     "run_number": job["run_number"],
-                    "reservation_id": current["request_id"],
+                    **({} if direct else {"reservation_id": current["request_id"]}),
                 }
 
             async def run_batch(prompt: Message) -> str:
@@ -256,16 +261,19 @@ class ProgressWorker:
                     return recovered
                 history.batch_message_id = prompt.message_id
                 if _has_user_message(checkpoint.session, prompt.message_id):
+                    if direct:
+                        raise ProgressUsageUnknown(
+                            "The original Pi batch result is unavailable; do not dispatch it again"
+                        )
                     prompt.message_id += ":resume"
                 if client is None:
-                    snapshot = GatewayModelSnapshot.model_validate(job.get("gateway_model"))
-                    client = make_gateway_client(
+                    client = make_task_model_client(
                         model,
-                        snapshot=snapshot,
+                        source=job,
+                        settings=self.settings,
                         service=self.service,
                         task_id=str(job["task_id"]),
                         purpose="progress",
-                        gateway_url=self.settings.runner_gateway_url,
                         proof=gateway_proof,
                         explore_max_steps=11,
                         conclude_grace_calls=0,
@@ -374,6 +382,18 @@ class ProgressWorker:
             if (
                 isinstance(error, RemoteError)
                 and error.status == 429
+                and job.get("pi_model") is not None
+                and checkpoint is not None
+            ):
+                current = checkpoint.session.state.get("bbx_progress_active_request")
+                if isinstance(current, dict) and current.get("pi_direct"):
+                    checkpoint.session.state.pop("bbx_progress_active_request", None)
+                    await checkpoint.save()
+                budget_exhausted = True
+                native_budget_exhausted = True
+            elif (
+                isinstance(error, RemoteError)
+                and error.status == 429
                 and error.code == "gateway_budget_exhausted"
                 and checkpoint is not None
             ):
@@ -437,7 +457,10 @@ class ProgressWorker:
             active = (
                 checkpoint.session.state.get("bbx_progress_active_request") if checkpoint else None
             )
-            if active and active["job_id"] == str(bound.job["job_id"]):
+            if active and active.get("pi_direct"):
+                # The trusted Pi ledger is the only accounting source for this call.
+                retryable = False
+            elif active and active["job_id"] == str(bound.job["job_id"]):
                 assert checkpoint is not None
                 # Never release a reservation after crossing the provider dispatch boundary.
                 unsent = active["status"] == "preparing"

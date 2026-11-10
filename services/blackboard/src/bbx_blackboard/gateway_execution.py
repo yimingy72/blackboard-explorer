@@ -58,7 +58,7 @@ class GatewayExecution:
             )
         return await self.budgets.publish(task_id, "ordinary", model)
 
-    async def _ordinary(self, conn, task_id, body):
+    async def _ordinary_scope(self, conn, task_id, body):
         task = await row(conn, s.tasks, task_id)
         agent = await row(conn, s.agent_runs, task_id, body.agent_id)
         role = agent["task_type"]
@@ -77,6 +77,10 @@ class GatewayExecution:
             and body.expected_derive_round is not None
         ):
             raise denied()
+        return task, agent
+
+    async def _ordinary(self, conn, task_id, body):
+        task, _ = await self._ordinary_scope(conn, task_id, body)
         frozen = await task_gateway_model(conn, task_id)
         if frozen is None:
             raise denied()
@@ -88,7 +92,7 @@ class GatewayExecution:
             body.agent_id,
         )
 
-    async def _progress(self, conn, task_id, body):
+    async def _progress_scope(self, conn, task_id, body, *, pi=False):
         task = await row(conn, s.tasks, task_id)
         job = (
             (
@@ -121,13 +125,21 @@ class GatewayExecution:
         if (
             data.get("claim_token") != str(body.claim_token)
             or datetime.fromisoformat(data["lease_until"]) <= datetime.now(UTC)
-            or not data.get("gateway_model")
             or data.get("budget_currency") != "USD"
-            or data["receipts"].get(str(body.reservation_id), {}).get("status") != "reserved"
+            or not (
+                data.get("pi_model")
+                if pi
+                else data.get("gateway_model")
+                and data["receipts"].get(str(body.reservation_id), {}).get("status") == "reserved"
+            )
         ):
             raise denied("The original Progress reservation is unavailable")
+        return task, dict(job), current
+
+    async def _progress(self, conn, task_id, body):
+        _, job, current = await self._progress_scope(conn, task_id, body)
         return (
-            GatewayModelSnapshot.model_validate(data["gateway_model"]),
+            GatewayModelSnapshot.model_validate(job["data"]["gateway_model"]),
             "USD",
             Decimal(current["settings"]["max_cost"]),
             "__progress__",

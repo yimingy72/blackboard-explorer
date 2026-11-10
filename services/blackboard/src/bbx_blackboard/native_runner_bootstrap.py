@@ -71,6 +71,7 @@ from bbx_blackboard.native_vpn import (
     vpn_state,
 )
 from bbx_blackboard.native_worker_dispatch import NativeWorkers
+from bbx_blackboard.pi_ledger import pi_budget_available, task_pi_model
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
 from bbx_blackboard.runner_control import OWNER_SECONDS, fence, row
@@ -252,7 +253,8 @@ class NativeRunnerBootstrap:
     def require_launch_configuration(self):
         if not self.settings.sandbox_tenant_resolver_token.get_secret_value():
             raise HTTPException(503, "Sandbox tenant resolver is unavailable")
-        self.gateway.native._configured()
+        if not self.settings.pi_site_id:
+            self.gateway.native._configured()
         self.gateway.routes.configuration()
 
     async def launch(self, tid, raw):
@@ -1307,9 +1309,14 @@ class NativeRunnerBootstrap:
                     raise HTTPException(409, "Original native owner scope changed")
                 owner = await self.control._update_owner(conn, tid, owner["epoch"])
                 if continuation and not data.get("binding_id"):
-                    budget = await self.gateway.native._budget(conn, tid)
-                    if not self.recovery._budget_available(budget):
-                        raise HTTPException(409, "Original native budget is unconfirmed")
+                    direct = await task_pi_model(conn, tid)
+                    if direct is not None:
+                        if not await pi_budget_available(conn, tid, self.settings.pi_site_id):
+                            raise HTTPException(409, "Original Pi budget is unconfirmed")
+                    else:
+                        budget = await self.gateway.native._budget(conn, tid)
+                        if not self.recovery._budget_available(budget):
+                            raise HTTPException(409, "Original native budget is unconfirmed")
                     binding = await self.pause_control.register_continuation(
                         conn, tid, owner, continuation
                     )
@@ -1319,28 +1326,50 @@ class NativeRunnerBootstrap:
             return await self._control_material(tid, body)
         assert owner is not None
         if not data.get("binding_id"):
-            await self.gateway.native.prepare(
-                tid,
-                runner_json_text(
-                    {
-                        "expected_epoch": owner["epoch"],
-                        "accounting_source_id": self.settings.native_gateway_accounting_source_id,
-                        "selected_models": [record["request"]["model_alias"]],
-                        **(
-                            {"budget_currency": "USD"}
-                            if record["request"].get("budget_currency") == "USD"
-                            else {"exchange_rate": record["request"]["exchange_rate"]}
-                        ),
-                    }
-                ).encode(),
-            )
-            await self.gateway.native.publish(tid)
-            selected = await self.gateway.native.selection(tid, record["request"]["model_alias"])
+            async with self.repo.engine.connect() as conn:
+                direct = await task_pi_model(conn, tid)
+            if direct is None:
+                source_id = self.settings.native_gateway_accounting_source_id
+                await self.gateway.native.prepare(
+                    tid,
+                    runner_json_text(
+                        {
+                            "expected_epoch": owner["epoch"],
+                            "accounting_source_id": source_id,
+                            "selected_models": [record["request"]["model_alias"]],
+                            **(
+                                {"budget_currency": "USD"}
+                                if record["request"].get("budget_currency") == "USD"
+                                else {"exchange_rate": record["request"]["exchange_rate"]}
+                            ),
+                        }
+                    ).encode(),
+                )
+                await self.gateway.native.publish(tid)
+                selected = (
+                    await self.gateway.native.selection(tid, record["request"]["model_alias"])
+                )["sdk_model"]
+            else:
+                authority, frozen = direct
+                if (
+                    authority != self.settings.pi_model_authority
+                    or frozen.id != record["request"]["model_alias"]
+                ):
+                    raise HTTPException(409, "Frozen Pi launch model changed")
+                selected = {
+                    "id": frozen.id,
+                    "model_revision": frozen.model_revision,
+                    "api": frozen.api,
+                    "input": frozen.input_modalities,
+                    "reasoning": frozen.reasoning,
+                    "context_window": frozen.context_window,
+                    "max_output_tokens": frozen.max_output_tokens,
+                }
             document = await ProfileStore(self.repo.engine).get(
                 task["agent_profile"], task["agent_profile_version"]
             )
             profile = ctf_profile(document)
-            model = effective_role_model(profile, "lead", selected["sdk_model"])
+            model = effective_role_model(profile, "lead", selected)
             worker_spec = None
             if native_dispatch_enabled(task):
                 worker_tools = [
@@ -1348,7 +1377,7 @@ class NativeRunnerBootstrap:
                     *SANDBOX_TOOLS,
                 ]
                 worker_spec = {
-                    "model": effective_role_model(profile, "teammate", selected["sdk_model"]),
+                    "model": effective_role_model(profile, "teammate", selected),
                     "allowed_tools": worker_tools,
                     **(
                         {"helper_foreground": True}
@@ -1528,7 +1557,7 @@ class NativeRunnerBootstrap:
                 if task["ctf_control"].get("native_recovery_rebuilding") and binding_id:
                     prepared = await row(conn, s.runner_bindings, tid, binding_id)
                     if prepared["status"] == "prepared" and prepared["cursor"]:
-                        budget = await self.gateway.native._budget(conn, tid)
+                        budget = await self.recovery.budget_snapshot(conn, tid)
                         if self.recovery._budget_available(budget):
                             budget_proof = (budget,)
             if budget_proof:
@@ -1650,10 +1679,15 @@ class NativeRunnerBootstrap:
                 data.update(activated=True, sdk_session_id=binding["sdk_session_id"])
             if data.get("worker_spec"):
                 task = await row(conn, s.tasks, tid)
-                budget = await self.gateway.native._budget(conn, tid)
+                if await task_pi_model(conn, tid) is not None:
+                    budget_ready = await pi_budget_available(conn, tid, self.settings.pi_site_id)
+                else:
+                    budget = await self.gateway.native._budget(conn, tid)
+                    budget_ready = (
+                        budget["publication_state"] == "ready" and not budget["hold_reason"]
+                    )
                 allow_new = (
-                    budget["publication_state"] == "ready"
-                    and not budget["hold_reason"]
+                    budget_ready
                     and task["status"] == "running"
                     and task["ctf_control"]["phase"] == "running"
                     and self._resources_ready(record["observation"])

@@ -103,6 +103,7 @@ async def settle_terminal_failure(
         terminal is None
         or terminal.terminal_usage is None
         or not active
+        or active.get("pi_direct")
         or active.get("job_id") != str(service.job["job_id"])
         or active.get("status") != "dispatching"
     ):
@@ -188,7 +189,10 @@ class ProgressHistoryProvider(CheckpointHistoryProvider):
     ) -> None:
         active = session.state.get("bbx_progress_active_request")
         response = context.response
-        if response is not None and active is not None:
+        if response is not None and active is not None and active.get("pi_direct"):
+            # The sender already settled before exposing this response.
+            session.state.pop("bbx_progress_active_request", None)
+        elif response is not None and active is not None:
             details = response.usage_details
             usage, warning = _usage(
                 details, Price.model_validate(active["price"]), self.model.provider

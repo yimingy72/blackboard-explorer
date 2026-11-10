@@ -87,6 +87,15 @@ class BlackboardClient:
         )
         return await self._check(response)
 
+    async def trusted_pi_model(
+        self, path: str, body: dict[str, Any], sender_token: str, runner_token: str | None = None
+    ) -> Any:
+        headers = {"X-BBX-Pi-Runtime": sender_token}
+        if runner_token is not None:
+            headers["X-BBX-Runner-Model"] = runner_token
+        response = await self._http.post(f"{self.base_url}/api{path}", headers=headers, json=body)
+        return (await self._check(response)).json()
+
     @staticmethod
     async def _check(response: httpx.Response) -> httpx.Response:
         if response.is_error:

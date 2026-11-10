@@ -2318,6 +2318,16 @@
             ],
             "title": "Native Vpn Source Id"
           },
+          "pi_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_version": {
             "anyOf": [
               {
@@ -2467,6 +2477,18 @@
             "minimum": 1.0,
             "title": "Max Output Tokens",
             "type": "integer"
+          },
+          "model_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Revision"
           },
           "reasoning": {
             "title": "Reasoning",
@@ -8113,6 +8135,407 @@
         "title": "Params",
         "type": "object"
       },
+      "PiModelDirectory": {
+        "additionalProperties": false,
+        "properties": {
+          "can_manage": {
+            "title": "Can Manage",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/PiModelVersion"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "can_manage",
+          "models"
+        ],
+        "title": "PiModelDirectory",
+        "type": "object"
+      },
+      "PiModelInput": {
+        "additionalProperties": false,
+        "properties": {
+          "api": {
+            "const": "openai-completions",
+            "default": "openai-completions",
+            "title": "Api",
+            "type": "string"
+          },
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "clear_secret": {
+            "default": false,
+            "title": "Clear Secret",
+            "type": "boolean"
+          },
+          "confirmed_free": {
+            "default": false,
+            "title": "Confirmed Free",
+            "type": "boolean"
+          },
+          "context_window": {
+            "minimum": 1024.0,
+            "title": "Context Window",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "input_modalities": {
+            "items": {
+              "enum": [
+                "text",
+                "image"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Input Modalities",
+            "type": "array"
+          },
+          "label": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "pricing_source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Pricing Source",
+            "type": "string"
+          },
+          "provider": {
+            "const": "openai",
+            "default": "openai",
+            "title": "Provider",
+            "type": "string"
+          },
+          "reasoning": {
+            "default": false,
+            "title": "Reasoning",
+            "type": "boolean"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "tool_call": {
+            "default": true,
+            "title": "Tool Call",
+            "type": "boolean"
+          },
+          "upstream_model": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Upstream Model",
+            "type": "string"
+          },
+          "usd_rates": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiUsdRates-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "upstream_model",
+          "base_url",
+          "context_window",
+          "max_output_tokens",
+          "input_modalities"
+        ],
+        "title": "PiModelInput",
+        "type": "object"
+      },
+      "PiModelRef": {
+        "additionalProperties": false,
+        "properties": {
+          "model_id": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Model Id",
+            "type": "string"
+          },
+          "model_revision": {
+            "minimum": 1.0,
+            "title": "Model Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model_id",
+          "model_revision"
+        ],
+        "title": "PiModelRef",
+        "type": "object"
+      },
+      "PiModelVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "api": {
+            "const": "openai-completions",
+            "default": "openai-completions",
+            "title": "Api",
+            "type": "string"
+          },
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "confirmed_free": {
+            "default": false,
+            "title": "Confirmed Free",
+            "type": "boolean"
+          },
+          "context_window": {
+            "minimum": 1024.0,
+            "title": "Context Window",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "has_secret": {
+            "title": "Has Secret",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_modalities": {
+            "items": {
+              "enum": [
+                "text",
+                "image"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Input Modalities",
+            "type": "array"
+          },
+          "label": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "max_output_tokens": {
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "model_revision": {
+            "minimum": 1.0,
+            "title": "Model Revision",
+            "type": "integer"
+          },
+          "pricing_source": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Pricing Source",
+            "type": "string"
+          },
+          "provider": {
+            "const": "openai",
+            "default": "openai",
+            "title": "Provider",
+            "type": "string"
+          },
+          "reasoning": {
+            "default": false,
+            "title": "Reasoning",
+            "type": "boolean"
+          },
+          "tool_call": {
+            "default": true,
+            "title": "Tool Call",
+            "type": "boolean"
+          },
+          "upstream_model": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Upstream Model",
+            "type": "string"
+          },
+          "usd_rates": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiUsdRates-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "upstream_model",
+          "base_url",
+          "context_window",
+          "max_output_tokens",
+          "input_modalities",
+          "id",
+          "model_revision",
+          "has_secret"
+        ],
+        "title": "PiModelVersion",
+        "type": "object"
+      },
+      "PiUsdRates-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_read": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Cache Read"
+          },
+          "cache_write": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Cache Write"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Input"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Output"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "cache_read",
+          "cache_write"
+        ],
+        "title": "PiUsdRates",
+        "type": "object"
+      },
+      "PiUsdRates-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_read": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Cache Read",
+            "type": "string"
+          },
+          "cache_write": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Cache Write",
+            "type": "string"
+          },
+          "input": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Input",
+            "type": "string"
+          },
+          "output": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,9}|(?=[\\d.]{1,25}0*$)\\d{0,9}\\.\\d{0,15}0*$)",
+            "title": "Output",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "cache_read",
+          "cache_write"
+        ],
+        "title": "PiUsdRates",
+        "type": "object"
+      },
       "PostFactRequest": {
         "additionalProperties": false,
         "properties": {
@@ -9117,6 +9540,16 @@
             ],
             "title": "Model Id"
           },
+          "pi_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "prompt": {
             "default": "",
             "maxLength": 40000,
@@ -9459,6 +9892,16 @@
               }
             ],
             "title": "Model Version"
+          },
+          "pi_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reasoning_effort": {
             "anyOf": [
@@ -11068,6 +11511,16 @@
             "title": "Params",
             "type": "object"
           },
+          "pi_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_version": {
             "anyOf": [
               {
@@ -11424,6 +11877,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/NativeTaskNetworkStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pi_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PiModelRef"
               },
               {
                 "type": "null"
@@ -14370,6 +14833,142 @@
         "summary": "List Mcp Tools",
         "tags": [
           "platform"
+        ]
+      }
+    },
+    "/api/platform/pi-models": {
+      "get": {
+        "operationId": "list_models_api_platform_pi_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiModelDirectory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "platform-pi-models"
+        ]
+      },
+      "post": {
+        "operationId": "new_model_api_platform_pi_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PiModelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiModelVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "New Model",
+        "tags": [
+          "platform-pi-models"
+        ]
+      }
+    },
+    "/api/platform/pi-models/{name}": {
+      "put": {
+        "operationId": "save_model_api_platform_pi_models__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PiModelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiModelVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Model",
+        "tags": [
+          "platform-pi-models"
+        ]
+      }
+    },
+    "/api/platform/pi-review-fees": {
+      "get": {
+        "operationId": "review_fees_api_platform_pi_review_fees_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Fees Api Platform Pi Review Fees Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Review Fees",
+        "tags": [
+          "pi-fees"
         ]
       }
     },
@@ -21285,6 +21884,51 @@
         "summary": "Get Object",
         "tags": [
           "board"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/pi-fees": {
+      "get": {
+        "operationId": "task_fees_api_tasks__task_id__pi_fees_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Task Fees Api Tasks  Task Id  Pi Fees Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Task Fees",
+        "tags": [
+          "pi-fees"
         ]
       }
     },

@@ -200,6 +200,10 @@ export class RunnerSession {
       lease: this.lease, platform: this.platform });
     await this.journal.initialize();
     installModelBoundary(this.session, { gatewayUrl: this.config.model_proxy_url,
+      nativeModelRevision: this.spec.model.model_revision,
+      nativeProof: (journal) => ({ kind: "native", fence: this.config.fence, binding: this.binding,
+        sdk_session_id: this.session.sessionId, journal, profile_revision: this.spec.profile_revision,
+        prompt_revision: this.promptRevision }),
       createStream: createAssistantMessageEventStream,
       prepareContext: (context, options) => this.refreshPrompt(context, options),
       binding: { taskId: this.config.fence.task_id, agentId: this.binding.agent_id, bindingId: this.binding.binding_id,

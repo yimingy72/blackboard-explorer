@@ -146,9 +146,7 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr(
-        "bbx_runtime.chatworker.make_gateway_client", lambda *_args, **_kwargs: script
-    )
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", lambda *_args, **_kwargs: script)
     worker = ChatWorker(
         Settings.model_construct(),
         cast(BlackboardClient, service),
@@ -188,9 +186,7 @@ async def test_review_view_image_uses_saved_task_evidence_only(monkeypatch):
             ScriptStep(text="I see the image."),
         ]
     )
-    monkeypatch.setattr(
-        "bbx_runtime.chatworker.make_gateway_client", lambda *_args, **_kwargs: script
-    )
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", lambda *_args, **_kwargs: script)
     worker = ChatWorker(
         Settings.model_construct(),
         cast(BlackboardClient, service),
@@ -208,9 +204,7 @@ async def test_review_view_image_uses_saved_task_evidence_only(monkeypatch):
 async def test_legacy_review_is_marked_and_keeps_its_new_session(monkeypatch):
     service = ReviewService(native=False)
     script = ScriptedChatClient([ScriptStep(text="Only the archived board is available.")])
-    monkeypatch.setattr(
-        "bbx_runtime.chatworker.make_gateway_client", lambda *_args, **_kwargs: script
-    )
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", lambda *_args, **_kwargs: script)
     worker = ChatWorker(
         Settings.model_construct(),
         cast(BlackboardClient, service),
@@ -232,9 +226,7 @@ async def test_saved_answer_completes_after_retry_without_model(monkeypatch):
         "usage": {},
     }
     service.session = native.to_dict()
-    monkeypatch.setattr(
-        "bbx_runtime.chatworker.make_gateway_client", lambda *_args, **_kwargs: 1 / 0
-    )
+    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", lambda *_args, **_kwargs: 1 / 0)
     worker = ChatWorker(
         Settings.model_construct(),
         cast(BlackboardClient, service),

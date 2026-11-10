@@ -8,6 +8,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from bbx_contracts.heartbeat import usage_receipt_support
+from bbx_contracts.pi_models import PiModelVersion
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -70,7 +71,15 @@ def _public(row: Any) -> dict[str, Any]:
 
 
 def _review_dispatched():
-    return exists(
+    pi = exists(
+        select(s.pi_model_calls.c.call_id).where(
+            s.pi_model_calls.c.task_id == s.agent_messages.c.task_id,
+            s.pi_model_calls.c.purpose == "review",
+            s.pi_model_calls.c.turn_id == sql_cast(s.agent_messages.c.id, Text),
+            s.pi_model_calls.c.state.in_(("dispatched", "unknown", "complete")),
+        )
+    )
+    return pi | exists(
         select(s.gateway_execution_attempts.c.id).where(
             s.gateway_execution_attempts.c.task_id == s.agent_messages.c.task_id,
             s.gateway_execution_attempts.c.purpose == "review",
@@ -500,6 +509,7 @@ class Conversations:
         review_model=None,
         review_generation=None,
         review_origin=None,
+        request_user=None,
     ) -> dict[str, Any]:
         content = storage_safe(content)
         written = []
@@ -514,7 +524,8 @@ class Conversations:
                     "run_number": task["run_number"],
                 }:
                     raise HTTPException(409, "No original terminal review scope is available")
-                await admission(conn, review_generation)
+                if review_generation is not None or request_user is None:
+                    await admission(conn, review_generation)
             elif agent["status"] not in ACTIVE or review_origin is not None:
                 raise HTTPException(409, "This Agent cannot be reviewed while the Task is active")
             result = await conn.execute(
@@ -526,6 +537,7 @@ class Conversations:
                     role="user",
                     purpose="review" if review else "active",
                     request_run_number=task["run_number"],
+                    request_user=request_user if review else None,
                     request_started_at=agent["started_at"],
                     request_derive_round=agent["derive_round"],
                     review_model=review_model.model_dump(mode="json")
@@ -611,7 +623,6 @@ class Conversations:
             if (mode == "active") != active:
                 raise HTTPException(409, "Agent mode changed")
             if mode == "review":
-                await admission(conn)
                 if agent["status"] not in {"finished", "failed"}:
                     raise HTTPException(409, "Review requires a finished Agent")
                 processing = await conn.execute(
@@ -628,6 +639,8 @@ class Conversations:
                 if processing.first():
                     raise HTTPException(409, "Agent review is already processing")
             message = await self._message(conn, tid, aid, mid)
+            if mode == "review" and not (message.get("review_model") or {}).get("pi_model"):
+                await admission(conn)
             if mode == "review" and (
                 message["purpose"] != "review"
                 or message["request_run_number"] != task["run_number"]
@@ -672,7 +685,19 @@ class Conversations:
             return {
                 "message": _public(result.mappings().one()),
                 "claim_token": token,
-                **({"gateway_model": message["review_model"]} if mode == "review" else {}),
+                **(
+                    {
+                        "pi_model": PiModelVersion.model_validate(
+                            message["review_model"]["pi_model"]
+                        )
+                        .reference()
+                        .model_dump(mode="json")
+                    }
+                    if mode == "review" and message["review_model"].get("pi_model")
+                    else {"gateway_model": message["review_model"]}
+                    if mode == "review"
+                    else {}
+                ),
             }
 
     async def complete(

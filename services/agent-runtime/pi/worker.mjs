@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openAiUsageEvidence, piMessagesDelta, trustedModelTransport } from "./trusted-model.mjs";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { createModels, createProvider } from "@earendil-works/pi-ai/models";
@@ -147,6 +148,13 @@ const apiModules = {
 
 async function streamModel(job, params) {
   const { model } = params;
+  if (params.trusted_model && (params.gateway || params.custom_transport ||
+      model.api !== "openai-completions" || !params.api_key)) {
+    throw new Error("Invalid trusted Pi model scope");
+  }
+  const usageEvidence = params.trusted_model ? openAiUsageEvidence() : null;
+  const trustedTransport = params.trusted_model ? trustedModelTransport(model, params.trusted_model,
+    (scope) => callback(job, "pi_dispatch", scope)) : null;
   if (params.gateway && (model.api !== "openai-completions" || params.custom_transport)) {
     throw new Error("Invalid AgentGateway transport");
   }
@@ -231,6 +239,12 @@ async function streamModel(job, params) {
     let gatewayClaimed = false;
     const transport = async (url, init) => {
       const headers = new Headers(init?.headers);
+      if (trustedTransport) {
+        const response = await trustedTransport.fetch(url, init);
+        // Unlike the legacy observation branch, this does not look inside provider SSE.
+        observeHeaders(response);
+        return response;
+      }
       if (params.gateway) {
         const expected = new URL(params.gateway);
         const request = new URL(url);
@@ -304,6 +318,7 @@ async function streamModel(job, params) {
           ? {} : { fetch: transport }),
         onResponse: observeHeaders,
         onProviderStreamEvent(event) {
+          usageEvidence?.observe(event);
           if (typeof event?.id === "string") terminal.response_id = event.id;
           const usage = event?.usage ?? event?.response?.usage ?? event?.message?.usage
             ?? event?.usageMetadata ?? event?.metadata?.usage;
@@ -334,7 +349,10 @@ async function streamModel(job, params) {
     for await (const event of stream) {
       // Usage and the terminal message arrive once in the final response. Do
       // not repeatedly serialize the growing partial transcript for each token.
-      if (event.type === "text_delta" || event.type === "thinking_delta") {
+      if (params.trusted_model?.wire_events) {
+        const frame = piMessagesDelta(event);
+        if (frame) await send({ type: "event", id: job.id, event: frame });
+      } else if (event.type === "text_delta" || event.type === "thinking_delta") {
         await send({ type: "event", id: job.id, event: { type: event.type, delta: event.delta } });
       }
     }
@@ -344,8 +362,22 @@ async function streamModel(job, params) {
       && /stream ended (without|before)/i.test(message.errorMessage ?? "");
     terminal.transport_failure = /^(?:.* API error(?: \([^)]*\))?: )?(?:Connection error\.?|fetch failed)$/.test(message.errorMessage ?? "");
     terminal.transport_timeout = /^(?:.* API error(?: \([^)]*\))?: )?Request timed out\.?$/.test(message.errorMessage ?? "");
+    if (usageEvidence) {
+      const accounting = usageEvidence.result(model, message, status, requestId, params.trusted_model.price_present);
+      message.bbxUsageObserved = accounting.usage !== null;
+      // Provider errors, metadata, headers and telemetry may include credentials.
+      if (message.errorMessage) message.errorMessage = "The trusted Pi model request did not complete";
+      delete message.diagnostic;
+      delete message.diagnostics;
+      delete message.rawStopReason;
+      return { message, status, accounting, terminal: {
+        prepared: terminal.prepared, truncated_stream: terminal.truncated_stream,
+        transport_failure: terminal.transport_failure, transport_timeout: terminal.transport_timeout,
+      } };
+    }
     return { message, status, request_id: requestId, terminal };
   });
+  if (trustedTransport) return result;
   const traces = await telemetry.findTraces();
   result.telemetry = traces.traces.flatMap((trace) => trace.spans)
     .filter((span) => span.name === "pi.ai.request").slice(0, 16)
@@ -355,6 +387,7 @@ async function streamModel(job, params) {
     }));
   return result;
   } finally {
+    if (trustedTransport) await trustedTransport.close();
     if (temporary) await rm(temporary, { recursive: true, force: true });
   }
 }

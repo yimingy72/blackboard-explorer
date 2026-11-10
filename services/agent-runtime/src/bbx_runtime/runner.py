@@ -12,7 +12,6 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_objects import ObjectStore
 
 from bbx_runtime.clients import BlackboardClient, EnvdClient, RemoteError
@@ -30,7 +29,7 @@ from bbx_runtime.model_errors import OPENAI_PROVIDERS, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
-    make_gateway_client,
+    make_task_model_client,
     model_run_options,
 )
 from bbx_runtime.opening import OpeningContextProvider
@@ -443,14 +442,14 @@ class AgentRunner:
             if client is None:
                 if started_fence is None or run_number is None:
                     raise ValueError("Original Agent execution scope is unavailable")
-                snapshot = GatewayModelSnapshot.model_validate(task.get("gateway_model"))
-                owned_client = make_gateway_client(
+
+                owned_client = make_task_model_client(
                     model,
-                    snapshot=snapshot,
+                    source=task,
+                    settings=self.settings,
                     service=self.service,
                     task_id=task_id,
                     purpose="ordinary",
-                    gateway_url=self.settings.runner_gateway_url,
                     proof={
                         "agent_id": agent_id,
                         "run_number": run_number,

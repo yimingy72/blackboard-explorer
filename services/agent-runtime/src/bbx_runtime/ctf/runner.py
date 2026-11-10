@@ -18,7 +18,6 @@ from bbx_contracts.ctf import (
     resolve_ctf_model,
     resolve_ctf_options,
 )
-from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.models import ModelConfig
 from bbx_objects import ObjectStore
@@ -56,7 +55,7 @@ from bbx_runtime.model_errors import (
 from bbx_runtime.models import (
     close_model_client,
     ctf_model_run_options,
-    make_gateway_client,
+    make_task_model_client,
 )
 from bbx_runtime.pi import (
     Agent,
@@ -303,14 +302,13 @@ class CtfRunner:
                     profile.model_copy(update={"model": effective_model, "role_run_options": {}}),
                 )
             elif review:
-                snapshot = GatewayModelSnapshot.model_validate(turn.get("gateway_model"))
-                client = make_gateway_client(
+                client = make_task_model_client(
                     effective_model,
-                    snapshot=snapshot,
+                    source=turn,
+                    settings=self.settings,
                     service=self.service.client,
                     task_id=task_id,
                     purpose="review",
-                    gateway_url=self.settings.runner_gateway_url,
                     proof={
                         "agent_id": member["id"],
                         "run_number": task["run_number"],

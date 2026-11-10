@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { taskListUrl } from '../pages/taskNavigation';
-import { ApiError, type TaskView } from '../api/client';
+import { api, ApiError, type TaskView } from '../api/client';
 import { formatMoney, taskTitle, formatDate } from '../pages/format';
 import { ctfApi } from './api';
 import { challengeTimeline } from './progress';
@@ -164,6 +164,9 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         setDialog(next);
     }
     const task = { ...initialTask, ...state.data?.task, cost_currency: state.data?.task.cost_currency ?? initialTask.cost_currency, runs: state.data?.task.runs ?? initialTask.runs };
+    const piFees = useQuery({ queryKey: ['pi-task-fees', taskId], queryFn: () => api.piTaskFees(taskId),
+        enabled: Boolean(task.pi_model), refetchInterval: query => query.state.data?.enabled && query.state.data.solver.unknown_calls ? 4000 : 10000 });
+    const piSolver = piFees.data?.enabled ? piFees.data.solver : undefined;
     const phase = task.ctf_phase === 'closed' || task.status !== 'created' ? task.status : task.ctf_phase ?? task.status;
     const members = state.data?.members ?? [];
     const selected = memberId ? members.find((member) => member.id === memberId) : undefined;
@@ -211,7 +214,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(task)}>{taskTitle(task)}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={phase === 'running' ? 'processing' : phase === 'failed' ? 'error' : 'default'}>{phaseLabels[phase] ?? phase}</Tag>
-        <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 <ElapsedTime seconds={task.active_seconds ?? 0} since={task.active_since} /></span><span>{formatMoney(task.usage?.cost ?? 0, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
+        <div className={styles.taskMeta}><span>第 {task.run_number??1} 轮</span><span>运行 <ElapsedTime seconds={task.active_seconds ?? 0} since={task.active_since} /></span><span>{task.pi_model ? piSolver ? `${piSolver.unknown_calls && Number(piSolver.estimated_usd) === 0 ? '费用待核' : `估算 ${formatMoney(piSolver.estimated_usd, 'USD')}`}${piSolver.unknown_calls ? ` · ${piSolver.unknown_calls} 笔待核` : ''}` : '费用待核' : task.usage?.cost == null ? '费用待核' : formatMoney(task.usage.cost, task.cost_currency)} / {formatMoney(task.budget?.max_cost ?? 0, task.cost_currency)}</span><span className={styles.live} data-connected={connection === 'open'}>{connection === 'open' ? '实时同步' : connection === 'connecting' ? '连接中' : '正在重连'}</span></div>
         <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button type="text" size="small" onClick={() => setCommandAuditOpen(true)}>命令记录</Button><Button ref={goalButton} size="small" type="text" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button>{task.report_uri && <Button href={`/tasks/${encodeURIComponent(taskId)}/report`} target="_blank" rel="noopener noreferrer" icon={<Icon name="file" />}>报告</Button>}
           {phase === 'created' && <Button aria-label="启动任务" aria-busy={statusAction.busy && operation === 'start'} type="primary" loading={statusAction.busy && operation === 'start'} disabled={statusAction.busy} onClick={() => void changeStatus('start')}>启动任务</Button>}
           {['created','provisioning','running'].includes(phase) && <Button aria-label="停止任务" aria-busy={statusAction.busy && operation === 'stop'} danger disabled={statusAction.busy} loading={statusAction.busy && operation === 'stop'} onClick={() => void changeStatus('stop')}>停止任务</Button>}

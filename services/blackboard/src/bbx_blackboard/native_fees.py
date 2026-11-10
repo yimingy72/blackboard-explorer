@@ -566,9 +566,13 @@ class NativeFees:
     async def original_model_guard(self, tid):
         if self.gateway_models is None:
             return None
-        generation = await observed_generation(self.repo.engine)
+        from bbx_blackboard.pi_ledger import task_pi_model
+
         async with self.repo.engine.connect() as conn:
+            if await task_pi_model(conn, tid) is not None:
+                return None
             scope = await task_gateway_model(conn, tid)
+        generation = await observed_generation(self.repo.engine)
         if scope is None:
             raise HTTPException(409, "Native execution requires an original AgentGateway model")
         await require_original_model(self.gateway_models, scope[0])

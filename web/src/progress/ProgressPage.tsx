@@ -3,7 +3,7 @@ import { ApartmentOutlined, ArrowLeftOutlined, FileTextOutlined, MessageOutlined
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApiError, type TaskView } from '../api/client';
+import { api, ApiError, type TaskView } from '../api/client';
 import { randomUUID } from '../api/uuid';
 import type { BoardEvent } from '../board/types';
 import InspectorLayout from '../components/InspectorLayout';
@@ -43,13 +43,19 @@ export default function ProgressPage({ taskId, task, events, historicalVersion, 
   const query = useQuery({ queryKey, queryFn: ({ signal }) => progressApi.get(taskId, signal, historicalVersion ?? undefined), refetchInterval: history ? false : current => current.state.data?.enabled ? 10000 : false });
   const data = query.data, node = data?.nodes.find(item => item.id === selected) ?? null;
   const featureCurrency = data?.budget.currency ?? null;
-  const canConfigure = Boolean(task.gateway_model) && (!featureCurrency || featureCurrency === "USD");
-  const pendingUsage = Number(data?.budget.unknown ?? 0) > 0;
+  const canConfigure = Boolean(task.gateway_model || task.pi_model) && (!featureCurrency || featureCurrency === "USD");
+  const piFees = useQuery({ queryKey: ['pi-task-fees', taskId], queryFn: () => api.piTaskFees(taskId), enabled: !history && Boolean(task.pi_model) });
+  const directFees = piFees.data?.enabled ? piFees.data.progress : undefined;
+  const directSolver = piFees.data?.enabled ? piFees.data.solver : undefined;
+  const direct = !history && Boolean(task.pi_model);
+  const amount = (fees?: { estimated_usd: string; unknown_calls: number }) =>
+    !fees || fees.unknown_calls && Number(fees.estimated_usd) === 0 ? '费用待核' : `估算 ${formatMoney(fees.estimated_usd, 'USD')}`;
+  const pendingUsage = (directFees?.unknown_calls ?? Number(data?.budget.unknown ?? 0)) > 0;
   const interrupted = data && ['paused', 'failed', 'unknown_usage', 'budget_exhausted'].includes(data.status);
   const diagnostic = data?.diagnostic;
   const outputLimited = diagnostic?.finish_reason === 'length' || diagnostic?.incomplete_reason === 'max_output_tokens';
   const failureTitle = data?.status === 'budget_exhausted' ? statuses.budget_exhausted : outputLimited ? '模型响应达到输出上限，整理已暂停' : pendingUsage ? interrupted ? '整理已暂停，上一笔请求用量待确认' : '有一笔整理用量待确认' : '模型响应未正常完成，整理已暂停';
-  const failureDetail = pendingUsage ? `已确认费用 ${formatMoney(data?.budget.spent, featureCurrency)}；${formatMoney(data?.budget.unknown, featureCurrency)} 为待确认预留，并非确认消费。继续整理时保留该预留并计入额度。` : '已有成果与会话继续保留，求解任务不受影响。';
+  const failureDetail = directFees?.unknown_calls ? `已有 ${directFees.unknown_calls} 笔整理费用待核；核实前暂停新的整理调用。` : pendingUsage ? `已确认费用 ${formatMoney(data?.budget.spent, featureCurrency)}；${formatMoney(data?.budget.unknown, featureCurrency)} 为待确认预留，并非确认消费。继续整理时保留该预留并计入额度。` : '已有成果与会话继续保留，求解任务不受影响。';
   useEffect(() => { if (query.error instanceof ApiError && query.error.status === 401) navigate('/login', { replace: true }); }, [query.error, navigate]);
   useEffect(() => {
     const latest = events.at(-1)?.version ?? 0, prior = latestVersion.current; latestVersion.current = latest;
@@ -99,7 +105,7 @@ export default function ProgressPage({ taskId, task, events, historicalVersion, 
     <Suspense fallback={<LoadingState label="成果内容" lines={5} />}>{panel === 'chat' ? history ? <p className={styles.chatEmpty}>历史模式只读，返回实时视图后可继续提问。</p> : <ProgressConversation taskId={taskId} node={node} enabled={Boolean(data?.enabled) && canConfigure} draft={draft} onDraftChange={setDraft} onClearNode={() => setSelected(null)} onReference={chatReference} intent={intent} sending={sending} onSendingChange={setSending} /> : node ? <ProgressDetails node={node} onSource={setSource} onAgent={id => navigate(`/tasks/${taskId}?focus=${encodeURIComponent(id)}`)} onAsk={() => { if (!history) setPanel('chat'); }} /> : <div className={styles.chatEmpty}>选择一个成果节点，查看结论、过程与依据。</div>}</Suspense>
   </aside>;
   return <div className={styles.page}>
-    <header className={styles.header}><Button type="text" icon={<ArrowLeftOutlined />} aria-label="返回协作黑板" onClick={() => navigate(`/tasks/${taskId}`)} /><h1 title={task.goal}>{taskTitle(task)}</h1><code className={styles.id}>{taskId.slice(0, 8)}</code><Tag color={task.status === 'running' ? 'processing' : 'default'}>{taskStatusLabel(task.status)}</Tag><div className={styles.meta}><span>运行 <ElapsedTime seconds={task.active_seconds} since={task.active_since} /></span><span>求解 {formatMoney(task.usage?.cost, task.cost_currency)} / {formatMoney(task.budget.max_cost, task.cost_currency)}</span>{data?.enabled && <><span>整理 {formatMoney(data.budget.spent, featureCurrency)} / {formatMoney(data.budget.max_cost, featureCurrency)}</span>{pendingUsage && <span>待确认预留 {formatMoney(data.budget.unknown, featureCurrency)}</span>}{data.cost_breakdown?.total != null && <span>已记录合计 {formatMoney(data.cost_breakdown.total, featureCurrency)}</span>}</>}</div><span className={styles.spacer}/><Button type="text" size="small" icon={<SettingOutlined />} aria-label="成果整理设置" disabled={history || !canConfigure} onClick={() => { setCap(featureCurrency === 'USD' ? data?.budget.max_cost ?? '' : ''); setConfigOpen(true); }}>设置</Button></header>
+    <header className={styles.header}><Button type="text" icon={<ArrowLeftOutlined />} aria-label="返回协作黑板" onClick={() => navigate(`/tasks/${taskId}`)} /><h1 title={task.goal}>{taskTitle(task)}</h1><code className={styles.id}>{taskId.slice(0, 8)}</code><Tag color={task.status === 'running' ? 'processing' : 'default'}>{taskStatusLabel(task.status)}</Tag><div className={styles.meta}><span>运行 <ElapsedTime seconds={task.active_seconds} since={task.active_since} /></span><span>求解 {direct ? amount(directSolver) : formatMoney(task.usage?.cost, task.cost_currency)} / {formatMoney(task.budget.max_cost, task.cost_currency)}</span>{data?.enabled && <><span>整理 {direct ? amount(directFees) : formatMoney(data.budget.spent, featureCurrency)} / {formatMoney(data.budget.max_cost, featureCurrency)}</span>{pendingUsage && (direct ? <span>{directFees?.unknown_calls} 笔待核</span> : <span>待确认预留 {formatMoney(data.budget.unknown, featureCurrency)}</span>)}{!direct && data.cost_breakdown?.total != null && <span>已记录合计 {formatMoney(data.cost_breakdown.total, featureCurrency)}</span>}</>}</div><span className={styles.spacer}/><Button type="text" size="small" icon={<SettingOutlined />} aria-label="成果整理设置" disabled={history || !canConfigure} onClick={() => { setCap(featureCurrency === 'USD' ? data?.budget.max_cost ?? '' : ''); setConfigOpen(true); }}>设置</Button></header>
     <div className={styles.bar}><nav className={styles.nav} aria-label="任务视图"><Link to={`/tasks/${taskId}`}>协作黑板</Link><Link aria-current="page" to={`/tasks/${taskId}/progress`}><ApartmentOutlined />成果树</Link></nav><span className={styles.watermark}><i />整理至 v{data?.source_version ?? 0}{data && data.desired_source_version > data.source_version ? ' · 有新进展待整理' : ''}</span><span className={styles.spacer}/>{data?.enabled && <Button aria-label="整理最新进展" type="text" size="small" icon={<ReloadOutlined />} disabled={history || busy || !canConfigure} loading={busy} onClick={() => void refresh()}><span className={styles.refreshText}>{interrupted ? '继续整理' : '整理最新进展'}</span></Button>}<Button aria-label="问整理 Agent" type="primary" size="small" icon={<MessageOutlined />} disabled={!data?.enabled || history || !canConfigure} onClick={() => setPanel('chat')}>问整理 Agent</Button></div>
     {!canConfigure && !history && <Alert type="info" title="历史成果可查看，原预算币种不会改写。" />}
     {history && <Alert type="info" title={`历史成果 · v${historicalVersion}，只读`} />}

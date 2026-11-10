@@ -229,6 +229,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     const method = request.method();
     if (path === '/api/login' && method === 'POST') return json(route, { username: 'tester' });
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
+    if (path === '/api/platform/pi-models' && method === 'GET') return json(route, { enabled: false, can_manage: false, models: [] });
     if (path === '/api/task-creation-capabilities' && method === 'GET') return json(route, { mode: 'legacy', native_ctf: null });
     if (/^\/api\/tasks\/[^/]+\/progress\/settings$/.test(path) && method === 'PUT') {
       const body = request.postDataJSON() as { enabled: boolean; max_cost: string };

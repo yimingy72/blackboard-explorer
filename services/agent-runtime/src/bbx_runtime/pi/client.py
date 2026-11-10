@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -24,6 +25,7 @@ from bbx_runtime.pi.stream import ResponseStream, queued_stream
 
 if TYPE_CHECKING:
     from bbx_runtime.gateway_model import GatewayDispatch
+    from bbx_runtime.pi_sender import OrdinaryPiModel
 
 
 FunctionInvocationConfiguration = dict[str, Any]
@@ -156,6 +158,7 @@ class PiChatClient(BaseChatClient):
                 raise ValueError("Invalid AgentGateway Pi model binding")
             self.bridge = PiBridge(use_env_proxy=False)
         self.gateway = gateway
+        self.trusted_model: OrdinaryPiModel | None = None
         self.model = model
         self.credentials = dict(credentials)
         self.max_retries = max_retries
@@ -401,33 +404,61 @@ class PiChatClient(BaseChatClient):
             finally:
                 await response.aclose()
 
+        logical_anchor = None
+        if self.trusted_model is not None:
+            logical_anchor = next(
+                (
+                    [message.role, message.message_id]
+                    for message in reversed(outgoing)
+                    if message.role in {"user", "assistant", "tool"}
+                    and message.message_id
+                    and not re.fullmatch(r"msg_[0-9]+", message.message_id)
+                ),
+                None,
+            )
+            if logical_anchor is None:
+                raise ValueError("A persisted Pi conversation position is required")
+        context = {
+            "messages": pi_messages(
+                outgoing, api=model["api"], provider=model["provider"], model=model["id"]
+            ),
+            "systemPrompt": options.get("instructions", ""),
+            "tools": definitions,
+        }
         result = None
         try:
-            result = await self.bridge.call(
-                "model",
-                {
-                    "model": model,
-                    "context": {
-                        "messages": pi_messages(
-                            outgoing,
-                            api=model["api"],
-                            provider=model["provider"],
-                            model=model["id"],
-                        ),
-                        "systemPrompt": options.get("instructions", ""),
-                        "tools": definitions,
+            if self.trusted_model is not None:
+                if self.before_send is not None:
+                    await self.before_send()
+                approved_options = {
+                    name: value
+                    for name, value in run_options.items()
+                    if name
+                    in {"maxTokens", "reasoning", "toolChoice", "samplingParams", "cacheRetention"}
+                }
+                result = await self.trusted_model.invoke(
+                    context,
+                    approved_options,
+                    on_event=on_event,
+                    logical_anchor=[options.get("session_id"), logical_anchor],
+                )
+            else:
+                result = await self.bridge.call(
+                    "model",
+                    {
+                        "model": model,
+                        "context": context,
+                        "options": run_options,
+                        "api_key": secrets.get("api_key", "not-required"),
+                        "adapter": self.model.provider,
+                        "provider_options": native_options,
+                        "credentials": secrets,
+                        "custom_transport": self.request_transport is not None,
+                        **({"gateway": self.gateway.url} if self.gateway is not None else {}),
                     },
-                    "options": run_options,
-                    "api_key": secrets.get("api_key", "not-required"),
-                    "adapter": self.model.provider,
-                    "provider_options": native_options,
-                    "credentials": secrets,
-                    "custom_transport": self.request_transport is not None,
-                    **({"gateway": self.gateway.url} if self.gateway is not None else {}),
-                },
-                on_event=on_event,
-                callback=transport_callback,
-            )
+                    on_event=on_event,
+                    callback=transport_callback,
+                )
         finally:
             if self.gateway is not None and body_sha256 is not None:
                 status = None
@@ -516,7 +547,8 @@ class PiChatClient(BaseChatClient):
             raise error
         response = ChatResponse(
             messages=[from_pi_message(message)],
-            response_id=result.get("request_id"),
+            response_id=result.get("request_id")
+            or result.get("accounting", {}).get("provider_request_id"),
             model=self.model.model,
             usage_details=details,
             finish_reason="tool_calls" if reason == "toolUse" else "stop",

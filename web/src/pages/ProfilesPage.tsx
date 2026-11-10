@@ -8,7 +8,7 @@ const CtfSettings = lazy(() => import('../ctf/CtfSettings'));
 const ProgressSettings = lazy(() => import('../progress/ProgressSettings'));
 import { defaultTools, workers } from '../components/workerOptions';
 const PlatformCatalog = lazy(() => import('../components/PlatformCatalog'));
-const GatewayCatalog = lazy(() => import('../components/GatewayCatalog'));
+const ModelCatalog = lazy(() => import('../components/PiModelCatalog'));
 import { api, ApiError, type WorkerSettingsProfile, type RuntimeInput, type WorkerRole, type WorkerSettings, type WorkerTools } from '../api/client';
 import controls from '../styles/controls.module.css';
 import styles from './ProfilesPage.module.css';
@@ -147,8 +147,8 @@ export default function ProfilesPage() {
     return <div className={styles.page} onChangeCapture={()=>setNotice('')}>
       <Modal title="离开配置页？" open={blocker.state==='blocked'} onCancel={()=>blocker.reset?.()} onOk={()=>{if(!busy)blocker.proceed?.();}} okText="放弃修改并离开" cancelText="继续编辑" okButtonProps={{disabled:busy}}><p>{busy?'配置正在保存，请稍候。':'尚未保存的修改会丢失。'}</p></Modal>
       <header className={styles.pageHeader}><h1>Agent 配置</h1></header>
-      <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'progress', label: '成果整理', disabled: saving || catalogBusy }, { key: 'models', label: 'AgentGateway 模型', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
-      <Suspense fallback={<LoadingState label="配置内容加载中" lines={6} />}>{section === 'ctf' ? <CtfSettings /> : section === 'progress' ? <ProgressSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <GatewayCatalog /> : section === 'mcp' ? <PlatformCatalog onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
+      <Tabs activeKey={section} onChange={(value) => void chooseSection(value as typeof section)} items={[{ key: 'worker', label: 'Worker 配置', disabled: saving || catalogBusy }, { key: 'ctf', label: 'CTF 配置', disabled: saving || catalogBusy }, { key: 'progress', label: '成果整理', disabled: saving || catalogBusy }, { key: 'models', label: '模型配置', disabled: saving || catalogBusy }, { key: 'mcp', label: 'MCP 工具', disabled: saving || catalogBusy }]} />
+      <Suspense fallback={<LoadingState label="配置内容加载中" lines={6} />}>{section === 'ctf' ? <CtfSettings /> : section === 'progress' ? <ProgressSettings onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'models' ? <ModelCatalog onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : section === 'mcp' ? <PlatformCatalog onDirtyChange={setCatalogDirty} onBusyChange={setCatalogBusy} /> : <>
         {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void reload()}>重新读取</Button>} className={styles.feedback} />}
         {notice && <Alert role="status" type="success" showIcon title={notice} className={styles.feedback} />}
         {settings.isLoading && !snapshot && <LoadingState label="Worker 配置加载中" lines={7} />}

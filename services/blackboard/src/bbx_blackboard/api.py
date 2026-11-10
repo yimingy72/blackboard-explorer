@@ -42,6 +42,7 @@ from bbx_contracts.models import (
     TaskSpec,
     TaskStatus,
 )
+from bbx_contracts.pi_models import PiModelRef, PiModelVersion, PiReviewSelection
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import NativeRunnerLaunch, TaskCreationCapabilities
 from bbx_contracts.runner_inputs import INPUT_PROFILE
@@ -121,6 +122,11 @@ from bbx_blackboard.native_inputs import router as native_inputs_router
 from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap, native_role_thinking
 from bbx_blackboard.native_runner_bootstrap import router as native_runner_bootstrap_router
 from bbx_blackboard.native_vpn import router as native_vpn_router
+from bbx_blackboard.pi_ledger import pi_pending, pi_totals, task_pi_model
+from bbx_blackboard.pi_ledger import public as pi_fees_router
+from bbx_blackboard.pi_ledger import router as pi_ledger_router
+from bbx_blackboard.pi_registry import PiRegistry, display_pi_model
+from bbx_blackboard.pi_registry import router as pi_registry_router
 from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.platform import router as platform_router
 from bbx_blackboard.profiles import ProfileStore, ctf_profile, require_ctf_tool_capabilities
@@ -156,6 +162,7 @@ class LoginBody(BaseModel):
 
 
 class TaskCreateBody(TaskSpec):
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     gateway_model: GatewayModelRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -194,6 +201,7 @@ class GatewayTaskFees(BaseModel):
 
 
 class TaskView(BaseModel):
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     gateway_fees: GatewayTaskFees | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -702,6 +710,9 @@ def create_app(
     app.include_router(gateway_catalog_internal)
     app.include_router(gateway_execution_router)
     app.include_router(gateway_maintenance_router)
+    app.include_router(pi_ledger_router)
+    app.include_router(pi_fees_router)
+    app.include_router(pi_registry_router)
     app.state.settings = settings
     app.state.gateway_models = GatewayModels(settings)
     app.state.legacy_network_publication = deployment_snapshot(settings)
@@ -712,7 +723,9 @@ def create_app(
     app.state.objects = objects
     app.state.dispatcher = dispatcher
     app.state.board_service = (
-        BoardService(engine, objects) if engine is not None and objects is not None else None
+        BoardService(engine, objects, pi_site_id=settings.pi_site_id)
+        if engine is not None and objects is not None
+        else None
     )
     app.state.ctf_service = CtfService(engine, objects) if engine is not None else None
     app.state.runner_control = RunnerControl(engine) if engine is not None else None
@@ -738,6 +751,9 @@ def create_app(
         if engine is not None
         else None
     )
+    app.state.pi_registry = (
+        PiRegistry(app.state.platform_store, settings) if app.state.platform_store else None
+    )
     app.state.workspace_cache = WorkspaceArchiveCache()
     app.state.native_cache = NativeAnalysisCache()
 
@@ -757,6 +773,14 @@ def create_app(
             raise HTTPException(409, "原黑板网络配置不可用，不能改用其他出口")
         if prior is None:
             raise HTTPException(409, "此历史任务没有原黑板网络配置")
+        direct = None
+        if settings.pi_site_id:
+            async with request.app.state.engine.connect() as conn:
+                direct = await task_pi_model(conn, tid)
+        if direct is not None:
+            if direct[0] != settings.pi_model_authority:
+                raise HTTPException(409, "任务的原模型目录已变更")
+            return None
         generation = await observed_generation(request.app.state.engine)
         if publish:
             await request.app.state.gateway_execution.ordinary_ready(tid)
@@ -1047,6 +1071,28 @@ def create_app(
             raise HTTPException(422, "此模型未声明支持工具调用")
         return selected, generation
 
+    def display_model(selected):
+        return (
+            display_pi_model(selected)
+            if isinstance(selected, PiModelVersion)
+            else gateway_display_model(selected)
+        )
+
+    async def selected_task_model(request: Request, body):
+        registry = request.app.state.pi_registry
+        if registry is not None and registry.enabled:
+            if body.pi_model is None or body.gateway_model is not None:
+                raise HTTPException(422, "请选择平台已启用的 Pi 模型")
+            return await registry.selected(body.pi_model), None
+        if body.pi_model is not None:
+            raise HTTPException(503, "平台 Pi 模型尚未启用")
+        return await selected_gateway_model(request, body.gateway_model)
+
+    def model_arguments(selected, generation):
+        if isinstance(selected, PiModelVersion):
+            return {"pi_model": (settings.pi_model_authority, selected)}
+        return {"gateway_model": (selected, generation)}
+
     @app.get(
         "/api/task-creation-capabilities",
         response_model=TaskCreationCapabilities,
@@ -1129,13 +1175,13 @@ def create_app(
             ):
                 raise HTTPException(422, "该原生 CTF 环境要求已发布的模型、配置和自动派工")
             publication.validate_budget(body.budget.max_cost)
-            selected, generation = await selected_gateway_model(request, body.gateway_model)
+            selected, generation = await selected_task_model(request, body)
             bootstrap = request.app.state.native_runner_bootstrap
             if bootstrap is None:
                 raise HTTPException(503, "原生 CTF 控制服务不可用")
             launch = NativeRunnerLaunch(
                 request_id=body.input_group_id,
-                model_alias=selected.alias,
+                model_alias=selected.id if isinstance(selected, PiModelVersion) else selected.alias,
                 budget_currency="USD",
                 traffic_profile="binding-pcap-v1",
             )
@@ -1164,7 +1210,7 @@ def create_app(
                 profile = CtfAgentProfile.model_validate(
                     {
                         **profile.model_dump(mode="json"),
-                        "model": gateway_display_model(selected),
+                        "model": display_model(selected),
                     }
                 )
                 for role in ("lead", "teammate"):
@@ -1191,6 +1237,7 @@ def create_app(
                     "input_group_id",
                     "input_file_ids",
                     "gateway_model",
+                    "pi_model",
                     "public_input_ids",
                     "model_id",
                     "model_version",
@@ -1205,7 +1252,7 @@ def create_app(
             tid = await request.app.state.ctf_service.create_task(
                 spec,
                 profile_version=row["version"],
-                gateway_model=(selected, generation),
+                **model_arguments(selected, generation),
                 **(
                     {
                         "business_contract": BOARD_CONTRACT,
@@ -1245,13 +1292,13 @@ def create_app(
         if legacy_network is None:
             raise HTTPException(503, "黑板执行网络配置不可用")
         profiles = _profiles(request)
-        selected, generation = await selected_gateway_model(request, body.gateway_model)
+        selected, generation = await selected_task_model(request, body)
         validate_task_threshold(body.budget.max_cost)
         row = await profiles.get(body.agent_profile, body.profile_version)
         if row.get("prompts", {}).get("mode") == "ctf":
             raise HTTPException(409, "mode_mismatch")
         content = {key: row[key] for key in AgentProfile.model_fields}
-        model = gateway_display_model(selected)
+        model = display_model(selected)
         content["models"] = {role: model for role in ("explore", "derive", "close")}
         threshold = model_context_threshold(content["models"])
         if threshold is not None:
@@ -1261,6 +1308,7 @@ def create_app(
             exclude={
                 "profile_version",
                 "gateway_model",
+                "pi_model",
                 "model_id",
                 "model_version",
                 "reasoning_effort",
@@ -1276,7 +1324,7 @@ def create_app(
             spec,
             profile_version=row["version"],
             legacy_network=legacy_network,
-            gateway_model=(selected, generation),
+            **model_arguments(selected, generation),
             **(
                 {
                     "input_group_id": body.input_group_id,
@@ -1320,6 +1368,18 @@ def create_app(
                 await conn.execute(
                     select(s.gateway_task_models.c.task_id, s.gateway_task_models.c.snapshot).where(
                         s.gateway_task_models.c.task_id.in_(ids)
+                    )
+                )
+            )
+        }
+        pi_models = {
+            item.task_id: PiModelRef(
+                model_id=item.snapshot["id"], model_revision=item.snapshot["model_revision"]
+            )
+            for item in (
+                await conn.execute(
+                    select(s.pi_task_models.c.task_id, s.pi_task_models.c.snapshot).where(
+                        s.pi_task_models.c.task_id.in_(ids)
                     )
                 )
             )
@@ -1465,6 +1525,7 @@ def create_app(
             result.append(
                 TaskView(
                     gateway_model=gateway_models.get(task["id"]),
+                    pi_model=pi_models.get(task["id"]),
                     gateway_fees=GatewayTaskFees(
                         solver=fees.get(task["id"], {}).get("solver", GatewayFeeScope()),
                         progress=fees.get(task["id"], {}).get("progress", GatewayFeeScope()),
@@ -1660,7 +1721,12 @@ def create_app(
                     s.resume_requests.c.request_id == body.request_id,
                 )
             )
-        if prior is None and body.additional_cost:
+        if generation is None and prior is None:
+            async with request.app.state.engine.connect() as conn:
+                used, unknown = await pi_totals(conn, task_id, settings.pi_site_id)
+            if unknown or used >= Decimal(str(task["budget"]["max_cost"])) + body.additional_cost:
+                raise HTTPException(409, "原 Pi 费用待核或额度已用尽")
+        if generation is not None and prior is None and body.additional_cost:
             if task["status"] not in {"finished", "failed", "stopped"} or not task["cleanup_ready"]:
                 raise HTTPException(409, "原任务尚未归档，不能追加金额后恢复")
             await execution.budgets.increase(
@@ -1670,7 +1736,7 @@ def create_app(
                 body.additional_cost,
                 Decimal(str(task["budget"]["max_cost"])),
             )
-        if prior is None:
+        if generation is not None and prior is None:
             budget = await execution.ordinary_ready(task_id)
             _, used, exceeded = await execution.budgets.status(budget)
             if exceeded or used >= Decimal(budget["config"]["threshold_usd"]):
@@ -1699,7 +1765,7 @@ def create_app(
         if task.get("mode") == "ctf":
             raise HTTPException(409, "mode_mismatch")
         generation = await legacy_start_boundary(request, task_id, task, publish=False)
-        if body.additional_cost:
+        if generation is not None and body.additional_cost:
             if body.request_id is None:
                 raise HTTPException(422, "追加金额需要原请求编号")
             if task["status"] not in {"provisioning", "running", "closing"}:
@@ -1802,6 +1868,10 @@ def create_app(
     @app.post("/api/tasks/{task_id}/purge", tags=["system"])
     async def purge_task(request: Request, task_id: UUID) -> dict[str, bool]:
         require_service(request)
+        if request.app.state.engine is not None:
+            async with request.app.state.engine.connect() as conn:
+                if await pi_pending(conn, task_id):
+                    raise HTTPException(409, "原 Pi 调用尚未确认，不能删除任务")
         gateway = request.app.state.runner_gateway
         if gateway is not None:
             await gateway.routes.retire(task_id)
@@ -1903,11 +1973,31 @@ def create_app(
         review_generation = None
         origin = await review_source(request.app.state.engine, task, agent_id)
         if origin is not None:
-            review_generation = await observed_generation(request.app.state.engine)
-            await request.app.state.gateway_execution.review_key()
-            review_model = await select_review_model(
-                request.app.state.gateway_models, request.app.state.engine, task_id
-            )
+            registry = request.app.state.pi_registry
+            if registry is not None and registry.enabled:
+                async with request.app.state.engine.connect() as conn:
+                    frozen = await task_pi_model(conn, task_id)
+                candidates = [
+                    model
+                    for model in await registry.list()
+                    if model.enabled and model.has_secret and model.tool_call
+                ]
+                selected = next(
+                    (model for model in candidates if frozen and model.id == frozen[1].id), None
+                )
+                if selected is None:
+                    selected = candidates[0] if candidates else None
+                if selected is None:
+                    raise HTTPException(503, "终态复盘暂没有可用的 Pi 模型")
+                review_model = PiReviewSelection(
+                    authority=settings.pi_model_authority, pi_model=selected
+                )
+            else:
+                review_generation = await observed_generation(request.app.state.engine)
+                await request.app.state.gateway_execution.review_key()
+                review_model = await select_review_model(
+                    request.app.state.gateway_models, request.app.state.engine, task_id
+                )
         if getattr(request.state, "task_mode", "blackboard") == "ctf":
             return await request.app.state.ctf_service.post_message(
                 task_id,
@@ -1918,6 +2008,7 @@ def create_app(
                 review_model=review_model,
                 review_generation=review_generation,
                 review_origin=origin,
+                request_user=identity.name,
             )
         return await _conversations(request).post_message(
             task_id,
@@ -1927,6 +2018,7 @@ def create_app(
             review_model=review_model,
             review_generation=review_generation,
             review_origin=origin,
+            request_user=identity.name,
         )
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
@@ -2089,6 +2181,13 @@ def create_app(
             return board
         async with engine.connect() as conn:
             policy = await legacy_task_snapshot(conn, task_id)
+            if direct := await task_pi_model(conn, task_id):
+                _, unknown = await pi_totals(conn, task_id, settings.pi_site_id)
+                board["task"]["pi_fee_hold"] = bool(unknown)
+                board["task"]["pi_model"] = PiModelRef(
+                    model_id=direct[1].id,
+                    model_revision=direct[1].model_revision,
+                ).model_dump(mode="json")
             if frozen := await task_gateway_model(conn, task_id):
                 board["task"]["gateway_model"] = (
                     frozen[0] if identity.kind == "service" else frozen[0].public()

@@ -62,9 +62,10 @@ class ObjectStore(Protocol):
 
 
 class BoardService:
-    def __init__(self, engine: AsyncEngine, objects: ObjectStore) -> None:
+    def __init__(self, engine: AsyncEngine, objects: ObjectStore, *, pi_site_id: str = "") -> None:
         self.repo = Repository(engine)
         self.objects = objects
+        self.pi_site_id = pi_site_id
 
     async def create_task(
         self,
@@ -77,6 +78,7 @@ class BoardService:
         create_request_hash: str | None = None,
         legacy_network: LegacyNetworkSnapshot | None = None,
         gateway_model=None,
+        pi_model=None,
     ) -> UUID:
         spec = TaskSpec.model_validate(spec)
         if len({x.id for x in spec.acceptance}) != len(spec.acceptance):
@@ -148,6 +150,10 @@ class BoardService:
             await conn.execute(insert(s.tasks).values(id=tid, **payload))
             if gateway_model is not None:
                 await freeze_gateway_model(conn, tid, *gateway_model)
+            if pi_model is not None:
+                from bbx_blackboard.pi_ledger import freeze_pi_model
+
+                await freeze_pi_model(conn, tid, *pi_model)
             if legacy_network is not None:
                 await conn.execute(
                     insert(s.legacy_execution_networks).values(
@@ -421,6 +427,17 @@ class BoardService:
                 raise RuleViolation("resume_review_active", "复盘消息仍在处理，请稍后重试。")
             if not await self.objects.exists(source_uri):
                 raise RuleViolation("resume_archive_missing", "工作区归档对象不存在。")
+            from bbx_blackboard.pi_ledger import pi_pending, pi_totals, task_pi_model
+
+            if await task_pi_model(conn, tid) is not None:
+                if not self.pi_site_id or await pi_pending(conn, tid, solver_only=True):
+                    raise HTTPException(409, "原 Pi 调用尚未确认，不能恢复")
+                pi_used, pi_unknown = await pi_totals(conn, tid, self.pi_site_id)
+                if (
+                    pi_unknown
+                    or pi_used >= Decimal(str(task["budget"]["max_cost"])) + additional_cost
+                ):
+                    raise HTTPException(409, "原 Pi 费用待核或额度已用尽")
             budget = dict(task["budget"])
             budget["max_cost"] = str(Decimal(str(budget["max_cost"])) + additional_cost)
             budget["max_minutes"] = int(budget["max_minutes"]) + additional_minutes
@@ -549,6 +566,34 @@ class BoardService:
                     ):
                         raise HTTPException(409, "The original platform budget request changed")
                     return []
+            from bbx_blackboard.pi_ledger import task_pi_model
+
+            pi_request = None
+            if await task_pi_model(conn, tid) is not None:
+                if additional_cost and request_id is None:
+                    raise HTTPException(422, "A Pi budget change requires an original request ID")
+                if request_id is not None:
+                    original = await conn.scalar(
+                        select(s.events.c.payload["pi_budget_request"])
+                        .where(
+                            s.events.c.task_id == tid,
+                            s.events.c.type == "budget.updated",
+                            s.events.c.payload["pi_budget_request"]["id"].astext == str(request_id),
+                        )
+                        .limit(1)
+                    )
+                    if original is not None:
+                        if (
+                            Decimal(original["additional_cost"]) != additional_cost
+                            or original["max_minutes"] != max_minutes
+                        ):
+                            raise HTTPException(409, "The original Pi budget request changed")
+                        return []
+                    pi_request = {
+                        "id": str(request_id),
+                        "additional_cost": str(additional_cost),
+                        "max_minutes": max_minutes,
+                    }
             previous = dict(task["budget"])
             budget = dict(previous)
             budget["max_cost"] = str(Decimal(str(previous["max_cost"])) + additional_cost)
@@ -589,6 +634,7 @@ class BoardService:
                             "budget": budget,
                             "previous_budget": previous,
                             "additional_cost": str(additional_cost),
+                            **({"pi_budget_request": pi_request} if pi_request else {}),
                         },
                     )
                 ],
@@ -795,9 +841,19 @@ class BoardService:
                 model, requested_at or datetime.now(UTC), mode_override=billing_mode
             )
             pricing["timestamp_basis"] = "request_start" if requested_at else "heartbeat_received"
-        amount, warning = calculate_cost(delta, selected)
+        from bbx_blackboard.pi_ledger import task_pi_model
+
+        async with self.repo.engine.connect() as conn:
+            direct = await task_pi_model(conn, tid)
+        if direct is None:
+            amount, warning = calculate_cost(delta, selected)
+        else:
+            amount, warning, pricing = Decimal(0), None, {"source": "pi_ledger", "token_only": True}
         values = delta.model_dump(mode="json")
-        values["cost"] = str(amount)
+        if direct is None:
+            values["cost"] = str(amount)
+        else:
+            values.pop("cost", None)
         events = await self._write(
             tid,
             "heartbeat",

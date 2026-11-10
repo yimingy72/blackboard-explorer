@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
@@ -20,6 +21,7 @@ from bbx_contracts.native_gateway import (
     NativeTransportObservation,
     NativeTransportReceipt,
 )
+from bbx_contracts.pi_models import PiCallPrepare
 from bbx_contracts.runner import (
     MAX_MODEL_BODY_BYTES,
     MAX_MODEL_METADATA_BYTES,
@@ -41,6 +43,8 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.pi.bridge import PiBridge
+from bbx_runtime.pi_sender import PiSender, context_sha256
 from bbx_runtime.settings import NativeRunnerSettings, Settings
 
 
@@ -117,7 +121,7 @@ class RunnerModelProxy:
         self.settings, self.service = settings, service
         self.gateway = (settings.runner_gateway_url or "").rstrip("/")
         parsed = urlsplit(self.gateway)
-        if (
+        if self.gateway and (
             parsed.scheme not in {"http", "https"}
             or not parsed.hostname
             or parsed.username
@@ -126,6 +130,8 @@ class RunnerModelProxy:
             or parsed.fragment
         ):
             raise ValueError("One fixed native gateway URL is required")
+        if not self.gateway and not settings.pi_runtime_sender_token:
+            raise ValueError("No approved Runtime model sender is configured")
         self.http = http or httpx.AsyncClient(
             trust_env=False,
             follow_redirects=False,
@@ -139,6 +145,7 @@ class RunnerModelProxy:
         self.closing = False
         self.app = Starlette(
             routes=[
+                Route("/messages", self.pi_messages, methods=["POST"]),
                 Route("/attempts/admit", self.admit, methods=["POST"]),
                 Route("/chat/completions", self.dispatch, methods=["POST"]),
                 Route("/attempts/{attempt_id}/receipt", self.observation, methods=["POST"]),
@@ -147,7 +154,8 @@ class RunnerModelProxy:
 
     @staticmethod
     def token(request: Request) -> str:
-        value = request.headers.get("authorization", "")
+        values = request.headers.getlist("authorization")
+        value = values[0] if len(values) == 1 else ""
         if not value.startswith("Bearer ") or not value[7:]:
             raise HTTPException(401, "Scoped model credential required")
         if request.url.query:
@@ -180,7 +188,145 @@ class RunnerModelProxy:
             raise HTTPException(response.status_code, "Blackboard refused the model operation")
         return response.json()
 
+    async def pi_messages(self, request: Request) -> StreamingResponse:
+        """Project native SDK events onto the existing private Runtime listener."""
+        sender_token = self.settings.pi_runtime_sender_token
+        if self.closing or sender_token is None:
+            raise HTTPException(503, "Trusted Pi Runtime is unavailable")
+        token = self.token(request)
+        try:
+            payload = json_object(await body_bytes(request, MAX_MODEL_BODY_BYTES))
+            if set(payload) != {"model", "context", "options", "bbx"}:
+                raise ValueError("Unexpected Pi message fields")
+            context, raw_options = payload["context"], payload["options"]
+            if (
+                not isinstance(context, dict)
+                or set(context) - {"messages", "systemPrompt", "tools"}
+                or not isinstance(context.get("messages"), list)
+                or not isinstance(raw_options, dict)
+            ):
+                raise ValueError("Invalid original Pi context")
+            maximum = raw_options.get("maxTokens")
+            if maximum is not None and (type(maximum) is not int or maximum < 1):
+                raise ValueError("Invalid approved output limit")
+            options = {}
+            if maximum is not None:
+                options["maxTokens"] = maximum
+            if raw_options.get("reasoning") in ("minimal", "low", "medium", "high", "xhigh", "max"):
+                options["reasoning"] = raw_options["reasoning"]
+            # Treat this request as a private session message, never a generic provider proxy.
+            body = PiCallPrepare.model_validate(
+                {
+                    **payload["bbx"],
+                    "context_sha256": context_sha256(context, options),
+                }
+            )
+            if body.proof.kind != "native" or payload["model"] != body.model_id:
+                raise ValueError("The frozen Runner Pi model did not match")
+            proof = body.proof
+            durable_scope = [
+                "bbx-native-pi-v1",
+                str(body.task_id),
+                proof.binding.platform_session_id,
+                proof.sdk_session_id,
+                proof.journal.leaf_id or proof.journal.hash,
+                proof.journal.seq,
+                body.action,
+            ]
+            identity = json.dumps(durable_scope, ensure_ascii=False, separators=(",", ":")).encode()
+            if hashlib.sha256(identity).hexdigest() != body.logical_call_id:
+                raise ValueError("The original Runner call identity changed")
+        except (TypeError, ValueError, ValidationError) as error:
+            raise HTTPException(422, "Invalid scoped Pi model request") from error
+        if self.slots.locked():
+            raise HTTPException(429, "Trusted Pi Runtime is at capacity")
+
+        def frame(event: dict) -> bytes:
+            return (
+                b"data: "
+                + json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode()
+                + b"\n\n"
+            )
+
+        async def stream() -> AsyncIterator[bytes]:
+            handler = asyncio.current_task()
+            assert handler is not None
+            self.streams.add(handler)
+            queue: asyncio.Queue[dict | None] = asyncio.Queue(32)
+            bridge = PiBridge(use_env_proxy=False)
+
+            async def produce():
+                try:
+                    sender = PiSender(
+                        self.service,
+                        sender_token.get_secret_value(),
+                        self.settings.pi_provider_allowed_origins,
+                        bridge,
+                    )
+                    result = await sender.invoke(
+                        body,
+                        context,
+                        options,
+                        runner_token=token,
+                        wire_events=True,
+                        on_event=queue.put,
+                    )
+                    message = result["message"]
+                    if message["stopReason"] not in {"stop", "length", "toolUse"}:
+                        raise ValueError("The original Pi model stream was incomplete")
+                    event = {
+                        "type": "done",
+                        "reason": message["stopReason"],
+                        "usage": message["usage"],
+                        "responseId": result["accounting"].get("provider_request_id"),
+                    }
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # This SDK error frame is not usage or fee evidence.
+                    event = {
+                        "type": "error",
+                        "reason": "error",
+                        "errorMessage": "The trusted model result was not confirmed",
+                        "usage": {
+                            "input": 0,
+                            "output": 0,
+                            "cacheRead": 0,
+                            "cacheWrite": 0,
+                            "totalTokens": 0,
+                            "cost": {
+                                "input": 0,
+                                "output": 0,
+                                "cacheRead": 0,
+                                "cacheWrite": 0,
+                                "total": 0,
+                            },
+                        },
+                    }
+                await queue.put(event)
+                await queue.put(None)
+
+            try:
+                async with self.slots:
+                    worker = asyncio.create_task(produce(), name="private-pi-model")
+                    try:
+                        while (event := await queue.get()) is not None:
+                            yield frame(event)
+                    finally:
+                        if not worker.done():
+                            worker.cancel()
+                        await asyncio.gather(worker, return_exceptions=True)
+                        await bridge.close()
+            finally:
+                self.streams.discard(handler)
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"}
+        )
+
     async def admit(self, request: Request) -> JSONResponse:
+        if not self.gateway:
+            raise HTTPException(404, "Legacy model transport is unavailable")
         if self.closing:
             raise HTTPException(503, "Runtime model proxy is stopping")
         token = self.token(request)
@@ -207,6 +353,8 @@ class RunnerModelProxy:
         return JSONResponse(value.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
     async def dispatch(self, request: Request) -> StreamingResponse:
+        if not self.gateway:
+            raise HTTPException(404, "Legacy model transport is unavailable")
         if self.closing:
             raise HTTPException(503, "Runtime transport is stopping")
         token = self.token(request)

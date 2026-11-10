@@ -23,6 +23,7 @@ from bbx_blackboard.auth import require_service, require_user_or_service
 from bbx_blackboard.store.schema import platform_configs as table
 
 Kind = Literal["mcp-servers"]
+StoredKind = Literal["mcp-servers", "pi-models"]
 
 
 def config_lock(kind: str, name: str) -> int:
@@ -66,7 +67,12 @@ class PlatformStore:
         return {**common, **row["config"]}
 
     async def get(
-        self, kind: Kind, name: str, version: int | None = None, *, include_deleted: bool = False
+        self,
+        kind: StoredKind,
+        name: str,
+        version: int | None = None,
+        *,
+        include_deleted: bool = False,
     ) -> dict[str, Any]:
         query = select(table).where(table.c.kind == kind, table.c.name == name)
         if not include_deleted:
@@ -159,7 +165,7 @@ class PlatformStore:
             )
         return self.public(dict(row))
 
-    async def credentials(self, kind: Kind, name: str, version: int) -> dict[str, Any]:
+    async def credentials(self, kind: StoredKind, name: str, version: int) -> dict[str, Any]:
         # Existing tasks and resumed conversations still use their pinned credentials.
         row = await self.get(kind, name, version, include_deleted=True)
         secret = (

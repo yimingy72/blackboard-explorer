@@ -226,6 +226,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/pi-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Models */
+        get: operations["list_models_api_platform_pi_models_get"];
+        put?: never;
+        /** New Model */
+        post: operations["new_model_api_platform_pi_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/pi-models/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Model */
+        put: operations["save_model_api_platform_pi_models__name__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/pi-review-fees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Fees */
+        get: operations["review_fees_api_platform_pi_review_fees_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/{kind}/{name}/versions/{version}": {
         parameters: {
             query?: never;
@@ -2054,6 +2106,23 @@ export interface paths {
         };
         /** Get Object */
         get: operations["get_object_api_tasks__task_id__objects__object_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/pi-fees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Fees */
+        get: operations["task_fees_api_tasks__task_id__pi_fees_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4321,6 +4390,7 @@ export interface components {
             native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
             /** Native Vpn Source Id */
             native_vpn_source_id?: string | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
             /** Public Input Ids */
@@ -4378,6 +4448,8 @@ export interface components {
             input: ("text" | "image")[];
             /** Max Output Tokens */
             max_output_tokens: number;
+            /** Model Revision */
+            model_revision?: number | null;
             /** Reasoning */
             reasoning: boolean;
             /** Thinking Budgets */
@@ -6572,6 +6644,165 @@ export interface components {
              */
             snapshot_max_lines: number;
         };
+        /** PiModelDirectory */
+        PiModelDirectory: {
+            /** Can Manage */
+            can_manage: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Models */
+            models: components["schemas"]["PiModelVersion"][];
+        };
+        /** PiModelInput */
+        PiModelInput: {
+            /**
+             * Api
+             * @default openai-completions
+             * @constant
+             */
+            api: "openai-completions";
+            /** Base Url */
+            base_url: string;
+            /**
+             * Clear Secret
+             * @default false
+             */
+            clear_secret: boolean;
+            /**
+             * Confirmed Free
+             * @default false
+             */
+            confirmed_free: boolean;
+            /** Context Window */
+            context_window: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision?: number | null;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /**
+             * Pricing Source
+             * @default
+             */
+            pricing_source: string;
+            /**
+             * Provider
+             * @default openai
+             * @constant
+             */
+            provider: "openai";
+            /**
+             * Reasoning
+             * @default false
+             */
+            reasoning: boolean;
+            /** Secret */
+            secret?: string | null;
+            /**
+             * Tool Call
+             * @default true
+             */
+            tool_call: boolean;
+            /** Upstream Model */
+            upstream_model: string;
+            usd_rates?: components["schemas"]["PiUsdRates-Input"] | null;
+        };
+        /** PiModelRef */
+        PiModelRef: {
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+        };
+        /** PiModelVersion */
+        PiModelVersion: {
+            /**
+             * Api
+             * @default openai-completions
+             * @constant
+             */
+            api: "openai-completions";
+            /** Base Url */
+            base_url: string;
+            /**
+             * Confirmed Free
+             * @default false
+             */
+            confirmed_free: boolean;
+            /** Context Window */
+            context_window: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Has Secret */
+            has_secret: boolean;
+            /** Id */
+            id: string;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** Model Revision */
+            model_revision: number;
+            /**
+             * Pricing Source
+             * @default
+             */
+            pricing_source: string;
+            /**
+             * Provider
+             * @default openai
+             * @constant
+             */
+            provider: "openai";
+            /**
+             * Reasoning
+             * @default false
+             */
+            reasoning: boolean;
+            /**
+             * Tool Call
+             * @default true
+             */
+            tool_call: boolean;
+            /** Upstream Model */
+            upstream_model: string;
+            usd_rates?: components["schemas"]["PiUsdRates-Output"] | null;
+        };
+        /** PiUsdRates */
+        "PiUsdRates-Input": {
+            /** Cache Read */
+            cache_read: number | string;
+            /** Cache Write */
+            cache_write: number | string;
+            /** Input */
+            input: number | string;
+            /** Output */
+            output: number | string;
+        };
+        /** PiUsdRates */
+        "PiUsdRates-Output": {
+            /** Cache Read */
+            cache_read: string;
+            /** Cache Write */
+            cache_write: string;
+            /** Input */
+            input: string;
+            /** Output */
+            output: string;
+        };
         /** PostFactRequest */
         PostFactRequest: {
             /** Derived From */
@@ -6920,6 +7151,7 @@ export interface components {
             gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /** Model Id */
             model_id?: string | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /**
              * Prompt
              * @default
@@ -7067,6 +7299,7 @@ export interface components {
             model_id?: string | null;
             /** Model Version */
             model_version?: number | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /**
              * Reasoning Effort
              * @description 历史兼容字段，实际思考强度使用固定模型配置
@@ -7637,6 +7870,7 @@ export interface components {
             params?: {
                 [key: string]: number | string | boolean;
             };
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
             /**
@@ -7768,6 +8002,7 @@ export interface components {
             /** Name */
             name?: string | null;
             native_network?: components["schemas"]["NativeTaskNetworkStatus"] | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Report Uri */
             report_uri: string | null;
             /**
@@ -9051,6 +9286,116 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_api_platform_pi_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiModelDirectory"];
+                };
+            };
+        };
+    };
+    new_model_api_platform_pi_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PiModelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiModelVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_model_api_platform_pi_models__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PiModelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiModelVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_fees_api_platform_pi_review_fees_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -13253,6 +13598,39 @@ export interface operations {
             path: {
                 task_id: string;
                 object_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_fees_api_tasks__task_id__pi_fees_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
             };
             cookie?: never;
         };

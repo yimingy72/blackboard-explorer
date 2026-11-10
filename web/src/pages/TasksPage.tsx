@@ -99,7 +99,7 @@ export default function TasksPage() {
       </Link>
       <div className={styles.state}><Tag className={styles.statusTag} color={task.status === 'failed' ? 'error' : active ? 'processing' : 'default'} icon={task.status === 'failed' ? <WarningOutlined aria-hidden="true" /> : ended ? <StopOutlined aria-hidden="true" /> : <ClockCircleOutlined aria-hidden="true" />}>{task.deleting ? '删除中' : task.status === 'finished' ? '已结束' : taskStatusLabel(task.status)}</Tag></div>
       <div className={styles.usage}>
-        <Tooltip title={task.gateway_fees ? "已确认的 AgentGateway 求解费用 / 任务预算，待核费用与复盘另计" : "历史模型费用 / 原任务预算"}><span className={styles.cost}><span>{knownAmount(task.gateway_fees ? task.gateway_fees.solver.confirmed_usd : task.usage?.cost, task.cost_currency)}</span><small> / <span>{knownAmount(task.budget?.max_cost, task.cost_currency)}</span></small></span></Tooltip>
+        <Tooltip title={task.pi_model ? "Pi 求解估算费用 / 任务金额阈值，复盘另计" : task.gateway_fees ? "已确认的旧网关求解费用 / 任务预算，复盘另计" : "历史模型费用 / 原任务预算"}><span className={styles.cost}><span>{knownAmount(task.gateway_fees ? task.gateway_fees.solver.confirmed_usd : task.usage?.cost, task.cost_currency)}</span><small> / <span>{knownAmount(task.budget?.max_cost, task.cost_currency)}</span></small></span></Tooltip>
         <span className={styles.runtime}><ClockCircleOutlined aria-hidden="true" /><ElapsedTime seconds={task.active_seconds} since={task.active_since} /></span>
       </div>
       <div className={styles.created}><span>创建于</span><time dateTime={task.created_at} title={`创建于 ${formatDate(task.created_at)}`}>{formatDate(task.created_at)}</time></div>

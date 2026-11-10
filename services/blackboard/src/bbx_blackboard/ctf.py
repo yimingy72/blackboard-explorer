@@ -587,6 +587,7 @@ class CtfService(
         native_vpn_profile=None,
         native_vpn_source_id=None,
         gateway_model=None,
+        pi_model=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
         from bbx_contracts.runner_inputs import INPUT_PROFILE
@@ -711,6 +712,10 @@ class CtfService(
             await conn.execute(insert(s.tasks).values(id=tid, **fields))
             if gateway_model is not None:
                 await freeze_gateway_model(conn, tid, *gateway_model)
+            if pi_model is not None:
+                from bbx_blackboard.pi_ledger import freeze_pi_model
+
+                await freeze_pi_model(conn, tid, *pi_model)
             if native_vpn_source_id is not None:
                 if native_vpn_profile != VPN_DYNAMIC_PROFILE or input_group_id is None:
                     raise HTTPException(422, "Private VPN source is not supported by this Task")
@@ -1349,12 +1354,14 @@ class CtfService(
         review_model=None,
         review_generation=None,
         review_origin=None,
+        request_user=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
             member = await row(conn, s.ctf_members, tid, recipient_id) if actor == "user" else None
             if member is not None and ctf_review_allowed(task, member):
-                await admission(conn, review_generation)
+                if review_generation is not None or request_user is None:
+                    await admission(conn, review_generation)
                 original_generation = await ctf_review_generation(conn, tid, member)
                 require(
                     review_model is not None
@@ -1387,6 +1394,7 @@ class CtfService(
                             "review_model": review_model.model_dump(mode="json"),
                             "request_run_number": task["run_number"],
                             "request_agent_generation": original_generation,
+                            "request_user": request_user,
                         },
                         str(message_id),
                     )
@@ -2530,6 +2538,12 @@ class CtfService(
         if duplicate:
             require(str(duplicate[0]) == str(turn_id), "Usage request belongs to another turn")
             return turn["usage"]
+        from bbx_blackboard.pi_ledger import task_pi_model
+
+        if await task_pi_model(conn, tid) is not None or (turn.get("review_model") or {}).get(
+            "pi_model"
+        ):
+            usage = {key: value for key, value in usage.items() if key != "cost"}
         total = add_usage(turn["usage"], usage)
         control = dict(task["ctf_control"])
         reservations = _reservations(task)

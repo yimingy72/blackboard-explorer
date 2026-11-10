@@ -14,6 +14,7 @@ from bbx_contracts.billing import effective_price, token_cost
 from bbx_contracts.gateway_models import GatewayModelRef, GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig, Price
+from bbx_contracts.pi_models import PiModelRef, PiModelVersion
 from bbx_contracts.progress import (
     ProgressCandidate,
     ProgressCheckpoint,
@@ -50,6 +51,8 @@ from bbx_blackboard.gateway_tasks import (
     require_original_model,
     task_gateway_model,
 )
+from bbx_blackboard.pi_ledger import pi_totals, task_pi_model
+from bbx_blackboard.pi_registry import display_pi_model
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 
@@ -203,13 +206,20 @@ def fold_sources(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 class ProgressService:
     def __init__(
-        self, engine, objects=None, profiles_dir: Path | None = None, *, require_gateway=False
+        self,
+        engine,
+        objects=None,
+        profiles_dir: Path | None = None,
+        *,
+        require_gateway=False,
+        pi_site_id: str = "",
     ):
         self.repo = Repository(engine)
         self.conversations = Conversations(engine)
         self.objects = objects
         self.profiles_dir = profiles_dir
         self.require_gateway = require_gateway
+        self.pi_site_id = pi_site_id
 
     async def task(self, conn, tid, *, writable=False, allow_deleting=False):
         if writable:
@@ -319,12 +329,25 @@ class ProgressService:
                 )
             return value
 
-    async def settings(self, tid, body, *, gateway_scope=None):
+    async def settings(self, tid, body, *, gateway_scope=None, pi_scope=None):
         async with self.repo.engine.begin() as conn:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
             budget_request = None
-            if body.enabled:
+            if body.enabled and pi_scope is not None:
+                authority, model, site_id = pi_scope
+                frozen = {"authority": authority, "snapshot": model.model_dump(mode="json")}
+                if state.get("gateway_model") or state.get("pi_model") not in (None, frozen):
+                    raise HTTPException(409, "The original Progress model cannot change")
+                spent, unknown = await pi_totals(conn, tid, site_id, "progress")
+                if unknown or body.max_cost < spent:
+                    raise HTTPException(
+                        409, "Original Progress fees are unknown or exceed the limit"
+                    )
+                state["pi_model"] = frozen
+                state["budget_currency"] = "USD"
+                state["model"] = display_pi_model(model).model_dump(mode="json")
+            elif body.enabled:
                 await admission(conn)
                 if self.require_gateway:
                     if (
@@ -345,7 +368,7 @@ class ProgressService:
                 not body.enabled or body.max_cost >= self.occupied(state),
                 "Limit is below committed or reserved use",
             )
-            if self.require_gateway and body.enabled:
+            if self.require_gateway and body.enabled and pi_scope is None:
                 assert gateway_scope is not None
                 native = await GatewayBudgets.find(conn, tid, "progress")
                 if native is not None and native["publication_state"] == "ready":
@@ -358,6 +381,12 @@ class ProgressService:
                         {"operation": "progress-settings", "currency": "USD"},
                     )
             effective = {**state["settings"], **body.model_dump(mode="json", exclude_unset=True)}
+            if pi_scope is not None:
+                chosen = pi_scope[1]
+                effective["pi_model"] = {
+                    "model_id": chosen.id,
+                    "model_revision": chosen.model_revision,
+                }
             if (
                 not self.require_gateway
                 and effective["enabled"]
@@ -591,7 +620,7 @@ class ProgressService:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
             await admission(conn)
-            if self.require_gateway and not state.get("gateway_model"):
+            if self.require_gateway and not (state.get("gateway_model") or state.get("pi_model")):
                 raise HTTPException(409, "Progress needs an applied AgentGateway model")
             check(state["settings"]["enabled"], "Progress is disabled")
             existing = (
@@ -624,7 +653,7 @@ class ProgressService:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
             await admission(conn)
-            if self.require_gateway and not state.get("gateway_model"):
+            if self.require_gateway and not (state.get("gateway_model") or state.get("pi_model")):
                 raise HTTPException(409, "Progress needs an applied AgentGateway model")
             check(state["settings"]["enabled"], "Progress is disabled")
             existing = (
@@ -942,6 +971,10 @@ class ProgressService:
                 task = dict(task_row)
                 tid = task["id"]
                 state = await self.state(conn, task)
+                if state.get("pi_model"):
+                    used, unknown = await pi_totals(conn, tid, self.pi_site_id, "progress")
+                    if unknown or used >= Decimal(str(state["settings"]["max_cost"])):
+                        continue
                 running = (
                     (
                         await conn.execute(
@@ -1180,9 +1213,12 @@ class ProgressService:
                     effective_settings["model_id"] = effective_settings.get(
                         "model_id"
                     ) or global_value.get("model_id")
-                    if self.require_gateway and not state.get("gateway_model"):
+                    if self.require_gateway and not (
+                        state.get("gateway_model") or state.get("pi_model")
+                    ):
                         continue
-                    await admission(conn)
+                    if not state.get("pi_model"):
+                        await admission(conn)
                     model = state.get("model") or await self.model(conn, task, effective_settings)
                     floor = max(
                         state["source_version"],
@@ -1218,6 +1254,7 @@ class ProgressService:
                         candidate=None,
                         model=model,
                         gateway_model=state.get("gateway_model"),
+                        pi_model=state.get("pi_model"),
                         budget_currency=state.get("budget_currency"),
                         settings=effective_settings,
                         attempts=data["attempts"] + 1,
@@ -1259,6 +1296,17 @@ class ProgressService:
                         "settings": effective_settings,
                         "model": model,
                         "gateway_model": state.get("gateway_model"),
+                        **(
+                            {
+                                "pi_model": PiModelVersion.model_validate(
+                                    state["pi_model"]["snapshot"]
+                                )
+                                .reference()
+                                .model_dump(mode="json")
+                            }
+                            if state.get("pi_model")
+                            else {}
+                        ),
                         "message": message,
                         "node_id": data.get("node_id"),
                         "session": session,
@@ -2049,6 +2097,7 @@ def service(request: Request) -> ProgressService:
         request.app.state.objects,
         request.app.state.settings.profiles_dir,
         require_gateway=True,
+        pi_site_id=request.app.state.settings.pi_site_id,
     )
 
 
@@ -2077,7 +2126,9 @@ async def global_get(request: Request):
 @router.put("/progress/settings")
 async def global_put(request: Request, body: ProgressGlobalSettings):
     require_user_or_service(request)
-    if body.gateway_model is not None:
+    if body.pi_model is not None:
+        await request.app.state.pi_registry.selected(body.pi_model)
+    elif body.gateway_model is not None:
         selected = await request.app.state.gateway_models.require_active(
             body.gateway_model.alias, body.gateway_model.catalog_revision
         )
@@ -2095,7 +2146,15 @@ async def progress_get(request: Request, tid: UUID, at_version: int | None = Que
             check(at_version is None, "Historical replay is a user-only read", 403)
             state = await service(request).state(conn, task)
             return {key: state[key] for key in ("overview", "nodes", "revision", "source_version")}
-    return await service(request).view(tid, at_version)
+    progress = service(request)
+    result = await progress.view(tid, at_version)
+    if at_version is None and result["settings"].get("pi_model"):
+        async with progress.repo.engine.connect() as conn:
+            amount, unknown = await pi_totals(
+                conn, tid, request.app.state.settings.pi_site_id, "progress"
+            )
+        result.update(cost=str(amount), fee_source="pi_estimated", unknown_calls=unknown)
+    return result
 
 
 @router.get("/tasks/{tid}/progress/settings")
@@ -2110,6 +2169,38 @@ async def settings_put(request: Request, tid: UUID, body: ProgressSettings):
     check("at_version" not in request.query_params, "Historical progress is read-only", 403)
     progress = service(request)
     scope = None
+    registry = request.app.state.pi_registry
+    async with progress.repo.engine.connect() as conn:
+        task_model = await task_pi_model(conn, tid)
+    if body.pi_model is not None and task_model is None:
+        raise HTTPException(409, "此旧任务仍使用原冻结模型")
+    if body.enabled and task_model is not None and registry is not None and registry.enabled:
+        if body.currency != "USD" or body.gateway_model is not None or body.max_cost <= 0:
+            raise HTTPException(422, "成果整理需要已定价的 Pi 模型和正数 USD 额度")
+        async with progress.repo.engine.connect() as conn:
+            task = await progress.task(conn, tid)
+            current = await progress.state(conn, task)
+        if task_model is None or task_model[0] != registry.settings.pi_model_authority:
+            raise HTTPException(409, "原任务没有冻结的 Pi 模型")
+        if original := current.get("pi_model"):
+            model = PiModelVersion.model_validate(original["snapshot"])
+            if body.pi_model and (body.pi_model.model_id, body.pi_model.model_revision) != (
+                model.id,
+                model.model_revision,
+            ):
+                raise HTTPException(409, "The original Progress model cannot change")
+        else:
+            global_value = await progress.global_settings()
+            chosen = body.pi_model or (
+                PiModelRef.model_validate(global_value["pi_model"])
+                if global_value.get("pi_model")
+                else None
+            )
+            model = await registry.selected(chosen) if chosen is not None else task_model[1]
+        await progress.settings(
+            tid, body, pi_scope=(task_model[0], model, registry.settings.pi_site_id)
+        )
+        return await progress.view(tid)
     if body.enabled:
         manager = request.app.state.gateway_models
         generation = await observed_generation(progress.repo.engine)

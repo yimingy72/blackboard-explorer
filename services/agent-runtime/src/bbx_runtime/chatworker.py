@@ -9,7 +9,6 @@ import logging
 from typing import Any, Literal, cast
 
 import httpx
-from bbx_contracts.gateway_models import GatewayModelSnapshot
 from bbx_contracts.models import ModelConfig
 from bbx_objects import ObjectStore
 
@@ -22,7 +21,7 @@ from bbx_runtime.model_errors import OPENAI_PROVIDERS
 from bbx_runtime.models import (
     close_model_client,
     load_runtime_profile,
-    make_gateway_client,
+    make_task_model_client,
     model_run_options,
 )
 from bbx_runtime.pi import Agent, AgentSession, BaseChatClient, Content, Message, tool
@@ -72,14 +71,16 @@ def _completed_text(session: AgentSession, message_id: str) -> str | None:
     return answer
 
 
-def _review_usage(session: AgentSession, message_id: str, model: ModelConfig) -> dict[str, Any]:
+def _review_usage(
+    session: AgentSession, message_id: str, model: ModelConfig, *, pi: bool = False
+) -> dict[str, Any]:
     raw_usage = session.state.get("bbx_review_usage", {}).get(message_id)
     billed = session.state.get("bbx_review_billed", {}).get(message_id)
-    if billed:
+    if billed and not pi:
         return billed["usage"]
     if raw_usage:
         tokens = _token_usage(raw_usage, model.provider).model_dump(mode="json", exclude={"cost"})
-        return {"accounting": "agentgateway", **tokens}
+        return {"accounting": "pi_ledger" if pi else "agentgateway", **tokens}
     return {"unavailable": True}
 
 
@@ -189,7 +190,9 @@ class ChatWorker:
                 checkpoint.review_claim = {"id": message_id, "claim_token": token}
             if repair_unpaired_tool_calls(checkpoint.session, include_interrupted=True):
                 await checkpoint.save()
-            recovered_usage = _review_usage(checkpoint.session, message_id, model)
+            recovered_usage = _review_usage(
+                checkpoint.session, message_id, model, pi=claim.get("pi_model") is not None
+            )
             prior = checkpoint.session.state.get("bbx_review_response")
             if isinstance(prior, dict) and prior.get("message_id") == message_id:
                 answer = str(prior["content"])
@@ -199,14 +202,13 @@ class ChatWorker:
                 if recovered is not None:
                     answer, usage = recovered, recovered_usage
                 else:
-                    snapshot = GatewayModelSnapshot.model_validate(claim.get("gateway_model"))
-                    client = make_gateway_client(
+                    client = make_task_model_client(
                         model,
-                        snapshot=snapshot,
+                        source=claim,
+                        settings=self.settings,
                         service=self.service,
                         task_id=task_id,
                         purpose="review",
-                        gateway_url=self.settings.runner_gateway_url,
                         proof={
                             "agent_id": agent_id,
                             "message_id": message_id,
@@ -278,7 +280,9 @@ class ChatWorker:
                                     options=model_run_options(model),
                                 )
                     answer = response.text
-                    usage = _review_usage(checkpoint.session, message_id, model)
+                    usage = _review_usage(
+                        checkpoint.session, message_id, model, pi=claim.get("pi_model") is not None
+                    )
                 checkpoint.session.state["bbx_review_response"] = {
                     "message_id": message_id,
                     "content": answer,

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    Numeric,
     Table,
     Text,
     func,
@@ -837,6 +838,50 @@ gateway_execution_attempts = Table(
     col("next_check_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
+
+pi_task_models = Table(
+    "pi_task_models",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("authority", Text, nullable=False),
+    col("snapshot", JSONB, nullable=False),
+)
+
+pi_model_calls = Table(
+    "pi_model_calls",
+    metadata,
+    col("site_id", Text, primary_key=True),
+    col("call_id", UUID(as_uuid=True), primary_key=True),
+    col("attempt_id", UUID(as_uuid=True), nullable=False),
+    col("task_id", UUID(as_uuid=True), nullable=False),
+    col("purpose", Text, nullable=False),
+    col("agent_id", Text, nullable=False),
+    col("turn_id", Text, nullable=False),
+    col("request_user", Text),
+    col("logical_call_id", Text, nullable=False),
+    col("intent", JSONB, nullable=False),
+    col("model_snapshot", JSONB, nullable=False),
+    col("state", Text, nullable=False),
+    col("request_sha256", Text),
+    col("settlement", JSONB),
+    col("amount_usd", Numeric(42, 24)),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    col("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index("ix_pi_model_calls_task_purpose", pi_model_calls.c.task_id, pi_model_calls.c.purpose)
+Index(
+    "ux_pi_model_calls_logical",
+    pi_model_calls.c.site_id,
+    pi_model_calls.c.task_id,
+    pi_model_calls.c.purpose,
+    pi_model_calls.c.logical_call_id,
+    unique=True,
+)
+Index("ix_pi_model_calls_review_user", pi_model_calls.c.request_user, pi_model_calls.c.purpose)
+agent_messages.append_column(col("request_user", Text))
+ctf_messages.append_column(col("request_user", Text))
 Index(
     "ux_gateway_execution_native_log",
     gateway_execution_attempts.c.accounting_source_id,

@@ -16,10 +16,11 @@ describe('CTF workbench boundaries', () => {
     const second = { task_id: 'task', version: 9, type: 'ctf.turn.finished', payload: {} };
     expect(mergeCtfEvents([first], [first, second, first]).map((event) => event.version)).toEqual([8, 9]);
   });
-  it('keeps stopped messaging queued without implying resume', () => {
+  it('allows read-only review for a stopped member without resuming execution', () => {
     const stopped = { ...member, lifecycle: 'stopped' as const };
     expect(canSend('running', stopped)).toBe(true);
-    expect(composeHint('running', stopped)).toContain('明确恢复');
+    expect(composeHint('running', stopped)).toContain('只读复盘');
+    expect(composeHint('running', stopped)).toContain('不会续跑任务或恢复成员');
     expect(deliveryLabel(message)).toBe('等待送达');
     expect(memberStatus(stopped)).toBe('已停止');
   });
@@ -32,8 +33,11 @@ describe('CTF workbench boundaries', () => {
       expect(canSend(phase, { ...member, lifecycle: 'removed' })).toBe(true);
       expect(composeHint(phase, member)).toContain('只读复盘');
     }
-    expect(canSend('running', { ...member, lifecycle: 'removed' })).toBe(false);
-    expect(memberStatus({ ...member, lifecycle: 'removed' })).toContain('历史保留');
+    const removed = { ...member, lifecycle: 'removed' as const };
+    expect(canSend('running', removed)).toBe(true);
+    expect(composeHint('running', removed)).toContain('只读复盘');
+    expect(composeHint('running', removed)).toContain('不会续跑任务或恢复成员');
+    expect(memberStatus(removed)).toContain('历史保留');
   });
   it('distinguishes owner claims, manual and simulated platform verification', () => {
     expect(workLabels.completed).toBe('已交付');

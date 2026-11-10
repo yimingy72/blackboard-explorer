@@ -139,14 +139,23 @@ async def settle_receipt(service, conn, tid, aid, request: HeartbeatRequest):
         )
     ).scalar_one()
     model = ModelConfig.model_validate(profile[agent["task_type"]])
-    price, pricing = effective_price(
-        model, request.requested_at, mode_override=receipt.billing_mode
-    )
-    amount, warning = calculate_cost(request.usage, price)
+    from bbx_blackboard.pi_ledger import task_pi_model
+
+    direct = await task_pi_model(conn, tid) is not None
+    if direct:
+        amount, warning, pricing = Decimal(0), None, {"source": "pi_ledger", "token_only": True}
+    else:
+        price, pricing = effective_price(
+            model, request.requested_at, mode_override=receipt.billing_mode
+        )
+        amount, warning = calculate_cost(request.usage, price)
     if not request.usage_known:
         warning = UNKNOWN_USAGE_WARNING
     usage = request.usage.model_dump(mode="json")
-    usage["cost"] = str(amount)
+    if direct:
+        usage.pop("cost", None)
+    else:
+        usage["cost"] = str(amount)
     current = (
         request.expected_run_number == task["run_number"]
         and agent["status"] in {"running", "concluding"}

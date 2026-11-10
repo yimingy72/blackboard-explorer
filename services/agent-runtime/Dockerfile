@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS pi
 WORKDIR /opt/bbx-pi
 COPY services/agent-runtime/pi/package.json services/agent-runtime/pi/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-COPY services/agent-runtime/pi/worker.mjs ./
+COPY services/agent-runtime/pi/worker.mjs services/agent-runtime/pi/trusted-model.mjs ./
 
 FROM python:3.12-slim
 
