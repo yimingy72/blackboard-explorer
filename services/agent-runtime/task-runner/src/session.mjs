@@ -5,6 +5,7 @@ import { createAssistantMessageEventStream, getCurrentSystemMessage, InMemoryCre
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { McpClient, StreamableHttpTransport, toLlmContent } from "@earendil-works/pi-mcp";
 import { assertSessionOpen, freezeSession, installModelBoundary } from "./model-boundary.mjs";
+import { mcpScope } from "./mcp-binding.mjs";
 import { IncrementalJournal, openNativeJournal } from "./journal.mjs";
 import { PROTOCOL, digest, jsonText, safeUrl, sameFence, sameValue, validate } from "./protocol.mjs";
 
@@ -27,6 +28,7 @@ export class RunnerSession {
     this.unresolvedAttempts = new Set();
     this.unresolvedInvocations = new Set();
     this.pendingInputs = new Set();
+    this.mcpClients = new Map();
     this.promptRevision = spec.prompt_revision;
     this.promptText = spec.instructions;
     this.roleInstalled = false;
@@ -80,12 +82,17 @@ export class RunnerSession {
   }
   async prepareSession() {
     this.assertLease();
-    const aliases = this.spec.mcp_tool_aliases;
-    if (!aliases || new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length
-        || Object.keys(aliases).length !== this.spec.allowed_tools.length
-        || this.spec.allowed_tools.some((name) => !Object.hasOwn(aliases, name))
-        || new Set(Object.values(aliases)).size !== this.spec.allowed_tools.length) {
-      throw new Error("MCP aliases must map every declared tool to a distinct wire name");
+    const routes = this.spec.mcp_tool_routes;
+    const direct = routes !== undefined;
+    const aliases = direct ? Object.fromEntries(Object.entries(routes).map(([name, route]) => [name, route.wire_name]))
+      : this.spec.mcp_tool_aliases;
+    const keys = direct ? Object.values(routes).map((route) => `${route.target}/${route.wire_name}`) : Object.values(aliases ?? {});
+    if (direct !== (this.config.mcp_targets !== undefined) || !aliases ||
+        new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length ||
+        Object.keys(aliases).length !== this.spec.allowed_tools.length ||
+        this.spec.allowed_tools.some((name) => !Object.hasOwn(aliases, name)) ||
+        new Set(keys).size !== this.spec.allowed_tools.length) {
+      throw new Error("MCP aliases or routes must map each declared tool to one frozen target and wire name");
     }
     this.toolNames = new Map(Object.entries(aliases));
     if (Boolean(this.lease.cursor) !== Boolean(this.lease.sdk_session_id)) throw new Error("The session lease is incomplete");
@@ -132,20 +139,43 @@ export class RunnerSession {
         ...(model.thinking_level_map ? { thinkingLevelMap: model.thinking_level_map } : {}),
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
     await runtime.refresh({ allowNetwork: false });
-    this.mcp = new McpClient({ name: "bbx-task-runner", version: "0.1.0",
-      requestTimeoutMs: this.config.mcp_metadata_timeout_ms ?? 15000, capabilities: {} });
-    this.transport = new StreamableHttpTransport({ url: safeUrl(this.config.mcp_gateway_url), openGetStream: false,
-      reconnect: { maxRetries: 0 }, authProvider: { token: () => this.credentials.resolve(this.spec.mcp_credential_ref, "mcp", this.binding.binding_id) },
-      headers: { "x-bbx-task-id": this.config.fence.task_id, "x-bbx-binding-id": this.binding.binding_id,
-        "x-bbx-agent-id": this.binding.agent_id, "x-bbx-runner-id": this.config.fence.runner_id,
-        "x-bbx-pod-uid": this.config.fence.pod_uid, "x-bbx-sdk-session-id": sdkSessionId,
-        "x-bbx-runtime-epoch": String(this.config.fence.epoch) },
-      fetch: (url, init) => fetch(url, { ...init, redirect: "error",
-        signal: AbortSignal.any([this.stopController.signal, ...(init.signal ? [init.signal] : [])]) }) });
-    await this.mcp.connect(this.transport);
-    const available = await this.mcp.listTools();
+    const timeout = this.config.mcp_metadata_timeout_ms ?? 15000;
+    const targets = direct ? Object.keys(this.spec.mcp_target_credential_refs ?? {}) : ["legacy"];
+    if (!targets.length || this.spec.helper_child && direct && (targets.length !== 1 || targets[0] !== "sandbox")) {
+      throw new Error("Invalid frozen MCP role targets");
+    }
+    const available = new Map();
+    for (const target of targets) {
+      const { audience, reference } = mcpScope(this.spec, target);
+      const url = safeUrl(direct ? this.config.mcp_targets[target] : this.config.mcp_gateway_url);
+      if (direct && target === "sandbox" && url.href !== "http://127.0.0.1:8766/mcp/") {
+        throw new Error("The Sandbox MCP target must use the frozen loopback endpoint");
+      }
+      if (direct && target === "business" &&
+          (url.origin !== safeUrl(this.config.control_url).origin ||
+           !url.pathname.endsWith(`/api/tasks/${this.config.fence.task_id}/business-mcp-v2/`))) {
+        throw new Error("The Business MCP URL did not match the Task");
+      }
+      const client = new McpClient({ name: "bbx-task-runner", version: "0.1.0", requestTimeoutMs: timeout, capabilities: {} });
+      this.mcpClients.set(target, client);
+      const transport = new StreamableHttpTransport({ url, openGetStream: false, reconnect: { maxRetries: 0 },
+        authProvider: { token: () => this.credentials.resolve(reference, audience, this.binding.binding_id) },
+        headers: { "x-bbx-task-id": this.config.fence.task_id, "x-bbx-binding-id": this.binding.binding_id,
+          "x-bbx-agent-id": this.binding.agent_id, "x-bbx-runner-id": this.config.fence.runner_id,
+          "x-bbx-pod-uid": this.config.fence.pod_uid, "x-bbx-sdk-session-id": sdkSessionId,
+          "x-bbx-runtime-epoch": String(this.config.fence.epoch) },
+        fetch: (input, init) => {
+          if (new URL(input).href !== url.href) throw new Error("The original MCP destination changed");
+          return fetch(url, { ...init, redirect: "error",
+            signal: AbortSignal.any([this.stopController.signal, ...(init.signal ? [init.signal] : [])]) });
+        } });
+      await client.connect(transport);
+      available.set(target, await client.listTools({ signal: AbortSignal.any([
+        this.stopController.signal, AbortSignal.timeout(timeout),
+      ]) }));
+    }
     const tools = this.spec.allowed_tools.map((name) => {
-      const matches = available.filter((tool) => tool.name === this.toolNames.get(name));
+      const matches = (available.get(this.mcpTarget(name)) ?? []).filter((tool) => tool.name === this.toolNames.get(name));
       if (matches.length !== 1 || ["bash", "read", "write", "edit"].includes(name)) throw new Error("An approved remote tool is unavailable, ambiguous or conflicts with a local tool");
       const [remote] = matches;
       return { name, label: remote.title ?? name, description: remote.description ?? name, parameters: remote.inputSchema,
@@ -296,6 +326,16 @@ export class RunnerSession {
       assistant_entry_id: entry.id, tool_name: name, arguments_json: argumentsJson,
       arguments_digest: digest(argumentsJson), journal: await this.confirm(signal) };
   }
+  mcpTarget(name) {
+    if (this.spec.mcp_tool_routes === undefined) return "legacy";
+    if (!Object.hasOwn(this.spec.mcp_tool_routes, name)) throw new Error("The tool is not bound to a frozen MCP target");
+    return this.spec.mcp_tool_routes[name].target;
+  }
+  async closeMcp() {
+    const clients = [...this.mcpClients.values()];
+    this.mcpClients.clear();
+    await Promise.all(clients.map((client) => client.close()));
+  }
   async callTool(name, callId, args, signal) {
     if (!this.toolNames.has(name)) throw new Error("The tool is not declared in this session");
     const invocation = await this.toolInvocation(name, callId, args, signal);
@@ -314,7 +354,7 @@ export class RunnerSession {
         if (!Number.isSafeInteger(permit.authorized_wait_until_ms) || remaining <= 0) throw new Error("The admitted tool wait deadline is unavailable or expired");
         this.unresolvedInvocations.add(invocationId);
         try {
-          await this.mcp.request("tools/call", { name: this.toolNames.get(name), arguments: JSON.parse(argumentsJson),
+          await this.mcpClients.get(this.mcpTarget(name)).request("tools/call", { name: this.toolNames.get(name), arguments: JSON.parse(argumentsJson),
             _meta: { bbx: { ...invocation, permit_ref: invocationId } } }, { signal, timeoutMs: Math.min(2147483647, remaining) });
         } catch { /* A lost transport reply can still have a durable host result. */ }
         const saved = await this.platform.completeTool(this, invocation, signal);
@@ -355,7 +395,7 @@ export class RunnerSession {
       return { sdk_session_id: this.session.sessionId, cursor, sdk_idle: true, journal_confirmed: true,
         unresolved_attempts: [...this.unresolvedAttempts], unresolved_invocations: [...this.unresolvedInvocations] };
     } finally {
-      const closed = await Promise.allSettled([this.mcp?.close(), this.journal?.close()]);
+      const closed = await Promise.allSettled([this.closeMcp(), this.journal?.close()]);
       if (closed.some((outcome) => outcome.status === "rejected")) throw new Error("The helper resources did not close");
     }
   }
@@ -363,7 +403,7 @@ export class RunnerSession {
     this.closed = true;
     clearTimeout(this.leaseTimer);
     this.stop();
-    await this.mcp?.close();
+    await this.closeMcp();
   }
   close() {
     if (this.closing) return this.closing;
@@ -381,7 +421,7 @@ export class RunnerSession {
       }
       await this.journal?.queue;
       const cleanup = await Promise.allSettled([
-        this.mcp?.close(),
+        this.closeMcp(),
         Promise.resolve().then(() => this.session?.dispose()),
         (async () => { try { await this.journal?.file?.sync(); } finally { await this.journal?.close(); } })(),
       ]);
@@ -390,7 +430,7 @@ export class RunnerSession {
         journal_confirmed: Boolean(this.journal) && !this.journalPending,
         pending_confirmation: this.journal?.pendingConfirmation ?? null,
         unresolved_attempts: [...this.unresolvedAttempts], unresolved_invocations: [...this.unresolvedInvocations] };
-      this.session = this.mcp = this.transport = this.journal = this.spec = this.onApplied = undefined;
+      this.session = this.journal = this.spec = this.onApplied = undefined;
       this.promptText = undefined;
       this.toolNames?.clear();
       this.jobs.clear(); this.invocations.clear(); this.pendingInputs.clear();

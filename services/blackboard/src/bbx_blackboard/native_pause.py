@@ -660,7 +660,8 @@ class NativePause:
         bid = continuation["binding_id"]
         spec = json.loads(old_lead["payload_json"])["spec"]
         spec.pop("binding")
-        spec.pop("mcp_tool_aliases")
+        for field in ("mcp_tool_aliases", "mcp_tool_routes", "mcp_target_credential_refs"):
+            spec.pop(field, None)
         binding = await self.control._register_binding(
             conn,
             tid,

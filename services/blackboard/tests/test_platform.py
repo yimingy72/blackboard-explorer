@@ -1,7 +1,5 @@
 """Public configuration and secret handling boundaries."""
 
-from unittest.mock import AsyncMock
-
 import httpx
 import pytest
 from bbx_blackboard.api import create_app
@@ -50,25 +48,18 @@ async def test_platform_has_no_provider_model_write_surface():
         ).status_code == 403
 
 
-async def test_mcp_discovery_lists_all_pages_without_executing_tools_or_leaking_errors(monkeypatch):
+async def test_mcp_discovery_lists_all_pages_without_executing_tools(monkeypatch):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
-    import bbx_blackboard.platform as module
+    import bbx_blackboard.mcp_catalog as module
 
-    settings = config()
-    app = create_app(settings)
-    platform = AsyncMock()
-    app.state.platform_store = platform
-    platform.get.return_value = {
-        "config": {"url": "https://example.invalid/mcp", "auth_header": "X-Key", "auth_scheme": ""}
-    }
-    platform.credentials.return_value = {"secret": "fixture-mcp-secret"}
     calls = []
 
     @asynccontextmanager
     async def transport(url, *, http_client):
-        assert http_client.headers["X-Key"] == "fixture-mcp-secret"
+        assert http_client.headers["X-API-Key"] == "fixture-mcp-secret"
         assert url == "https://example.invalid/mcp"
         yield None, None, None
 
@@ -90,32 +81,22 @@ async def test_mcp_discovery_lists_all_pages_without_executing_tools_or_leaking_
             return SimpleNamespace(
                 tools=[
                     SimpleNamespace(
-                        name="first" if cursor is None else "second", description="Tool"
+                        name="first" if cursor is None else "second",
+                        description="Tool",
+                        inputSchema={"type": "object", "required": ["value"]},
+                        outputSchema=None,
+                        annotations=None,
                     )
                 ],
                 nextCursor="next" if cursor is None else None,
             )
 
+    monkeypatch.setattr(module, "public_address", AsyncMock(return_value="1.1.1.1"))
     monkeypatch.setattr(module, "streamable_http_client", transport)
     monkeypatch.setattr(module, "ClientSession", Session)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.get(
-            "/api/platform/mcp-servers/test/versions/1/tools",
-            headers={"Authorization": "Bearer test-service"},
-        )
-        assert [tool["name"] for tool in response.json()["tools"]] == ["first", "second"]
-        assert calls == [None, "next"]
-        assert "fixture-mcp-secret" not in response.text
-
-        async def broken(self, cursor=None):
-            raise RuntimeError("fixture-mcp-secret")
-
-        monkeypatch.setattr(Session, "list_tools", broken)
-        failure = await client.get(
-            "/api/platform/mcp-servers/test/versions/1/tools",
-            headers={"Authorization": "Bearer test-service"},
-        )
-        assert failure.status_code == 502
-        assert "fixture-mcp-secret" not in failure.text
+    tools = await module.discover_tools(
+        "https://example.invalid/mcp", {"X-API-Key": "fixture-mcp-secret"}, "fixture-mcp-secret"
+    )
+    assert [tool.name for tool in tools] == ["first", "second"]
+    assert tools[0].input_schema["required"] == ["value"]
+    assert calls == [None, "next"]

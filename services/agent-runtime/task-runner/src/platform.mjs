@@ -1,3 +1,4 @@
+import { mcpAudiences, mcpScope, mcpScopes } from "./mcp-binding.mjs";
 import { readFile } from "node:fs/promises";
 import { PROTOCOL, digest, safeUrl, sameValue, validate } from "./protocol.mjs";
 
@@ -14,12 +15,12 @@ export class MountedCredentials {
     try { records = JSON.parse(text); }
     catch { throw new Error("The credential mount is invalid"); }
     if (!records || typeof records !== "object" || Array.isArray(records)
-        || Object.values(records).some((item) => !item || !["runner-control", "model", "mcp"].includes(item.audience)
+        || Object.values(records).some((item) => !item || !["runner-control", "model", ...mcpAudiences].includes(item.audience)
           || item.task_id !== this.taskId)) throw new Error("The credential mount must contain only this task's scoped identities");
     return records;
   }
   #token(records, reference, audience, bindingId) {
-    if (!["runner-control", "model", "mcp"].includes(audience)) throw new Error("The scoped credential is unavailable");
+    if (!["runner-control", "model", ...mcpAudiences].includes(audience)) throw new Error("The scoped credential is unavailable");
     if (!Object.hasOwn(records, reference)) return undefined;
     const credential = records[reference];
     if (credential.audience !== audience || credential.task_id !== this.taskId
@@ -37,8 +38,8 @@ export class MountedCredentials {
     const records = await this.#read();
     const id = spec.binding.binding_id;
     const model = this.#token(records, spec.model_credential_ref, "model", id);
-    const mcp = this.#token(records, spec.mcp_credential_ref, "mcp", id);
-    if (model === undefined || mcp === undefined) throw pendingCredential();
+    const mcp = mcpScopes(spec).map(({ reference, audience }) => this.#token(records, reference, audience, id));
+    if (model === undefined || mcp.includes(undefined)) throw pendingCredential();
   }
 }
 
@@ -109,8 +110,8 @@ export class HttpPlatform {
   async admitTool(slot, body, signal) {
     validate("ToolInvocation", body);
     const receipt = validate("ToolPermit", await this.request(this.control,
-      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal, audience: "mcp",
-        credentials: slot.credentials, reference: slot.spec.mcp_credential_ref, bindingId: body.binding.binding_id }));
+      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(body.tool_name) : undefined),
+        credentials: slot.credentials, bindingId: body.binding.binding_id }));
     if (receipt.invocation_id !== body.invocation_id || receipt.arguments_digest !== body.arguments_digest) throw new Error("Tool admission identity did not match");
     return receipt;
   }
@@ -118,8 +119,8 @@ export class HttpPlatform {
     const body = validate("ToolResultConfirmation", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolResultReceipt", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/result`, {
-        body, signal, audience: "mcp", credentials: slot.credentials,
-        reference: slot.spec.mcp_credential_ref, bindingId: invocation.binding.binding_id,
+        body, signal, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(invocation.tool_name) : undefined),
+        credentials: slot.credentials, bindingId: invocation.binding.binding_id,
       }));
     if (receipt.invocation_id !== invocation.invocation_id || digest(receipt.result_json) !== receipt.result_digest) throw new Error("Tool result receipt did not match");
     return receipt;
@@ -131,8 +132,8 @@ export class HttpPlatform {
       validate("ToolInvocation", invocation);
       const path = action === "launch" ? `${invocation.invocation_id}/launch` : action.replace(/^model-/, "");
       return this.request(this.control, `${base}/${path}`, {
-        body: invocation, signal, audience: "mcp", credentials: slot.credentials,
-        reference: slot.spec.mcp_credential_ref, bindingId,
+        body: invocation, signal, ...mcpScope(slot.spec, "business"),
+        credentials: slot.credentials, bindingId,
       });
     }
     return this.request(this.control, `${base}/${invocation.invocation_id}${action === "status" ? "" : "/" + action}`, {
@@ -143,8 +144,8 @@ export class HttpPlatform {
     const body = validate("ToolUnknownSubmission", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolPermit", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/unknown`, {
-        body, timeoutMs: 2000, audience: "mcp", credentials: slot.credentials,
-        reference: slot.spec.mcp_credential_ref, bindingId: invocation.binding.binding_id,
+        body, timeoutMs: 2000, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(invocation.tool_name) : undefined),
+        credentials: slot.credentials, bindingId: invocation.binding.binding_id,
       }));
     if (receipt.invocation_id !== invocation.invocation_id || receipt.arguments_digest !== invocation.arguments_digest
         || receipt.disposition === "admitted") throw new Error("The unknown tool receipt did not match");

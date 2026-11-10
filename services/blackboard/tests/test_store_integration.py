@@ -881,6 +881,69 @@ async def test_conversation_cas_claim_and_reply_are_atomic(board_service):
     assert len((await store.list_messages(first, aid))["messages"]) == 2
 
 
+async def test_external_mcp_unknown_holds_a_new_agent_until_original_receipt(board_service):
+    tid = await task(board_service)
+    original = await board_service.register_agent(tid, "explore")
+    replacement = await board_service.register_agent(tid, "explore")
+    store = Conversations(board_service.repo.engine)
+    pending = {"attempt_id": str(uuid4()), "call_id": "call-original"}
+    other = {"attempt_id": str(uuid4()), "call_id": "call-new"}
+    key = "bbx_external_mcp_pending"
+    checkpoint = await store.put_session(
+        tid, original, {"state": {key: pending}}, "start", "native", 0, []
+    )
+    assert checkpoint["revision"] == 1
+    with pytest.raises(HTTPException) as held:
+        await store.put_session(tid, replacement, {"state": {key: other}}, "start", "native", 0, [])
+    assert held.value.status_code == 409
+    with pytest.raises(HTTPException) as mismatched:
+        await store.put_session(
+            tid,
+            original,
+            {"state": {"bbx_external_mcp_completed": other}},
+            "start",
+            "native",
+            1,
+            [],
+        )
+    assert mismatched.value.status_code == 409
+    assert (await store.get_session(tid, original))["session"]["state"][key] == pending
+    with pytest.raises(HTTPException) as no_result:
+        await store.put_session(
+            tid,
+            original,
+            {"state": {"bbx_external_mcp_completed": pending}},
+            "start",
+            "native",
+            1,
+            [],
+        )
+    assert no_result.value.status_code == 409
+    await store.put_session(
+        tid,
+        original,
+        {
+            "state": {
+                "bbx_external_mcp_completed": pending,
+                "bbx_tool_results": {
+                    pending["call_id"]: {
+                        "type": "function_result",
+                        "call_id": pending["call_id"],
+                        "result": "original",
+                    }
+                },
+            },
+        },
+        "start",
+        "native",
+        1,
+        [],
+    )
+    assert (
+        await store.put_session(tid, replacement, {"state": {key: other}}, "start", "native", 0, [])
+    )["revision"] == 1
+
+
 async def test_session_storage_escapes_nested_nul_and_returns_stored_snapshot(board_service):
     tid = await task(board_service)
     aid = await board_service.register_agent(tid, "explore")

@@ -50,10 +50,12 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
       const wireDigest = digest(raw);
       if (url.pathname.startsWith("/blackboard/")) {
         const bindingId = url.pathname.split("/")[3];
+        const target = state.directMcp && (url.pathname.includes("/helpers/") ? "business" :
+          state.directTargetByTool?.get(body?.tool_name ?? body?.invocation?.tool_name));
         assert.equal(request.headers.authorization, url.pathname.includes("/tools/") ||
           (url.pathname.includes("/helpers/") &&
             (/\/(reserve|launch)$/.test(url.pathname) || /\/helpers\/(status|cancel)$/.test(url.pathname)))
-          ? `Bearer ${token(bindingId, "mcp")}` : `Bearer ${token("task", "control")}`);
+          ? `Bearer ${token(bindingId, target ? `${target}-mcp` : "mcp")}` : `Bearer ${token("task", "control")}`);
         if (url.pathname.includes("/helpers/") && state.helperApi) {
           await state.helperApi({ url, bindingId, body, response, send });
           return;
@@ -186,26 +188,38 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
           sse(response, state.modelTool ? state.modelTool(bindingId, index, body) : state.useTools && index === 1); return;
         }
       }
-      if (url.pathname === "/mcp") {
+      const target = url.pathname === "/mcp/" ? "sandbox" :
+        url.pathname === `/api/tasks/${taskId}/business-mcp-v2/` ? "business" : undefined;
+      if (url.pathname === "/mcp" || (state.directMcp && target)) {
         const bindingId = request.headers["x-bbx-binding-id"];
-        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, "mcp")}`);
+        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, target ? `${target}-mcp` : "mcp")}`);
         if (request.method === "DELETE") { response.writeHead(204); response.end(); return; }
         if (body.id === undefined) { response.writeHead(202); response.end(); return; }
         let result;
         let sessionId = request.headers["mcp-session-id"];
         if (body.method === "initialize") {
           sessionId = `${bindingId}-${state.connections.length + 1}`;
-          state.connections.push({ bindingId, sessionId });
+          state.connections.push({ bindingId, sessionId, ...(target ? { target } : {}) });
           result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "fake-gateway", version: "1" } };
         } else if (body.method === "tools/list") {
           if (state.holdToolsList === bindingId) { state.toolsListEntered.resolve(); await state.toolsListGate.promise; }
-          result = { tools: state.remoteTools?.get(bindingId) ?? [{ name: "remote_echo", description: "Only a remote fixture tool",
+          if (target) {
+            state.directLists ??= [];
+            state.directLists.push({ target, cursor: body.params?.cursor ?? null, sdk: request.headers["x-bbx-sdk-session-id"] });
+          }
+          result = { ...(target === "business" && !body.params?.cursor ? { nextCursor: "approved-page" } : {}),
+            tools: target ? state.directTools.get(target)(body.params?.cursor) : state.remoteTools?.get(bindingId) ?? [{ name: "remote_echo", description: "Only a remote fixture tool",
             inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } }] };
         }
         else if (body.method === "tools/call") {
           const invocation = body.params._meta.bbx;
-          assert.equal(body.params.name, state.wireNames?.get(bindingId) ?? "remote_echo");
-          assert.equal(invocation.tool_name, state.logicalNames?.get(bindingId) ?? "remote_echo");
+          if (target) {
+            assert.equal(target, state.directTargetByTool.get(invocation.tool_name));
+            assert.equal(body.params.name, "same_echo");
+          } else {
+            assert.equal(body.params.name, state.wireNames?.get(bindingId) ?? "remote_echo");
+            assert.equal(invocation.tool_name, state.logicalNames?.get(bindingId) ?? "remote_echo");
+          }
           assert.equal(invocation.binding.binding_id, bindingId);
           assert.deepEqual(invocation.fence, fence);
           assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
@@ -214,7 +228,7 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
           assert.deepEqual(JSON.parse(invocation.arguments_json), body.params.arguments);
           assert.equal(state.invocations.get(invocation.invocation_id).binding.binding_id, bindingId);
           assert.equal(state.connections.find((connection) => connection.sessionId === sessionId).bindingId, bindingId);
-          state.toolCalls.push({ bindingId, invocation, sessionId, wireName: body.params.name, args: body.params.arguments, receivedAt: Date.now() });
+          state.toolCalls.push({ bindingId, invocation, sessionId, ...(target ? { target } : {}), wireName: body.params.name, args: body.params.arguments, receivedAt: Date.now() });
           if (state.unknownToolBindings?.has(bindingId)) { response.destroy(); return; }
           if (state.toolBarrier) {
             if (state.toolCalls.length === 2) {
@@ -266,7 +280,7 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
     if (failure) throw failure;
     await rm(directory, { recursive: true, force: true });
   });
-  return { directory, config, state, credentials,
+  return { directory, config, state, credentials, token, base,
     command(payload, requestId = `request-${state.commands.length + 1}`, overrideFence = fence) {
       const payloadJson = jsonText(payload);
       const command = { protocol: PROTOCOL, request_id: requestId, command_seq: state.commands.length + 1,

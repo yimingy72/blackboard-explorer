@@ -20,7 +20,19 @@ export function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 export function validate(name, value) {
-  if (!Check({ $ref: `#/$defs/${name}`, $defs: schema.$defs }, value)) throw Object.assign(new Error(`Invalid ${name}`), { code: "invalid_protocol" });
+  const invalid = () => Object.assign(new Error(`Invalid ${name}`), { code: "invalid_protocol" });
+  if (!Check({ $ref: `#/$defs/${name}`, $defs: schema.$defs }, value)) throw invalid();
+  // Pydantic cross-field validators are not represented in the generated JSON Schema.
+  if (name === "RunnerBootstrap" &&
+      !(value.mcp_targets && Object.keys(value.mcp_targets).length && value.mcp_gateway_url === undefined ||
+        value.mcp_gateway_url && value.mcp_targets === undefined)) throw invalid();
+  if (name === "RunnerPayload" && value.kind === "prepare") {
+    const spec = value.spec;
+    if (!(spec.mcp_tool_routes && spec.mcp_target_credential_refs && spec.mcp_tool_aliases === undefined &&
+          spec.mcp_credential_ref === undefined ||
+          spec.mcp_tool_aliases && spec.mcp_credential_ref && spec.mcp_tool_routes === undefined &&
+          spec.mcp_target_credential_refs === undefined)) throw invalid();
+  }
   return value;
 }
 export const sameValue = isDeepStrictEqual;

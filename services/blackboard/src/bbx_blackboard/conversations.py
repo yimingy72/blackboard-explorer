@@ -8,10 +8,12 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from bbx_contracts.heartbeat import usage_receipt_support
+from bbx_contracts.mcp_catalog import ExternalMcpCheckpoint
 from bbx_contracts.pi_models import PiModelVersion
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from sqlalchemy import Text, and_, delete, exists, func, or_, select, update
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert
@@ -25,6 +27,62 @@ from bbx_blackboard.store.repository import agent_execution_matches
 
 ACTIVE = {"running", "concluding"}
 LEASE = timedelta(seconds=300)
+EXTERNAL_MCP_PENDING = "bbx_external_mcp_pending"
+EXTERNAL_MCP_COMPLETED = "bbx_external_mcp_completed"
+
+
+def checkpoint_state(session: dict[str, Any]) -> dict[str, Any]:
+    state = session.get("state")
+    return state if isinstance(state, dict) else {}
+
+
+def external_mcp_marker(value: Any) -> ExternalMcpCheckpoint | None:
+    if value is None:
+        return None
+    try:
+        return ExternalMcpCheckpoint.model_validate(value)
+    except ValidationError:
+        raise HTTPException(422, "Invalid external MCP checkpoint identity") from None
+
+
+def original_mcp_result(state: dict[str, Any], original: ExternalMcpCheckpoint) -> bool:
+    if state.get(EXTERNAL_MCP_COMPLETED) != original.model_dump(mode="json"):
+        return False
+
+    def matches(value: Any) -> bool:
+        return (
+            isinstance(value, dict)
+            and value.get("type") == "function_result"
+            and value.get("call_id") == original.call_id
+            and value.get("exception") is None
+        )
+
+    results = state.get("bbx_tool_results")
+    if isinstance(results, dict) and matches(results.get(original.call_id)):
+        return True
+    # A checkpoint can move this exact saved result into tool history while
+    # flushing usage. Interrupted repairs are not evidence of a return.
+    history = state.get("in_memory")
+    if not isinstance(history, dict) or not isinstance(history.get("messages"), list):
+        return False
+    for message in reversed(history["messages"]):
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        contents = message.get("contents")
+        if not isinstance(contents, list):
+            continue
+        for item in contents:
+            if not matches(item):
+                continue
+            properties = item.get("additional_properties")
+            if (
+                isinstance(properties, dict)
+                and properties.get("bbx_recovery_repair") == "saved_tool_result"
+            ):
+                return True
+    return False
+
+
 MESSAGE_FIELDS = (
     "id",
     "task_id",
@@ -340,16 +398,35 @@ class Conversations:
         *,
         return_session: bool = True,
     ) -> dict[str, Any]:
+        marker = s.agent_sessions.c.session["state"][EXTERNAL_MCP_PENDING]
         existing = (
             await conn.execute(
-                select(s.agent_sessions.c.revision).where(
+                select(s.agent_sessions.c.revision, marker.label("external_mcp_pending")).where(
                     s.agent_sessions.c.task_id == tid, s.agent_sessions.c.agent_id == aid
                 )
             )
-        ).scalar_one_or_none()
-        revision = existing if existing is not None else 0
+        ).one_or_none()
+        revision = existing.revision if existing else 0
         if revision != expected_revision:
             raise HTTPException(409, "Session revision conflict")
+        previous = external_mcp_marker(existing.external_mcp_pending) if existing else None
+        state = checkpoint_state(session)
+        pending = external_mcp_marker(state.get(EXTERNAL_MCP_PENDING))
+        if previous and pending != previous:
+            if pending or not original_mcp_result(state, previous):
+                raise HTTPException(409, "Original external MCP result is unconfirmed")
+        if pending and not previous:
+            other = await conn.scalar(
+                select(s.agent_sessions.c.agent_id)
+                .where(
+                    s.agent_sessions.c.task_id == tid,
+                    s.agent_sessions.c.agent_id != aid,
+                    marker.astext.is_not(None),
+                )
+                .limit(1)
+            )
+            if other is not None:
+                raise HTTPException(409, "Another external MCP result is unconfirmed for this Task")
         session = storage_safe(session)
         opening_instructions = storage_safe(opening_instructions)
         if existing is not None:

@@ -2306,6 +2306,16 @@
               }
             ]
           },
+          "native_mcp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeMcpGrants"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "native_vpn_source_id": {
             "anyOf": [
               {
@@ -5639,6 +5649,18 @@
             ],
             "title": "Allowed Tools"
           },
+          "catalog_version": {
+            "anyOf": [
+              {
+                "const": "p6b",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Version"
+          },
           "name": {
             "pattern": "^[a-z][a-z0-9_-]{0,63}$",
             "title": "Name",
@@ -5655,6 +5677,92 @@
           "version"
         ],
         "title": "McpBinding",
+        "type": "object"
+      },
+      "McpDiscovery": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "discovery_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Digest"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "published": {
+            "default": false,
+            "title": "Published",
+            "type": "boolean"
+          },
+          "roles": {
+            "items": {
+              "enum": [
+                "explore",
+                "lead",
+                "teammate"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Roles",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "untested",
+              "ready",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolDetail"
+            },
+            "maxItems": 128,
+            "title": "Tools",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "McpDiscovery",
         "type": "object"
       },
       "McpInput": {
@@ -5711,6 +5819,106 @@
           "url"
         ],
         "title": "McpInput",
+        "type": "object"
+      },
+      "McpPublish": {
+        "additionalProperties": false,
+        "properties": {
+          "discovery_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Discovery Digest",
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "enum": [
+                "explore",
+                "lead",
+                "teammate"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Roles",
+            "type": "array"
+          },
+          "tools": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "discovery_digest",
+          "tools",
+          "roles"
+        ],
+        "title": "McpPublish",
+        "type": "object"
+      },
+      "McpToolDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "annotations": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annotations"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 12000,
+            "title": "Description",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema"
+          },
+          "schema_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Schema Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "input_schema",
+          "schema_digest"
+        ],
+        "title": "McpToolDetail",
         "type": "object"
       },
       "ModelAdmissionReceipt": {
@@ -6504,6 +6712,11 @@
       "NativeCtfEnvironment": {
         "additionalProperties": false,
         "properties": {
+          "external_mcp": {
+            "default": false,
+            "title": "External Mcp",
+            "type": "boolean"
+          },
           "id": {
             "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
             "title": "Id",
@@ -6862,6 +7075,62 @@
           "manifest_sha256"
         ],
         "title": "NativeInputScope",
+        "type": "object"
+      },
+      "NativeMcpGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "allowed_tools"
+        ],
+        "title": "NativeMcpGrant",
+        "type": "object"
+      },
+      "NativeMcpGrants": {
+        "additionalProperties": false,
+        "properties": {
+          "lead": {
+            "items": {
+              "$ref": "#/components/schemas/NativeMcpGrant"
+            },
+            "maxItems": 8,
+            "title": "Lead",
+            "type": "array"
+          },
+          "teammate": {
+            "items": {
+              "$ref": "#/components/schemas/NativeMcpGrant"
+            },
+            "maxItems": 8,
+            "title": "Teammate",
+            "type": "array"
+          }
+        },
+        "title": "NativeMcpGrants",
         "type": "object"
       },
       "NativeModelDispatchGrant": {
@@ -14729,6 +14998,29 @@
         ]
       }
     },
+    "/api/platform/mcp-servers/capabilities": {
+      "get": {
+        "operationId": "capabilities_api_platform_mcp_servers_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Capabilities Api Platform Mcp Servers Capabilities Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "platform-mcp"
+        ]
+      }
+    },
     "/api/platform/mcp-servers/{name}": {
       "post": {
         "operationId": "save_mcp_api_platform_mcp_servers__name__post",
@@ -14783,15 +15075,16 @@
         ]
       }
     },
-    "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
-      "get": {
-        "operationId": "list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get",
+    "/api/platform/mcp-servers/{name}/versions/{version}/discover": {
+      "post": {
+        "operationId": "discover_api_platform_mcp_servers__name__versions__version__discover_post",
         "parameters": [
           {
             "in": "path",
             "name": "name",
             "required": true,
             "schema": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
               "title": "Name",
               "type": "string"
             }
@@ -14801,6 +15094,7 @@
             "name": "version",
             "required": true,
             "schema": {
+              "minimum": 1,
               "title": "Version",
               "type": "integer"
             }
@@ -14811,8 +15105,71 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/McpDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover",
+        "tags": [
+          "platform-mcp"
+        ]
+      }
+    },
+    "/api/platform/mcp-servers/{name}/versions/{version}/publish": {
+      "post": {
+        "operationId": "publish_api_platform_mcp_servers__name__versions__version__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpPublish"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
                   "additionalProperties": true,
-                  "title": "Response List Mcp Tools Api Platform Mcp Servers  Name  Versions  Version  Tools Get",
+                  "title": "Response Publish Api Platform Mcp Servers  Name  Versions  Version  Publish Post",
                   "type": "object"
                 }
               }
@@ -14830,9 +15187,62 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List Mcp Tools",
+        "summary": "Publish",
         "tags": [
-          "platform"
+          "platform-mcp"
+        ]
+      }
+    },
+    "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
+      "get": {
+        "operationId": "tool_details_api_platform_mcp_servers__name__versions__version__tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tool Details",
+        "tags": [
+          "platform-mcp"
         ]
       }
     },

@@ -124,7 +124,7 @@ test('MCP清单的慢请求不能覆盖后选择的服务，加载状态明确',
     await delayed;
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [{ name: 'outdated_tool', description: '旧请求' }] }) });
   });
-  await page.route('**/api/platform/mcp-servers/analysis/versions/1/tools', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [{ name: 'current_tool', description: '当前服务' }] }) }));
+  await page.route('**/api/platform/mcp-servers/analysis/versions/1/tools', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ status: 'ready', published: true, roles: ['explore'], tools: [{ name: 'current_tool', description: '当前服务' }] }) }));
   try {
     await page.goto('/profiles');
     await page.getByRole('checkbox', { name: '资料检索', exact: true }).check();

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
+import re
 from collections.abc import Callable
+from contextlib import asynccontextmanager, nullcontext
 from datetime import timedelta
-from typing import Any, get_type_hints
+from typing import TYPE_CHECKING, Any, get_type_hints
 
 import httpx
 from mcp import ClientSession
@@ -16,6 +20,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from bbx_runtime.pi.data import Content, result_contents
 from bbx_runtime.pi.hooks import FunctionInvocationContext
+
+if TYPE_CHECKING:
+    from bbx_runtime.session import SessionCheckpoint
 
 
 class FunctionTool:
@@ -83,6 +90,23 @@ class FunctionTool:
         return value if skip_parsing else self.parse_result(value)
 
 
+class _PublishedMcpFunction(FunctionTool):
+    def __init__(self, connector: MCPStreamableHTTPTool, wire_name: str, **options):
+        super().__init__(func=connector.call_tool, **options)
+        self.connector, self.wire_name = connector, wire_name
+
+    async def invoke(
+        self,
+        *,
+        arguments: Any,
+        context: FunctionInvocationContext | None = None,
+        skip_parsing: bool = False,
+        **_kwargs: Any,
+    ) -> Any:
+        result = await self.connector._call_tool(self.wire_name, dict(arguments), context)
+        return result if skip_parsing else self.parse_result(result)
+
+
 def tool(func: Callable | None = None, **options: Any) -> Any:
     def decorate(handler):
         return FunctionTool(
@@ -128,6 +152,10 @@ class MCPStreamableHTTPTool:
         http_client: httpx.AsyncClient | None = None,
         request_timeout: float | None = None,
         session: ClientSession | None = None,
+        approved_tools: dict[str, dict[str, Any]] | None = None,
+        trusted_transport: httpx.AsyncBaseTransport | None = None,
+        protected_secret: str | None = None,
+        checkpoint: SessionCheckpoint | None = None,
         **_kwargs: Any,
     ) -> None:
         self.name, self.url = name, url
@@ -140,6 +168,10 @@ class MCPStreamableHTTPTool:
         self.tool_name_prefix = tool_name_prefix
         self.load_tools, self.request_timeout = load_tools, request_timeout
         self._httpx_client = http_client
+        self._trusted_transport = trusted_transport
+        self._approved_tools = approved_tools
+        self._protected_secret = protected_secret
+        self._checkpoint = checkpoint
         self.session = session
         self.functions: list[FunctionTool] = []
         self._owner: asyncio.Task | None = None
@@ -152,22 +184,52 @@ class MCPStreamableHTTPTool:
         async def invoke(**arguments):
             return await self.call_tool(remote_name, **arguments)
 
+        exposed = f"{self.tool_name_prefix}_{remote_name}" if self.tool_name_prefix else remote_name
+        frozen = self._approved_tools.get(remote_name) if self._approved_tools is not None else None
+        if frozen is not None:
+            digest = hashlib.sha256(exposed.encode()).hexdigest()[:16]
+            exposed = f"{re.sub(r'[^A-Za-z0-9_-]', '_', exposed)[:47]}_{digest}"
+            return _PublishedMcpFunction(
+                self,
+                remote_name,
+                name=exposed,
+                description=frozen["description"],
+                input_schema=frozen["input_schema"],
+            )
         return FunctionTool(
-            name=f"{self.tool_name_prefix}_{remote_name}" if self.tool_name_prefix else remote_name,
+            name=exposed,
             description=definition.description or "",
             func=invoke,
             input_schema=definition.inputSchema,
         )
 
-    async def _lifecycle(self) -> None:
-        assert self._ready is not None and self._closed is not None
-        owned = self._httpx_client is None
-        client = self._httpx_client or httpx.AsyncClient(timeout=self.request_timeout or 120)
-        try:
+    def _sdk_log_scope(self):
+        if self._approved_tools is None:
+            return nullcontext()
+        from bbx_contracts.mcp_catalog import quiet_external_sdk
+
+        return quiet_external_sdk()
+
+    @asynccontextmanager
+    async def _sdk_transport(self, client):
+        with self._sdk_log_scope():
             async with streamable_http_client(
                 self.url,
                 http_client=_Headers(client, self._static_headers),  # type: ignore[arg-type]
-            ) as (read, write, _):
+            ) as streams:
+                yield streams
+
+    async def _lifecycle(self) -> None:
+        assert self._ready is not None and self._closed is not None
+        owned = self._httpx_client is None
+        client = self._httpx_client or httpx.AsyncClient(
+            timeout=self.request_timeout or 120,
+            trust_env=self._trusted_transport is None,
+            transport=self._trusted_transport,
+            follow_redirects=False,
+        )
+        try:
+            async with self._sdk_transport(client) as (read, write, _):
                 timeout = timedelta(seconds=self.request_timeout) if self.request_timeout else None
                 async with ClientSession(read, write, read_timeout_seconds=timeout) as session:
                     self.session = session
@@ -176,26 +238,57 @@ class MCPStreamableHTTPTool:
                         functions = []
                         cursor = None
                         seen = set()
+                        registered = set()
+                        discovered = 0
                         while True:
                             catalog = await session.list_tools(cursor=cursor)
-                            functions.extend(
-                                self._function(definition)
-                                for definition in catalog.tools
-                                if self.allowed_tools is None
-                                or definition.name in self.allowed_tools
-                            )
+                            discovered += len(catalog.tools)
+                            if self._approved_tools is not None and discovered > 256:
+                                raise ValueError("MCP discovery exceeded the approved bound")
+                            for definition in catalog.tools:
+                                if (
+                                    self.allowed_tools is not None
+                                    and definition.name not in self.allowed_tools
+                                ):
+                                    continue
+                                if self._approved_tools is not None:
+                                    from bbx_contracts.mcp_catalog import tool_schema_digest
+
+                                    frozen = self._approved_tools.get(definition.name)
+                                    if (
+                                        frozen is None
+                                        or definition.name in registered
+                                        or tool_schema_digest(
+                                            definition.inputSchema, definition.outputSchema
+                                        )
+                                        != frozen["schema_digest"]
+                                    ):
+                                        raise ValueError("The selected MCP tool schema changed")
+                                    registered.add(definition.name)
+                                functions.append(self._function(definition))
                             cursor = catalog.nextCursor
                             if not cursor:
                                 break
                             if cursor in seen:
                                 raise ValueError("Repeated MCP cursor")
+                            if self._approved_tools is not None and len(seen) >= 32:
+                                raise ValueError("MCP discovery exceeded the page bound")
                             seen.add(cursor)
+                        if (
+                            self._approved_tools is not None
+                            and registered != self._approved_tools.keys()
+                        ):
+                            raise ValueError("A selected published MCP tool is missing")
                         self.functions = functions
                     self._ready.set_result(None)
                     await self._closed.wait()
         except BaseException as error:
             if not self._ready.done():
+                if self._approved_tools is not None and isinstance(error, Exception):
+                    error = RuntimeError("Published MCP connection or schema verification failed")
                 self._ready.set_exception(error)
+            elif self._approved_tools is not None and isinstance(error, Exception):
+                raise RuntimeError("Published MCP connection terminated") from None
             else:
                 raise
         finally:
@@ -218,11 +311,57 @@ class MCPStreamableHTTPTool:
             raise
 
     async def call_tool(self, tool_name: str, /, **arguments: Any) -> list[Content]:
+        return await self._call_tool(tool_name, arguments)
+
+    async def _call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: FunctionInvocationContext | None = None,
+    ) -> list[Content]:
         if self.allowed_tools is not None and tool_name not in self.allowed_tools:
             raise PermissionError("MCP tool is outside the pinned allowlist")
         if self.session is None:
             raise RuntimeError("MCP connection is unavailable")
-        result = await self.session.call_tool(tool_name, arguments)
+        if self._approved_tools is not None:
+            from jsonschema.validators import validator_for
+            from referencing import Registry
+
+            frozen = self._approved_tools.get(tool_name)
+            if frozen is None:
+                raise PermissionError("The MCP tool is outside the published allowlist")
+            try:
+                schema = frozen["input_schema"]
+                validator_for(schema)(schema, registry=Registry()).validate(arguments)
+            except Exception:
+                raise ValueError("Arguments did not match the approved MCP tool schema") from None
+            from bbx_runtime.session import EXTERNAL_MCP_PENDING, ExternalMcpUnconfirmed
+
+            call_id = context.metadata.get("call_id") if context is not None else None
+            if (
+                self._checkpoint is None
+                or context is None
+                or context.session is not self._checkpoint.session
+                or not isinstance(call_id, str)
+            ):
+                raise ExternalMcpUnconfirmed("The external MCP call lacks its fenced checkpoint")
+            context.metadata[EXTERNAL_MCP_PENDING] = await self._checkpoint.begin_external_mcp(
+                call_id
+            )
+        try:
+            with self._sdk_log_scope():
+                result = await self.session.call_tool(tool_name, arguments)
+        except Exception:
+            if self._approved_tools is not None:
+                raise RuntimeError(
+                    "Published MCP result is unconfirmed; do not replay it"
+                ) from None
+            raise
+        if self._protected_secret and (
+            json.dumps(self._protected_secret, ensure_ascii=False)[1:-1]
+            in json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+        ):
+            raise RuntimeError("Published MCP returned protected credential data; do not replay it")
         if result.isError:
             raise RuntimeError("MCP tool failed; its effect must not be replayed")
         if result.structuredContent is not None:

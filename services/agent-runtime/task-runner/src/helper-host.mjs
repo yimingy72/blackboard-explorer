@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { mcpScope } from "./mcp-binding.mjs";
 import { RunnerSession } from "./session.mjs";
 import { freezeSession } from "./model-boundary.mjs";
 import { PROTOCOL, decodeCommand, digest, sameFence, sameValue, validate } from "./protocol.mjs";
@@ -40,8 +41,9 @@ class ChildCredentials {
     if (Object.keys(records ?? {}).length !== 2) throw new Error("The helper requires two child credentials");
   }
   async resolve(reference, audience, binding) {
+    const sandbox = mcpScope(this.spec, "sandbox");
     const expected = audience === "model" ? this.spec.model_credential_ref :
-      audience === "mcp" ? this.spec.mcp_credential_ref : undefined;
+      audience === sandbox.audience ? sandbox.reference : undefined;
     const value = this.records?.[reference];
     if (!expected || reference !== expected || binding !== this.spec.binding.binding_id ||
         value?.audience !== audience || value.task_id !== this.taskId || value.binding_id !== binding ||
@@ -51,7 +53,8 @@ class ChildCredentials {
   }
   async requireBinding(spec) {
     await this.resolve(spec.model_credential_ref, "model", spec.binding.binding_id);
-    await this.resolve(spec.mcp_credential_ref, "mcp", spec.binding.binding_id);
+    const sandbox = mcpScope(spec, "sandbox");
+    await this.resolve(sandbox.reference, sandbox.audience, spec.binding.binding_id);
   }
   clear() { this.records = undefined; }
 }

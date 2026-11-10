@@ -22,13 +22,20 @@ from jwt.algorithms import RSAAlgorithm
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import RunnerControl
 
+DIRECT_MCP = {
+    "business": ("business-mcp", "bbx-runner-business-v2"),
+    "sandbox": ("sandbox-mcp", "bbx-runner-sandbox-v2"),
+}
+DIRECT_ISSUERS = {audience: issuer for audience, issuer in DIRECT_MCP.values()}
+MCP_AUDIENCES = frozenset({"mcp", *DIRECT_ISSUERS})
+
 
 @dataclass(frozen=True)
 class GatewayIdentity:
     fence: RunnerFence
     binding_id: str
     token_version: str
-    audience: Literal["model", "mcp"]
+    audience: Literal["model", "mcp", "business-mcp", "sandbox-mcp"]
     expires_at: int
     role: Literal["lead", "teammate", "helper"] | None = None
 
@@ -75,19 +82,36 @@ def mcp_public_jwks(settings):
     return {"keys": [dict(_mcp_material(settings.runner_mcp_signing_key.get_secret_value())[2])]}
 
 
-def issue_gateway_credentials(settings, owner, binding_id, role, *, deadline_ms=None):
+def issue_gateway_credentials(settings, owner, binding_id, role, *, deadline_ms=None, targets=None):
     if role not in {"lead", "teammate", "helper"}:
         raise HTTPException(403, "Runner role is not ready")
-    mcp_key, _, jwk = _mcp_material(settings.runner_mcp_signing_key.get_secret_value())
+    mcp_key, _, jwk = (
+        _mcp_material(settings.runner_mcp_signing_key.get_secret_value())
+        if targets is None
+        else (None, None, None)
+    )
     expiry = int(min(owner["hard_deadline"], datetime.now(UTC) + timedelta(minutes=5)).timestamp())
     if deadline_ms is not None:
         expiry = min(expiry, deadline_ms // 1000)
     result = {}
-    for audience in ("model", "mcp"):
+    issued = {"model": ("model", "bbx-runner-gateway-v1")}
+    if targets is None:
+        issued["mcp"] = ("mcp", "bbx-runner-gateway-v1")
+    else:
+        if role == "helper" and set(targets) != {"sandbox"}:
+            raise HTTPException(403, "Helper is limited to its Sandbox target")
+        issued.update({target: DIRECT_MCP[target] for target in targets})
+    for name, (audience, issuer) in issued.items():
+        signing_key: bytes | rsa.RSAPrivateKey
+        if audience == "mcp":
+            assert mcp_key is not None
+            signing_key = mcp_key
+        else:
+            signing_key = scoped_key(settings, audience)
         token = jwt.encode(
             {
                 "aud": audience,
-                "iss": "bbx-runner-gateway-v1",
+                "iss": issuer,
                 "tid": str(owner["task_id"]),
                 "runner_id": owner["runner_id"],
                 "pod_uid": owner["pod_uid"],
@@ -95,13 +119,13 @@ def issue_gateway_credentials(settings, owner, binding_id, role, *, deadline_ms=
                 "token_version": owner["token_version"],
                 "bid": binding_id,
                 "exp": expiry,
-                **({"role": role} if audience == "mcp" else {}),
+                **({"role": role} if audience in MCP_AUDIENCES else {}),
             },
-            mcp_key if audience == "mcp" else _key(settings),
+            signing_key,
             algorithm="RS256" if audience == "mcp" else "HS256",
-            headers={"kid": jwk["kid"]} if audience == "mcp" else None,
+            headers={"kid": jwk["kid"]} if jwk and audience == "mcp" else None,
         )
-        result[audience] = {
+        result[name] = {
             "audience": audience,
             "task_id": str(owner["task_id"]),
             "binding_id": binding_id,
@@ -111,12 +135,55 @@ def issue_gateway_credentials(settings, owner, binding_id, role, *, deadline_ms=
     return result
 
 
+def scoped_key(settings, audience: str) -> bytes:
+    key = _key(settings)
+    return hmac.digest(key, audience.encode(), "sha256") if audience in DIRECT_ISSUERS else key
+
+
+async def task_direct_mcp(conn, tid: UUID) -> bool:
+    from sqlalchemy import select
+
+    from bbx_blackboard.store import schema as s
+
+    config = await conn.scalar(
+        select(s.task_runner_resources.c.data).where(s.task_runner_resources.c.task_id == tid)
+    )
+    return isinstance(config, dict) and config.get("mcp_transport") == "direct-v2"
+
+
+async def require_mcp_transport(conn, tid: UUID, identity: GatewayIdentity) -> None:
+    if identity.audience in MCP_AUDIENCES and await task_direct_mcp(conn, tid) != (
+        identity.audience in DIRECT_ISSUERS
+    ):
+        raise HTTPException(403, "MCP capability does not match the frozen transport")
+
+
+def mcp_identity(request: Request, task_id: UUID, *, parent_only: bool = False):
+    values = request.headers.getlist("authorization")
+    if len(values) != 1:
+        raise HTTPException(401, "One MCP capability is required")
+    try:
+        scheme, _, token = values[0].partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            raise ValueError("Missing capability")
+        audience = jwt.decode(token, options={"verify_signature": False}).get("aud")
+        allowed = {"mcp", "business-mcp"} if parent_only else MCP_AUDIENCES
+        if not isinstance(audience, str) or audience not in allowed:
+            raise ValueError("Unexpected MCP audience")
+    except (jwt.InvalidTokenError, ValueError) as error:
+        raise HTTPException(401, "MCP capability audience denied") from error
+    return require_gateway_identity(request, task_id, audience)
+
+
 def require_gateway_identity(request: Request, task_id: UUID, audience, *, authorization=None):
-    scheme, _, token = (authorization or request.headers.get("authorization", "")).partition(" ")
+    values = request.headers.getlist("authorization")
+    if authorization is None and len(values) != 1:
+        raise HTTPException(401, "One Runner capability is required")
+    scheme, _, token = (authorization if authorization is not None else values[0]).partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(401, "Gateway capability required")
     try:
-        key = _key(request.app.state.settings)
+        key = scoped_key(request.app.state.settings, audience)
         algorithm = "HS256"
         if audience == "mcp":
             algorithm = "RS256"
@@ -130,7 +197,7 @@ def require_gateway_identity(request: Request, task_id: UUID, audience, *, autho
             key,
             algorithms=[algorithm],
             audience=audience,
-            issuer="bbx-runner-gateway-v1",
+            issuer=DIRECT_ISSUERS.get(audience, "bbx-runner-gateway-v1"),
             options={
                 "require": [
                     "aud",
@@ -149,7 +216,10 @@ def require_gateway_identity(request: Request, task_id: UUID, audience, *, autho
             claims["aud"] != audience
             or not isinstance(claims["bid"], str)
             or not isinstance(claims["token_version"], str)
-            or (audience == "mcp" and claims.get("role") not in {"lead", "teammate", "helper"})
+            or (
+                audience in MCP_AUDIENCES
+                and claims.get("role") not in {"lead", "teammate", "helper"}
+            )
         ):
             raise ValueError("Invalid capability scope")
         fence = RunnerFence(
@@ -195,7 +265,8 @@ async def validate_runtime_context(conn, tid, context):
 
 
 async def validate_gateway_role(conn, tid, identity, binding):
-    if identity.audience == "mcp":
+    if identity.audience in MCP_AUDIENCES:
+        await require_mcp_transport(conn, tid, identity)
         from bbx_blackboard.runner_control import row
         from bbx_blackboard.store import schema as s
 

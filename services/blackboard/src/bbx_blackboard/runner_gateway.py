@@ -8,6 +8,7 @@ import json
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from bbx_contracts.mcp_catalog import FrozenNativeMcpTool
 from bbx_contracts.native_gateway import GatewayCredentialsRequest
 from bbx_contracts.runner import (
     BACKGROUND_HELPER_TOOLS,
@@ -30,8 +31,11 @@ from sqlalchemy import func, insert, select, update
 from bbx_blackboard.auth import Principal
 from bbx_blackboard.ctf import CtfService
 from bbx_blackboard.gateway_auth import (
+    DIRECT_MCP,
     RuntimeBusinessContext,
     issue_gateway_credentials,
+    require_mcp_transport,
+    task_direct_mcp,
     validate_gateway_role,
 )
 from bbx_blackboard.native_vpn import NativeVpn, vpn_result, vpn_solver_deadline
@@ -139,6 +143,29 @@ class RunnerGateway:
             binding = await self.control._binding(conn, tid, bid, owner, live=True)
             if binding["business"].get("native_child_id"):
                 raise HTTPException(403, "Helper credentials require the original launch claim")
+            if await task_direct_mcp(conn, tid):
+                spec = json.loads(binding["payload_json"])["spec"]
+                targets = spec.get("mcp_target_credential_refs")
+                if not targets:
+                    raise HTTPException(409, "Direct MCP binding is missing its target identities")
+                member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+                config = await conn.scalar(
+                    select(s.task_runner_resources.c.config).where(
+                        s.task_runner_resources.c.task_id == tid
+                    )
+                )
+                if not config or config.get("mcp_transport") != "direct-v2":
+                    raise HTTPException(409, "Direct MCP deployment is not frozen")
+                return {
+                    **issue_gateway_credentials(
+                        self.settings, owner, bid, member["role"], targets=targets
+                    ),
+                    "mcp_targets": {
+                        "business": config["runner_blackboard_url"].rstrip("/")
+                        + f"/api/tasks/{tid}/business-mcp-v2/",
+                        "sandbox": "http://127.0.0.1:8766/mcp/",
+                    },
+                }
             await self.routes.prepare(conn, tid)
         verified_revision = await self.routes.reconcile(tid)
         async with self.repo.engine.begin() as conn:
@@ -178,6 +205,24 @@ class RunnerGateway:
             (s.runner_calls.c.kind != "model") | s.runner_calls.c.concurrency_active.is_(True)
         )
 
+    async def _external_tools(self, conn, tid, identity, binding) -> dict:
+        if identity.audience != "business-mcp" or identity.role not in {"lead", "teammate"}:
+            return {}
+        frozen = await conn.scalar(
+            select(s.task_runner_resources.c.data["native_mcp"][identity.role]).where(
+                s.task_runner_resources.c.task_id == tid
+            )
+        )
+        spec = json.loads(binding["payload_json"])["spec"]
+        return {
+            name: grant for name, grant in (frozen or {}).items() if name in spec["allowed_tools"]
+        }
+
+    async def external_catalog(self, tid, identity) -> dict:
+        async with self.repo.engine.connect() as conn:
+            _, _, binding = await self._scope(conn, tid, identity, metadata=True)
+            return await self._external_tools(conn, tid, identity, binding)
+
     async def catalog(self, tid, identity):
         async with self.repo.engine.connect() as conn:
             task, _, binding = await self._scope(conn, tid, identity, metadata=True)
@@ -188,7 +233,14 @@ class RunnerGateway:
                 if binding["business"].get("native_child_id")
                 else set(roles.get(member["role"], [])) | set(SANDBOX_TOOLS)
             )
-            declared = set(json.loads(binding["payload_json"])["spec"]["allowed_tools"])
+            spec = json.loads(binding["payload_json"])["spec"]
+            declared = set(spec["allowed_tools"])
+            if identity.audience != "mcp":
+                declared = {
+                    name
+                    for name, route in spec.get("mcp_tool_routes", {}).items()
+                    if DIRECT_MCP[route["target"]][0] == identity.audience
+                }
             return sorted(allowed & declared)
 
     async def _tool(self, conn, tid, identity, invocation, *, live=True):
@@ -214,6 +266,17 @@ class RunnerGateway:
                 conn, tid, RunnerIdentity(identity.fence, identity.token_version)
             )
             binding = await row(conn, s.runner_bindings, tid, identity.binding_id)
+        await require_mcp_transport(conn, tid, identity)
+        if identity.audience != "mcp":
+            spec = json.loads(binding["payload_json"])["spec"]
+            route = spec.get("mcp_tool_routes", {}).get(invocation.tool_name)
+            target = route["target"] if route else None
+            if invocation.tool_name in {"delegate_helper", *BACKGROUND_HELPER_TOOLS} and (
+                spec.get("helper_foreground") or spec.get("helper_background")
+            ):
+                target = "business"
+            if target is None or DIRECT_MCP[target][0] != identity.audience:
+                raise HTTPException(403, "MCP capability does not match the frozen tool target")
         identity_fields = [
             str(tid),
             identity.binding_id,
@@ -288,24 +351,27 @@ class RunnerGateway:
             roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
             spec = json.loads(binding["payload_json"])["spec"]
             child = bool(binding["business"].get("native_child_id"))
+            external = (await self._external_tools(conn, tid, identity, binding)).get(
+                invocation.tool_name
+            )
             role_tools = (
                 set(HELPER_SANDBOX_TOOLS)
                 if child
                 else {*roles.get(member["role"], []), *SANDBOX_TOOLS}
             )
-            if (
-                invocation.tool_name not in spec["allowed_tools"]
-                or invocation.tool_name not in role_tools
+            if invocation.tool_name not in spec["allowed_tools"] or (
+                invocation.tool_name not in role_tools and external is None
             ):
                 raise HTTPException(403, "Tool is not published for this role")
             reconciling = invocation.tool_name in SANDBOX_CONTROLS
             original_args = exact_json(invocation.arguments_json)
             if not isinstance(original_args, dict):
                 raise HTTPException(422, "Tool arguments must be an object")
-            if "request_id" in original_args:
+            if external is None and "request_id" in original_args:
                 raise HTTPException(422, "Platform mutation identity is supplied by the host")
             if (
-                member["role"] == "teammate"
+                external is None
+                and member["role"] == "teammate"
                 and invocation.tool_name
                 not in {*SANDBOX_TOOLS, "board_announcements", "board_challenges"}
                 and str(original_args.get("challenge_id")) != binding["business"]["challenge_id"]
@@ -324,6 +390,13 @@ class RunnerGateway:
                     await self.sandbox.resolve_command(
                         conn, tid, original_args["command_id"], scoped
                     )
+            if external is not None and await self._count(
+                conn,
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.provider_key == "external-mcp",
+                self._unresolved(),
+            ):
+                raise HTTPException(409, "Task has an unresolved external MCP call")
             unrelated = (
                 [s.runner_calls.c.id != "tool:" + original_args["command_id"]]
                 if reconciling
@@ -360,6 +433,11 @@ class RunnerGateway:
                     uuid5(NAMESPACE_URL, "runner-business:" + invocation.invocation_id)
                 ),
                 "authorized_wait_until_ms": int(wait * 1000),
+                **(
+                    {"external_mcp": runner_payload_digest(runner_json_text(external))}
+                    if external is not None
+                    else {}
+                ),
             }
             value = dict(
                 task_id=tid,
@@ -369,7 +447,13 @@ class RunnerGateway:
                 owner_epoch=owner["epoch"],
                 state="admitted",
                 concurrency_active=True,
-                provider_key="sandbox" if invocation.tool_name in SANDBOX_TOOLS else "business",
+                provider_key=(
+                    "external-mcp"
+                    if external is not None
+                    else "sandbox"
+                    if invocation.tool_name in SANDBOX_TOOLS
+                    else "business"
+                ),
                 data=data,
                 created_at=datetime.now(UTC),
             )
@@ -394,7 +478,10 @@ class RunnerGateway:
             if call is None:
                 raise HTTPException(403, "MCP call has no admitted invocation")
             data = call["data"]
-            if call["provider_key"] != target:
+            external = None
+            if target == "business" and call["provider_key"] == "external-mcp":
+                external = await self._matching_external(conn, tid, identity, binding, call)
+            elif call["provider_key"] != target:
                 raise HTTPException(403, "MCP target does not own this tool invocation")
             original = exact_json(
                 self.cipher.decrypt(data["arguments_ciphertext"].encode()).decode()
@@ -442,7 +529,35 @@ class RunnerGateway:
                 turn_id=UUID(binding["business"]["turn_id"]),
                 runtime_context=context,
             )
+            if external is not None:
+                data = {**data, "external_grant": external}
             return (principal, data, original), None
+
+    async def _matching_external(self, conn, tid, identity, binding, call) -> FrozenNativeMcpTool:
+        original = call["data"]
+        grant = (await self._external_tools(conn, tid, identity, binding)).get(
+            original["tool_name"]
+        )
+        if grant is None or runner_payload_digest(runner_json_text(grant)) != original.get(
+            "external_mcp"
+        ):
+            raise HTTPException(403, "Original external MCP grant is unavailable")
+        return FrozenNativeMcpTool.model_validate(grant)
+
+    async def verify_external_send(self, tid, identity, invocation):
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            call, owner, binding = await self._tool(conn, tid, identity, invocation)
+            if (
+                call is None
+                or call["provider_key"] != "external-mcp"
+                or call["owner_epoch"] != owner["epoch"]
+                or call["state"] != "dispatched"
+                or call["data"]["authorized_wait_until_ms"]
+                <= int(datetime.now(UTC).timestamp() * 1000)
+            ):
+                raise HTTPException(409, "Original external MCP permit expired or changed")
+            await self._matching_external(conn, tid, identity, binding, call)
 
     async def save_business_result(self, tid, invocation_id, value):
         async with self.repo.engine.begin() as conn:

@@ -187,9 +187,9 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     credential_source: 'stored', has_secret: true, configured_credentials: ['api_key'], enabled: true, is_default: true }];
   const mcpServers = [
     { name: 'reference', version: 1, label: '资料检索', url: 'https://mcp.example.invalid/mcp',
-      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true },
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true, published: true, published_version: 1 as number | null, published_roles: ['explore'] },
     { name: 'analysis', version: 1, label: '分析工具', url: 'https://analysis.example.invalid/mcp',
-      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: false, enabled: true },
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: false, enabled: true, published: true, published_version: 1 as number | null, published_roles: ['explore'] },
   ];
   const task = {
     id: TASK_ID, goal: GOAL, status: 'finished', acceptance_state: { A1: { status: 'met' } },
@@ -355,6 +355,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       { id: 'foundry_local', supports_reasoning_effort: false, label: 'Local', options_fields: [], credential_fields: [], allow_no_auth: true, default_base_url: 'http://host.docker.internal:8000/v1', base_url_required: true },
     ]);
     if (path === '/api/platform/models' && method === 'GET') return json(route, platformModels);
+    if (path === '/api/platform/mcp-servers/capabilities' && method === 'GET') return json(route, { can_manage: true, external_roles: ['explore', 'lead', 'teammate'] });
     if (path === '/api/platform/mcp-servers' && method === 'GET') return json(route, mcpServers);
     const modelMatch = /^\/api\/platform\/models\/([^/]+)$/.exec(path);
     if (modelMatch && method === 'DELETE') {
@@ -396,12 +397,13 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       const saved = { name, version, label: String(body.label), url: String(body.url),
         auth_header: String(body.auth_header), auth_scheme: String(body.auth_scheme),
         has_secret: Boolean(body.secret) || index >= 0 && mcpServers[index].has_secret && !body.clear_secret,
-        enabled: Boolean(body.enabled) };
+        enabled: Boolean(body.enabled), published: false, published_version: index < 0 ? null : mcpServers[index].published_version,
+        published_roles: index < 0 ? [] : mcpServers[index].published_roles };
       if (index < 0) mcpServers.push(saved); else mcpServers[index] = saved;
       return json(route, saved);
     }
     if (/^\/api\/platform\/mcp-servers\/[^/]+\/versions\/\d+\/tools$/.test(path) && method === 'GET') {
-      return json(route, { tools: [{ name: 'search_docs', description: '搜索文档' }, { name: 'read_docs', description: '读取文档' }] });
+      return json(route, { status: 'ready', published: true, roles: ['explore'], tools: [{ name: 'search_docs', description: '搜索文档' }, { name: 'read_docs', description: '读取文档' }] });
     }
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);

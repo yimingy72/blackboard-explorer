@@ -582,6 +582,7 @@ class McpBinding(ContractModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     version: int = Field(ge=1)
     allowed_tools: list[str] | None = None
+    catalog_version: Literal["p6b"] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class WorkerTools(ContractModel):

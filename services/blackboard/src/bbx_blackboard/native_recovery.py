@@ -675,7 +675,8 @@ class NativeRecovery:
                 return await self._blocked(
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
-        if not exceeded and used < self._threshold(budget):
+        direct = record["data"].get("mcp_transport") == "direct-v2"
+        if not direct and not exceeded and used < self._threshold(budget):
             try:
                 await self.bootstrap.gateway.routes.retire_for_recovery(
                     tid, body, self, budget, used, exceeded
@@ -700,9 +701,12 @@ class NativeRecovery:
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
             route = await self.bootstrap.gateway.routes._get(conn, tid)
-            if not route or (route["desired"], route["publication_state"]) != (
-                "recovery",
-                "retired",
+            if (direct and route is not None) or (
+                not direct
+                and (
+                    not route
+                    or (route["desired"], route["publication_state"]) != ("recovery", "retired")
+                )
             ):
                 return await self._blocked(
                     conn, tid, record, incident, "original_route_unconfirmed"
@@ -892,9 +896,16 @@ class NativeRecovery:
             "blocker": None,
             "replacement_epoch": incident["original_epoch"] + 1,
             "replacement_proof": proof,
-            "original_route": {
-                key: route[key] for key in ("resource_id", "revision", "operation_id", "value")
-            },
+            **(
+                {
+                    "original_route": {
+                        key: route[key]
+                        for key in ("resource_id", "revision", "operation_id", "value")
+                    }
+                }
+                if route is not None
+                else {"mcp_transport": "direct-v2"}
+            ),
         }
         require_inputs_confirmed(record)
         retained = {
@@ -941,7 +952,13 @@ class NativeRecovery:
                 ),
                 **{
                     key: data[key]
-                    for key in ("inputs_profile", "inputs_receipt", "native_network")
+                    for key in (
+                        "inputs_profile",
+                        "inputs_receipt",
+                        "native_network",
+                        "mcp_transport",
+                        "native_mcp",
+                    )
                     if key in data
                 },
                 **(

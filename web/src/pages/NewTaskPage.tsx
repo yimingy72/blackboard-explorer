@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Collapse, Form, Input, Select } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Segmented, Select } from 'antd';
 import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -7,7 +7,11 @@ import { api, ApiError, type TaskCreateInput } from '../api/client';
 import styles from './NewTaskPage.module.css';
 import controls from '../styles/controls.module.css';
 import TaskAttachments from '../components/TaskAttachments';
+import McpGrantPicker from '../components/McpGrantPicker';
+import { MCP_ROLE_LABELS, type McpGrant } from '../components/mcpGrants';
 import { progressApi } from '../progress/api';
+const nativeMcpRoles = ['lead', 'teammate'] as const;
+type NativeMcpRole = typeof nativeMcpRoles[number];
 type AcceptanceDraft = {
     key: number;
     desc: string;
@@ -30,6 +34,8 @@ export default function NewTaskPage() {
     const progressChoice = useRef<{ enabled: boolean; max_cost: string; currency: "USD" } | null>(null);
     const [allowlist, setAllowlist] = useState('');
     const [modelId, setModelId] = useState('');
+    const [mcpRole, setMcpRole] = useState<NativeMcpRole>('lead');
+    const [mcpGrants, setMcpGrants] = useState<Record<NativeMcpRole, McpGrant[]>>({ lead: [], teammate: [] });
     const [pending, setPending] = useState(false);
     const [formError, setFormError] = useState('');
     const [privateVpnFile, setPrivateVpnFile] = useState<File | null>(null);
@@ -66,6 +72,8 @@ export default function NewTaskPage() {
     const nativeEnvironment = capabilities.data?.native_ctf;
     const taskNetwork = nativeEnvironment?.vpn?.profile === 'openvpn-task-ipv4-tcp-v1';
     const sharedInputs = nativeEnvironment?.shared_inputs;
+    const nativeExternalMcp = nativeEnvironment?.external_mcp === true;
+    const hasMcpGrants = nativeMcpRoles.some(role => mcpGrants[role].length > 0);
     const creationBlocked = !capabilities.isSuccess || nativeDeployment && !nativeEnvironment;
     const mode = nativeDeployment ? 'ctf' : 'blackboard';
     const piDirectory = useQuery({ queryKey: ['pi-models'], queryFn: api.piModels, refetchOnWindowFocus: true });
@@ -134,6 +142,10 @@ export default function NewTaskPage() {
                 setFormError(!sharedInputs && inputIds.length ? '此环境不支持附件，请返回后新建任务。' : '原生 CTF 需要 1 至 20 个 Worker 席位。');
                 return;
             }
+            if (nativeExternalMcp && nativeMcpRoles.some(role => mcpGrants[role].some(grant => !grant.allowed_tools?.length))) {
+                setFormError('请为 Lead 和 Worker 已选的每项 MCP 服务至少勾选一个工具，或取消选择该服务。');
+                return;
+            }
             if (mode === 'blackboard' && progressEnabled && (!Number.isFinite(Number(progressCap)) || Number(progressCap) <= 0)) {
                 setFormError('请填写大于0的独立成果整理上限。'); return;
             }
@@ -149,6 +161,12 @@ export default function NewTaskPage() {
                 completion_requirements: completionRequirements.trim() || null,
                 budget: { currency: "USD", max_cost: maxCost, max_minutes: minutes },
                 ctf_options: { max_teammates: agents },
+                ...(nativeExternalMcp && hasMcpGrants && {
+                    native_mcp: {
+                        lead: mcpGrants.lead.map(({ name, version, allowed_tools }) => ({ name, version, allowed_tools: allowed_tools ?? [] })),
+                        teammate: mcpGrants.teammate.map(({ name, version, allowed_tools }) => ({ name, version, allowed_tools: allowed_tools ?? [] })),
+                    },
+                }),
                 ...(nativeEnvironment && { native_environment: { id: nativeEnvironment.id, revision: nativeEnvironment.revision, publication_stamp: nativeEnvironment.publication_stamp } }),
             } : {
                 ...common, agent_profile: 'default',
@@ -229,6 +247,17 @@ export default function NewTaskPage() {
                 <Select id="model" aria-label="任务模型" value={selectedModel?.id} placeholder="选择可用于任务的模型" loading={modelPending}
                   options={available.map(item => ({ value: item.id, label: `${item.label} · ${item.id}` }))} onChange={setModelId} />
               </Form.Item>
+              {nativeExternalMcp && <Collapse ghost size="small" items={[{
+                key: 'native-mcp',
+                label: hasMcpGrants ? '外部 MCP 工具（已选）' : '外部 MCP 工具（可选）',
+                children: <>
+                  <p className={controls.hint}>仅将勾选的工具授予本任务角色，助手不会继承。创建后保留所选版本。</p>
+                  <Segmented aria-label="外部 MCP 授权角色" value={mcpRole} onChange={setMcpRole} disabled={pending || locked}
+                    options={nativeMcpRoles.map(role => ({ value: role, label: MCP_ROLE_LABELS[role] }))} />
+                  <McpGrantPicker key={mcpRole} role={mcpRole} selected={mcpGrants[mcpRole]} disabled={pending || locked}
+                    onChange={grants => setMcpGrants(current => ({ ...current, [mcpRole]: grants }))} />
+                </>,
+              }]} />}
               {direct && <p className={controls.hint}>到达金额阈值后停止新调用；已在途的调用仍会计费，实际金额可能超过阈值。</p>}
               {modelUnavailable && !unauthorized && <Alert type="error" title="模型目录暂不可用" action={<Button size="small" onClick={refreshModels}>重试</Button>} />}
               {!modelPending && !modelUnavailable && !available.length && <Alert type="warning" title="尚无可用于任务的模型" action={<Button href="/profiles?section=models">模型管理</Button>} />}

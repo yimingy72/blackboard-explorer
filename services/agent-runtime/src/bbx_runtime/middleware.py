@@ -44,6 +44,7 @@ from bbx_runtime.recovery import (
     RecoveryExhausted,
     recoverable_transport,
 )
+from bbx_runtime.session import EXTERNAL_MCP_PENDING
 from bbx_runtime.tool_failures import BlackboardToolFailure, tool_error_content
 from bbx_runtime.trace import model_content, record_trace
 from bbx_runtime.usage_receipts import flush_ordinary_usage
@@ -154,7 +155,11 @@ class ToolLogMiddleware(FunctionMiddleware):
                         model_call_id, result=context.result, exception=failure_type
                     ).to_dict()
                 )
-                await checkpoint.save()
+                identity = context.metadata.get(EXTERNAL_MCP_PENDING)
+                if failure is None and isinstance(identity, str):
+                    await checkpoint.save_external_mcp_result(identity, model_call_id)
+                else:
+                    await checkpoint.save()
         except Exception as error:
             original = failure if failure is not None else error
             raise BlackboardToolFailure(original) from original

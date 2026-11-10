@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -22,6 +23,14 @@ from bbx_runtime.pi import (
     Message,
 )
 from bbx_runtime.usage_receipts import flush_ordinary_usage
+
+EXTERNAL_MCP_PENDING = "bbx_external_mcp_pending"
+_EXTERNAL_MCP_COMPLETED = "bbx_external_mcp_completed"
+
+
+class ExternalMcpUnconfirmed(RuntimeError):
+    """The original external effect cannot be issued again."""
+
 
 INTERRUPTED_TOOL_RESULT = (
     "此前工具执行中断或结果未保存，不能认为调用成功；原工具没有在复盘中重新执行。"
@@ -106,6 +115,7 @@ class SessionCheckpoint:
         self.ordinary_usage_request: dict[str, Any] | None = None
         self.usage_receipt_protocol: int | None = None
         self._lock = asyncio.Lock()
+        self._settling_external_mcp = False
 
     @property
     def prompt_revision(self) -> int:
@@ -136,6 +146,52 @@ class SessionCheckpoint:
         )
         checkpoint.usage_receipt_protocol = saved.get("usage_receipt_protocol")
         return checkpoint
+
+    @property
+    def external_mcp_pending(self) -> bool:
+        return self._settling_external_mcp or EXTERNAL_MCP_PENDING in self.session.state
+
+    async def begin_external_mcp(self, call_id: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9._:/-]{1,256}", call_id):
+            raise ExternalMcpUnconfirmed("The external MCP call identity is invalid")
+        if self.external_mcp_pending:
+            raise ExternalMcpUnconfirmed("The original external MCP call is unconfirmed")
+        if self.expected_started_at is None or self.review_claim is not None:
+            raise ExternalMcpUnconfirmed("The original Explore execution fence is unavailable")
+        identity = str(uuid4())
+        self.session.state[EXTERNAL_MCP_PENDING] = {"attempt_id": identity, "call_id": call_id}
+        # The existing CAS establishes authority before the SDK can send a request.
+        try:
+            await self.save()
+        except RemoteError as error:
+            if error.status == 409:
+                del self.session.state[EXTERNAL_MCP_PENDING]
+                raise ExternalMcpUnconfirmed("The external MCP checkpoint was refused") from None
+            raise
+        return identity
+
+    async def save_external_mcp_result(self, identity: str, call_id: str) -> None:
+        marker = {"attempt_id": identity, "call_id": call_id}
+        if self.session.state.get(EXTERNAL_MCP_PENDING) != marker:
+            raise ExternalMcpUnconfirmed("The original external MCP call identity changed")
+        self._settling_external_mcp = True
+        state = self.session.state
+        previous_completion = state.get(_EXTERNAL_MCP_COMPLETED)
+        revision = self.revision
+        del state[EXTERNAL_MCP_PENDING]
+        state[_EXTERNAL_MCP_COMPLETED] = marker
+        try:
+            await self.save()
+        except BaseException:
+            if self.revision == revision:
+                state[EXTERNAL_MCP_PENDING] = marker
+                if previous_completion is None:
+                    del state[_EXTERNAL_MCP_COMPLETED]
+                else:
+                    state[_EXTERNAL_MCP_COMPLETED] = previous_completion
+            raise
+        finally:
+            self._settling_external_mcp = False
 
     def stage_delivery(self, message_id: str, claim_token: str) -> None:
         self.deliveries.append({"id": message_id, "claim_token": claim_token})

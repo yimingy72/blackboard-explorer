@@ -336,6 +336,14 @@ class BlackboardClient:
             "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}"
         )
 
+    async def get_mcp_material(self, name: str, version: int, token: str) -> dict[str, Any]:
+        response = await self._http.get(
+            f"{self.base_url}/api/runtime/mcp-servers/"
+            f"{quote(name, safe='')}/versions/{version}/material",
+            headers={"X-BBX-Pi-Runtime": token},
+        )
+        return (await self._check(response)).json()
+
     async def get_mcp_credentials(self, name: str, version: int) -> dict[str, Any]:
         return await self._json(
             "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}/credentials"

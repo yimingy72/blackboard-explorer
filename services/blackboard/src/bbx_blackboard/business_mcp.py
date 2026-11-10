@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import json
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -18,12 +19,14 @@ from starlette.responses import JSONResponse
 
 from bbx_blackboard.business_tools import MUTATIONS, BusinessTools, schemas
 from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.mcp_catalog import invoke_native_tool
 
 request_scope = ContextVar("bbx_business_mcp_scope")
 
 
 class BusinessMCP:
-    def __init__(self, application):
+    def __init__(self, application, *, direct: bool = False):
+        self.direct = direct
         self.application = application
         self.server = Server("bbx-business-v1")
         self.manager = StreamableHTTPSessionManager(self.server, json_response=True, stateless=True)
@@ -34,7 +37,7 @@ class BusinessMCP:
             gateway = self.application.state.runner_gateway
             allowed = await gateway.catalog(tid, identity)
             catalog = schemas(dynamic_vpn=dynamic)
-            return [
+            builtins = [
                 types.Tool(
                     name=name,
                     description=name.replace("board_", "").replace("_", " "),
@@ -42,6 +45,19 @@ class BusinessMCP:
                 )
                 for name in allowed
                 if name in catalog
+            ]
+            external = await gateway.external_catalog(tid, identity) if self.direct else {}
+            return [
+                *builtins,
+                *(
+                    types.Tool(
+                        name=name,
+                        description=grant["tool"]["description"],
+                        inputSchema=grant["tool"]["input_schema"],
+                        outputSchema=grant["tool"]["output_schema"],
+                    )
+                    for name, grant in external.items()
+                ),
             ]
 
         @self.server.call_tool(validate_input=False)
@@ -63,6 +79,48 @@ class BusinessMCP:
             if saved:
                 return types.CallToolResult.model_validate(json.loads(saved["result_json"]))
             principal, data, original = claimed
+            if grant := data.get("external_grant"):
+                started = False
+
+                async def before_send():
+                    nonlocal started
+                    await gateway.verify_external_send(tid, identity, invocation)
+                    started = True
+
+                try:
+                    remaining = (
+                        data["authorized_wait_until_ms"] / 1000 - datetime.now(UTC).timestamp()
+                    )
+                    async with asyncio.timeout(max(0, min(45, remaining))):
+                        payload = await invoke_native_tool(
+                            self.application, grant, identity.role, original, before_send
+                        )
+                except asyncio.CancelledError:
+                    await asyncio.shield(
+                        gateway.unknown_business_result(tid, invocation.invocation_id)
+                    )
+                    raise
+                except Exception:
+                    if started:
+                        await gateway.unknown_business_result(tid, invocation.invocation_id)
+                        raise HTTPException(409, "External MCP outcome is unconfirmed") from None
+                    payload = {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "External MCP was not sent; connection or scope failed.",
+                            }
+                        ],
+                        "isError": True,
+                    }
+                try:
+                    await gateway.save_business_result(tid, invocation.invocation_id, payload)
+                except BaseException:
+                    await asyncio.shield(
+                        gateway.unknown_business_result(tid, invocation.invocation_id)
+                    )
+                    raise
+                return types.CallToolResult.model_validate(payload)
             args = dict(original)
             if name in MUTATIONS:
                 args["request_id"] = data["mutation_request_id"]
@@ -105,16 +163,25 @@ class BusinessMCP:
     async def __call__(self, scope, receive, send):
         request = Request({**scope, "app": self.application}, receive)
         try:
-            expected = self.application.state.settings.runner_mcp_backend_token.get_secret_value()
-            if not expected:
-                raise HTTPException(503, "Business MCP backend identity is unavailable")
-            supplied = request.headers.getlist("x-bbx-gateway-backend")
-            if len(supplied) != 1 or not hmac.compare_digest(
-                supplied[0].encode(), expected.encode()
-            ):
-                raise HTTPException(401, "Business MCP gateway identity required")
             tid = UUID(scope["path_params"]["task_id"])
-            identity = require_gateway_identity(request, tid, "mcp")
+            if self.direct:
+                if request.headers.getlist("origin") or request.method != "POST":
+                    raise HTTPException(
+                        403, "Direct business MCP requires the private Runner transport"
+                    )
+                identity = require_gateway_identity(request, tid, "business-mcp")
+            else:
+                expected = (
+                    self.application.state.settings.runner_mcp_backend_token.get_secret_value()
+                )
+                if not expected:
+                    raise HTTPException(503, "Business MCP backend identity is unavailable")
+                supplied = request.headers.getlist("x-bbx-gateway-backend")
+                if len(supplied) != 1 or not hmac.compare_digest(
+                    supplied[0].encode(), expected.encode()
+                ):
+                    raise HTTPException(401, "Business MCP gateway identity required")
+                identity = require_gateway_identity(request, tid, "mcp")
             if identity.role == "helper":
                 raise HTTPException(403, "Helper capability is scoped to the Sandbox target")
             gateway = self.application.state.runner_gateway
@@ -122,7 +189,8 @@ class BusinessMCP:
                 raise HTTPException(503, "Business MCP is unavailable")
             async with gateway.repo.engine.connect() as conn:
                 task, _, binding = await gateway._scope(conn, tid, identity, metadata=True)
-                sdk = request.headers.get("x-bbx-sdk-session-id", "")
+                sdk_headers = request.headers.getlist("x-bbx-sdk-session-id")
+                sdk = sdk_headers[0] if len(sdk_headers) == 1 else ""
                 if not sdk or (
                     binding["sdk_session_id"] is not None and sdk != binding["sdk_session_id"]
                 ):

@@ -158,7 +158,7 @@ class PiRegistry:
             ).mappings()
             return [self.version(dict(row)) for row in rows if not row["deleted"]]
 
-    async def peer(self, path: str) -> Any:
+    async def peer(self, path: str, *, endpoint: str = INTERNAL) -> Any:
         try:
             base, _ = normalized_url(self.settings.pi_model_primary_url)
             target = urlsplit(base)
@@ -175,7 +175,7 @@ class PiRegistry:
                 timeout=8, trust_env=False, follow_redirects=False
             ) as http:
                 response = await http.get(
-                    base + INTERNAL + path,
+                    base + endpoint + path,
                     headers={
                         AUTHORITY_HEADER: secret,
                         "x-bbx-model-authority": self.settings.pi_model_authority,

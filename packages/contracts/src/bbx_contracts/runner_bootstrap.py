@@ -140,6 +140,7 @@ class NativeCtfEnvironmentRef(ContractModel):
 
 
 class NativeCtfEnvironment(NativeCtfEnvironmentRef):
+    external_mcp: bool = Field(default=False, exclude_if=lambda value: not value)
     label: str = Field(min_length=1, max_length=100)
     shared_inputs: NativeSharedInputLimits | None = Field(
         default=None, exclude_if=lambda value: value is None

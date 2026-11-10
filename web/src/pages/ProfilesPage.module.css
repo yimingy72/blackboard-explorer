@@ -75,3 +75,13 @@
 .effectiveLimits > span:first-child { font-weight:500; color:var(--color-ink); }
 
 @media(max-width:550px) { .catalogEditor .connectionPicker { flex-wrap:nowrap; } .catalogEditor .resourceSelect { width:auto; flex:1; min-width:0; } .createLabel { display:none; } }
+.mcpVersionStatus { margin-top:16px; }
+.mcpTools { display:grid; gap:12px; }
+.mcpTools p { margin:0; }
+.mcpToolList { margin:0; padding:0; list-style:none; }
+.mcpToolList > li { display:grid; gap:6px; padding:10px 0; border-bottom:1px solid var(--color-line); overflow-wrap:anywhere; }
+.mcpToolDetail summary { cursor:pointer; }
+.mcpToolDetail p,.mcpToolDetail details { margin:6px 0 0 16px; }
+.mcpToolDetail pre { max-height:18rem; overflow:auto; padding:8px; font:12px/1.5 var(--font-mono); }
+.mcpParameters { display:grid; gap:8px; margin:8px 0 8px 16px; }
+.mcpParameters dd { margin:2px 0 0; color:var(--color-muted); }

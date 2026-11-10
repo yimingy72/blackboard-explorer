@@ -25,6 +25,7 @@ from sqlalchemy import func, insert, or_, select, update
 
 from bbx_blackboard.challenge_board import knowledge_scope_revision
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
+from bbx_blackboard.pi_ledger import pi_budget_available, task_pi_model
 from bbx_blackboard.runner_control import command_key, fence, row
 from bbx_blackboard.runner_gateway import decode, exact_json
 from bbx_blackboard.store import schema as s
@@ -185,8 +186,12 @@ class NativeHelpers:
                 self.gateway._unresolved(),
             ):
                 raise HTTPException(409, "Parent binding has an unresolved call")
-            budget = await self.gateway.native._budget(conn, tid)
-            if budget["publication_state"] != "ready" or budget["hold_reason"]:
+            if await task_pi_model(conn, tid) is not None:
+                ready = await pi_budget_available(conn, tid, self.bootstrap.settings.pi_site_id)
+            else:
+                budget = await self.gateway.native._budget(conn, tid)
+                ready = budget["publication_state"] == "ready" and not budget["hold_reason"]
+            if not ready:
                 raise HTTPException(409, "Native Task budget is held")
             now = datetime.now(UTC).timestamp()
             deadline = int(
@@ -384,8 +389,12 @@ class NativeHelpers:
             child = self._child(task, call)
             if call["state"] != "admitted" or not child or child["state"] != "reserved":
                 return {**self._status(call, child), "launch_allowed": False}
-            budget = await self.gateway.native._budget(conn, tid)
-            if budget["publication_state"] != "ready" or budget["hold_reason"]:
+            if await task_pi_model(conn, tid) is not None:
+                ready = await pi_budget_available(conn, tid, self.bootstrap.settings.pi_site_id)
+            else:
+                budget = await self.gateway.native._budget(conn, tid)
+                ready = budget["publication_state"] == "ready" and not budget["hold_reason"]
+            if not ready:
                 raise HTTPException(409, "Native Task budget is held")
             if min(child["deadline_ms"], call["data"]["authorized_wait_until_ms"]) // 1000 <= int(
                 datetime.now(UTC).timestamp()
@@ -401,12 +410,15 @@ class NativeHelpers:
             child = {**child, "state": "launch_claimed"}
             await self._set_child(conn, tid, task, child)
             call = await self._patch_call(conn, tid, call, state="dispatched")
+            spec = json.loads(binding["payload_json"])["spec"]
+            target_refs = spec.get("mcp_target_credential_refs")
             credentials = issue_gateway_credentials(
                 self.bootstrap.settings,
                 owner,
                 binding["id"],
                 "helper",
                 deadline_ms=child["deadline_ms"],
+                targets=target_refs,
             )
             return {
                 **self._status(call, child),
@@ -420,8 +432,12 @@ class NativeHelpers:
                     },
                 },
                 "credentials": {
-                    f"native-{purpose}-{binding['id']}": value
-                    for purpose, value in credentials.items()
+                    spec["model_credential_ref"]: credentials["model"],
+                    **(
+                        {ref: credentials[target] for target, ref in target_refs.items()}
+                        if target_refs is not None
+                        else {spec["mcp_credential_ref"]: credentials["mcp"]}
+                    ),
                 },
             }
 
@@ -465,7 +481,13 @@ class NativeHelpers:
             await self.control._identity(conn, tid, identity, live=True)
             await self.control._binding(conn, tid, bid, owner, live=True, permit=True)
             resource = await self.bootstrap._get(conn, tid)
-            budget = await self.gateway.native._budget(conn, tid)
+            if await task_pi_model(conn, tid) is not None:
+                budget_ready = await pi_budget_available(
+                    conn, tid, self.bootstrap.settings.pi_site_id
+                )
+            else:
+                budget = await self.gateway.native._budget(conn, tid)
+                budget_ready = budget["publication_state"] == "ready" and not budget["hold_reason"]
             if (
                 not child
                 or child["state"] != "launch_claimed"
@@ -475,8 +497,7 @@ class NativeHelpers:
                 or not resource
                 or self.bootstrap._stopping(task, resource)
                 or self.bootstrap._held(task)
-                or budget["publication_state"] != "ready"
-                or budget["hold_reason"]
+                or not budget_ready
                 or call["data"]["authorized_wait_until_ms"]
                 <= int(datetime.now(UTC).timestamp() * 1000)
             ):

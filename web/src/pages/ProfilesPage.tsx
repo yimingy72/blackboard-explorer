@@ -94,9 +94,13 @@ export default function ProfilesPage() {
     async function saveWorker() {
         if (!snapshot || !drafts)
             return;
-        setSaving(true);
         setError('');
         setNotice('');
+        if (drafts[role].tools.mcp_servers?.some(binding => binding.catalog_version === 'p6b' && !binding.allowed_tools?.length)) {
+            setError('请为每个选中的 MCP 服务至少选择一个已发布工具，或取消选择该服务。');
+            return;
+        }
+        setSaving(true);
         try {
             const saved = await api.saveWorkerSettings(role, snapshot.revision, drafts[role].prompt, drafts[role].tools);
             setSnapshot(saved);

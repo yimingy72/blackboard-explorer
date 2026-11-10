@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from bbx_contracts.mcp_catalog import SandboxMcpAuthorize
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.sandbox_tools import (
     MAX_COMMAND_OUTPUT_BYTES,
@@ -29,7 +30,7 @@ from sqlalchemy import insert, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from bbx_blackboard.auth import require_task_reader
-from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.gateway_auth import mcp_identity, require_gateway_identity
 from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_traffic import (
     PART_LIMIT,
@@ -170,7 +171,14 @@ class SandboxTools:
                 .where(s.task_runner_resources.c.task_id == tid)
                 .values(sandbox_host=current)
             )
-        return self.private_host(current)
+        return {
+            **self.private_host(current),
+            **(
+                {"mcp_transport": "direct-v2"}
+                if resource["data"].get("mcp_transport") == "direct-v2"
+                else {}
+            ),
+        }
 
     @staticmethod
     def validate_arguments(name, arguments):
@@ -855,12 +863,37 @@ async def _host_body(request, model, maximum):
     return body, key
 
 
+def sandbox_mcp_identity(request: Request, tid: UUID):
+    identity = mcp_identity(request, tid)
+    if identity.audience not in {"mcp", "sandbox-mcp"}:
+        raise HTTPException(403, "A Sandbox target capability is required")
+    return identity
+
+
+@router.post("/api/tasks/{task_id}/sandbox-host/authorize", include_in_schema=False)
+async def host_authorize(request: Request, task_id: UUID):
+    body, key = await _host_body(request, SandboxMcpAuthorize, 16 * 1024)
+    identity = require_gateway_identity(request, task_id, "sandbox-mcp")
+    service = _tools(request)
+    async with service.repo.engine.connect() as conn:
+        resource, _ = await service.host(conn, task_id, key)
+        if resource["data"].get("mcp_transport") != "direct-v2":
+            raise HTTPException(403, "The original Sandbox target uses a different transport")
+        _, _, binding = await service.gateway._scope(conn, task_id, identity, metadata=True)
+        sdk = binding["sdk_session_id"]
+        if (sdk is not None and sdk != body.sdk_session_id) or (
+            sdk is None and body.method in {"tools/call", "notifications/cancelled"}
+        ):
+            raise HTTPException(403, "Original Sandbox SDK identity changed")
+    return {"authorized": True}
+
+
 @router.get("/api/tasks/{task_id}/sandbox-host/catalog")
 async def host_catalog(request: Request, task_id: UUID):
     service = _tools(request)
     async with service.repo.engine.connect() as conn:
         await service.host(conn, task_id, _report_key(request))
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = sandbox_mcp_identity(request, task_id)
     return [
         name for name in await service.gateway.catalog(task_id, identity) if name in SANDBOX_TOOLS
     ]
@@ -871,9 +904,9 @@ async def host_claim(request: Request, task_id: UUID):
     service = _tools(request)
     async with service.repo.engine.connect() as conn:
         await service.host(conn, task_id, _report_key(request))
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = sandbox_mcp_identity(request, task_id)
     body, _ = await _host_body(request, SandboxToolClaim, 2 * 1024 * 1024)
-    if request.headers.get("x-bbx-sdk-session-id") != body.invocation.sdk_session_id:
+    if request.headers.getlist("x-bbx-sdk-session-id") != [body.invocation.sdk_session_id]:
         raise HTTPException(403, "Original Sandbox SDK identity changed")
     return await service.claim(task_id, identity, body.invocation, body.name, body.arguments)
 
@@ -881,7 +914,7 @@ async def host_claim(request: Request, task_id: UUID):
 @router.post("/api/tasks/{task_id}/sandbox-host/admit")
 async def host_admit(request: Request, task_id: UUID):
     service = _tools(request)
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = sandbox_mcp_identity(request, task_id)
     body, key = await _host_body(request, SandboxToolClaim, 2 * 1024 * 1024)
     async with service.repo.engine.begin() as conn:
         await service.repo.lock(conn, task_id)
@@ -947,7 +980,7 @@ async def _read_scope(request, tid):
         if identity and identity.kind in {"user", "service"}:
             await row(conn, s.tasks, tid)
             return {}
-        capability = require_gateway_identity(request, tid, "mcp")
+        capability = sandbox_mcp_identity(request, tid)
         _, owner, runner_binding = await service.gateway._scope(
             conn, tid, capability, metadata=True
         )

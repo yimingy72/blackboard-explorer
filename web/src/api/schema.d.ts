@@ -192,6 +192,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/mcp-servers/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capabilities */
+        get: operations["capabilities_api_platform_mcp_servers_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/mcp-servers/{name}": {
         parameters: {
             query?: never;
@@ -209,6 +226,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/mcp-servers/{name}/versions/{version}/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover */
+        post: operations["discover_api_platform_mcp_servers__name__versions__version__discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/mcp-servers/{name}/versions/{version}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish */
+        post: operations["publish_api_platform_mcp_servers__name__versions__version__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
         parameters: {
             query?: never;
@@ -216,8 +267,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Mcp Tools */
-        get: operations["list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get"];
+        /** Tool Details */
+        get: operations["tool_details_api_platform_mcp_servers__name__versions__version__tools_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4388,6 +4439,7 @@ export interface components {
             /** Name */
             name?: string | null;
             native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
+            native_mcp?: components["schemas"]["NativeMcpGrants"] | null;
             /** Native Vpn Source Id */
             native_vpn_source_id?: string | null;
             pi_model?: components["schemas"]["PiModelRef"] | null;
@@ -5612,8 +5664,35 @@ export interface components {
         McpBinding: {
             /** Allowed Tools */
             allowed_tools?: string[] | null;
+            /** Catalog Version */
+            catalog_version?: "p6b" | null;
             /** Name */
             name: string;
+            /** Version */
+            version: number;
+        };
+        /** McpDiscovery */
+        McpDiscovery: {
+            /** Checked At */
+            checked_at?: string | null;
+            /** Discovery Digest */
+            discovery_digest?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Published
+             * @default false
+             */
+            published: boolean;
+            /** Roles */
+            roles?: ("explore" | "lead" | "teammate")[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "untested" | "ready" | "error";
+            /** Tools */
+            tools?: components["schemas"]["McpToolDetail"][];
             /** Version */
             version: number;
         };
@@ -5645,6 +5724,39 @@ export interface components {
             secret?: string | null;
             /** Url */
             url: string;
+        };
+        /** McpPublish */
+        McpPublish: {
+            /** Discovery Digest */
+            discovery_digest: string;
+            /** Roles */
+            roles: ("explore" | "lead" | "teammate")[];
+            /** Tools */
+            tools: string[];
+        };
+        /** McpToolDetail */
+        McpToolDetail: {
+            /** Annotations */
+            annotations?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Schema Digest */
+            schema_digest: string;
         };
         /** ModelAdmissionReceipt */
         ModelAdmissionReceipt: {
@@ -5946,6 +6058,11 @@ export interface components {
         };
         /** NativeCtfEnvironment */
         NativeCtfEnvironment: {
+            /**
+             * External Mcp
+             * @default false
+             */
+            external_mcp: boolean;
             /** Id */
             id: string;
             /** Label */
@@ -6059,6 +6176,22 @@ export interface components {
             task_id: string;
             /** Workspace Pvc Uid */
             workspace_pvc_uid: string;
+        };
+        /** NativeMcpGrant */
+        NativeMcpGrant: {
+            /** Allowed Tools */
+            allowed_tools: string[];
+            /** Name */
+            name: string;
+            /** Version */
+            version: number;
+        };
+        /** NativeMcpGrants */
+        NativeMcpGrants: {
+            /** Lead */
+            lead?: components["schemas"]["NativeMcpGrant"][];
+            /** Teammate */
+            teammate?: components["schemas"]["NativeMcpGrant"][];
         };
         /** NativeModelDispatchGrant */
         NativeModelDispatchGrant: {
@@ -9219,6 +9352,28 @@ export interface operations {
             };
         };
     };
+    capabilities_api_platform_mcp_servers_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     save_mcp_api_platform_mcp_servers__name__post: {
         parameters: {
             query?: never;
@@ -9256,7 +9411,7 @@ export interface operations {
             };
         };
     };
-    list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get: {
+    discover_api_platform_mcp_servers__name__versions__version__discover_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -9274,9 +9429,77 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["McpDiscovery"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_api_platform_mcp_servers__name__versions__version__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpPublish"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_details_api_platform_mcp_servers__name__versions__version__tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpDiscovery"];
                 };
             };
             /** @description Validation Error */

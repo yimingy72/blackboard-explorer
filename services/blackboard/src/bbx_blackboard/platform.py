@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-import httpx
 from bbx_contracts.models import AgentProfile
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, HTTPException, Request, Response
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -107,6 +103,8 @@ class PlatformStore:
         name: str,
         body: McpInput,
         actor: str,
+        *,
+        p6b: bool = False,
     ) -> dict[str, Any]:
         import re
 
@@ -138,8 +136,20 @@ class PlatformStore:
             config = body.model_dump(
                 mode="json", exclude={"label", "secret", "clear_secret", "enabled"}
             )
+            if p6b:
+                config["catalog_version"] = "p6b"
             if body.clear_secret:
                 ciphertext, secret = None, None
+            if ciphertext and not secret and previous:
+                from bbx_blackboard.pi_registry import normalized_url
+
+                old = previous["config"]
+                if (
+                    normalized_url(old["url"])[1] != normalized_url(body.url)[1]
+                    or old["auth_header"].lower() != body.auth_header.lower()
+                    or old["auth_scheme"] != body.auth_scheme
+                ):
+                    raise HTTPException(422, "更换上游或认证方式时，请重新填写或清除旧密钥")
             if secret:
                 ciphertext = self.cipher.encrypt(secret.encode()).decode()
             row = (
@@ -192,63 +202,40 @@ router = APIRouter(prefix="/api/platform", tags=["platform"])
 
 @router.get("/mcp-servers")
 async def mcp_servers(request: Request) -> list[dict[str, Any]]:
+    from bbx_blackboard.mcp_catalog import catalog
+
     require_user_or_service(request)
-    return await store(request).list("mcp-servers")
+    return await catalog(request)
+
+
+async def checked_save(request: Request, name: str, body: McpInput) -> dict[str, Any]:
+    from bbx_blackboard.mcp_catalog import AUTH_HEADERS, public_address, require_operator
+    from bbx_blackboard.pi_registry import normalized_url
+
+    require_operator(request)
+    if body.auth_header.lower() not in AUTH_HEADERS or (body.secret and body.clear_secret):
+        raise HTTPException(422, "请选择受支持的认证方式和密钥操作")
+    if body.secret and len(body.secret.get_secret_value()) > 8192:
+        raise HTTPException(422, "MCP 密钥超过长度上限")
+    try:
+        url, _ = normalized_url(body.url)
+        await public_address(url)
+    except (ValueError, OSError):
+        raise HTTPException(422, "MCP Server 须为可解析到公网的 HTTPS 地址") from None
+    body = body.model_copy(update={"url": url})
+    return await store(request).save(
+        "mcp-servers", name, body, require_user_or_service(request).name, p6b=True
+    )
 
 
 @router.post("/mcp-servers")
 async def new_mcp(request: Request, body: McpInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("mcp-servers", f"mcp-{uuid4().hex[:16]}", body, identity.name)
+    return await checked_save(request, f"mcp-{uuid4().hex[:16]}", body)
 
 
 @router.post("/mcp-servers/{name}")
 async def save_mcp(request: Request, name: str, body: McpInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("mcp-servers", name, body, identity.name)
-
-
-@router.get("/mcp-servers/{name}/versions/{version}/tools")
-async def list_mcp_tools(request: Request, name: str, version: int) -> dict[str, Any]:
-    require_user_or_service(request)
-    platform = store(request)
-    row = await platform.get("mcp-servers", name, version)
-    config = row["config"]
-    credential = await platform.credentials("mcp-servers", name, version)
-    headers = {}
-    if secret := credential["secret"]:
-        headers[config["auth_header"]] = f"{config['auth_scheme']} {secret}".strip()
-    try:
-        async with (
-            asyncio.timeout(20),
-            httpx.AsyncClient(headers=headers, timeout=15, trust_env=False) as client,
-        ):
-            async with streamable_http_client(config["url"], http_client=client) as (
-                read,
-                write,
-                _,
-            ):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools = []
-                    cursor = None
-                    seen = set()
-                    while True:
-                        result = await session.list_tools(cursor=cursor)
-                        tools.extend(
-                            {"name": tool.name, "description": tool.description or ""}
-                            for tool in result.tools
-                        )
-                        cursor = result.nextCursor
-                        if not cursor:
-                            return {"tools": tools}
-                        if cursor in seen:
-                            raise ValueError("Repeated MCP cursor")
-                        seen.add(cursor)
-    except Exception as error:
-        raise HTTPException(
-            502, f"MCP 连接失败（{type(error).__name__}），请检查地址与认证配置"
-        ) from None
+    return await checked_save(request, name, body)
 
 
 @router.get("/{kind}/{name}/versions/{version}/credentials")
@@ -257,10 +244,27 @@ async def credentials(
 ) -> dict[str, Any]:
     require_service(request)
     response.headers["Cache-Control"] = "no-store"
-    return await store(request).credentials(kind, name, version)
+    platform = store(request)
+    config = (await platform.get(kind, name, version, include_deleted=True))["config"]
+    if config.get("catalog_version") == "p6b" or config.get("published"):
+        raise HTTPException(403, "Managed MCP credentials require a dedicated Runtime identity")
+    return await platform.credentials(kind, name, version)
 
 
 @router.get("/{kind}/{name}/versions/{version}")
 async def config_version(request: Request, kind: Kind, name: str, version: int) -> dict[str, Any]:
     require_user_or_service(request)
-    return store(request).public(await store(request).get(kind, name, version))
+    import re
+
+    from bbx_blackboard.mcp_catalog import operator, view
+
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name) or version < 1:
+        raise HTTPException(404, "平台配置不存在")
+    row = await store(request).get(kind, name, version)
+    if (
+        row["config"].get("catalog_version") == "p6b"
+        and not row["config"].get("published")
+        and not operator(request)
+    ):
+        raise HTTPException(403, "MCP discovery drafts are operator-only")
+    return view(row)

@@ -19,6 +19,7 @@ from bbx_runtime.clients.blackboard import is_control_transport_error
 from bbx_runtime.context import CloseMode, RunContext, TaskType, execution_timestamp
 from bbx_runtime.derive_history import DeriveHistoryProvider, start_derive_segment
 from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
+from bbx_runtime.mcp_egress import PinnedMcpTransport
 from bbx_runtime.middleware import (
     BoardSyncMiddleware,
     GraceGateMiddleware,
@@ -42,6 +43,7 @@ from bbx_runtime.pi import (
     MCPStreamableHTTPTool,
     Message,
 )
+from bbx_runtime.pi_sender import provider_addresses
 from bbx_runtime.receipts import parse_receipt
 from bbx_runtime.recovery import (
     MAX_AGENT_RECOVERIES,
@@ -52,6 +54,7 @@ from bbx_runtime.recovery import (
 from bbx_runtime.scheduler.decision import _ever_claimed
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
+    ExternalMcpUnconfirmed,
     SessionCheckpoint,
     repair_unpaired_tool_calls,
 )
@@ -76,23 +79,76 @@ async def external_mcp_tools(
     bindings: list[Any],
     http_client: httpx.AsyncClient,
     observation_secrets: list[str] | None = None,
+    runtime_token: str | None = None,
+    checkpoint: SessionCheckpoint | None = None,
 ) -> list[MCPStreamableHTTPTool]:
     """Build Explore-only tools from immutable platform server versions."""
     result: list[MCPStreamableHTTPTool] = []
     for index, binding in enumerate(bindings):
-        if binding.allowed_tools == []:
+        if binding.allowed_tools is None:
+            raise ValueError("MCP requires an explicit Explore tool allowlist")
+        if not binding.allowed_tools:
             continue
-        server = await service.get_mcp_server(binding.name, binding.version)
-        if (
-            server.get("name") != binding.name
-            or server.get("version") != binding.version
-            or not server.get("enabled")
-        ):
-            raise ValueError("Pinned MCP server is unavailable")
         headers: dict[str, str] = {}
-        if server.get("has_secret"):
-            credentials = await service.get_mcp_credentials(binding.name, binding.version)
-            secret = credentials.get("secret")
+        approved = None
+        transport = None
+        secret = None
+        catalog_version = getattr(binding, "catalog_version", None)
+        if catalog_version == "p6b":
+            from bbx_contracts.mcp_catalog import McpToolDetail, public_mcp_ip
+
+            if checkpoint is None:
+                raise ExternalMcpUnconfirmed("Published MCP requires a fenced session")
+            if not runtime_token:
+                raise ValueError("The trusted MCP Runtime identity is unavailable")
+            server = await service.get_mcp_material(binding.name, binding.version, runtime_token)
+            published = server.get("published") or {}
+            roles = published.get("roles")
+            if (
+                not server.get("enabled")
+                or server.get("name") != binding.name
+                or server.get("version") != binding.version
+                or not isinstance(roles, list)
+                or "explore" not in roles
+                or any(role not in ("explore", "lead", "teammate") for role in roles)
+            ):
+                raise ValueError("The frozen published MCP server is unavailable")
+            tools = published.get("tools")
+            if not isinstance(tools, list):
+                raise ValueError("The frozen published MCP tools are unavailable")
+            frozen_tools = [McpToolDetail.model_validate(tool) for tool in tools]
+            by_name = {tool.name: tool for tool in frozen_tools}
+            if len(by_name) != len(tools) or not set(binding.allowed_tools) <= by_name.keys():
+                raise ValueError("The MCP grant is outside the published Explore tool set")
+            approved = {
+                name: by_name[name].model_dump(mode="json") for name in binding.allowed_tools
+            }
+            if server.get("auth_header", "").lower() not in {
+                "authorization",
+                "x-api-key",
+                "api-key",
+            }:
+                raise ValueError("Unsupported external MCP authentication header")
+            addresses = await provider_addresses(server["url"], ())
+            if not addresses or not all(public_mcp_ip(address) for address in addresses):
+                raise ValueError("MCP destination is outside the supported public network")
+            transport = PinnedMcpTransport(server["url"], addresses[0])
+            secret = server.get("secret")
+        elif catalog_version is not None:
+            raise ValueError("Unsupported external MCP catalog version")
+        else:
+            server = await service.get_mcp_server(binding.name, binding.version)
+            if (
+                server.get("name") != binding.name
+                or server.get("version") != binding.version
+                or not server.get("enabled")
+                or server.get("catalog_version") is not None
+            ):
+                raise ValueError("Pinned legacy MCP server is unavailable")
+            if server.get("has_secret"):
+                credentials = await service.get_mcp_credentials(binding.name, binding.version)
+                secret = credentials.get("secret")
+        if secret is not None or server.get("has_secret"):
             if not isinstance(secret, str) or not secret:
                 raise ValueError("MCP server credential is unavailable")
             if observation_secrets is not None:
@@ -107,7 +163,12 @@ async def external_mcp_tools(
                 allowed_tools=binding.allowed_tools,
                 load_prompts=False,
                 sampling_max_requests=0,
-                http_client=http_client,
+                http_client=http_client if transport is None else None,
+                trusted_transport=transport,
+                approved_tools=approved,
+                protected_secret=secret if approved is not None else None,
+                checkpoint=checkpoint,
+                request_timeout=120 if approved is not None else None,
             )
         )
     return result
@@ -332,6 +393,7 @@ class AgentRunner:
         mcp_http = envd_http_client
         external_mcp_http: httpx.AsyncClient | None = None
         cancelled = False
+        external_mcp_unconfirmed = False
         cancellation_error: asyncio.CancelledError | None = None
         checkpoint: SessionCheckpoint | None = None
         round_fence = expected_derive_round
@@ -404,6 +466,8 @@ class AgentRunner:
                 ctx.checkpoint = checkpoint
                 checkpoint.expected_derive_round = ctx.expected_derive_round
                 checkpoint.expected_started_at = started_fence
+                if task_type == "explore" and checkpoint.external_mcp_pending:
+                    raise ExternalMcpUnconfirmed("The original external MCP call is unconfirmed")
                 cleared_receipt = (
                     run.get("previous_receipt") is not None
                     and checkpoint.session.state.pop("bbx_final_receipt", None) is not None
@@ -483,7 +547,14 @@ class AgentRunner:
                 )
                 tools.extend(
                     await external_mcp_tools(
-                        self.service, worker.mcp_servers, external_mcp_http, observation_secrets
+                        self.service,
+                        worker.mcp_servers,
+                        external_mcp_http,
+                        observation_secrets,
+                        self.settings.pi_runtime_sender_token.get_secret_value()
+                        if self.settings.pi_runtime_sender_token
+                        else None,
+                        checkpoint,
                     )
                 )
             recovery = (
@@ -637,6 +708,10 @@ class AgentRunner:
                                 # session with the confirmed snapshot. Unconfirmed delivery
                                 # ids and claim tokens remain on that same checkpoint.
                                 checkpoint.session = session = restored.session
+                                if checkpoint.external_mcp_pending:
+                                    raise ExternalMcpUnconfirmed(
+                                        "The original external MCP call is unconfirmed"
+                                    ) from None
                                 checkpoint.opening_instructions = restored.opening_instructions
                                 repair_unpaired_tool_calls(session, include_interrupted=True)
                                 sync.reset_failed_injections()
@@ -734,6 +809,7 @@ class AgentRunner:
                 else "grace_timeout"
             )
         except Exception as error:
+            external_mcp_unconfirmed = isinstance(error, ExternalMcpUnconfirmed)
             usage_failure = getattr(error, "bbx_usage_settlement_error", False) is True
             metadata = None if usage_failure else getattr(error, "bbx_model_error", None)
             if not usage_failure and not isinstance(metadata, dict):
@@ -773,6 +849,18 @@ class AgentRunner:
                     "scope": "infrastructure",
                     "transient": True,
                 }
+            end_reason = "runtime_error"
+
+        if external_mcp_unconfirmed or (checkpoint is not None and checkpoint.external_mcp_pending):
+            receipt = {
+                "accepted": False,
+                "reason": "外部 MCP 工具结果待核，未重新执行",
+                "error": {
+                    "category": "mcp_unconfirmed",
+                    "scope": "infrastructure",
+                    "transient": False,
+                },
+            }
             end_reason = "runtime_error"
 
         async def finalize() -> None:

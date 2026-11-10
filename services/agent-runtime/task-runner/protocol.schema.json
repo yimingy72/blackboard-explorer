@@ -1065,8 +1065,37 @@
           "type": "string"
         },
         "mcp_gateway_url": {
-          "title": "Mcp Gateway Url",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Gateway Url"
+        },
+        "mcp_targets": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "enum": [
+                  "business",
+                  "sandbox"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Targets"
         },
         "control_credential_ref": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -1104,7 +1133,6 @@
         "fence",
         "control_url",
         "model_proxy_url",
-        "mcp_gateway_url",
         "control_credential_ref",
         "credential_file",
         "journal_root"
@@ -1189,6 +1217,30 @@
         "epoch"
       ],
       "title": "RunnerFence",
+      "type": "object"
+    },
+    "RunnerMcpRoute": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "enum": [
+            "business",
+            "sandbox"
+          ],
+          "title": "Target",
+          "type": "string"
+        },
+        "wire_name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Wire Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "wire_name"
+      ],
+      "title": "RunnerMcpRoute",
       "type": "object"
     },
     "RunnerPayload": {
@@ -1380,9 +1432,39 @@
           "type": "string"
         },
         "mcp_credential_ref": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Mcp Credential Ref",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Credential Ref"
+        },
+        "mcp_target_credential_refs": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              "propertyNames": {
+                "enum": [
+                  "business",
+                  "sandbox"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Target Credential Refs"
         },
         "allowed_tools": {
           "items": {
@@ -1394,15 +1476,41 @@
           "type": "array"
         },
         "mcp_tool_aliases": {
-          "maxProperties": 128,
-          "patternProperties": {
-            "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-              "type": "string"
+          "anyOf": [
+            {
+              "maxProperties": 128,
+              "patternProperties": {
+                "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
             }
-          },
-          "title": "Mcp Tool Aliases",
-          "type": "object"
+          ],
+          "default": null,
+          "title": "Mcp Tool Aliases"
+        },
+        "mcp_tool_routes": {
+          "anyOf": [
+            {
+              "maxProperties": 128,
+              "patternProperties": {
+                "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
+                  "$ref": "#/$defs/RunnerMcpRoute"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Tool Routes"
         },
         "instructions": {
           "maxLength": 131072,
@@ -1445,9 +1553,7 @@
         "binding",
         "model",
         "model_credential_ref",
-        "mcp_credential_ref",
         "allowed_tools",
-        "mcp_tool_aliases",
         "instructions",
         "profile_revision",
         "prompt_revision"

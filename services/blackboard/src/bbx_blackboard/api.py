@@ -111,6 +111,7 @@ from bbx_blackboard.legacy_network import (
 from bbx_blackboard.legacy_network import (
     task_snapshot as legacy_task_snapshot,
 )
+from bbx_blackboard.mcp_catalog import router as mcp_catalog_router
 from bbx_blackboard.native import NativeAnalysisCache
 from bbx_blackboard.native_api import router as native_router
 from bbx_blackboard.native_ctf_publication import (
@@ -680,7 +681,7 @@ def create_app(
         native_mcp_routes = asyncio.create_task(app.state.runner_gateway.routes.run())
         try:
             await app.state.native_cache.initialize()
-            async with app.state.business_mcp.run():
+            async with app.state.business_mcp.run(), app.state.direct_business_mcp.run():
                 yield
         finally:
             native_mcp_routes.cancel()
@@ -741,6 +742,7 @@ def create_app(
         else None
     )
     app.state.business_mcp = BusinessMCP(app)
+    app.state.direct_business_mcp = BusinessMCP(app, direct=True)
     app.state.conversations = Conversations(engine) if engine is not None else None
     app.state.input_groups = (
         InputGroups(engine, objects) if engine is not None and objects is not None else None
@@ -827,7 +829,7 @@ def create_app(
             # This fixed router uses an independent audience and never constructs a Principal.
             return None
         if re.fullmatch(
-            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp|sandbox-host|sandbox/commands|runner-vpn)(?:/.*)?",
+            r"/api/tasks/[0-9a-fA-F-]{36}/(runner-model|business-mcp|business-mcp-v2|sandbox-host|sandbox/commands|runner-vpn)(?:/.*)?",
             request.url.path,
         ):
             return None
@@ -1111,7 +1113,15 @@ def create_app(
             await resolve_ctf_creation(request, publication)
         except (HTTPException, ValueError):
             return state.capabilities(available=False)
-        return state.capabilities()
+        capabilities = state.capabilities()
+        if (
+            capabilities.native_ctf is not None
+            and settings.runner_mcp_direct_v2
+            and request.app.state.pi_registry.enabled
+            and settings.pi_model_authority
+        ):
+            capabilities.native_ctf.external_mcp = True
+        return capabilities
 
     @app.post("/api/tasks", response_model=TaskCreated, tags=["tasks"])
     async def create_task(request: Request, body: TaskCreateBody | CtfTaskCreate) -> TaskCreated:
@@ -1187,11 +1197,21 @@ def create_app(
             )
             launch_digest = runner_payload_digest(runner_json_text(launch.model_dump(mode="json")))
             frozen_publication = publication.frozen()
+            native_grants = None
+            if body.native_mcp is not None:
+                from bbx_blackboard.mcp_catalog import freeze_native_grants
+
+                native_grants = await freeze_native_grants(request, body.native_mcp)
 
             async def queue_native(conn, tid):
                 await bootstrap.repo.lock(conn, tid)
                 await bootstrap.queue_locked(
-                    conn, tid, launch, launch_digest, publication=frozen_publication
+                    conn,
+                    tid,
+                    launch,
+                    launch_digest,
+                    publication=frozen_publication,
+                    native_grants=native_grants,
                 )
 
             native_queue = queue_native
@@ -1245,6 +1265,7 @@ def create_app(
                     "reasoning_effort",
                     "native_environment",
                     "native_vpn_source_id",
+                    "native_mcp",
                 }
             )
             spec["agent_profile"] = row["name"]
@@ -1303,7 +1324,12 @@ def create_app(
         threshold = model_context_threshold(content["models"])
         if threshold is not None:
             content["params"] = {**content["params"], "context_threshold": threshold}
-        row = await profiles.create("task-settings", AgentProfile.model_validate(content), "task")
+        frozen_profile = AgentProfile.model_validate(content)
+        if isinstance(selected, PiModelVersion):
+            from bbx_blackboard.mcp_catalog import validate_profile_tools
+
+            await validate_profile_tools(request, frozen_profile)
+        row = await profiles.create("task-settings", frozen_profile, "task")
         spec = body.model_dump(
             exclude={
                 "profile_version",
@@ -2663,7 +2689,9 @@ def create_app(
                     "models": default["models"],
                 }
             )
-            await request.app.state.platform_store.validate_profile_tools(body)
+            from bbx_blackboard.mcp_catalog import validate_profile_tools
+
+            await validate_profile_tools(request, body)
         except ValueError:
             raise HTTPException(422, "工具配置不一致") from None
         row = await _profiles(request).create(name, body, identity.name)
@@ -2681,7 +2709,9 @@ def create_app(
     app.include_router(native_inputs_router)
     app.include_router(native_vpn_router)
     app.mount("/api/tasks/{task_id}/business-mcp", app.state.business_mcp)
+    app.mount("/api/tasks/{task_id}/business-mcp-v2", app.state.direct_business_mcp)
     app.include_router(platform_router)
+    app.include_router(mcp_catalog_router)
     app.include_router(settings_router)
     app.include_router(progress_router)
     web_dist = _web_dist()

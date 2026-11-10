@@ -27,7 +27,7 @@ from bbx_contracts.runner import (
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from bbx_blackboard.auth import require_service, require_task_reader
-from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.gateway_auth import mcp_identity, require_gateway_identity
 
 model_router = APIRouter(prefix="/api/tasks/{task_id}/runner-model", tags=["runner-model"])
 tool_router = APIRouter(
@@ -56,7 +56,7 @@ def private_identity(request, task_id):
 
 
 def tool_identity(request, task_id, binding_id):
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = mcp_identity(request, task_id)
     if identity.binding_id != binding_id:
         raise HTTPException(403, "Tool binding scope denied")
     return identity

@@ -106,7 +106,7 @@ for (const kind of ['models', 'mcp'] as const) {
     const editor = page.getByRole('region', { name: kind === 'models' ? '模型配置编辑' : 'MCP 服务编辑', exact: true });
     const label = editor.getByLabel('显示名称', { exact: true });
     await label.fill('连接第一版');
-    const save = editor.getByRole('button', { name: '保存', exact: true });
+    const save = editor.getByRole('button', { name: kind === 'mcp' ? '保存草稿' : '保存', exact: true });
     await save.click();
     await expect(editor.getByRole('status')).toContainText('已保存');
     await expect(save).toHaveAttribute('aria-busy', 'false');
@@ -192,7 +192,7 @@ test('MCP 未保存连接变更时清除旧工具清单并停止读取，保存�
     await expect(editor.getByText('old_endpoint_tool', { exact: true })).toHaveCount(0);
     await expect(inspect).toBeDisabled();
     await capture(page, 'mcp-unsaved-connection-1440.png');
-    await editor.getByRole('button', { name: '保存', exact: true }).click();
+    await editor.getByRole('button', { name: '保存草稿', exact: true }).click();
     await expect(editor.getByRole('status')).toContainText('已保存');
     await expect(inspect).toBeEnabled();
     await inspect.click();

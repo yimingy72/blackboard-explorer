@@ -359,8 +359,12 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
         "expires_at": 4102444800,
         "token": "original-scoped-mcp",
     }
+    old_sandbox = {**old_mcp, "audience": "sandbox-mcp", "token": "original-scoped-sandbox"}
+    old_business = {**old_mcp, "audience": "business-mcp", "token": "original-scoped-business"}
     old_records = {
         **renewed,
+        "native-mcp-draining-sandbox": old_sandbox,
+        "native-mcp-draining-business": old_business,
         "native-mcp-draining": old_mcp,
         "native-model-draining": {**old_mcp, "audience": "model", "expires_at": -1},
         "native-mcp-unrelated": {**old_mcp, "binding_id": "unrelated"},
@@ -379,6 +383,8 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     assert json_value(sent[-1][1]["data"]["credentials.json"]) == {
         **replacement,
         "native-mcp-draining": old_mcp,
+        "native-mcp-draining-sandbox": old_sandbox,
+        "native-mcp-draining-business": old_business,
     }
     with pytest.raises(ResourceUnknown, match="cannot be issued again"):
         await adapter.publish_mount(
@@ -802,3 +808,56 @@ def test_sandbox_host_profile_keeps_mounts_separate_and_requires_both_original_e
     pod["spec"]["ephemeralContainers"] = [{"name": "debug"}]
     with pytest.raises(ResourceUnknown):
         adapter._pod_projection(pod, with_host=True)
+
+
+@pytest.mark.parametrize("direct", [False, True])
+async def test_runner_egress_follows_each_frozen_task_mcp_transport(monkeypatch, direct):
+    from bbx_runtime.runner_resources import SANDBOX_HOST_PROFILE
+
+    adapter = RunnerResources(
+        {
+            **configured().config,
+            "runner_profile": SANDBOX_HOST_PROFILE,
+            "sandbox_host_image": "host@sha256:" + "c" * 64,
+            "sandbox_network": {
+                "namespace": "worker-a",
+                "network_identity": "worker-a",
+                "ipv4": "198.19.1.2",
+            },
+        }
+    )
+    observation, _ = identity(adapter)
+    operation = {
+        "task_id": observation["task_id"],
+        "operation_id": observation["operation_id"],
+        "namespace": observation["namespace"],
+        "hard_deadline": "2099-01-01T00:00:00Z",
+        "config": {"mcp_transport": "direct-v2"} if direct else {},
+    }
+    targets = []
+
+    class PolicyObserved(Exception):
+        pass
+
+    async def ensure(doc, *_):
+        if doc["metadata"]["name"] == "bbx-runner-control":
+            targets.extend(rule["toPorts"][0]["ports"][0]["port"] for rule in doc["spec"]["egress"])
+            raise PolicyObserved()
+        return {"metadata": {"uid": "test-uid"}}
+
+    async def unused(*_args, **_kwargs):
+        pass
+
+    async def unexpected_dispatch():
+        raise AssertionError("No Sandbox creation is needed for this policy proof")
+
+    monkeypatch.setattr(adapter, "_ensure", ensure)
+    monkeypatch.setattr(adapter, "_cluster", unused)
+    with pytest.raises(PolicyObserved):
+        await adapter.ensure_task_resources(
+            operation,
+            "synthetic-tenant",
+            admit_sandbox_create=unexpected_dispatch,
+            checkpoint=unused,
+        )
+    assert targets == (["28888"] if direct else ["3000", "28888"])

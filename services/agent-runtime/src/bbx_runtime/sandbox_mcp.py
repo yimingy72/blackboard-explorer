@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -18,7 +19,7 @@ from uuid import UUID
 import httpx
 import mcp.types as types
 import uvicorn
-from bbx_contracts.runner import ToolInvocation, runner_json_text
+from bbx_contracts.runner import ToolInvocation, runner_json_text, validate_runner_json_object
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_PROFILE, NativeTaskRoutePolicy
 from bbx_contracts.sandbox_tools import sandbox_schemas
@@ -37,6 +38,17 @@ from bbx_runtime.sandbox_tools import BoundedExecdLogTransport, assignment_contr
 from bbx_runtime.sandbox_vpn import supervise_sandbox_vpn
 
 request_scope: ContextVar[tuple[str, str]] = ContextVar("bbx_sandbox_mcp_scope")
+DIRECT_METHODS = frozenset(
+    {
+        "initialize",
+        "notifications/initialized",
+        "notifications/cancelled",
+        "ping",
+        "tools/list",
+        "tools/call",
+    }
+)
+MAX_DIRECT_MESSAGE = 2 * 1024 * 1024
 
 
 def load_configuration(path):
@@ -44,6 +56,7 @@ def load_configuration(path):
     task = str(UUID(config["task_id"]))
     if (
         config.get("version") != 1
+        or config.get("mcp_transport") not in {None, "direct-v2"}
         or config.get("runner_pod_uid") != os.environ.get("BBX_POD_UID")
         or task != config["task_id"]
         or config.get("inbound_key") == config.get("report_key")
@@ -453,6 +466,9 @@ class SandboxMCP:
 
     async def handle(self, scope, receive, send):
         request = Request(scope, receive)
+        if self.config.get("mcp_transport") == "direct-v2":
+            await self.handle_direct(request, scope, receive, send)
+            return
         if not self.ready or not self.authorized(request):
             await JSONResponse(
                 {"detail": "Task Sandbox gateway identity required"}, status_code=401
@@ -466,6 +482,79 @@ class SandboxMCP:
         )
         try:
             await self.manager.handle_request(scope, receive, send)
+        finally:
+            request_scope.reset(token)
+
+    async def handle_direct(self, request, scope, receive, send):
+        async def deny(status):
+            await JSONResponse(
+                {"detail": "The scoped Sandbox MCP request was refused"}, status_code=status
+            )(scope, receive, send)
+
+        authorizations = request.headers.getlist("authorization")
+        sessions = request.headers.getlist("x-bbx-sdk-session-id")
+        if (
+            not self.ready
+            or request.method != "POST"
+            or request.url.query
+            or request.client is None
+            or request.client.host != "127.0.0.1"
+            or "origin" in request.headers
+            or "x-bbx-sandbox-inbound" in request.headers
+            or len(authorizations) != 1
+            or not authorizations[0].startswith("Bearer ")
+            or len(sessions) != 1
+            or not sessions[0]
+        ):
+            await deny(401)
+            return
+        raw = bytearray()
+        try:
+            async for chunk in request.stream():
+                if len(raw) + len(chunk) > MAX_DIRECT_MESSAGE:
+                    await deny(413)
+                    return
+                raw.extend(chunk)
+            value = validate_runner_json_object(
+                raw.decode("utf-8"), hashlib.sha256(raw).hexdigest()
+            )
+            method = value.get("method")
+            if not isinstance(method, str) or method not in DIRECT_METHODS:
+                raise ValueError("Unsupported direct MCP method")
+        except (UnicodeError, ValueError):
+            await deny(422)
+            return
+        try:
+            result = await self.control(
+                "POST",
+                "authorize",
+                {"method": method, "sdk_session_id": sessions[0]},
+                authorization=authorizations[0],
+                sdk=sessions[0],
+            )
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            await deny(status if status in {401, 403, 409, 422} else 503)
+            return
+        except (httpx.RequestError, ValueError):
+            await deny(503)
+            return
+        if not isinstance(result, dict) or result.get("authorized") is not True:
+            await deny(503)
+            return
+        # The official MCP SDK still parses and executes the exact original message.
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": bytes(raw), "more_body": False}
+            return await receive()
+
+        token = request_scope.set((authorizations[0], sessions[0]))
+        try:
+            await self.manager.handle_request(scope, replay, send)
         finally:
             request_scope.reset(token)
 
@@ -565,7 +654,14 @@ def main():
             raise RuntimeError("Original Sandbox host mount is unavailable")
         time.sleep(0.25)
     host = SandboxMCP(load_configuration(options.config))
-    uvicorn.run(host.app, host="0.0.0.0", port=8766, access_log=False)
+    direct = host.config.get("mcp_transport") == "direct-v2"
+    uvicorn.run(
+        host.app,
+        host="127.0.0.1" if direct else "0.0.0.0",
+        port=8766,
+        access_log=False,
+        proxy_headers=not direct,
+    )
 
 
 if __name__ == "__main__":

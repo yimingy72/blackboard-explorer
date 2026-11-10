@@ -175,7 +175,7 @@ def message(storage, **changes):
     }
 
 
-async def test_session_narrow_revision_query_retains_cas_storage_safety_and_default_response(
+async def test_session_narrow_checkpoint_query_retains_cas_storage_safety_and_default_response(
     storage,
 ):
     service = storage.service
@@ -207,7 +207,11 @@ async def test_session_narrow_revision_query_retains_cas_storage_safety_and_defa
                 )
     assert (await service.sessions.get_session(storage.tid, "lead"))["session"] == saved["session"]
     queries = [query for query in storage.queries if getattr(query, "is_select", False)]
-    narrow = [query for query in queries if list(query.selected_columns.keys()) == ["revision"]]
+    narrow = [
+        query
+        for query in queries
+        if list(query.selected_columns.keys()) == ["revision", "external_mcp_pending"]
+    ]
     assert len(narrow) == 5
 
 

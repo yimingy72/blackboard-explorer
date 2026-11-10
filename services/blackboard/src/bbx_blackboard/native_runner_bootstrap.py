@@ -255,7 +255,8 @@ class NativeRunnerBootstrap:
             raise HTTPException(503, "Sandbox tenant resolver is unavailable")
         if not self.settings.pi_site_id:
             self.gateway.native._configured()
-        self.gateway.routes.configuration()
+        if not self.settings.runner_mcp_direct_v2:
+            self.gateway.routes.configuration()
 
     async def launch(self, tid, raw):
         body, digest = decode(NativeRunnerLaunch, raw, 262144)
@@ -264,7 +265,9 @@ class NativeRunnerBootstrap:
             await self.repo.lock(conn, tid)
             return await self.queue_locked(conn, tid, body, digest)
 
-    async def queue_locked(self, conn, tid, body, digest, *, publication=None):
+    async def queue_locked(self, conn, tid, body, digest, *, publication=None, native_grants=None):
+        if native_grants and not self.settings.runner_mcp_direct_v2:
+            raise HTTPException(409, "Native MCP grants require the direct transport")
         if body.exchange_rate is not None and body.exchange_rate.observed_at.tzinfo is None:
             raise HTTPException(422, "Frozen exchange rate requires a timezone")
         task = await self.control._task(conn, tid, live=True)
@@ -328,6 +331,8 @@ class NativeRunnerBootstrap:
             tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
             observation={},
             data={
+                **({"mcp_transport": "direct-v2"} if self.settings.runner_mcp_direct_v2 else {}),
+                **({"native_mcp": native_grants} if native_grants else {}),
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
                 **(
@@ -439,6 +444,11 @@ class NativeRunnerBootstrap:
             if record is None:
                 raise HTTPException(404, "Native Runner bootstrap is not registered")
             task = await self.control._task(conn, tid)
+            direct = record["data"].get("mcp_transport") == "direct-v2"
+            if "mcp_transport" in config:
+                raise HTTPException(409, "MCP transport is owned by the frozen Task")
+            if direct and config.get("runner_profile") != "node-sandbox-host-v1":
+                raise HTTPException(409, "Direct MCP requires the Sandbox host profile")
             if vpn_enabled(record) != ("vpn" in config):
                 raise HTTPException(409, "Original Task VPN deployment changed")
             if opted_in(record) and "traffic_targets" not in config:
@@ -459,6 +469,8 @@ class NativeRunnerBootstrap:
             expected = record["request"].get("publication", {}).get("runtime_config_digest")
             if expected is not None and management_document_digest(config) != expected:
                 raise HTTPException(409, "Runtime does not match the Task's published environment")
+            if direct:
+                config["mcp_transport"] = "direct-v2"
             if record["config"] is not None and record["config"] != config:
                 raise HTTPException(409, "Frozen native resource deployment changed")
             await self._global_fence(
@@ -1370,11 +1382,13 @@ class NativeRunnerBootstrap:
             )
             profile = ctf_profile(document)
             model = effective_role_model(profile, "lead", selected)
+            external = record["data"].get("native_mcp", {})
             worker_spec = None
             if native_dispatch_enabled(task):
                 worker_tools = [
                     *task["ctf_control"]["business_tools"]["roles"]["teammate"],
                     *SANDBOX_TOOLS,
+                    *external.get("teammate", {}),
                 ]
                 worker_spec = {
                     "model": effective_role_model(profile, "teammate", selected),
@@ -1410,6 +1424,7 @@ class NativeRunnerBootstrap:
                 async with self.repo.engine.connect() as conn:
                     await self.gateway.sandbox.require_ready(conn, tid)
                 tools = [*tools, *SANDBOX_TOOLS]
+            tools = [*tools, *external.get("lead", {})]
             instructions = render_ctf_prompt(
                 profile,
                 "lead",
@@ -1479,7 +1494,11 @@ class NativeRunnerBootstrap:
                 "control_url": current["config"]["runner_blackboard_url"].rstrip("/")
                 + f"/api/tasks/{tid}/runner-control",
                 "model_proxy_url": current["config"]["runner_model_proxy_url"].rstrip("/"),
-                "mcp_gateway_url": scoped["mcp_gateway_url"],
+                **(
+                    {"mcp_targets": scoped["mcp_targets"]}
+                    if "mcp_targets" in scoped
+                    else {"mcp_gateway_url": scoped["mcp_gateway_url"]}
+                ),
                 "control_credential_ref": "control",
                 "credential_file": "/var/run/bbx/credentials.json",
                 "journal_root": "/journal",
@@ -1509,7 +1528,14 @@ class NativeRunnerBootstrap:
                     "token": issue_runner_control_token(self.settings, owner, expires_at=expires),
                 },
                 lead_spec["model_credential_ref"]: scoped["model"],
-                lead_spec["mcp_credential_ref"]: scoped["mcp"],
+                **(
+                    {
+                        ref: scoped[target]
+                        for target, ref in lead_spec["mcp_target_credential_refs"].items()
+                    }
+                    if lead_spec.get("mcp_target_credential_refs")
+                    else {lead_spec["mcp_credential_ref"]: scoped["mcp"]}
+                ),
             }
             retained = []
             for assignment in task["ctf_control"].get("native_worker_active", {}).values():
@@ -1517,15 +1543,22 @@ class NativeRunnerBootstrap:
                 if assignment["epoch"] != owner["epoch"]:
                     raise HTTPException(409, "Original native Worker credential owner changed")
                 try:
-                    await self.control._binding(conn, tid, bid, owner, live=True)
+                    worker_binding = await self.control._binding(conn, tid, bid, owner, live=True)
                 except HTTPException as error:
                     if error.status_code not in {403, 404, 409}:
                         raise
                     retained.append(bid)
                     continue
-                worker = issue_gateway_credentials(self.settings, owner, bid, "teammate")
-                credentials["native-model-" + bid] = worker["model"]
-                credentials["native-mcp-" + bid] = worker["mcp"]
+                worker_spec = json.loads(worker_binding["payload_json"])["spec"]
+                target_refs = worker_spec.get("mcp_target_credential_refs")
+                worker = issue_gateway_credentials(
+                    self.settings, owner, bid, "teammate", targets=target_refs
+                )
+                credentials[worker_spec["model_credential_ref"]] = worker["model"]
+                if target_refs is not None:
+                    credentials.update({ref: worker[target] for target, ref in target_refs.items()})
+                else:
+                    credentials[worker_spec["mcp_credential_ref"]] = worker["mcp"]
             data = {
                 **current["data"],
                 "bootstrap": bootstrap,

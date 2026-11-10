@@ -36,15 +36,24 @@ export type PublishedCtfSettings = { published: false } | {
   business_tools: Record<'lead' | 'teammate', string[]>;
 };
 export type RuntimeInput = Pick<ProfileInput, 'params' | 'exec_resources'>;
+export type McpRole = 'explore' | 'lead' | 'teammate';
 export type McpServer = {
   name: string; version: number; label: string; url: string; auth_header: string;
   auth_scheme: string; has_secret: boolean; enabled: boolean;
+  published?: boolean; published_version?: number | null; published_roles?: McpRole[];
 };
 export type McpServerInput = {
   label: string; url: string; auth_header: string; auth_scheme: string;
   secret?: string; clear_secret?: boolean; enabled: boolean;
 };
-export type McpTool = { name: string; description: string };
+export type McpTool = {
+  name: string; description: string; input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown> | null; annotations?: Record<string, unknown> | null;
+};
+export type McpDiscovery = {
+  status: 'untested' | 'ready' | 'error'; version: number; published: boolean;
+  discovery_digest: string | null; tools: McpTool[]; roles?: McpRole[]; checked_at?: string | null; error?: string | null;
+};
 export type BoardEvent = components['schemas']['Event'];
 export type PreviewData = { text: string; size: number; truncated: boolean; binary: boolean };
 export type AgentMessage = {
@@ -250,13 +259,20 @@ export const api = {
     request<WorkerSettings>(`/settings/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools }) }),
   saveRuntimeSettings: (expected_revision: number, input: RuntimeInput) =>
     request<WorkerSettings>('/settings/runtime', { method: 'PUT', body: JSON.stringify({ expected_revision, ...input }) }),
+  mcpCapabilities: () => request<{ can_manage: boolean; external_roles: McpRole[] }>('/platform/mcp-servers/capabilities'),
   listMcpServers: () => request<McpServer[]>('/platform/mcp-servers'),
   createMcpServer: (input: McpServerInput) =>
     request<McpServer>('/platform/mcp-servers', { method: 'POST', body: JSON.stringify(input) }),
   saveMcpServer: (name: string, input: McpServerInput) =>
     request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
   listMcpTools: (name: string, version: number) =>
-    request<{ tools: McpTool[] }>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
+    request<McpDiscovery>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
+  discoverMcp: (name: string, version: number) =>
+    request<McpDiscovery>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/discover`, { method: 'POST' }),
+  publishMcp: (name: string, version: number, discovery_digest: string, tools: string[], roles: McpRole[]) =>
+    request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/publish`, {
+      method: 'POST', body: JSON.stringify({ discovery_digest, tools, roles }),
+    }),
   getReport: async (id: string, signal?: AbortSignal, run?: number) => (await textResponse(`${taskPath(id)}/report${run ? `?run=${run}` : ''}`, signal)).text(),
   getWorkspaceTree: (id: string, run?: number) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree${run ? `?run=${run}` : ''}`),
   getWorkspaceFile: (id: string, path: string, run?: number) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}${run ? `&run=${run}` : ''}`),

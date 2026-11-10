@@ -851,16 +851,18 @@ class RunnerResources:
         if vpn and isinstance(self.vpn, NativeVpnProfile):
             runner_policy["spec"]["egress"].append(await self._vpn_peer_rule(namespace))
         if self.sandbox_host:
-            for target, port in (
-                ({"k8s:bbx.dev/component": "native-mcp-gateway"}, "3000"),
+            targets = [
                 (
                     {
                         "k8s:app.kubernetes.io/component": "ingress-gateway",
                         "k8s:app.kubernetes.io/part-of": "opensandbox",
                     },
                     "28888",
-                ),
-            ):
+                )
+            ]
+            if operation.get("config", {}).get("mcp_transport") != "direct-v2":
+                targets.insert(0, ({"k8s:bbx.dev/component": "native-mcp-gateway"}, "3000"))
+            for target, port in targets:
                 runner_policy["spec"]["egress"].append(
                     {
                         "toEndpoints": [
@@ -1608,7 +1610,8 @@ class RunnerResources:
     def _scoped_credentials(value, task_id):
         if not isinstance(value, dict) or any(
             not isinstance(item, dict)
-            or item.get("audience") not in {"runner-control", "model", "mcp"}
+            or item.get("audience")
+            not in {"runner-control", "model", "mcp", "business-mcp", "sandbox-mcp"}
             or item.get("task_id") != task_id
             for item in value.values()
         ):
@@ -1823,6 +1826,11 @@ class RunnerResources:
         observed = operation["observation"]
         expected = {
             "version": 1,
+            **(
+                {"mcp_transport": "direct-v2"}
+                if operation.get("config", {}).get("mcp_transport") == "direct-v2"
+                else {}
+            ),
             "task_id": operation["task_id"],
             "operation_id": operation["operation_id"],
             "runner_pod_uid": observed["runner"]["pod_uid"],
@@ -2054,8 +2062,11 @@ class RunnerResources:
                 raise ResourceUnknown("The original credential mount is unavailable") from None
             credentials = dict(credentials)
             for bid in retain_binding_ids:
-                for audience in ("model", "mcp"):
-                    ref = f"native-{audience}-{bid}"
+                for audience in ("model", "mcp", "business-mcp", "sandbox-mcp"):
+                    if audience in {"business-mcp", "sandbox-mcp"}:
+                        ref = f"native-mcp-{bid}-{audience.removesuffix('-mcp')}"
+                    else:
+                        ref = f"native-{audience}-{bid}"
                     if ref in credentials:
                         raise ResourceUnknown("A draining credential cannot be issued again")
                     previous = existing.get(ref)

@@ -86,6 +86,13 @@ BACKGROUND_HELPER_TOOLS = (
     "cancel_helper",
 )
 
+McpTarget = Literal["business", "sandbox"]
+
+
+class RunnerMcpRoute(ContractModel):
+    target: McpTarget
+    wire_name: RunnerId
+
 
 class HelperChild(ContractModel):
     child_id: RunnerId
@@ -98,9 +105,17 @@ class SessionSpec(ContractModel):
     binding: RunnerBinding
     model: EffectiveRunnerModel
     model_credential_ref: RunnerId
-    mcp_credential_ref: RunnerId
+    mcp_credential_ref: RunnerId | None = Field(default=None, exclude_if=lambda v: v is None)
+    mcp_target_credential_refs: dict[McpTarget, RunnerId] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
     allowed_tools: list[RunnerId] = Field(max_length=128)
-    mcp_tool_aliases: dict[RunnerId, RunnerId] = Field(max_length=128)
+    mcp_tool_aliases: dict[RunnerId, RunnerId] | None = Field(
+        default=None, max_length=128, exclude_if=lambda v: v is None
+    )
+    mcp_tool_routes: dict[RunnerId, RunnerMcpRoute] | None = Field(
+        default=None, max_length=128, exclude_if=lambda v: v is None
+    )
     instructions: str = Field(max_length=131072)
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
@@ -114,9 +129,28 @@ class SessionSpec(ContractModel):
             raise ValueError("Helpers cannot delegate")
         if len(set(self.allowed_tools)) != len(self.allowed_tools):
             raise ValueError("Declared tools must be distinct")
-        if set(self.mcp_tool_aliases) != set(self.allowed_tools) or len(
-            set(self.mcp_tool_aliases.values())
-        ) != len(self.mcp_tool_aliases):
+        if self.mcp_tool_routes is not None:
+            refs = self.mcp_target_credential_refs or {}
+            routes = [(route.target, route.wire_name) for route in self.mcp_tool_routes.values()]
+            if (
+                self.mcp_tool_aliases is not None
+                or self.mcp_credential_ref is not None
+                or not refs
+                or len(set(refs.values())) != len(refs)
+                or set(self.mcp_tool_routes) != set(self.allowed_tools)
+                or len(set(routes)) != len(routes)
+                or any(target not in refs for target, _ in routes)
+                or self.helper_child
+                and set(refs) != {"sandbox"}
+            ):
+                raise ValueError("Invalid direct MCP target binding")
+        elif (
+            self.mcp_target_credential_refs is not None
+            or self.mcp_credential_ref is None
+            or self.mcp_tool_aliases is None
+            or set(self.mcp_tool_aliases) != set(self.allowed_tools)
+            or len(set(self.mcp_tool_aliases.values())) != len(self.mcp_tool_aliases)
+        ):
             raise ValueError("MCP aliases must map every declared tool to a distinct wire name")
         return self
 
@@ -415,13 +449,22 @@ class RunnerBootstrap(ContractModel):
     fence: RunnerFence
     control_url: str
     model_proxy_url: str
-    mcp_gateway_url: str
+    mcp_gateway_url: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    mcp_targets: dict[McpTarget, str] | None = Field(default=None, exclude_if=lambda v: v is None)
     control_credential_ref: RunnerId
     credential_file: str
     journal_root: str
     mcp_metadata_timeout_ms: int = Field(default=15000, ge=50, le=30000)
     helper_foreground: bool = False
     helper_background: bool = False
+
+    @model_validator(mode="after")
+    def exclusive_mcp_transport(self):
+        if (self.mcp_targets is None) == (self.mcp_gateway_url is None) or not (
+            self.mcp_targets or self.mcp_gateway_url
+        ):
+            raise ValueError("Exactly one MCP transport is required")
+        return self
 
 
 class RunnerSchemaBundle(ContractModel):

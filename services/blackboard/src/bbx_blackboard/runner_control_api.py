@@ -32,7 +32,7 @@ from bbx_contracts.runner_control import (
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from bbx_blackboard.auth import require_service
-from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.gateway_auth import mcp_identity
 from bbx_blackboard.native_helpers import BACKGROUND_STATUS, CANCEL
 from bbx_blackboard.runner_auth import (
     issue_runner_control_token,
@@ -214,7 +214,7 @@ def _helpers(request, response):
 async def reserve_helper(
     request: Request, response: Response, task_id: UUID, binding_id: str, body: ToolInvocation
 ):
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = mcp_identity(request, task_id, parent_only=True)
     return await _helpers(request, response).reserve(
         task_id, binding_id, identity, await request.body()
     )
@@ -233,7 +233,7 @@ async def launch_helper(
     invocation_id: str,
     body: ToolInvocation,
 ):
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = mcp_identity(request, task_id, parent_only=True)
     return await _helpers(request, response).launch(
         task_id, binding_id, invocation_id, identity, await request.body()
     )
@@ -310,7 +310,7 @@ async def background_helper_status(
     binding_id: str,
     body: ToolInvocation,
 ):
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = mcp_identity(request, task_id, parent_only=True)
     return await _helpers(request, response).parent_tool(
         task_id, binding_id, identity, await request.body(), BACKGROUND_STATUS
     )
@@ -324,7 +324,7 @@ async def cancel_background_helper(
     binding_id: str,
     body: ToolInvocation,
 ):
-    identity = require_gateway_identity(request, task_id, "mcp")
+    identity = mcp_identity(request, task_id, parent_only=True)
     return await _helpers(request, response).parent_tool(
         task_id, binding_id, identity, await request.body(), CANCEL
     )

@@ -108,11 +108,14 @@ async def update_worker(request: Request, role: Role, body: WorkerUpdate) -> dic
     profiles = request.app.state.profile_store
     current = await read_workers(profiles, internal=True)
     content = current["profile"]
+    previous = AgentProfile.model_validate(content)
     content["prompt_templates"][role] = body.prompt
     content["worker_tools"][role] = body.tools.model_dump(mode="json")
     try:
         profile = AgentProfile.model_validate(content)
-        await request.app.state.platform_store.validate_profile_tools(profile)
+        from bbx_blackboard.mcp_catalog import validate_profile_tools
+
+        await validate_profile_tools(request, profile, previous=previous)
     except ValueError:
         raise HTTPException(422, "工具配置超出角色权限或缺少必要工具，请检查勾选项") from None
     row = await profiles.create(

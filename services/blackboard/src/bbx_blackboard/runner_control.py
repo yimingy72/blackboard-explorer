@@ -600,13 +600,51 @@ class RunnerControl:
                 else None
             ),
         ).model_dump(mode="json")
+        from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
+
+        from bbx_blackboard.gateway_auth import task_direct_mcp
+
+        fields = body.model_dump(
+            exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
+        )
+        if await task_direct_mcp(conn, tid):
+            external = (
+                await conn.scalar(
+                    select(s.task_runner_resources.c.data["native_mcp"][member["role"]]).where(
+                        s.task_runner_resources.c.task_id == tid
+                    )
+                )
+                if not helper
+                else {}
+            )
+            if any(
+                name.startswith("mcp_") and name not in (external or {})
+                for name in body.allowed_tools
+            ):
+                raise HTTPException(403, "External MCP tools must belong to the original Task role")
+            base_ref = fields.pop("mcp_credential_ref")
+            routes = {
+                name: {
+                    "target": "sandbox" if name in SANDBOX_TOOLS else "business",
+                    "wire_name": name,
+                }
+                for name in body.allowed_tools
+            }
+            targets = {route["target"] for route in routes.values()}
+            if helper:
+                targets.add("sandbox")
+            else:
+                targets.add("business")
+            fields.update(
+                mcp_tool_routes=routes,
+                mcp_target_credential_refs={target: f"{base_ref}-{target}" for target in targets},
+            )
+        else:
+            fields["mcp_tool_aliases"] = {name: tool_alias(name) for name in body.allowed_tools}
         spec = SessionSpec.model_validate(
             {
                 "binding": binding,
-                **body.model_dump(
-                    exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
-                ),
-                "mcp_tool_aliases": {name: tool_alias(name) for name in body.allowed_tools},
+                **fields,
                 **({"helper_foreground": True} if helper_foreground else {}),
                 **({"helper_background": True} if helper_background else {}),
                 **(

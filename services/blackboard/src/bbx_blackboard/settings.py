@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     gateway_maintenance_peers: dict[str, str] = Field(default_factory=dict)
     runner_mcp_signing_key: SecretStr = SecretStr("")
     runner_mcp_backend_token: SecretStr = SecretStr("")
+    runner_mcp_direct_v2: bool = False
     native_mcp_gateway_url: str = ""
     native_mcp_backend_url: str = ""
     native_mcp_jwks_file: str = ""

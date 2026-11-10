@@ -346,7 +346,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
     lease_expires_at: Math.floor(Date.now() / 1000) + 10, sdk_session_id: h.state.journal.get("one").sdk_session_id,
     cursor: h.state.journal.get("one").cursor });
   const one = runner.sessions.get("one");
-  const oneMcp = one.mcp;
+  const oneMcp = one.mcpClients.get("legacy");
   const oneFile = one.journal.file;
   one.unresolvedAttempts.add("unresolved-attempt"); one.unresolvedInvocations.add("unresolved-invocation");
   const closeOne = h.command({ kind: "close", binding_id: "one" });
@@ -356,7 +356,8 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.deepEqual(closedOne.unresolved_invocations, ["unresolved-invocation"]);
   assert.equal(runner.sessions.has("one"), false);
   assert.equal(runner.preparing.has("one"), false);
-  for (const field of ["session", "mcp", "transport", "journal", "spec", "promptText"]) assert.equal(one[field], undefined);
+  for (const field of ["session", "journal", "spec", "promptText"]) assert.equal(one[field], undefined);
+  assert.equal(one.mcpClients.size, 0);
   assert.equal(oneMcp.transport, undefined);
   assert.equal(oneFile.fd, -1);
   const repeatClose = h.command({ kind: "close", binding_id: "one" });
@@ -378,7 +379,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   const preparing = h.command({ kind: "prepare", spec: h.spec("preparing") });
   await h.state.toolsListEntered.promise;
   const preparingSlot = runner.preparingSlots.get("preparing");
-  const preparingMcp = preparingSlot.mcp;
+  const preparingMcp = preparingSlot.mcpClients.get("legacy");
   assert.equal(typeof preparingSlot.sdkSessionId, "string");
   assert.equal(preparingSlot.session, undefined);
   const closePreparing = h.command({ kind: "close", binding_id: "preparing" });
@@ -389,7 +390,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.equal(runner.sessions.has("preparing"), false);
   assert.equal(runner.preparing.size, 0);
   assert.equal(preparingSlot.session, undefined);
-  assert.equal(preparingSlot.mcp, undefined);
+  assert.equal(preparingSlot.mcpClients.size, 0);
   assert.equal(preparingMcp.transport, undefined);
   const preparingGrant = h.state.leaseStates.get("preparing");
   assert.equal(preparingGrant.sdk_session_id, null);
@@ -409,7 +410,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.equal(exitCode, null, "a benign late renewal must not terminate the task runner");
   assert.equal(h.state.modelCalls.length, 5);
   const two = runner.sessions.get("two");
-  const twoMcp = two.mcp;
+  const twoMcp = two.mcpClients.get("legacy");
   const twoFile = two.journal.file;
   const closeMcp = twoMcp.close.bind(twoMcp);
   twoMcp.close = async () => { await closeMcp(); throw new Error("Injected MCP close failure"); };
@@ -419,6 +420,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.equal(failedReceipt.error_code, "boundary_frozen");
   assert.equal(runner.sessions.size, 0);
   assert.equal(two.session, undefined);
+  assert.equal(two.mcpClients.size, 0);
   assert.equal(twoMcp.transport, undefined);
   assert.equal(twoFile.fd, -1, "an MCP close error cannot skip releasing the journal descriptor");
   h.state.lateRenewals.push({ ...grant, fence: { ...grant.fence, epoch: grant.fence.epoch + 1 },
