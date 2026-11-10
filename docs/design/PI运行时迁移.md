@@ -16,7 +16,7 @@
 
 不采用 pi-durable、Chord 应用框架、管理 LLM 或第二套工作流循环。所选 SDK/插件的持久确认与前后台宿主接口须先通过 G3，包名或源码存在不能证明可用。评估版本与部署锁分开；P6a 先验证真实 Pi 请求、账本及版本间流消息契约。AGW/OpenSandbox 既有固定基线继续作为兼容证据。
 
-仅从平台冻结配置注入 MCP，禁止默认项目/全局 mcp.json、stdio/codemode 和本机执行。P6b 私网业务与 Sandbox sidecar 两目标各有独立新 issuer/audience，direct 切换前拒旧共享 audience；保持真实 403/409/422、许可、结果、命令审计和清理边界。
+仅从平台冻结配置注入 MCP，禁止默认项目/全局 mcp.json、stdio/codemode 和本机执行。P6b 私网业务与 Sandbox sidecar 两目标各有独立新 issuer/audience，direct 切换前拒旧共享 audience；保持真实 403/409/422、许可、结果、命令审计和清理边界。普通 Explore 与原生 CTF 的 Lead/Worker 可使用操作者明确发布到该角色的外部工具；原生新 Task 分角色选择并冻结版本和工具，helper 不继承。原生 Pi 会话仍经现有 Business-v2 连接，通过有命名空间的工具进入 Blackboard 受信 host，再用官方 MCP SDK 向批准的 HTTPS Server 发送；不新增通用网关，不把外部凭据交给 Runner 或把内部能力交给远端。
 
 高层 extension 忽略稳定 toolCallId/meta、404 effect 重发等会要求更多桥，故暂推荐官方低层客户端＋窄桥，保可等待确认/absolute permit/结果/关闭 gate；不是保留自研客户端或自研 MCP 整层。模型目录/路由单源可编辑，SDK 快照派生；DTO/小元数据去重不造 registry。Runner poll 后续只复用现 PG 通知（先订阅后读命令表、提交生效、listener/租约回退），不增总线。K8s 原生 workload/watch/Lease/卷约束不替 Task DB epoch、实际进程清理和 journal 单写证据，probe 不等产品控制器。
 
