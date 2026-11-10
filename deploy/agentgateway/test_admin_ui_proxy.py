@@ -27,6 +27,7 @@ STORED = {
     ("fault", "status", "reason"),
     [
         ("temporary", 200, None),
+        ("policy_array", 200, None),
         ("down", 503, "runtime_unavailable"),
         ("auth", 503, "runtime_rejected"),
         ("invalid", 503, "invalid_readback"),
@@ -37,12 +38,19 @@ STORED = {
         ("unknown_rollout", 503, "unconfirmed_same_store"),
     ],
 )
-async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fault, status, reason):
+async def test_native_confirmation_only_retries_reads(monkeypatch, caplog, fault, status, reason):
     monkeypatch.setattr(admin_ui_proxy, "READBACK_SECONDS", 0.1)
     monkeypatch.setattr(admin_ui_proxy, "READBACK_INTERVAL", 0.005)
     caplog.set_level(logging.WARNING, logger=admin_ui_proxy.__name__)
     writes, restarts, readbacks, preflight = 0, 0, 0, 0
     fences = []
+    read_path = PATH if fault != "policy_array" else "/api/config/resources/llm.policy"
+    path = PATH if fault != "policy_array" else read_path + "/localRateLimit"
+    stored = (
+        STORED
+        if fault != "policy_array"
+        else {**STORED, "id": "localRateLimit", "value": [{"tokens": 10}]}
+    )
 
     async def restart(_http, _request_id):
         nonlocal restarts
@@ -67,7 +75,7 @@ async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fau
             writes += 1
             if fault == "unknown_write":
                 raise httpx.ReadTimeout(SYNTHETIC_SECRET, request=request)
-            item = {**STORED, "revision": None} if fault == "invalid_write_receipt" else STORED
+            item = {**stored, "revision": None} if fault == "invalid_write_receipt" else stored
             return httpx.Response(200, json={"resources": [item]})
         assert request.method == "GET"
         if request.url.path == "/api/runtime":
@@ -86,16 +94,19 @@ async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fau
                     return httpx.Response(200, json={"configReload": {"synchronized": False}})
             else:
                 preflight += 1
-            return httpx.Response(200, json={"configReload": {"synchronized": True}})
-        assert request.url.path == PATH
+            return httpx.Response(
+                200,
+                json={"configReload": {"synchronized": True}, "ui": {"configStoreMode": "hybrid"}},
+            )
+        assert request.url.path == read_path
         if not writes or fault == "temporary" and readbacks == 3:
             return httpx.Response(200, json={"resources": []})
         value = (
-            {**STORED, "revision": None}
+            {**stored, "revision": None}
             if fault == "invalid_read_receipt"
-            else {**STORED, "revision": 2}
+            else {**stored, "revision": 2}
             if fault == "conflict"
-            else STORED
+            else stored
         )
         return httpx.Response(200, json={"resources": [value]})
 
@@ -113,9 +124,9 @@ async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fau
     ):
         app.state.http = app.state.kube = upstream
         response = await browser.put(
-            PATH,
+            path,
             headers={"origin": PUBLIC, "if-none-match": '"browser-etag"'},
-            json={"resources": [STORED]},
+            json={"resources": [stored]},
         )
 
     assert response.status_code == status
@@ -124,9 +135,9 @@ async def test_provider_confirmation_only_retries_reads(monkeypatch, caplog, fau
     assert len({request_id for _, request_id, _ in fences}) == 1
     assert {site for site, _, action in fences if action == "prepare"} == {"legacy", "native"}
     assert SYNTHETIC_SECRET not in caplog.text
-    if fault == "temporary":
-        assert readbacks == 4
-        assert response.json() == {"resources": [STORED]}
+    if fault in {"temporary", "policy_array"}:
+        assert readbacks == (4 if fault == "temporary" else 1)
+        assert response.json() == {"resources": [stored]}
         assert {site for site, _, action in fences if action == "release"} == {"legacy", "native"}
     else:
         assert not any(action == "release" for _, _, action in fences)
@@ -145,6 +156,23 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
     path = admin_ui_proxy.PLAYGROUND_PATH.decode()
     marker = admin_ui_proxy.PLAYGROUND_MARKER
     digest = hashlib.sha256(key.encode()).hexdigest()
+    key_id = "10aaf4e2-a9ef-400b-8879-4f145210b215"
+    platform_id = "97c46625-8ace-4471-8e11-e9df54af6d3d"
+    platform_key = "synthetic-review-key"
+    rows = [
+        {
+            "id": key_id,
+            "value": {
+                "keyHash": "sha256:" + digest,
+                "metadata": {
+                    "name": "operator",
+                    admin_ui_proxy.KEY_ID: key_id,
+                    admin_ui_proxy.KEY_OWNER: True,
+                },
+            },
+        },
+        {"id": platform_id, "value": {"key": platform_key, "metadata": {"name": "bbx-review"}}},
+    ]
     data_origin = "http://native.test:4000"
     calls = []
     mode = "ok"
@@ -161,7 +189,11 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
     )
 
     def native(request):
-        calls.append(request)
+        if str(request.url) == NATIVE + admin_ui_proxy.KEY_PATH:
+            assert admin_ui_proxy.PLAYGROUND_KEY_HEADER not in request.headers
+            if request.headers.get("authorization") != "Basic fixture":
+                return httpx.Response(401)
+            return httpx.Response(200, json={"resources": rows})
         if str(request.url) == NATIVE + "/api/runtime":
             assert "data=session" not in request.headers.get("cookie", "")
             if request.headers.get("authorization") != "Basic fixture":
@@ -171,11 +203,18 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
                 json={"build": {"gitRevision": admin_ui_proxy.UPSTREAM_UI_COMMIT}},
                 headers={"set-cookie": "admin=session; Path=/"},
             )
-        assert str(request.url) == data_origin + path
+        calls.append(request)
+        assert str(request.url) == data_origin + admin_ui_proxy.CHAT_PATH
         assert request.method == "POST"
         assert request.headers["authorization"] == f"Bearer {key}"
         assert request.headers["content-type"] == "application/json"
-        for header in ("origin", "cookie", "x-forwarded-for", "x-bbx-task-id"):
+        for header in (
+            "origin",
+            "cookie",
+            "x-forwarded-for",
+            "x-bbx-task-id",
+            admin_ui_proxy.PLAYGROUND_KEY_HEADER,
+        ):
             assert header not in request.headers
         assert request.content == b'{"model":"fixture"}'
         if mode == "timeout":
@@ -192,7 +231,7 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
     enabled_ui = LocalizedUI(tmp_path, playground=True)
     disabled_ui = LocalizedUI(tmp_path)
     assert b'content="disabled"' in disabled_ui.index[0]
-    with pytest.raises(ValueError, match="requires a verified UI, data origin and key"):
+    with pytest.raises(ValueError, match="requires a verified UI"):
         AdminUI(NATIVE, PUBLIC, peers, "x" * 32, None, playground_data_url=data_origin)
     proxy = AdminUI(
         NATIVE,
@@ -202,7 +241,6 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
         None,
         localized=enabled_ui,
         playground_data_url=data_origin,
-        playground_key_sha256=digest,
     )
     app = Starlette(routes=[Route("/{path:path}", proxy.handle, methods=["GET", "POST", "PUT"])])
     async with (
@@ -218,16 +256,17 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
         page = await browser.get("/ui/llm/playground", headers={"authorization": "Basic fixture"})
         assert page.status_code == 200 and b'content="enabled"' in page.content
         calls.clear()
-        headers = {"origin": PUBLIC, "authorization": f"Bearer {key}"}
+        key_header = admin_ui_proxy.PLAYGROUND_KEY_HEADER
+        headers = {"origin": PUBLIC, "authorization": "Basic fixture", key_header: key}
         for target, additional, status in (
             (path, {"origin": "http://foreign.test"}, 403),
-            (path, {"authorization": "Basic fixture"}, 401),
-            (path, {"authorization": "Bearer synthetic-review-key"}, 401),
-            (path, {"authorization": "Bearer synthetic-task-key"}, 401),
-            (path, {"authorization": "Bearer synthetic-catalog-key"}, 401),
+            (path, {"authorization": "Bearer fixture"}, 401),
+            (path, {key_header: platform_key}, 401),
+            (path, {key_header: "synthetic-task-key"}, 401),
+            (path, {key_header: "synthetic-catalog-key"}, 401),
             (path, {"content-type": "text/plain"}, 415),
             (path + "?query=yes", {}, 403),
-            (path + "/", {}, 405),
+            (path + "/", {}, 403),
             ("/v1/chat/%63ompletions", {}, 405),
             ("/v1/responses", {}, 405),
         ):
@@ -237,11 +276,13 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
             assert response.status_code == status
         assert (await browser.get(path, headers=headers)).status_code == 405
         assert (
-            await browser.put("/api/config/resources/llm.policy/cors", headers=headers, json={})
-        ).status_code == 405
+            await browser.put(
+                "/api/config/resources/llm.policy/authorization", headers=headers, json={}
+            )
+        ).status_code == 403
         assert (
-            await browser.put("/api/config/resources/llm.apiKey", headers=headers, json={})
-        ).status_code == 405
+            await browser.put("/api/config/resources/traffic.gateway", headers=headers, json={})
+        ).status_code == 403
         async with proxy.lock:
             assert (
                 await browser.post(path, headers=headers, json={"model": "fixture"})
@@ -278,4 +319,90 @@ async def test_playground_relays_only_dedicated_same_origin_chat(tmp_path, monke
 
         proxy.playground_data = None
         response = await browser.post(path, headers=headers, json={"model": "fixture"})
-        assert response.status_code == 405 and len(calls) == 4
+        assert response.status_code == 405 and len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_key_guard_rejects_platform_mutation_and_credential_collision():
+    native_key = "fixture-catalog-key"
+    resource_id = "4208b51e-7136-4fae-b2c1-afc4d97c9b4f"
+    key_path = admin_ui_proxy.KEY_PATH
+
+    def native(request):
+        assert request.method == "GET"
+        if request.url.path == "/api/runtime":
+            return httpx.Response(
+                200,
+                json={"ui": {"configStoreMode": "hybrid"}, "configReload": {"synchronized": True}},
+            )
+        if request.url.path == key_path:
+            return httpx.Response(
+                200,
+                json={
+                    "resources": [
+                        {
+                            "id": resource_id,
+                            "value": {
+                                "metadata": {"name": "bbx-platform-terminal-review-v1"},
+                                "key": "synthetic-review-key",
+                            },
+                        }
+                    ]
+                },
+            )
+        assert request.url.path == "/api/config"
+        return httpx.Response(
+            200,
+            json={
+                "llm": {
+                    "policies": {
+                        "apiKey": {
+                            "mode": "strict",
+                            "keys": [{"key": native_key}],
+                        }
+                    }
+                }
+            },
+        )
+
+    proxy = AdminUI(
+        NATIVE,
+        PUBLIC,
+        {"legacy": "http://legacy.test", "native": "http://secondary.test"},
+        "x" * 32,
+        None,
+    )
+    app = Starlette(routes=[Route("/{path:path}", proxy.handle, methods=["PUT", "DELETE"])])
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(native)) as upstream,
+        httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=PUBLIC) as browser,
+    ):
+        app.state.http = upstream
+        headers = {"origin": PUBLIC}
+        protected = key_path + "/" + resource_id
+        assert (await browser.delete(protected, headers=headers)).status_code == 403
+        assert (await browser.put(protected, headers=headers, json={})).status_code == 403
+        for value, status in (
+            ({"key": "other", "metadata": {"name": "BBX-task-fake"}}, 422),
+            ({"key": "other", "metadata": {"name": "user", admin_ui_proxy.KEY_OWNER: True}}, 422),
+            ({"key": "other", "metadata": {"name": "user", "bbx_catalog_reader": True}}, 422),
+            ({"key": "synthetic-review-key", "metadata": {"name": "user"}}, 409),
+            (
+                {
+                    "keyHash": "sha256:" + hashlib.sha256(native_key.encode()).hexdigest(),
+                    "metadata": {"name": "user"},
+                },
+                409,
+            ),
+        ):
+            response = await browser.put(
+                key_path, headers=headers, json={"resources": [{"value": value}]}
+            )
+            assert response.status_code == status
+        native_key = "${FILE_OWNED_KEY}"
+        response = await browser.put(
+            key_path,
+            headers=headers,
+            json={"resources": [{"value": {"key": "fixture-other", "metadata": {"name": "user"}}}]},
+        )
+        assert response.status_code == 503

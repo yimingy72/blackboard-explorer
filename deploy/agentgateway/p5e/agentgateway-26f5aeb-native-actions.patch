@@ -1,0 +1,1079 @@
+diff --git a/ui/index.html b/ui/index.html
+index 5f7ff3a..4b7a0d4 100644
+--- a/ui/index.html
++++ b/ui/index.html
+@@ -4,6 +4,7 @@
+ 		<meta charset="UTF-8">
+ 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+ 		<meta name="bbx-native-playground" content="">
++		<meta name="bbx-native-data-origin" content="">
+ 		<link rel="icon" href="%BASE_URL%favicon.svg">
+ 		<title>agentgateway</title>
+ 	</head>
+diff --git a/ui/src/api/playgroundApi.ts b/ui/src/api/playgroundApi.ts
+index a425980..65a63f6 100644
+--- a/ui/src/api/playgroundApi.ts
++++ b/ui/src/api/playgroundApi.ts
+@@ -7,15 +7,22 @@ export async function sendChatCompletion(args: {
+ 	messages: Array<Record<string, unknown>>;
+ 	tools?: unknown[];
+ 	stream?: boolean;
++	managed?: boolean;
+ }) {
+-	const url = `${args.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
++	const url = args.managed
++		? '/api/config/resources/playground/v1/chat/completions'
++		: `${args.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+ 	const headers: Record<string, string> = {
+ 		'Content-Type': 'application/json'
+ 	};
+-	if (args.apiKey) headers.Authorization = `Bearer ${args.apiKey}`;
++	if (args.apiKey) {
++		if (args.managed) headers['X-BBX-Playground-Key'] = args.apiKey;
++		else headers.Authorization = `Bearer ${args.apiKey}`;
++	}
+ 	const response = await fetch(url, {
+ 		method: 'POST',
+-		credentials: 'omit',
++		credentials: args.managed ? 'same-origin' : 'omit',
++		redirect: args.managed ? 'error' : 'follow',
+ 		headers,
+ 		body: JSON.stringify({
+ 			model: args.model,
+diff --git a/ui/src/components/ConfigDiffDrawer.tsx b/ui/src/components/ConfigDiffDrawer.tsx
+index 613ff5c..1243177 100644
+--- a/ui/src/components/ConfigDiffDrawer.tsx
++++ b/ui/src/components/ConfigDiffDrawer.tsx
+@@ -9,6 +9,7 @@ import { cloneConfig } from '@/config';
+ import { configureConfigYamlMonaco } from '@/configMonaco';
+ import { allowNextHybridFileWrite, useHybridFileWriteOverrideKeys, useRuntimeInfo } from '@/hooks';
+ import { tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import { toYamlText } from '@/policies/policyUtils';
+ import type { GatewayConfig } from '@/types';
+
+@@ -34,10 +35,11 @@ export function ConfigSaveButton(props: {
+ 		<button
+ 			className={`button primary${fileWriteDisabled ? ' hybrid-write-disabled' : ''}${fileWriteDisabled && overrideKeysActive ? ' hybrid-write-override' : ''}`}
+ 			type="button"
+-			disabled={props.disabled}
++			disabled={props.disabled || (fileWriteDisabled && managedGateway())}
+ 			aria-disabled={fileWriteDisabled}
+ 			onClick={event => {
+ 				if (fileWriteDisabled) {
++					if (managedGateway()) return;
+ 					if ((!event.ctrlKey && !event.metaKey) || !event.shiftKey) return;
+ 					allowNextHybridFileWrite();
+ 				}
+@@ -51,9 +53,11 @@ export function ConfigSaveButton(props: {
+ 	return (
+ 		<Tooltip
+ 			content={
+-				overrideKeysActive
+-					? hybridFileWriteOverrideMessage()
+-					: (props.hybridFileWriteMessage ?? hybridFileWriteMessage())
++				managedGateway()
++					? tr('copy.platformReadOnly')
++					: overrideKeysActive
++						? hybridFileWriteOverrideMessage()
++						: (props.hybridFileWriteMessage ?? hybridFileWriteMessage())
+ 			}
+ 		>
+ 			{button}
+diff --git a/ui/src/components/RawConfigEditor.tsx b/ui/src/components/RawConfigEditor.tsx
+index 2c85362..324ed52 100644
+--- a/ui/src/components/RawConfigEditor.tsx
++++ b/ui/src/components/RawConfigEditor.tsx
+@@ -15,6 +15,7 @@ import { parseYamlText } from '@/policies/policyUtils';
+ import type { GatewayConfig } from '@/types';
+
+ interface RawConfigEditorProps {
++	readOnly?: boolean;
+ 	invalid: boolean;
+ 	lineEnding: LineEnding;
+ 	onChange: (value: string) => void;
+@@ -25,6 +26,7 @@ interface RawConfigEditorProps {
+ configureConfigMonacoWorkers();
+
+ export function RawConfigEditor({
++	readOnly,
+ 	invalid,
+ 	lineEnding,
+ 	onChange,
+@@ -95,6 +97,7 @@ export function RawConfigEditor({
+ 				onChange={nextValue => onChange(nextValue ?? '')}
+ 				onMount={mountEditor}
+ 				options={{
++					readOnly,
+ 					automaticLayout: true,
+ 					copyWithSyntaxHighlighting: false,
+ 					fontSize: 13,
+diff --git a/ui/src/hooks.ts b/ui/src/hooks.ts
+index caf620f..2a9a4fe 100644
+--- a/ui/src/hooks.ts
++++ b/ui/src/hooks.ts
+@@ -29,11 +29,13 @@ import {
+ } from '@/config';
+ import { validateGatewayConfig } from '@/configValidation';
+ import { tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import type { GatewayConfig, LlmApiKeyPolicy, LlmConfig } from '@/types';
+
+ let hybridFileWriteOverride = false;
+
+ export function allowNextHybridFileWrite() {
++	if (managedGateway()) return;
+ 	hybridFileWriteOverride = true;
+ }
+
+@@ -46,6 +48,7 @@ export function takeHybridFileWriteOverride() {
+ export function useHybridFileWriteOverrideKeys() {
+ 	const [active, setActive] = useState(false);
+ 	useEffect(() => {
++		if (managedGateway()) return;
+ 		const update = (event: KeyboardEvent) =>
+ 			setActive((event.ctrlKey || event.metaKey) && event.shiftKey);
+ 		const clear = () => setActive(false);
+@@ -241,6 +244,7 @@ function invalidateConfigViews(queryClient: ReturnType<typeof useQueryClient>) {
+ }
+
+ async function requireWritableConfigFile(queryClient: ReturnType<typeof useQueryClient>) {
++	if (managedGateway()) throw new Error(tr('copy.platformReadOnly'));
+ 	const runtime = await requireWritableRuntime(queryClient);
+ 	const overrideHybridFileWrite = takeHybridFileWriteOverride();
+ 	if (runtime.ui.configStoreMode === 'hybrid' && !overrideHybridFileWrite) {
+@@ -297,6 +301,7 @@ export function useEnableSurface() {
+ 			surface: 'llm' | 'mcp' | 'traffic';
+ 			gateway?: string;
+ 		}) => {
++			if (managedGateway()) throw new Error(tr('copy.platformReadOnly'));
+ 			const runtime = await requireWritableRuntime(queryClient);
+ 			const hybrid = runtime.ui.configStoreMode === 'hybrid';
+ 			function apply(next: GatewayConfig) {
+diff --git a/ui/src/locales/en.ts b/ui/src/locales/en.ts
+index 2036051..ad80b07 100644
+--- a/ui/src/locales/en.ts
++++ b/ui/src/locales/en.ts
+@@ -2054,6 +2054,16 @@ const en = {
+ 			platformTeam: 'Platform team',
+ 			playground: 'Playground',
+ 			playgroundRequestFailed: 'Playground request failed',
++			platformObservability: 'Observability',
++			platformReadOnly: 'Platform-managed · read only',
++			platformSettingsHelp:
++				'These settings are managed by this deployment. You can inspect the current configuration here.',
++			platformKeyPolicyManaged: 'The platform manages key authentication',
++			platformKeyPolicyManagedHelp:
++				'Create and manage your own virtual keys here. Platform task, catalog and review keys are read only.',
++			platformMcpUnavailable: 'MCP Playground is unavailable on this deployment',
++			platformMcpUnavailableHelp:
++				'The platform uses the MCP listener for managed task routes. It does not expose a separate browser endpoint.',
+ 			playgroundDedicatedKey: 'Dedicated Playground key',
+ 			playgroundDedicatedKeyRequired: 'Enter the dedicated Playground key.',
+ 			playgroundNotConfigured: 'Chat Playground is not configured',
+diff --git a/ui/src/locales/zh-CN.ts b/ui/src/locales/zh-CN.ts
+index cfd592a..48c141e 100644
+--- a/ui/src/locales/zh-CN.ts
++++ b/ui/src/locales/zh-CN.ts
+@@ -1902,6 +1902,14 @@ const zhCN = {
+ 			platformTeam: '平台团队',
+ 			playground: '演练场',
+ 			playgroundRequestFailed: '演练场请求失败',
++			platformObservability: '可观测性',
++			platformReadOnly: '由平台管理 · 只读',
++			platformSettingsHelp: '这些设置由当前部署管理。可以在此查看当前配置。',
++			platformKeyPolicyManaged: '密钥认证由平台管理',
++			platformKeyPolicyManagedHelp:
++				'可以在此创建和管理自己的虚拟密钥。平台任务、目录和复盘密钥仅供查看。',
++			platformMcpUnavailable: '当前部署未开放 MCP 演练场',
++			platformMcpUnavailableHelp: '平台将 MCP 监听用于受管任务路由，没有单独对浏览器开放的入口。',
+ 			playgroundDedicatedKey: '演练专用密钥',
+ 			playgroundDedicatedKeyRequired: '请输入演练专用密钥。',
+ 			playgroundNotConfigured: '聊天演练场尚未配置',
+diff --git a/ui/src/main.tsx b/ui/src/main.tsx
+index 7c59a0a..1fe1cf3 100644
+--- a/ui/src/main.tsx
++++ b/ui/src/main.tsx
+@@ -15,6 +15,10 @@ import '@/i18n';
+
+ import { routerBasePath } from '@/basePath';
+ import { Shell } from '@/components/Shell';
++import { PageHeader, Panel, StatusBanner, YamlBlock } from '@/components/Primitives';
++import { useEffectiveGatewayConfig } from '@/hooks';
++import { managedGateway } from '@/managedGateway';
++import type { GatewayConfig } from '@/types';
+ import { CelPage } from '@/pages/Cel';
+ import { ClientSetupPage } from '@/pages/ClientSetup';
+ import { CostsPage } from '@/pages/Costs';
+@@ -72,6 +76,43 @@ function localizedRoute(Component: React.ComponentType) {
+ 	};
+ }
+
++const trafficView = (config: GatewayConfig) => ({
++	gateways: Object.keys(config.gateways ?? {}),
++	binds: config.binds?.map(bind => ({ port: bind.port })),
++	routes: config.routes?.map(route => ({ name: route.name })),
++	tcpRoutes: config.tcpRoutes?.map(route => ({ name: route.name }))
++});
++const mcpView = (config: GatewayConfig) => ({
++	targets: config.mcp?.targets?.map(target => target.name) ?? []
++});
++
++function managedRoute(
++	Component: React.ComponentType,
++	title: string,
++	select?: (config: GatewayConfig) => unknown
++) {
++	function ReadOnlyConfig() {
++		const config = useEffectiveGatewayConfig({ enabled: Boolean(select) });
++		return (
++			<div className="page-stack">
++				<PageHeader title={tr(title)} />
++				<StatusBanner
++					state="warn"
++					title={tr(select ? 'copy.platformReadOnly' : 'copy.platformMcpUnavailable')}
++				>
++					{tr(select ? 'copy.platformSettingsHelp' : 'copy.platformMcpUnavailableHelp')}
++				</StatusBanner>
++				{select && config.data ? (
++					<Panel>
++						<YamlBlock value={select(config.data) ?? {}} />
++					</Panel>
++				) : null}
++			</div>
++		);
++	}
++	return localizedRoute(managedGateway() ? ReadOnlyConfig : Component);
++}
++
+ const indexRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/',
+@@ -153,7 +194,7 @@ const clientSetupRoute = createRoute({
+ const mcpServersRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/mcp/servers',
+-	component: localizedRoute(McpServersPage)
++	component: managedRoute(McpServersPage, 'copy.mcpServers', mcpView)
+ });
+
+ const mcpPoliciesRoute = createRoute({
+@@ -165,37 +206,37 @@ const mcpPoliciesRoute = createRoute({
+ const mcpGetStartedRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/mcp/get-started',
+-	component: localizedRoute(McpGetStartedPage)
++	component: managedRoute(McpGetStartedPage, 'copy.mcpServers', mcpView)
+ });
+
+ const mcpPlaygroundRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/mcp/playground',
+-	component: localizedRoute(McpPlaygroundPage)
++	component: managedRoute(McpPlaygroundPage, 'copy.mcpPlayground')
+ });
+
+ const trafficListenersRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/traffic/listeners',
+-	component: localizedRoute(TrafficListenersPage)
++	component: managedRoute(TrafficListenersPage, 'copy.trafficListeners', trafficView)
+ });
+
+ const trafficGatewaysRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/traffic/gateways',
+-	component: localizedRoute(TrafficGatewaysPage)
++	component: managedRoute(TrafficGatewaysPage, 'copy.trafficGateways', trafficView)
+ });
+
+ const trafficGetStartedRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/traffic/get-started',
+-	component: localizedRoute(TrafficGetStartedPage)
++	component: managedRoute(TrafficGetStartedPage, 'copy.traffic', trafficView)
+ });
+
+ const trafficRoutesRoute = createRoute({
+ 	getParentRoute: () => appRoute,
+ 	path: '/traffic/routes',
+-	component: localizedRoute(TrafficRoutesPage)
++	component: managedRoute(TrafficRoutesPage, 'copy.trafficRoutes', trafficView)
+ });
+
+ const celRoute = createRoute({
+@@ -233,7 +274,9 @@ const uiSettingsRoute = createRoute({
+ const observabilitySettingsRoute = createRoute({
+ 	getParentRoute: () => settingsRoute,
+ 	path: '/observability',
+-	component: localizedRoute(ObservabilitySettingsPage)
++	component: managedRoute(ObservabilitySettingsPage, 'copy.platformObservability', config => ({
++		accessLogConfigured: Boolean(config.frontendPolicies?.accessLog)
++	}))
+ });
+
+ function RawConfigRoute() {
+diff --git a/ui/src/managedGateway.ts b/ui/src/managedGateway.ts
+new file mode 100644
+index 0000000..6d2ceea
+--- /dev/null
++++ b/ui/src/managedGateway.ts
+@@ -0,0 +1,32 @@
++import type { VirtualApiKey } from '@/types';
++
++export const operatorKeyMarker = 'bbx_operator_managed';
++
++export function localPlaygroundMode() {
++	return document.querySelector<HTMLMetaElement>('meta[name="bbx-native-playground"]')?.content;
++}
++
++export function managedGateway() {
++	const mode = localPlaygroundMode();
++	return mode === 'enabled' || mode === 'disabled';
++}
++
++export function publicLlmOrigin() {
++	return document.querySelector<HTMLMetaElement>('meta[name="bbx-native-data-origin"]')?.content;
++}
++
++export function operatorKey(key: VirtualApiKey) {
++	return (key.metadata as Record<string, unknown> | undefined)?.[operatorKeyMarker] === true;
++}
++
++const operatorLlmPolicies = new Set([
++	'cors',
++	'guardrails',
++	'localRateLimit',
++	'remoteRateLimit',
++	'timeout'
++]);
++
++export function managedPolicyReadOnly(kind: string, id: string) {
++	return managedGateway() && (kind !== 'llm.policy' || !operatorLlmPolicies.has(id));
++}
+diff --git a/ui/src/pages/ClientSetup.tsx b/ui/src/pages/ClientSetup.tsx
+index 576eac3..a173159 100644
+--- a/ui/src/pages/ClientSetup.tsx
++++ b/ui/src/pages/ClientSetup.tsx
+@@ -1,4 +1,5 @@
+ import { tr } from '@/i18n';
++import { managedGateway, operatorKey, publicLlmOrigin } from '@/managedGateway';
+ import { Check, Clipboard, Code2, GitBranch, KeyRound, Terminal } from 'lucide-react';
+ import type { ReactNode } from 'react';
+ import { useMemo, useState } from 'react';
+@@ -105,9 +106,13 @@ export function ClientSetupPage() {
+ 		],
+ 		[models, providers, virtualModels]
+ 	);
+-	const rawVirtualKeys = useMemo(() => apiKeys.filter(hasKeyValue), [apiKeys]);
++	const managed = managedGateway();
++	const rawVirtualKeys = useMemo(
++		() => apiKeys.filter(hasKeyValue).filter(key => !managed || operatorKey(key)),
++		[apiKeys, managed]
++	);
+ 	// The proxy does not know its externally reachable URL in XDS mode, so there is nothing to derive.
+-	const derivedBaseUrl = dumpMode ? '' : llmGatewayOrigin(config.data);
++	const derivedBaseUrl = dumpMode ? '' : publicLlmOrigin() || llmGatewayOrigin(config.data);
+ 	const [baseUrl, setBaseUrl] = useState(derivedBaseUrl);
+ 	const [baseUrlTouched, setBaseUrlTouched] = useState(false);
+ 	const [model, setModel] = useState('');
+@@ -265,7 +270,10 @@ export function ClientSetupPage() {
+ 						</Field>
+ 					) : null}
+ 					{selectedModelConfig && isWildcardModelName(selectedModelConfig.name) ? (
+-						<Field label={tr('copy.specificModel')} hint="Model uses a wildcard; specify the specific model.">
++						<Field
++							label={tr('copy.specificModel')}
++							hint="Model uses a wildcard; specify the specific model."
++						>
+ 							{(id, hintId) => (
+ 								<div className="target-resolved-composite">
+ 									{wildcardPrefix ? <span className="target-prefix">{wildcardPrefix}</span> : null}
+diff --git a/ui/src/pages/GetStarted.tsx b/ui/src/pages/GetStarted.tsx
+index e6b4d48..649f7cc 100644
+--- a/ui/src/pages/GetStarted.tsx
++++ b/ui/src/pages/GetStarted.tsx
+@@ -11,6 +11,7 @@ import {
+ 	useTrafficConfigData
+ } from '@/hooks';
+ import { tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import type { GatewayConfig } from '@/types';
+
+ type SurfaceKind = 'llm' | 'mcp' | 'traffic';
+@@ -156,6 +157,11 @@ function GetStartedPage(props: { surface: SurfaceKind }) {
+ 				</StatusBanner>
+ 			) : null}
+
++			{managedGateway() && (
++				<StatusBanner state="warn" title={tr('copy.platformReadOnly')}>
++					{tr('copy.platformSettingsHelp')}
++				</StatusBanner>
++			)}
+ 			<Panel className="surface-enable-panel">
+ 				{!enabled && (props.surface === 'llm' || props.surface === 'mcp') ? (
+ 					<details className="schema-details">
+@@ -191,7 +197,7 @@ function GetStartedPage(props: { surface: SurfaceKind }) {
+ 						<button
+ 							className="button primary"
+ 							type="button"
+-							disabled={loading || enableSurface.isPending}
++							disabled={managedGateway() || loading || enableSurface.isPending}
+ 							onClick={() => void enable()}
+ 						>
+ 							{tr('copy.enable')}
+diff --git a/ui/src/pages/Home.tsx b/ui/src/pages/Home.tsx
+index 645ed87..0169fae 100644
+--- a/ui/src/pages/Home.tsx
++++ b/ui/src/pages/Home.tsx
+@@ -16,6 +16,7 @@ import {
+ 	useUpsertConfigResource
+ } from '@/hooks';
+ import { currentLanguage, tr, translateText } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import { McpSettingsDrawer } from '@/pages/McpServers';
+ import { LlmSettingsDrawer } from '@/pages/models/LlmSettingsDrawer';
+ import { ReadonlyModeBanner, TrafficDumpOverview } from '@/pages/traffic/TrafficConfigDumpPanel';
+@@ -77,7 +78,8 @@ export function HomePage() {
+ 	const [startupFlow, setStartupFlow] = useState(false);
+ 	const [llmSettingsOpen, setLlmSettingsOpen] = useState(false);
+ 	const [mcpSettingsOpen, setMcpSettingsOpen] = useState(false);
+-	const showStartup = Boolean(config.data && startupFlow);
++	const managed = managedGateway();
++	const showStartup = !managed && Boolean(config.data && startupFlow);
+ 	const anySurfaceEnabled = hasLlm || hasMcp || hasTraffic || locallyEnabled.size > 0;
+
+ 	useEffect(() => {
+@@ -263,15 +265,17 @@ export function HomePage() {
+ 						surfaceEndpointLabel(config.data?.llm?.gateways, config.data?.llm?.port ?? 4000)
+ 					]}
+ 					actions={
+-						<button
+-							className="button"
+-							type="button"
+-							disabled={enable.isPending || update.isPending}
+-							onClick={() => setLlmSettingsOpen(true)}
+-						>
+-							<Settings size={16} />
+-							{tr('copy.settings')}
+-						</button>
++						!managed && (
++							<button
++								className="button"
++								type="button"
++								disabled={enable.isPending || update.isPending}
++								onClick={() => setLlmSettingsOpen(true)}
++							>
++								<Settings size={16} />
++								{tr('copy.settings')}
++							</button>
++						)
+ 					}
+ 				/>
+ 				<SurfaceRow
+@@ -280,7 +284,7 @@ export function HomePage() {
+ 					enabled={hasMcp}
+ 					disabled={enable.isPending || update.isPending}
+ 					onEnable={() => void enableSurface('mcp')}
+-					setupNeeded={mcpServers.length === 0}
++					setupNeeded={!managed && mcpServers.length === 0}
+ 					setupText="Add an MCP target before tools are available."
+ 					setupTo="/mcp/servers"
+ 					setupLabel="Set up servers"
+@@ -289,15 +293,17 @@ export function HomePage() {
+ 						surfaceEndpointLabel(mcpData.data?.mcp?.gateways, mcpData.data?.mcp?.port ?? 3000)
+ 					]}
+ 					actions={
+-						<button
+-							className="button"
+-							type="button"
+-							disabled={enable.isPending || update.isPending}
+-							onClick={() => setMcpSettingsOpen(true)}
+-						>
+-							<Settings size={16} />
+-							{tr('copy.settings')}
+-						</button>
++						!managed && (
++							<button
++								className="button"
++								type="button"
++								disabled={enable.isPending || update.isPending}
++								onClick={() => setMcpSettingsOpen(true)}
++							>
++								<Settings size={16} />
++								{tr('copy.settings')}
++							</button>
++						)
+ 					}
+ 				/>
+ 				<SurfaceRow
+@@ -306,7 +312,7 @@ export function HomePage() {
+ 					enabled={hasTraffic}
+ 					disabled={enable.isPending || update.isPending}
+ 					onEnable={() => void enableSurface('apis')}
+-					setupNeeded={hasBinds ? traffic.listeners === 0 : traffic.gateways === 0}
++					setupNeeded={!managed && (hasBinds ? traffic.listeners === 0 : traffic.gateways === 0)}
+ 					setupText={
+ 						hasBinds
+ 							? 'Add a listener before HTTP or TCP traffic can be served.'
+@@ -470,9 +476,18 @@ function SurfaceRow(props: {
+ 					{props.icon}
+ 					<strong>{props.title}</strong>
+ 				</div>
+-				<button className="button" type="button" disabled={props.disabled} onClick={props.onEnable}>
+-					{tr('copy.enableValue', [props.title])}
+-				</button>
++				{managedGateway() ? (
++					<span className="muted">{tr('copy.platformReadOnly')}</span>
++				) : (
++					<button
++						className="button"
++						type="button"
++						disabled={props.disabled}
++						onClick={props.onEnable}
++					>
++						{tr('copy.enableValue', [props.title])}
++					</button>
++				)}
+ 			</div>
+ 		);
+ 	}
+diff --git a/ui/src/pages/Keys.tsx b/ui/src/pages/Keys.tsx
+index 8b9d2a6..16cce39 100644
+--- a/ui/src/pages/Keys.tsx
++++ b/ui/src/pages/Keys.tsx
+@@ -47,6 +47,7 @@ import {
+ 	useUpsertPolicyResource
+ } from '@/hooks';
+ import { tr } from '@/i18n';
++import { managedGateway, operatorKey, operatorKeyMarker } from '@/managedGateway';
+ import {
+ 	authorizationLocationFrom,
+ 	authorizationLocationToValue,
+@@ -65,6 +66,7 @@ const apiKeyIdMetadata = 'agentgateway.dev/id';
+ const keyHashSupported = Boolean(globalThis.crypto?.subtle);
+
+ export function KeysPage() {
++	const managed = managedGateway();
+ 	const {
+ 		config,
+ 		rawConfig,
+@@ -86,7 +88,7 @@ export function KeysPage() {
+ 	const filePolicyOwned = Boolean(
+ 		rawConfig.data?.llm?.policies && Object.hasOwn(rawConfig.data.llm.policies, 'apiKey')
+ 	);
+-	const policyReadOnly = hybrid && filePolicyOwned;
++	const policyReadOnly = managed || (hybrid && filePolicyOwned);
+ 	const [editing, setEditing] = useState<{
+ 		previousKey?: string;
+ 		key: VirtualApiKey;
+@@ -100,10 +102,10 @@ export function KeysPage() {
+ 		editing ??
+ 		(keyDrawer === 'new' && policy
+ 			? { key: newVirtualKey() }
+-			: linkedKey
++			: linkedKey && (!managed || operatorKey(linkedKey))
+ 				? { previousKey: keyValue(linkedKey), key: structuredClone(linkedKey) }
+ 				: null);
+-	const advancedOpen = keyDrawer === 'settings';
++	const advancedOpen = !managed && keyDrawer === 'settings';
+ 	const saving = upsertResource.isPending || upsertPolicy.isPending || deleteResource.isPending;
+ 	const saveError =
+ 		upsertResource.error?.message ??
+@@ -119,6 +121,7 @@ export function KeysPage() {
+
+ 	function saveKey(key: VirtualApiKey, previousKey?: string, createdRawKey?: string) {
+ 		const previous = previousKey ? keys.find(item => keyValue(item) === previousKey) : undefined;
++		if (managed && previousKey && (!previous || !operatorKey(previous))) return;
+ 		const previousIndex = previous ? keys.indexOf(previous) : -1;
+ 		const previousId = previous ? keyId(previous) || `@index:${previousIndex}` : undefined;
+ 		const value = structuredClone(key);
+@@ -137,6 +140,7 @@ export function KeysPage() {
+ 	}
+
+ 	function removeKey(key: VirtualApiKey) {
++		if (managed && !operatorKey(key)) return;
+ 		const index = keys.indexOf(key);
+ 		const id = keyId(key) || (index >= 0 ? `@index:${index}` : '');
+ 		if (!id) return;
+@@ -154,6 +158,7 @@ export function KeysPage() {
+ 	}
+
+ 	function openEditKey(key: VirtualApiKey, index: number) {
++		if (managed && !operatorKey(key)) return;
+ 		setEditing(null);
+ 		setKeyDrawer(virtualKeyUrlRef(key, index));
+ 	}
+@@ -184,7 +189,7 @@ export function KeysPage() {
+ 								<button
+ 									className="button"
+ 									type="button"
+-									disabled={unavailable || saving}
++									disabled={managed || unavailable || saving}
+ 									onClick={() => setKeyDrawer('settings')}
+ 								>
+ 									<SlidersHorizontal size={16} />
+@@ -204,7 +209,7 @@ export function KeysPage() {
+ 							<button
+ 								className="button primary"
+ 								type="button"
+-								disabled={unavailable || saving}
++								disabled={managed || unavailable || saving}
+ 								onClick={() => setKeyDrawer('settings')}
+ 							>
+ 								<KeyRound size={16} />
+@@ -215,6 +220,11 @@ export function KeysPage() {
+ 				}
+ 			/>
+
++			{managed ? (
++				<StatusBanner state="warn" title={tr('copy.platformKeyPolicyManaged')}>
++					{tr('copy.platformKeyPolicyManagedHelp')}
++				</StatusBanner>
++			) : null}
+ 			{saveError ? (
+ 				<StatusBanner state="bad" title={tr('copy.saveFailed')}>
+ 					{saveError}
+@@ -244,7 +254,7 @@ export function KeysPage() {
+ 							<button
+ 								className="button primary"
+ 								type="button"
+-								disabled={saving}
++								disabled={managed || saving}
+ 								onClick={() => setKeyDrawer('settings')}
+ 							>
+ 								<KeyRound size={16} />
+@@ -323,37 +333,41 @@ export function KeysPage() {
+ 											/>
+ 										</td>
+ 										<td className="key-action-cell">
+-											<div className="key-actions">
+-												<Tooltip content={tr('copy.editKey')}>
+-													<button
+-														className="table-action"
+-														type="button"
+-														aria-label={tr('copy.editKey')}
+-														onClick={() => openEditKey(item, index)}
+-													>
+-														<Pencil size={14} />
+-														{tr('copy.edit')}
+-													</button>
+-												</Tooltip>
+-												<Tooltip
+-													content={
+-														hybrid && !databaseKeyId(item)
+-															? tr('copy.fileOwnedKeysCannotBeDeletedHere')
+-															: tr('copy.deleteKey')
+-													}
+-												>
+-													<button
+-														className="table-action danger"
+-														type="button"
+-														aria-label={tr('copy.deleteKey')}
+-														disabled={saving || (hybrid && !databaseKeyId(item))}
+-														onClick={() => setDeleteKey(item)}
++											{managed && !operatorKey(item) ? (
++												<span className="muted">{tr('copy.platformReadOnly')}</span>
++											) : (
++												<div className="key-actions">
++													<Tooltip content={tr('copy.editKey')}>
++														<button
++															className="table-action"
++															type="button"
++															aria-label={tr('copy.editKey')}
++															onClick={() => openEditKey(item, index)}
++														>
++															<Pencil size={14} />
++															{tr('copy.edit')}
++														</button>
++													</Tooltip>
++													<Tooltip
++														content={
++															hybrid && !databaseKeyId(item)
++																? tr('copy.fileOwnedKeysCannotBeDeletedHere')
++																: tr('copy.deleteKey')
++														}
+ 													>
+-														<Trash2 size={14} />
+-														{tr('copy.delete')}
+-													</button>
+-												</Tooltip>
+-											</div>
++														<button
++															className="table-action danger"
++															type="button"
++															aria-label={tr('copy.deleteKey')}
++															disabled={saving || (hybrid && !databaseKeyId(item))}
++															onClick={() => setDeleteKey(item)}
++														>
++															<Trash2 size={14} />
++															{tr('copy.delete')}
++														</button>
++													</Tooltip>
++												</div>
++											)}
+ 										</td>
+ 									</tr>
+ 								))}
+@@ -1589,7 +1603,9 @@ function withoutManagedMetadata(value: Record<string, unknown>) {
+ function withoutServerMetadata(value: Record<string, unknown>) {
+ 	return Object.fromEntries(
+ 		Object.entries(value).filter(
+-			([key]) => key === keyHintMetadata || !key.startsWith(managedMetadataPrefix)
++			([key]) =>
++				(key !== operatorKeyMarker || !managedGateway()) &&
++				(key === keyHintMetadata || !key.startsWith(managedMetadataPrefix))
+ 		)
+ 	);
+ }
+diff --git a/ui/src/pages/Logs.tsx b/ui/src/pages/Logs.tsx
+index 72860b1..e63bd6b 100644
+--- a/ui/src/pages/Logs.tsx
++++ b/ui/src/pages/Logs.tsx
+@@ -61,6 +61,7 @@ import {
+ import { queryParam, useStickyQueryParam } from '@/drawerRouteState';
+ import { useLlmConfigData, useUpdateConfig } from '@/hooks';
+ import { tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import { llmModelOptions } from '@/llmModelOptions';
+ import {
+ 	ANALYTICS_DIMENSIONS,
+@@ -314,10 +315,12 @@ export function LogsPage() {
+ 				description={tr('copy.inspectRecentLlmCallsAndRequestResponsePayloads')}
+ 				actions={
+ 					<div className="button-row">
+-						<button className="button" type="button" onClick={() => setSettings('logs')}>
+-							<Settings size={16} />
+-							{tr('copy.settings')}
+-						</button>
++						{!managedGateway() && (
++							<button className="button" type="button" onClick={() => setSettings('logs')}>
++								<Settings size={16} />
++								{tr('copy.settings')}
++							</button>
++						)}
+ 						<button className="button" type="button" disabled={loading} onClick={load}>
+ 							<RefreshCw size={16} className={loading ? 'spin' : undefined} />
+ 							{tr('copy.refresh')}
+@@ -470,7 +473,7 @@ export function LogsPage() {
+ 				)}
+ 			</Panel>
+
+-			{settings === 'logs' ? (
++			{!managedGateway() && settings === 'logs' ? (
+ 				<LogsSettingsDrawer
+ 					config={config.data}
+ 					enabled={promptLoggingEnabled}
+diff --git a/ui/src/pages/Playground.tsx b/ui/src/pages/Playground.tsx
+index 391e150..ba01034 100644
+--- a/ui/src/pages/Playground.tsx
++++ b/ui/src/pages/Playground.tsx
+@@ -32,6 +32,7 @@ import { providerLabel } from '@/config';
+ import { corsNeedsUpdate, currentOrigin, playgroundCorsPolicy, waitForLlmCors } from '@/cors';
+ import { hasKeyValue, keyLabel } from '@/credentialDisplay';
+ import { llmPlaygroundEndpoint, mcpPlaygroundEndpoint } from '@/gatewayUrls';
++import { localPlaygroundMode, operatorKey } from '@/managedGateway';
+ import {
+ 	useLlmConfigData,
+ 	useMcpConfigData,
+@@ -113,9 +114,7 @@ const legacySecretStorageKeys = [
+ ];
+
+ export function PlaygroundPage() {
+-	const playgroundMode = document.querySelector<HTMLMetaElement>(
+-		'meta[name="bbx-native-playground"]'
+-	)?.content;
++	const playgroundMode = localPlaygroundMode();
+ 	const relayPlayground = playgroundMode === 'enabled' || playgroundMode === 'disabled';
+ 	const {
+ 		config,
+@@ -150,10 +149,11 @@ export function PlaygroundPage() {
+ 		],
+ 		[models, providers, virtualModels]
+ 	);
+-	const rawVirtualKeys = useMemo(
+-		() => (relayPlayground ? [] : apiKeys.filter(hasKeyValue)),
++	const usableKeys = useMemo(
++		() => (relayPlayground ? apiKeys.filter(operatorKey) : apiKeys),
+ 		[apiKeys, relayPlayground]
+ 	);
++	const rawVirtualKeys = useMemo(() => usableKeys.filter(hasKeyValue), [usableKeys]);
+ 	const [storedModel, setStoredModel] = useStoredStringState(storageKeys.model, '');
+ 	const [model, setModel] = useState(() => queryModel() ?? storedModel);
+ 	const llmEndpoint = relayPlayground
+@@ -161,7 +161,9 @@ export function PlaygroundPage() {
+ 		: llmPlaygroundEndpoint(config.data);
+ 	const llmBaseUrl = llmEndpoint.baseUrl;
+ 	const [specificModel, setSpecificModel] = useStoredStringState(storageKeys.specificModel, '');
+-	const [apiKeyMode, setApiKeyMode] = useState<'saved' | 'raw'>(() => storedApiKeyMode());
++	const [apiKeyMode, setApiKeyMode] = useState<'saved' | 'raw'>(() =>
++		relayPlayground ? 'raw' : storedApiKeyMode()
++	);
+ 	const [selectedKeyRef, setSelectedKeyRef] = useStoredStringState(storageKeys.selectedKey, '');
+ 	const [apiKey, setApiKey] = useState('');
+ 	const [system, setSystem] = useState('You are a concise assistant.');
+@@ -216,11 +218,8 @@ export function PlaygroundPage() {
+ 			?.key ??
+ 		rawVirtualKeys[0]?.key ??
+ 		'';
+-	const selectedKeyValue = relayPlayground
+-		? apiKey.trim()
+-		: apiKeyMode === 'saved' && rawVirtualKeys.length > 0
+-			? savedKey
+-			: apiKey;
++	const selectedKeyValue =
++		apiKeyMode === 'saved' && rawVirtualKeys.length > 0 ? savedKey : apiKey.trim();
+ 	const llmCors = policies.cors as CorsPolicy | null | undefined;
+ 	const applyCors = useMutation({
+ 		mutationFn: async () => {
+@@ -383,6 +382,7 @@ export function PlaygroundPage() {
+ 			]);
+ 			const started = performance.now();
+ 			const response = await sendChatCompletion({
++				managed: relayPlayground,
+ 				baseUrl: llmBaseUrl,
+ 				model: requestModel,
+ 				apiKey: selectedKeyValue,
+@@ -460,6 +460,7 @@ export function PlaygroundPage() {
+ 				]);
+ 				const finalStarted = performance.now();
+ 				const finalResponse = await sendChatCompletion({
++					managed: relayPlayground,
+ 					baseUrl: llmBaseUrl,
+ 					model: requestModel,
+ 					apiKey: selectedKeyValue,
+@@ -534,6 +535,22 @@ export function PlaygroundPage() {
+ 					{tr('copy.playgroundSetupRequired')}
+ 				</StatusBanner>
+ 			) : null}
++			{playgroundMode === 'enabled' &&
++			!configDataLoading &&
++			!configDataError &&
++			usableKeys.length === 0 ? (
++				<StatusBanner
++					state="warn"
++					title={tr('copy.playgroundNotConfigured')}
++					action={
++						<Link className="button" to="/llm/keys">
++							{tr('copy.virtualApiKeys')}
++						</Link>
++					}
++				>
++					{tr('copy.playgroundSetupRequired')}
++				</StatusBanner>
++			) : null}
+ 			{configDataLoading ? (
+ 				<StatusBanner state="loading" title={tr('copy.loadingLlmConfiguration')} />
+ 			) : configDataError ? (
+@@ -648,7 +665,7 @@ export function PlaygroundPage() {
+ 							)}
+ 						</div>
+ 						<div className="playground-control-row">
+-							{!relayPlayground && (
++							{(!relayPlayground || rawVirtualKeys.length > 0) && (
+ 								<FieldGroup label={tr('copy.virtualApiKey')}>
+ 									<Dropdown
+ 										ariaLabel="Virtual API key"
+diff --git a/ui/src/pages/Policies.tsx b/ui/src/pages/Policies.tsx
+index 0233845..8b0ba81 100644
+--- a/ui/src/pages/Policies.tsx
++++ b/ui/src/pages/Policies.tsx
+@@ -15,6 +15,7 @@ import {
+ 	useUpsertPolicyResource
+ } from '@/hooks';
+ import { tr, translateText } from '@/i18n';
++import { managedGateway, managedPolicyReadOnly } from '@/managedGateway';
+ import { PolicyDrawer } from '@/policies/PolicyDrawer';
+ import { policyEnabled, policySummary, titleFromKey } from '@/policies/policyUtils';
+ import { policyUi } from '@/policies/registry';
+@@ -200,6 +201,12 @@ export function PolicyCatalogPage(props: {
+ 			};
+ 		});
+ 	}, [help, language, props.policyKeys, props.schemaRoot]);
++	function readOnly(key: PolicyKey) {
++		return (
++			managedPolicyReadOnly(props.resourceKind, key) ||
++			(managedGateway() && Boolean(filePolicies && Object.hasOwn(filePolicies, key)))
++		);
++	}
+ 	const selectedMeta = policyCatalog.find(policy => policy.key === selected);
+ 	const selectedFileOwned = Boolean(
+ 		selected && filePolicies && Object.hasOwn(filePolicies, selected)
+@@ -309,7 +316,8 @@ export function PolicyCatalogPage(props: {
+ 									key={policy.key}
+ 									policy={policy}
+ 									managedLink={props.managedLinks?.[policy.key]}
+-									disabled={policiesDisabled || policyDataUnavailable}
++									readOnly={readOnly(policy.key)}
++									disabled={policiesDisabled || policyDataUnavailable || readOnly(policy.key)}
+ 									onOpen={openPolicy}
+ 								/>
+ 							))}
+@@ -328,7 +336,11 @@ export function PolicyCatalogPage(props: {
+ 				</Panel>
+ 			</details>
+
+-			{selected && selectedMeta && !policiesDisabled && !policyDataUnavailable ? (
++			{selected &&
++			selectedMeta &&
++			!policiesDisabled &&
++			!policyDataUnavailable &&
++			!readOnly(selected) ? (
+ 				<PolicyDrawer
+ 					key={selected}
+ 					policyKey={selected}
+@@ -375,6 +387,7 @@ function PolicyTile(props: {
+ 	};
+ 	managedLink?: { to: string; summary: string };
+ 	disabled?: boolean;
++	readOnly?: boolean;
+ 	onOpen: (policyKey: PolicyKey) => void;
+ }) {
+ 	const className = props.policy.enabled ? 'policy-tile enabled' : 'policy-tile';
+@@ -392,7 +405,10 @@ function PolicyTile(props: {
+ 			disabled={props.disabled}
+ 			onClick={() => props.onOpen(props.policy.key)}
+ 		>
+-			<PolicyTileContent policy={props.policy} />
++			<PolicyTileContent
++				policy={props.policy}
++				summary={props.readOnly ? tr('copy.platformReadOnly') : undefined}
++			/>
+ 		</button>
+ 	);
+ }
+diff --git a/ui/src/pages/RawConfig.tsx b/ui/src/pages/RawConfig.tsx
+index d6176df..f4da423 100644
+--- a/ui/src/pages/RawConfig.tsx
++++ b/ui/src/pages/RawConfig.tsx
+@@ -1,4 +1,5 @@
+ import { currentLanguage, tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import { useNavigate } from '@tanstack/react-router';
+ import { Clipboard, Download, FileText, RotateCcw, Save, Trash2 } from 'lucide-react';
+ import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react';
+@@ -54,6 +55,7 @@ export function RawConfigPage() {
+ }
+
+ function RawConfigEditorPage() {
++	const managed = managedGateway();
+ 	const config = useRawConfigText();
+ 	const runtime = useRuntimeInfo();
+ 	const hybrid = runtime.data?.ui.configStoreMode === 'hybrid';
+@@ -85,6 +87,7 @@ function RawConfigEditorPage() {
+ 	}
+
+ 	async function save() {
++		if (managed) return;
+ 		setError(null);
+ 		setSavedText(null);
+ 		try {
+@@ -106,7 +109,7 @@ function RawConfigEditorPage() {
+ 				title={tr('copy.rawConfiguration')}
+ 				description={
+ 					view === 'file'
+-						? tr('copy.editTheFullGatewayYaml')
++						? tr(managed ? 'copy.platformSettingsHelp' : 'copy.editTheFullGatewayYaml')
+ 						: tr('copy.inspectConfigurationResourcesStoredInTheDatabase')
+ 				}
+ 				actions={
+@@ -130,28 +133,35 @@ function RawConfigEditorPage() {
+ 								<Download size={16} />
+ 								{tr('copy.download')}
+ 							</button>
+-							<button
+-								className="button"
+-								type="button"
+-								disabled={!dirty || update.isPending}
+-								onClick={() => updateText(initialText)}
+-							>
+-								<RotateCcw size={16} />
+-								{tr('copy.reset')}
+-							</button>
+-							<button
+-								className="button"
+-								type="button"
+-								disabled={!dirty || update.isPending}
+-								onClick={() => setDiffOpen(true)}
+-							>
+-								<FileText size={16} />
+-								{tr('copy.viewDiff')}
+-							</button>
+-							<ConfigSaveButton disabled={!dirty || update.isPending} onClick={() => void save()}>
+-								<Save size={16} />
+-								{tr('copy.save')}
+-							</ConfigSaveButton>
++							{!managed && (
++								<>
++									<button
++										className="button"
++										type="button"
++										disabled={!dirty || update.isPending}
++										onClick={() => updateText(initialText)}
++									>
++										<RotateCcw size={16} />
++										{tr('copy.reset')}
++									</button>
++									<button
++										className="button"
++										type="button"
++										disabled={!dirty || update.isPending}
++										onClick={() => setDiffOpen(true)}
++									>
++										<FileText size={16} />
++										{tr('copy.viewDiff')}
++									</button>
++									<ConfigSaveButton
++										disabled={!dirty || update.isPending}
++										onClick={() => void save()}
++									>
++										<Save size={16} />
++										{tr('copy.save')}
++									</ConfigSaveButton>
++								</>
++							)}
+ 						</div>
+ 					) : null
+ 				}
+@@ -204,6 +214,7 @@ function RawConfigEditorPage() {
+ 						}
+ 					>
+ 						<LazyRawConfigEditor
++							readOnly={managed}
+ 							invalid={Boolean(error)}
+ 							lineEnding={detectLineEnding(initialText)}
+ 							value={text}
+diff --git a/ui/src/pages/settings/UiSettings.tsx b/ui/src/pages/settings/UiSettings.tsx
+index 3181b69..694e4fa 100644
+--- a/ui/src/pages/settings/UiSettings.tsx
++++ b/ui/src/pages/settings/UiSettings.tsx
+@@ -1,4 +1,5 @@
+ import { tr } from '@/i18n';
++import { managedGateway } from '@/managedGateway';
+ import { useEffect, useMemo, useState } from 'react';
+
+ import { ConfigDiffSaveActions } from '@/components/ConfigDiffDrawer';
+@@ -98,9 +99,11 @@ function UiGatewayPanel() {
+ 				<div className="settings-row-label">
+ 					<strong>Public gateway</strong>
+ 					<p>
+-						{gatewayOptions.length
+-							? 'Serve the UI on a traffic gateway in addition to the admin interface.'
+-							: 'Add a traffic gateway to serve the UI outside the admin interface.'}
++						{managedGateway()
++							? tr('copy.platformReadOnly')
++							: gatewayOptions.length
++								? 'Serve the UI on a traffic gateway in addition to the admin interface.'
++								: 'Add a traffic gateway to serve the UI outside the admin interface.'}
+ 					</p>
+ 				</div>
+ 				<div className="settings-row-control">
+@@ -108,7 +111,7 @@ function UiGatewayPanel() {
+ 						ariaLabel="Public UI gateway"
+ 						value={draftGateway}
+ 						options={[{ value: noneGateway, label: 'None' }, ...gatewayOptions]}
+-						disabled={update.isPending || !gatewayOptions.length}
++						disabled={managedGateway() || update.isPending || !gatewayOptions.length}
+ 						onChange={setDraftGateway}
+ 					/>
+ 					{dirty ? (
