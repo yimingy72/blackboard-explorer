@@ -6,7 +6,8 @@ import asyncio
 import hmac
 import ipaddress
 import socket
-from typing import Any
+import ssl
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -70,6 +71,31 @@ def normalized_url(raw: str) -> tuple[str, str]:
     default = 443 if u.scheme == "https" else 80
     origin = f"{u.scheme}://{host}" + (f":{port}" if port and port != default else "")
     return origin + u.path.rstrip("/"), origin
+
+
+def peer_tls(settings: Settings) -> ssl.SSLContext | Literal[True]:
+    return (
+        ssl.create_default_context(cafile=settings.pi_model_peer_ca_file)
+        if settings.pi_model_peer_ca_file
+        else True
+    )
+
+
+def playground_runtime_url(settings) -> str | None:
+    token = settings.pi_model_runtime_token.get_secret_value()
+    if len(token) < 32 or token == settings.service_token.get_secret_value():
+        return None
+    try:
+        url, origin = normalized_url(settings.pi_playground_runtime_url)
+        target = urlsplit(url)
+        if url != origin or (
+            target.scheme != "https"
+            and target.hostname not in {"agent-runtime", "localhost", "127.0.0.1", "::1"}
+        ):
+            return None
+    except ValueError:
+        return None
+    return origin + "/playground"
 
 
 def display_pi_model(model: PiModelVersion) -> ModelConfig:
@@ -160,19 +186,18 @@ class PiRegistry:
 
     async def peer(self, path: str, *, endpoint: str = INTERNAL) -> Any:
         try:
-            base, _ = normalized_url(self.settings.pi_model_primary_url)
+            base, origin = normalized_url(self.settings.pi_model_primary_url)
             target = urlsplit(base)
-            if target.scheme != "https" and target.hostname not in {
-                "localhost",
-                "127.0.0.1",
-                "::1",
-            }:
+            if base != origin or (
+                target.scheme != "https"
+                and target.hostname not in {"localhost", "127.0.0.1", "::1"}
+            ):
                 raise ValueError("Authority peer traffic requires HTTPS")
             secret = self.settings.pi_model_authority_token.get_secret_value()
             if len(secret) < 32 or secret == self.settings.service_token.get_secret_value():
                 raise ValueError("Missing dedicated authority identity")
             async with httpx.AsyncClient(
-                timeout=8, trust_env=False, follow_redirects=False
+                timeout=8, trust_env=False, follow_redirects=False, verify=peer_tls(self.settings)
             ) as http:
                 response = await http.get(
                     base + endpoint + path,
@@ -185,7 +210,7 @@ class PiRegistry:
                 raise HTTPException(404, "原模型版本不可用")
             response.raise_for_status()
             return response.json()
-        except (ValueError, httpx.HTTPError) as error:
+        except (ValueError, OSError, httpx.HTTPError) as error:
             raise HTTPException(503, "主站模型目录暂不可用") from error
 
     async def list(self) -> list[PiModelVersion]:
@@ -208,10 +233,11 @@ class PiRegistry:
         if (
             not chosen.enabled
             or not chosen.has_secret
+            or not chosen.has_text_limits()
             or not chosen.tool_call
             or chosen.usd_rates is None
         ):
-            raise HTTPException(422, "此模型未启用、缺密钥、未定价或不支持工具调用")
+            raise HTTPException(422, "此模型未启用、配置未完善、缺密钥、未定价或未启用工具调用")
         return chosen
 
     async def frozen(self, ref: PiModelRef) -> tuple[PiModelVersion, str]:
@@ -230,6 +256,7 @@ class PiRegistry:
         if (
             selected.id != ref.model_id
             or selected.model_revision != ref.model_revision
+            or not selected.has_text_limits()
             or not isinstance(key, str)
             or not key
         ):
@@ -337,7 +364,13 @@ async def list_models(request: Request, response: Response) -> dict:
     require_user_or_service(request)
     response.headers["Cache-Control"] = "no-store"
     r = registry(request)
-    return {"enabled": r.enabled, "can_manage": r.operator(request), "models": await r.list()}
+    can_manage = r.operator(request)
+    return {
+        "enabled": r.enabled,
+        "can_manage": can_manage,
+        "can_test": can_manage and playground_runtime_url(r.settings) is not None,
+        "models": await r.list(),
+    }
 
 
 @router.post("/api/platform/pi-models", response_model=PiModelVersion)

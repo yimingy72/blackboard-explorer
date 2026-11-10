@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from bbx_blackboard.auth import issue_user_token
 from bbx_blackboard.store import schema as s
+from bbx_contracts.runner import runner_json_text
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from runner_gateway_support import cap, invocation, prepare, worker_scope
 from sqlalchemy import insert, select, update
@@ -23,7 +24,6 @@ from test_runner_control_integration import (
     cursor,
     empty_cursor,
     mgmt,
-    register_owner,
 )
 
 pytestmark = pytest.mark.integration
@@ -85,7 +85,7 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
                     "sandbox": {"id": context["sandbox_id"], "pod_uid": context["sandbox_pod_uid"]},
                     "runner": {"pod_uid": owner["pod_uid"], "pod_ip": "10.1.0.2"},
                 },
-                data={"owner_epoch": owner["epoch"]},
+                data={"owner_epoch": owner["epoch"], "mcp_transport": "direct-v2"},
                 sandbox_host={},
                 next_check_at=stamp,
                 created_at=stamp,
@@ -100,7 +100,7 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
             )
         assert material["inbound_key"] != material["report_key"]
         report = {"x-bbx-sandbox-report": material["report_key"]}
-        agent = {**cap(lead, "mcp"), **report, "x-bbx-sdk-session-id": lead["sdk"]}
+        agent = {**cap(lead, "sandbox"), **report, "x-bbx-sdk-session-id": lead["sdk"]}
         path = f"/api/tasks/{tid}/sandbox-host"
         reads = f"/api/tasks/{tid}/sandbox/commands"
         user = {"Authorization": "Bearer " + issue_user_token(app.state.settings, "test")}
@@ -109,7 +109,7 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
         original = invocation(lead, "exec_command", arguments)
         iid = original["invocation_id"]
         request = {"invocation": original, "name": "exec_command", "arguments": arguments}
-        admitted = await http.post(tool, headers=cap(lead, "mcp"), json=original)
+        admitted = await http.post(tool, headers=cap(lead, "sandbox"), json=original)
         assert admitted.status_code == 200, admitted.text
         assert (
             await http.post(
@@ -145,7 +145,7 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
         )
         assert output.status_code == 200, output.text
         assert (await event("unknown", reason="fixture_eof")).status_code == 200
-        again = await http.post(tool, headers=cap(lead, "mcp"), json=original)
+        again = await http.post(tool, headers=cap(lead, "sandbox"), json=original)
         assert again.json()["disposition"] == "unknown"
         assert (await http.post(path + "/claim", headers=agent, json=request)).status_code == 409
         status_args = {"command_id": iid}
@@ -157,7 +157,7 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
             "arguments": status_args,
         }
         assert (
-            await http.post(tool, headers=cap(lead, "mcp"), json=status_call)
+            await http.post(tool, headers=cap(lead, "sandbox"), json=status_call)
         ).status_code == 200
         status_claim = await http.post(path + "/claim", headers=agent, json=status_request)
         assert status_claim.json()["arguments"] == {"execution_id": "actual-original"}
@@ -179,16 +179,18 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
                 f"{path}/calls/{status_id}/result", headers=report, json={"result": status_result}
             )
         ).status_code == 200
-        assert (await http.post(tool, headers=cap(lead, "mcp"), json=original)).json()[
+        assert (await http.post(tool, headers=cap(lead, "sandbox"), json=original)).json()[
             "disposition"
         ] == "unknown"
         worker_tool = control(tid) + f"/bindings/{worker['binding']['binding_id']}/tools/admit"
         foreign = invocation(worker, "execution_status", {"command_id": iid})
         assert (
-            await http.post(worker_tool, headers=cap(worker, "mcp"), json=foreign)
+            await http.post(worker_tool, headers=cap(worker, "sandbox"), json=foreign)
         ).status_code == 403
-        assert (await http.get(reads, headers=cap(worker, "mcp"))).json()["items"] == []
-        assert (await http.get(reads + "/" + iid, headers=cap(worker, "mcp"))).status_code == 404
+        assert (await http.get(reads, headers=cap(worker, "sandbox"))).json()["items"] == []
+        assert (
+            await http.get(reads + "/" + iid, headers=cap(worker, "sandbox"))
+        ).status_code == 404
         async with ctf.repo.engine.begin() as conn:
             await gateway.repo.lock(conn, tid)
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
@@ -210,7 +212,27 @@ async def test_original_sandbox_dispatch_and_late_records(ctf):
         assert (
             await http.post(attach, headers=SERVICE, json={"expected_epoch": owner["epoch"]})
         ).status_code == 200
-        successor = await register_owner(http, tid, owner["epoch"])
+        from bbx_blackboard.runner_auth import issue_runner_control_token
+        from bbx_blackboard.runner_control import fence
+
+        async with ctf.repo.engine.begin() as conn:
+            await gateway.repo.lock(conn, tid)
+            replacement = await gateway.control._register_owner(
+                conn,
+                tid,
+                runner_json_text(
+                    {
+                        "request_id": str(uuid4()),
+                        "runner_id": "fixture-successor",
+                        "pod_uid": "fixture-replacement-pod",
+                        "expected_epoch": owner["epoch"],
+                    }
+                ).encode(),
+            )
+        successor = {
+            "fence": fence(replacement),
+            "token": issue_runner_control_token(app.state.settings, replacement),
+        }
         denied = await http.post(
             attach, headers=SERVICE, json={"expected_epoch": successor["fence"]["epoch"]}
         )

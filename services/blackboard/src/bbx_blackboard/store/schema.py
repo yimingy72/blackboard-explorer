@@ -3,6 +3,7 @@
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -855,7 +856,7 @@ pi_model_calls = Table(
     col("site_id", Text, primary_key=True),
     col("call_id", UUID(as_uuid=True), primary_key=True),
     col("attempt_id", UUID(as_uuid=True), nullable=False),
-    col("task_id", UUID(as_uuid=True), nullable=False),
+    col("task_id", UUID(as_uuid=True)),
     col("purpose", Text, nullable=False),
     col("agent_id", Text, nullable=False),
     col("turn_id", Text, nullable=False),
@@ -869,6 +870,12 @@ pi_model_calls = Table(
     col("amount_usd", Numeric(42, 24)),
     col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     col("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(
+        "(purpose = 'playground' AND task_id IS NULL AND request_user IS NOT NULL "
+        "AND request_user <> '' AND agent_id = '') OR "
+        "(purpose <> 'playground' AND task_id IS NOT NULL)",
+        name="ck_pi_model_calls_playground_scope",
+    ),
 )
 Index("ix_pi_model_calls_task_purpose", pi_model_calls.c.task_id, pi_model_calls.c.purpose)
 Index(
@@ -880,6 +887,14 @@ Index(
     unique=True,
 )
 Index("ix_pi_model_calls_review_user", pi_model_calls.c.request_user, pi_model_calls.c.purpose)
+Index(
+    "ux_pi_model_calls_playground",
+    pi_model_calls.c.site_id,
+    pi_model_calls.c.request_user,
+    pi_model_calls.c.logical_call_id,
+    unique=True,
+    postgresql_where=pi_model_calls.c.purpose == "playground",
+)
 agent_messages.append_column(col("request_user", Text))
 ctf_messages.append_column(col("request_user", Text))
 Index(

@@ -83,16 +83,13 @@ export class RunnerSession {
   async prepareSession() {
     this.assertLease();
     const routes = this.spec.mcp_tool_routes;
-    const direct = routes !== undefined;
-    const aliases = direct ? Object.fromEntries(Object.entries(routes).map(([name, route]) => [name, route.wire_name]))
-      : this.spec.mcp_tool_aliases;
-    const keys = direct ? Object.values(routes).map((route) => `${route.target}/${route.wire_name}`) : Object.values(aliases ?? {});
-    if (direct !== (this.config.mcp_targets !== undefined) || !aliases ||
-        new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length ||
+    const aliases = Object.fromEntries(Object.entries(routes).map(([name, route]) => [name, route.wire_name]));
+    const keys = Object.values(routes).map((route) => `${route.target}/${route.wire_name}`);
+    if (new Set(this.spec.allowed_tools).size !== this.spec.allowed_tools.length ||
         Object.keys(aliases).length !== this.spec.allowed_tools.length ||
         this.spec.allowed_tools.some((name) => !Object.hasOwn(aliases, name)) ||
         new Set(keys).size !== this.spec.allowed_tools.length) {
-      throw new Error("MCP aliases or routes must map each declared tool to one frozen target and wire name");
+      throw new Error("MCP routes must map each declared tool to one frozen target and wire name");
     }
     this.toolNames = new Map(Object.entries(aliases));
     if (Boolean(this.lease.cursor) !== Boolean(this.lease.sdk_session_id)) throw new Error("The session lease is incomplete");
@@ -134,24 +131,24 @@ export class RunnerSession {
       allowModelNetwork: false, refreshOnCreate: false });
     const sdkProvider = "openai";
     runtime.registerProvider(sdkProvider, { api: "openai-completions", baseUrl: this.config.model_proxy_url,
-      apiKey: "scoped-gateway-identity", models: [{ id: model.id, name: model.id,
+      apiKey: "scoped-pi-identity", models: [{ id: model.id, name: model.id,
         reasoning: model.reasoning, input: [...model.input], contextWindow: model.context_window, maxTokens: model.max_output_tokens,
         ...(model.thinking_level_map ? { thinkingLevelMap: model.thinking_level_map } : {}),
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
     await runtime.refresh({ allowNetwork: false });
     const timeout = this.config.mcp_metadata_timeout_ms ?? 15000;
-    const targets = direct ? Object.keys(this.spec.mcp_target_credential_refs ?? {}) : ["legacy"];
-    if (!targets.length || this.spec.helper_child && direct && (targets.length !== 1 || targets[0] !== "sandbox")) {
+    const targets = Object.keys(this.spec.mcp_target_credential_refs);
+    if (!targets.length || this.spec.helper_child && (targets.length !== 1 || targets[0] !== "sandbox")) {
       throw new Error("Invalid frozen MCP role targets");
     }
     const available = new Map();
     for (const target of targets) {
       const { audience, reference } = mcpScope(this.spec, target);
-      const url = safeUrl(direct ? this.config.mcp_targets[target] : this.config.mcp_gateway_url);
-      if (direct && target === "sandbox" && url.href !== "http://127.0.0.1:8766/mcp/") {
+      const url = safeUrl(this.config.mcp_targets[target]);
+      if (target === "sandbox" && url.href !== "http://127.0.0.1:8766/mcp/") {
         throw new Error("The Sandbox MCP target must use the frozen loopback endpoint");
       }
-      if (direct && target === "business" &&
+      if (target === "business" &&
           (url.origin !== safeUrl(this.config.control_url).origin ||
            !url.pathname.endsWith(`/api/tasks/${this.config.fence.task_id}/business-mcp-v2/`))) {
         throw new Error("The Business MCP URL did not match the Task");
@@ -229,7 +226,7 @@ export class RunnerSession {
     this.journal = new IncrementalJournal(this.session, { fence: this.config.fence, binding: this.binding,
       lease: this.lease, platform: this.platform });
     await this.journal.initialize();
-    installModelBoundary(this.session, { gatewayUrl: this.config.model_proxy_url,
+    installModelBoundary(this.session, { runtimeUrl: this.config.model_proxy_url,
       nativeModelRevision: this.spec.model.model_revision,
       nativeProof: (journal) => ({ kind: "native", fence: this.config.fence, binding: this.binding,
         sdk_session_id: this.session.sessionId, journal, profile_revision: this.spec.profile_revision,
@@ -240,15 +237,6 @@ export class RunnerSession {
         epoch: this.config.fence.epoch, runnerId: this.config.fence.runner_id, podUid: this.config.fence.pod_uid },
       credential: () => this.credentials.resolve(this.spec.model_credential_ref, "model", this.binding.binding_id),
       confirm: (signal) => this.confirm(signal), assertActive: () => this.assertActive(),
-      admit: async (request) => {
-        const ticket = await this.platform.admitModel(this, request);
-        this.unresolvedAttempts.add(request.attemptId);
-        return ticket;
-      },
-      settle: async (receipt) => {
-        await this.platform.settleModel(this, receipt);
-        if (receipt.outcome !== "unknown") this.unresolvedAttempts.delete(receipt.attemptId);
-      },
     });
     const after = this.session.agent.afterToolCall;
     this.session.agent.afterToolCall = async (context) => ({ ...await after?.(context),
@@ -327,7 +315,6 @@ export class RunnerSession {
       arguments_digest: digest(argumentsJson), journal: await this.confirm(signal) };
   }
   mcpTarget(name) {
-    if (this.spec.mcp_tool_routes === undefined) return "legacy";
     if (!Object.hasOwn(this.spec.mcp_tool_routes, name)) throw new Error("The tool is not bound to a frozen MCP target");
     return this.spec.mcp_tool_routes[name].target;
   }

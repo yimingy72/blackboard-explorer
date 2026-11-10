@@ -208,8 +208,6 @@ class NativeResourceRetirement:
             if retirement.get("state") == "retired":
                 return self.bootstrap._public(record)
         if body.action == "retire_prepare":
-            await self.gateway.native.retire(tid, explicit_delete=True)
-            await self.gateway.routes.retire(tid)
             async with self.repo.engine.begin() as conn:
                 record, task = await self.bootstrap._checked(conn, tid, body)
                 retirement = await self._ready(conn, tid, record, task, native_retired=True)

@@ -57,13 +57,7 @@ def poll_query(owner, after=0):
 
 @asynccontextmanager
 async def connect(ctf, *, native_mcp=False):
-    from mcp_gateway_support import ScriptedMCPRoutes, configured_mcp_settings
-
-    app = create_app(
-        configured_mcp_settings(settings()), engine=ctf.repo.engine, objects=ctf.objects
-    )
-    if not native_mcp:
-        app.state.runner_gateway.routes = ScriptedMCPRoutes()
+    app = create_app(settings(), engine=ctf.repo.engine, objects=ctf.objects)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
     ) as http:

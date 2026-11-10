@@ -316,7 +316,7 @@ async def assert_runtime_uses_claim(http, tid, priced, claimed, sender, purpose,
         conclude_grace_calls=0,
         max_duration_seconds=30,
     )
-    assert client.gateway is None and client.trusted_model is not None
+    assert client.trusted_model is not None
     assert client.trusted_model.reference.model_dump() == claimed["pi_model"]
     await client.close()
 
@@ -483,3 +483,180 @@ async def test_new_review_prefers_original_model_id_after_price_revision(pi_app)
     )
     assert claimed.status_code == 200, claimed.text
     assert claimed.json()["pi_model"] == {"model_id": model["id"], "model_revision": 2}
+
+
+async def test_native_terminal_review_uses_confirmed_exit_without_workspace_tar(pi_app):
+    from bbx_contracts.challenge_board import BOARD_CONTRACT
+
+    app, http, _, priced, _, sender, _, user = pi_app
+    settings = app.state.settings
+    editable = {
+        key: value
+        for key, value in priced.items()
+        if key not in {"id", "model_revision", "has_secret"}
+    }
+    unpriced = await http.put(
+        f"/api/platform/pi-models/{priced['id']}",
+        headers=user,
+        json={
+            **editable,
+            "expected_revision": priced["model_revision"],
+            "usd_rates": None,
+            "pricing_source": "",
+        },
+    )
+    assert unpriced.status_code == 200, unpriced.text
+    model = PiModelVersion.model_validate(priced)
+    ctf = app.state.ctf_service
+    tid = await ctf.create_task(
+        {
+            "mode": "ctf",
+            "goal": "Review the retained Native task",
+            "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 10},
+            "ctf_options": {"max_teammates": 1},
+        },
+        business_contract=BOARD_CONTRACT,
+        pi_model=(settings.pi_model_authority, model),
+    )
+    operation_id, stamp = str(uuid4()), datetime.now(UTC)
+    resources = s.task_runner_resources
+    owners = s.runner_owners
+    async with app.state.engine.begin() as conn:
+        control = await conn.scalar(select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid))
+        await conn.execute(
+            update(s.tasks)
+            .where(s.tasks.c.id == tid)
+            .values(
+                status="stopped", ctf_control={**control, "phase": "closed"}, cleanup_ready=False
+            )
+        )
+        await conn.execute(
+            insert(resources).values(
+                task_id=tid,
+                operation_id=operation_id,
+                request_id=operation_id,
+                request_digest="fixture",
+                request={},
+                controller_generation=1,
+                revision=1,
+                namespace="synthetic-retained",
+                state="stopped",
+                desired="stopped",
+                hard_deadline=stamp,
+                sandbox_create_claimed=True,
+                tenant_key_hash="fixture-" + operation_id,
+                tenant_key_ciphertext="fixture",
+                observation={},
+                data={"exit_confirmed": False},
+                next_check_at=stamp,
+                created_at=stamp,
+            )
+        )
+        await conn.execute(
+            insert(owners).values(
+                task_id=tid,
+                epoch=1,
+                current=True,
+                revoked=False,
+                runner_id="fixture-runner",
+                pod_uid="fixture-pod",
+                token_version="fixture",
+                expires_at=stamp,
+                hard_deadline=stamp,
+                registration_id=operation_id,
+                registration_digest="fixture",
+                next_seq=0,
+            )
+        )
+    svc = {"Authorization": "Bearer service-test"}
+    path = f"/api/tasks/{tid}/ctf/runtime"
+    body = {"agent_id": "lead", "runtime_instance": "synthetic-native-review"}
+
+    async def can_claim():
+        pending = await http.get("/api/ctf/reviews/pending-tasks", headers=svc)
+        assert pending.status_code == 200, pending.text
+        claimed = await http.post(path + "/claim_review_turn", headers=svc, json=body)
+        assert claimed.status_code == 200, claimed.text
+        return str(tid) in pending.json()["task_ids"], claimed.json()
+
+    mid = uuid4()
+    submitted = await http.post(
+        f"/api/tasks/{tid}/agents/lead/messages",
+        headers=user,
+        json={"id": str(mid), "content": "Review the saved records."},
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert await can_claim() == (False, None)
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            update(resources)
+            .where(resources.c.task_id == tid)
+            .values(data={"exit_confirmed": True})
+        )
+    assert await can_claim() == (False, None)
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            update(owners).where(owners.c.task_id == tid).values(current=False, revoked=True)
+        )
+    pending, turn = await can_claim()
+    assert pending and turn["purpose"] == "review"
+    assert turn["pi_model"]["model_revision"] == unpriced.json()["model_revision"]
+    claim = await http.post(
+        path + "/claim_messages",
+        headers=svc,
+        json={"agent_id": "lead", "turn_id": turn["id"], "generation": turn["generation"]},
+    )
+    assert claim.status_code == 200, claim.text
+    proof = {
+        "kind": "review",
+        "agent_id": "lead",
+        "run_number": 1,
+        "turn_id": turn["id"],
+        "generation": turn["generation"],
+    }
+    await assert_runtime_uses_claim(http, tid, priced, turn, sender, "review", proof)
+    call = {
+        "task_id": str(tid),
+        "call_id": str(uuid4()),
+        "attempt_id": str(uuid4()),
+        "logical_call_id": "e" * 64,
+        "context_sha256": "a" * 64,
+        "action": "turn",
+        **turn["pi_model"],
+        "proof": proof,
+    }
+    prepared = await http.post(CALLS + "/prepare", headers=sender, json=call)
+    assert prepared.status_code == 200 and prepared.json()["model"]["usd_rates"] is None
+    dispatch = {"attempt_id": call["attempt_id"], "request_sha256": "b" * 64}
+    call_path = f"{CALLS}/{call['call_id']}"
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            update(owners).where(owners.c.task_id == tid).values(current=True, revoked=False)
+        )
+    assert (
+        await http.post(call_path + "/dispatch", headers=sender, json=dispatch)
+    ).status_code == 409
+    async with app.state.engine.begin() as conn:
+        await conn.execute(
+            update(owners).where(owners.c.task_id == tid).values(current=False, revoked=True)
+        )
+    allowed = await http.post(call_path + "/dispatch", headers=sender, json=dispatch)
+    assert allowed.status_code == 200 and allowed.json()["send_allowed"] is True
+    settled = await http.post(
+        call_path + "/settle",
+        headers=sender,
+        json={
+            **dispatch,
+            "outcome": "complete",
+            "usage": {"input": 3, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 5},
+        },
+    )
+    assert settled.status_code == 200, settled.text
+    async with app.state.engine.connect() as conn:
+        record = (
+            (await conn.execute(select(s.pi_model_calls).where(s.pi_model_calls.c.task_id == tid)))
+            .mappings()
+            .one()
+        )
+        assert record["purpose"] == "review" and record["amount_usd"] is None
+        assert not await conn.scalar(select(s.tasks.c.cleanup_ready).where(s.tasks.c.id == tid))

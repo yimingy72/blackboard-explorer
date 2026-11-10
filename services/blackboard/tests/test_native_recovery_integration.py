@@ -1,11 +1,9 @@
-"""Real PostgreSQL recovery with scripted Kubernetes, Pi and native gateway evidence."""
+"""Real PostgreSQL recovery with scripted Kubernetes and direct Pi evidence."""
 
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -21,7 +19,6 @@ from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import NativeRunnerLaunch
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
-from mcp_gateway_support import configured_mcp_settings
 from pydantic import SecretStr
 from sqlalchemy import insert, update
 from test_board_flags_integration import Objects
@@ -45,31 +42,15 @@ from test_runner_control_integration import (
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("direct", [False, True], ids=["legacy-mcp", "direct-v2"])
 async def test_native_recovery_replaces_one_generation_after_explicit_user_intent(
-    ctf, ctf_url, monkeypatch, direct
+    ctf, ctf_url, monkeypatch
 ):
-    options = configured_mcp_settings(settings()).model_copy(
+    options = settings().model_copy(
         update={
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver"),
-            **(
-                {
-                    "runner_mcp_direct_v2": True,
-                    "pi_site_id": "fixture-primary",
-                    "pi_model_authority": "fixture-authority",
-                    "pi_model_primary_site": "fixture-primary",
-                }
-                if direct
-                else {}
-            ),
-            "native_gateway_accounting_source_id": "fixture-accounting",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "fixture-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
+            "pi_site_id": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
+            "pi_model_primary_site": "fixture-primary",
         }
     )
     ctf.objects = Objects()
@@ -78,64 +59,7 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         Path(__file__).resolve().parents[3] / "profiles/default"
     )
     native = app.state.native_runner_bootstrap
-    gateway, fees = native.gateway, native.gateway.native
-    key_id = str(uuid4())
-    deployed = {}
-    used = Decimal("0.02")
-
-    async def publish_budget(tid):
-        async with ctf.repo.engine.begin() as conn:
-            await ctf.repo.lock(conn, tid)
-            await conn.execute(
-                update(s.native_task_budgets)
-                .where(s.native_task_budgets.c.task_id == tid)
-                .values(
-                    native_resource_id=key_id,
-                    publication_state="ready",
-                    status_snapshot={"used_high_water_usd": "0.02"},
-                )
-            )
-
-    async def route_preflight(record):
-        value = deployed.get(record["resource_id"])
-        if value is not None:
-            assert value == gateway.routes._value(record)
-        return value is not None
-
-    async def put_route(value):
-        deployed[value["name"]] = value
-
-    async def lose_delete_receipt(resource_id):
-        del deployed[resource_id]
-        raise HTTPException(503, "scripted lost delete response")
-
-    publish = AsyncMock(side_effect=publish_budget)
-    delete = AsyncMock(side_effect=lose_delete_receipt)
-    monkeypatch.setattr(fees, "publish", publish)
-    monkeypatch.setattr(fees, "verified_key", AsyncMock())
-    monkeypatch.setattr(
-        fees, "threshold_status", AsyncMock(side_effect=lambda _: ({}, used, False))
-    )
-    monkeypatch.setattr(
-        fees,
-        "selection",
-        AsyncMock(
-            return_value={
-                "sdk_model": {
-                    "id": "fixture-model",
-                    "api": "openai-completions",
-                    "input": ["text", "image"],
-                    "reasoning": True,
-                    "thinking_level": "off",
-                    "context_window": 1048576,
-                    "max_output_tokens": 524288,
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(gateway.routes, "_preflight", route_preflight)
-    monkeypatch.setattr(fees.admin, "put_route", put_route)
-    monkeypatch.setattr(fees.admin, "delete_route", delete)
+    gateway = native.gateway
     model = PiModelVersion.model_validate(
         {
             "id": "fixture-model",
@@ -159,12 +83,12 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
             "budget": {
                 "max_cost": "7",
                 "max_minutes": 5,
-                **({"currency": "USD"} if direct else {}),
+                "currency": "USD",
             },
             "ctf_options": {"dispatch_mode": "automatic", "max_teammates": 1},
         },
         business_contract=BOARD_CONTRACT,
-        pi_model=(options.pi_model_authority, model) if direct else None,
+        pi_model=(options.pi_model_authority, model),
     )
     path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
     user = {"Authorization": "Bearer " + issue_user_token(options, "fixture-owner")}
@@ -184,50 +108,34 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         request = {
             "request_id": str(uuid4()),
             "model_alias": "fixture-model",
-            **(
-                {"budget_currency": "USD"}
-                if direct
-                else {
-                    "exchange_rate": {
-                        "rate_cny_per_usd": "7",
-                        "source_ref": "fixture://fx",
-                        "observed_at": datetime.now(UTC).isoformat(),
-                    }
-                }
-            ),
+            "budget_currency": "USD",
         }
-        grants = {}
         external_alias = "mcp_fixture_read_status"
-        if direct:
-            schema = {"type": "object"}
-            grants = {
-                "lead": {
-                    external_alias: FrozenNativeMcpTool(
-                        authority=options.pi_model_authority,
-                        name="fixture-mcp",
-                        version=1,
-                        tool=McpToolDetail(
-                            name="read_status",
-                            input_schema=schema,
-                            schema_digest=tool_schema_digest(schema, None),
-                        ),
-                    ).model_dump(mode="json")
-                }
+        schema = {"type": "object"}
+        grants = {
+            "lead": {
+                external_alias: FrozenNativeMcpTool(
+                    authority=options.pi_model_authority,
+                    name="fixture-mcp",
+                    version=1,
+                    tool=McpToolDetail(
+                        name="read_status",
+                        input_schema=schema,
+                        schema_digest=tool_schema_digest(schema, None),
+                    ),
+                ).model_dump(mode="json")
             }
-            async with ctf.repo.engine.begin() as conn:
-                await native.repo.lock(conn, tid)
-                await native.queue_locked(
-                    conn,
-                    tid,
-                    NativeRunnerLaunch.model_validate(request),
-                    "a" * 64,
-                    native_grants=grants,
-                )
-            original = (await http.get(path, headers=SERVICE)).json()
-        else:
-            launch = await http.post(path, headers=SERVICE, json=request)
-            assert launch.status_code == 200, launch.text
-            original = launch.json()
+        }
+        async with ctf.repo.engine.begin() as conn:
+            await native.repo.lock(conn, tid)
+            await native.queue_locked(
+                conn,
+                tid,
+                NativeRunnerLaunch.model_validate(request),
+                "a" * 64,
+                native_grants=grants,
+            )
+        original = (await http.get(path, headers=SERVICE)).json()
         claimed = await http.post(
             path + "/claim",
             headers=SERVICE,
@@ -318,10 +226,9 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
                 proof={"context_digest": gateway.sandbox.context_digest(context)},
             )
             value = await action("material")
-            if direct:
-                assert host_material["mcp_transport"] == "direct-v2"
-                assert set(value["bootstrap"]["mcp_targets"]) == {"business", "sandbox"}
-                assert "mcp_gateway_url" not in value["bootstrap"]
+            assert host_material["mcp_transport"] == "direct-v2"
+            assert set(value["bootstrap"]["mcp_targets"]) == {"business", "sandbox"}
+            assert "mcp_gateway_url" not in value["bootstrap"]
             return {
                 "fence": value["bootstrap"]["fence"],
                 "token": value["credentials"]["control"]["token"],
@@ -338,11 +245,10 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         async def prepare(owner):
             [(command, payload)] = await commands(owner)
             binding = payload["spec"]["binding"]
-            if direct:
-                assert payload["spec"]["mcp_tool_routes"][external_alias] == {
-                    "target": "business",
-                    "wire_name": external_alias,
-                }
+            assert payload["spec"]["mcp_tool_routes"][external_alias] == {
+                "target": "business",
+                "wire_name": external_alias,
+            }
             await acquire(http, tid, owner, binding, command)
             first = cursor(empty_cursor(), f"sdk{generation}")
             sdk = f"fresh-sdk-{generation}"
@@ -502,7 +408,6 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
             )
         async with ctf.repo.engine.connect() as conn:
             old_row = await row(conn, s.runner_bindings, tid, old_binding["binding_id"])
-            old_budget = None if direct else await fees._budget(conn, tid)
         plan = await action("recovery_prepare", proof=proof)
         entries = plan["manifest"]["bindings"]
         assert entries[0]["cursor"] == tail and entries[0]["sdk_session_id"] == old_sdk
@@ -543,16 +448,6 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         )
         await action("recovery_verifier_observe", proof=terminal)
         await action("recovery_replace", expected=409, proof={**proof, "writer_released": False})
-        if not direct:
-            used = Decimal("0.01")
-            assert (await action("recovery_replace", proof=proof))[
-                "blocker"
-            ] == "original_budget_unconfirmed"
-            delete.assert_not_awaited()
-            used = Decimal("0.03")
-            assert (await action("recovery_replace", proof=proof))[
-                "blocker"
-            ] == "original_route_unconfirmed"
         replacement = await action("recovery_replace", proof=proof)
         assert replacement["hard_deadline"] == original["hard_deadline"]
         assert replacement["data"]["sandbox_create_op_id"] != original["operation_id"]
@@ -560,22 +455,14 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         assert (
             not replacement["sandbox_create_claimed"] and (await status())["state"] == "rebuilding"
         )
-        if direct:
-            delete.assert_not_awaited()
-            assert replacement["data"]["mcp_transport"] == "direct-v2"
-            assert replacement["data"]["native_mcp"] == grants
-        else:
-            delete.assert_awaited_once()
+        assert replacement["data"]["mcp_transport"] == "direct-v2"
+        assert replacement["data"]["native_mcp"] == grants
         await action("sandbox_create", expected=409)
         generation = 2
         fresh, current_observation = await material()
         assert current_observation["runner"]["pod_uid"] != observed["runner"]["pod_uid"]
         assert current_observation["sandbox"]["id"] != observed["sandbox"]["id"]
         assert fresh["fence"]["epoch"] == old["fence"]["epoch"] + 1
-        if direct:
-            assert not deployed
-        else:
-            assert len(deployed) == 1 and next(iter(deployed)).endswith("-2")
         assert not await gateway.sandbox.pending_scopes(tid, fresh["sandbox_report_key"])
         with pytest.raises(HTTPException, match="exited epoch"):
             await gateway.sandbox.claim_scope(
@@ -587,13 +474,6 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
         assert denied.status_code in {403, 409}
         new_binding, new_sdk, new_first = await prepare(fresh)
         assert new_binding["binding_id"] != old_binding["binding_id"] and new_sdk != old_sdk
-        if not direct:
-            used = Decimal("0.02")
-            assert (await action("activate"))["state"] == "runner_starting"
-            assert not [
-                payload for _, payload in await commands(fresh) if payload["kind"] == "input"
-            ]
-            used = Decimal("0.04")
         assert (await action("activate"))["state"] == "ready"
         [new_input] = [
             payload for _, payload in await commands(fresh) if payload["kind"] == "input"
@@ -606,19 +486,7 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
             assert await row(conn, s.runner_bindings, tid, old_binding["binding_id"]) == old_row
             command = await row(conn, s.sandbox_command_records, tid, "original-completed-command")
             assert command["data"]["scope_state"] == "active" and command["state"] == "completed"
-            if direct:
-                assert await gateway.routes._get(conn, tid) is None
-            else:
-                assert old_budget is not None
-                budget = await fees._budget(conn, tid)
-                assert budget["config"] == old_budget["config"]
-                assert budget["key_ciphertext"] == old_budget["key_ciphertext"]
-                assert budget["native_resource_id"] == key_id
-                assert budget["status_snapshot"]["used_high_water_usd"] == "0.04"
-        if direct:
-            publish.assert_not_awaited()
-        else:
-            publish.assert_awaited_once()
+            assert not hasattr(gateway, "routes") and not hasattr(gateway, "native")
         new_tail = cursor(new_first, "new_input")
         await confirm(
             http,
@@ -682,4 +550,3 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
             },
         )
         assert (await action("cleanup", proof=second_exit))["state"] == "stopped"
-    await fees.admin.close()

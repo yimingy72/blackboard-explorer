@@ -54,9 +54,7 @@ async def test_twenty_native_seats_main_priority_and_unknown_retention(ctf, monk
     async with connect(ctf) as (app, http):
         native, gateway = app.state.native_runner_bootstrap, app.state.runner_gateway
         monkeypatch.setattr(
-            gateway.native,
-            "_budget",
-            AsyncMock(return_value={"publication_state": "ready", "hold_reason": None}),
+            "bbx_blackboard.native_helpers.pi_budget_available", AsyncMock(return_value=True)
         )
         async with ctf.repo.engine.begin() as conn:
             await ctf.repo.lock(conn, tid)
@@ -161,6 +159,7 @@ async def test_twenty_native_seats_main_priority_and_unknown_retention(ctf, monk
                         },
                     },
                     data={
+                        "mcp_transport": "direct-v2",
                         "activated": True,
                         "credentials_issued": True,
                         "binding_id": lead_bid,
@@ -228,9 +227,9 @@ async def test_twenty_native_seats_main_priority_and_unknown_retention(ctf, monk
         parent_headers = [
             {
                 "Authorization": "Bearer "
-                + issue_gateway_credentials(app.state.settings, owner_row, bid, "teammate")["mcp"][
-                    "token"
-                ],
+                + issue_gateway_credentials(
+                    app.state.settings, owner_row, bid, "teammate", targets={"business"}
+                )["business"]["token"],
             }
             for bid in parent_ids
         ]

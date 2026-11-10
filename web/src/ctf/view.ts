@@ -116,7 +116,8 @@ export function conversationEntries(session: CtfSession | null | undefined, mess
   return entries;
 }
 
-export function recoveryBlocker(task: { status: string; ctf_phase?: string | null; cleanup_ready?: boolean; workspace_uri?: string | null }): string | null {
+export function recoveryBlocker(task: { status: string; ctf_phase?: string | null; cleanup_ready?: boolean; workspace_uri?: string | null; execution_blocked_reason?: string | null }): string | null {
+    if (task.execution_blocked_reason) return "旧执行无法安全恢复。可查看原记录和归档。";
   if (!['finished', 'stopped', 'failed'].includes(task.status)) return '本轮仍在执行或收尾，请等待结束后再续跑。';
   if (!task.cleanup_ready) return '归档和本机清理尚未完成。若保存失败，执行环境将保留以供重试。';
   if (!task.workspace_uri) return '没有可恢复的已登记归档，暂不能续跑。';

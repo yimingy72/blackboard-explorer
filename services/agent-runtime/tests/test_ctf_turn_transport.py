@@ -431,7 +431,7 @@ async def test_client_cleanup_failure_keeps_completed_native_answer_and_settles_
         client.model = model
         return client
 
-    monkeypatch.setattr("bbx_runtime.models.make_gateway_client", make_scripted)
+    monkeypatch.setattr("bbx_runtime.ctf.runner.make_task_model_client", make_scripted)
     close = AsyncMock(side_effect=close_error)
     monkeypatch.setattr("bbx_runtime.ctf.runner.close_model_client", close)
     runner = CtfRunner(

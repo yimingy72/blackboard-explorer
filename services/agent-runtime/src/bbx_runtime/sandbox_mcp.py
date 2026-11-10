@@ -56,7 +56,7 @@ def load_configuration(path):
     task = str(UUID(config["task_id"]))
     if (
         config.get("version") != 1
-        or config.get("mcp_transport") not in {None, "direct-v2"}
+        or config.get("mcp_transport") != "direct-v2"
         or config.get("runner_pod_uid") != os.environ.get("BBX_POD_UID")
         or task != config["task_id"]
         or config.get("inbound_key") == config.get("report_key")
@@ -446,7 +446,7 @@ class SandboxMCP:
     async def health(self, request):
         if not self.authorized(request):
             return JSONResponse(
-                {"detail": "Task Sandbox gateway identity required"}, status_code=401
+                {"detail": "Task Sandbox readiness identity required"}, status_code=401
             )
         return JSONResponse(
             {
@@ -465,25 +465,7 @@ class SandboxMCP:
         )
 
     async def handle(self, scope, receive, send):
-        request = Request(scope, receive)
-        if self.config.get("mcp_transport") == "direct-v2":
-            await self.handle_direct(request, scope, receive, send)
-            return
-        if not self.ready or not self.authorized(request):
-            await JSONResponse(
-                {"detail": "Task Sandbox gateway identity required"}, status_code=401
-            )(scope, receive, send)
-            return
-        token = request_scope.set(
-            (
-                request.headers.get("authorization", ""),
-                request.headers.get("x-bbx-sdk-session-id", ""),
-            )
-        )
-        try:
-            await self.manager.handle_request(scope, receive, send)
-        finally:
-            request_scope.reset(token)
+        await self.handle_direct(Request(scope, receive), scope, receive, send)
 
     async def handle_direct(self, request, scope, receive, send):
         async def deny(status):
@@ -654,14 +636,7 @@ def main():
             raise RuntimeError("Original Sandbox host mount is unavailable")
         time.sleep(0.25)
     host = SandboxMCP(load_configuration(options.config))
-    direct = host.config.get("mcp_transport") == "direct-v2"
-    uvicorn.run(
-        host.app,
-        host="127.0.0.1" if direct else "0.0.0.0",
-        port=8766,
-        access_log=False,
-        proxy_headers=not direct,
-    )
+    uvicorn.run(host.app, host="127.0.0.1", port=8766, access_log=False, proxy_headers=False)
 
 
 if __name__ == "__main__":

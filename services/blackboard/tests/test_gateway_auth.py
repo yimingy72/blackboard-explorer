@@ -1,4 +1,4 @@
-"""Fixed MCP issuer and algorithm boundaries remain separate from model capabilities."""
+"""Direct MCP and model scopes reject the retired audience and cross-target tokens."""
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -7,20 +7,17 @@ from uuid import uuid4
 import jwt
 import pytest
 from bbx_blackboard.gateway_auth import (
-    _key,
     issue_gateway_credentials,
-    mcp_public_jwks,
     require_gateway_identity,
+    scoped_key,
 )
 from fastapi import HTTPException
-from mcp_gateway_support import configured_mcp_settings
-from pydantic import SecretStr
 from starlette.requests import Request
 from test_ctf_api import settings
 
 
-def test_mcp_rsa_scope_rejects_algorithm_issuer_audience_role_and_key_changes():
-    config = configured_mcp_settings(settings())
+def test_runner_capabilities_keep_distinct_target_and_role():
+    config = settings()
     tid = uuid4()
     owner = {
         "hard_deadline": datetime.now(UTC) + timedelta(minutes=10),
@@ -30,42 +27,25 @@ def test_mcp_rsa_scope_rejects_algorithm_issuer_audience_role_and_key_changes():
         "epoch": 1,
         "token_version": "version-test",
     }
-    issued = issue_gateway_credentials(config, owner, "binding-test", "teammate")
+    issued = issue_gateway_credentials(
+        config, owner, "binding-test", "teammate", targets={"business", "sandbox"}
+    )
     app = SimpleNamespace(state=SimpleNamespace(settings=config))
 
-    def verify(token, audience="mcp"):
+    def verify(token, audience="business-mcp"):
         request = Request({"type": "http", "app": app, "headers": []})
         return require_gateway_identity(request, tid, audience, authorization="Bearer " + token)
 
-    assert verify(issued["mcp"]["token"]).role == "teammate"
+    assert verify(issued["business"]["token"]).role == "teammate"
+    assert verify(issued["sandbox"]["token"], "sandbox-mcp").role == "teammate"
     assert verify(issued["model"]["token"], "model").role is None
-    public = mcp_public_jwks(config)["keys"][0]
-    assert set(public) == {"kty", "key_ops", "n", "e", "kid", "alg", "use"}
-    assert public["kty"] == "RSA" and public["alg"] == "RS256"
-    claims = jwt.decode(issued["mcp"]["token"], options={"verify_signature": False})
-    for changed, algorithm, kid in [
-        ({}, "HS256", public["kid"]),
-        ({"iss": "foreign-issuer"}, "RS256", public["kid"]),
-        ({"aud": "model"}, "RS256", public["kid"]),
-        ({"role": "admin"}, "RS256", public["kid"]),
-        ({}, "RS256", "foreign-key"),
-    ]:
+    claims = jwt.decode(issued["business"]["token"], options={"verify_signature": False})
+    for changed in ({"iss": "foreign"}, {"aud": "sandbox-mcp"}, {"role": "admin"}, {"aud": "mcp"}):
         token = jwt.encode(
-            {**claims, **changed},
-            _key(config)
-            if algorithm == "HS256"
-            else config.runner_mcp_signing_key.get_secret_value(),
-            algorithm=algorithm,
-            headers={"kid": kid},
+            {**claims, **changed}, scoped_key(config, "business-mcp"), algorithm="HS256"
         )
         with pytest.raises(HTTPException) as denied:
             verify(token)
         assert denied.value.status_code == 401
-    with pytest.raises(HTTPException) as unavailable:
-        issue_gateway_credentials(
-            config.model_copy(update={"runner_mcp_signing_key": SecretStr("")}),
-            owner,
-            "binding-test",
-            "lead",
-        )
-    assert unavailable.value.status_code == 503
+    with pytest.raises(HTTPException):
+        issue_gateway_credentials(config, owner, "binding-test", "helper", targets={"business"})

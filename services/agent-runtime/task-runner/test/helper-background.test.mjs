@@ -36,6 +36,9 @@ async function setup(t, mode) {
   h.state.modelGate = async (id, index) => {
     if (id === "child" && index === 1) await childGate.promise;
     if (mode === "fast" && id === "parent" && index === 2) await parentGate.promise;
+    if (mode === "frozen" && id === "parent" && index === 2) {
+      await waitFor(() => h.state.modelCalls.some(call => call.bindingId === "child"), "child prepared and awaiting its first model result");
+    }
   };
   h.state.modelTool = (id, index, body) => {
     assert.deepEqual(body.tools.map((item) => item.function.name).sort(), id === "parent" ?
@@ -48,7 +51,9 @@ async function setup(t, mode) {
     return index === 1 ? command : null;
   };
   const spec = (id) => {
-    const value = { ...h.spec(id), allowed_tools: ["exec_command"], mcp_tool_aliases: { exec_command: "exec_command" } };
+    const value = { ...h.spec(id), allowed_tools: ["exec_command"],
+        mcp_target_credential_refs: id.startsWith("child") ? { sandbox: `sandbox-${id}` } : { business: `mcp-${id}`, sandbox: `sandbox-${id}` },
+        mcp_tool_routes: { exec_command: { target: "sandbox", wire_name: "exec_command" } } };
     if (direct) value.model.model_revision = 2;
     return value;
   };
@@ -75,7 +80,7 @@ async function setup(t, mode) {
         helper_child: { child_id: "run-child", parent_binding_id: "parent", deadline_ms: run.childDeadline, mode: "background" } } }, "prepare-child");
       h.state.commands.pop();
       send(response, { ...publicStatus(), launch_allowed: true, command: run.prepare, credentials: {
-        "model-child": h.credentials["model-child"], "mcp-child": h.credentials["mcp-child"],
+        "model-child": h.credentials["model-child"], "sandbox-child": h.credentials["sandbox-child"],
       } });
       return;
     } else if (action === "accepted") {
@@ -168,7 +173,9 @@ test("a locally frozen parent revokes its original background child and shutdown
     await waitFor(() => h.state.toolCalls.some((item) => item.bindingId === "parent") && run.cancelCount > 0,
       "parent unknown tool freezes and requests original child cancellation");
     childGate.resolve();
-    await waitFor(() => run.terminal, "child locally disposed after cancellation");
+    await waitFor(() => run.terminal, "child locally disposed after cancellation").catch(error => {
+      throw new Error(`${error.message}; ${h.state.errors.map(item => item.stack).join(", ")}; ${JSON.stringify(h.state.receipts)}`);
+    });
     const shutdown = h.command({ kind: "shutdown" }, "shutdown-with-child");
     await new Promise((resolve) => setTimeout(resolve, 150));
     assert.equal(h.state.receipts.some((item) => item.request_id === shutdown.request_id && item.status === "closed"), false);

@@ -3,7 +3,6 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -15,6 +14,7 @@ from bbx_blackboard.runner_auth import issue_runner_control_token
 from bbx_blackboard.runner_control import fence
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
+from bbx_contracts.pi_models import PiModelVersion
 from bbx_contracts.runner import PROTOCOL, runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import NativeRunnerAction
 from bbx_runtime.scheduler.lock import RuntimeLock
@@ -45,6 +45,29 @@ from test_runner_control_integration import (
 pytestmark = pytest.mark.integration
 
 
+def fixture_pi_model(alias="synthetic-model"):
+    return (
+        "fixture-authority",
+        PiModelVersion.model_validate(
+            {
+                "id": alias,
+                "model_revision": 1,
+                "label": "Synthetic Native model",
+                "upstream_model": "fixture",
+                "base_url": "https://fixture.invalid/v1",
+                "context_window": 1048576,
+                "max_output_tokens": 524288,
+                "input_modalities": ["text"],
+                "has_secret": True,
+                "tool_call": True,
+                "reasoning": True,
+                "usd_rates": {"input": "1", "output": "1", "cache_read": "1", "cache_write": "1"},
+                "pricing_source": "Synthetic USD",
+            }
+        ),
+    )
+
+
 def config():
     return {
         "source_id": "synthetic-native-resource-control",
@@ -54,6 +77,7 @@ def config():
         "environment_revision": "synthetic-env-1",
         "runner_blackboard_url": "https://blackboard.invalid",
         "runner_model_proxy_url": "https://runtime.invalid",
+        "runner_profile": "node-sandbox-host-v1",
     }
 
 
@@ -99,15 +123,10 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
 ):
     options = settings().model_copy(
         update={
+            "pi_site_id": "fixture-primary",
+            "pi_model_primary_site": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
-            "native_gateway_accounting_source_id": "synthetic-accounting-db",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "synthetic-native-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
     ctf.objects = Objects()
@@ -120,6 +139,7 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
             "ctf_options": {"max_teammates": 1},
         },
         business_contract=BOARD_CONTRACT,
+        pi_model=fixture_pi_model(),
     )
     path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
     request = {
@@ -234,6 +254,7 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
                     "pod_name": "bbx-runner",
                     "pod_uid": str(uuid4()),
                     "container_id": "containerd://synthetic-runner",
+                    "host_container_id": "containerd://synthetic-host",
                     "phase": "Running",
                     "terminated": False,
                 },
@@ -422,7 +443,6 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
                     },
                 )
             ).status_code == 401
-    await app.state.runner_gateway.native.admin.close()
 
 
 async def test_native_never_dispatched_cancel_and_retained_ownership(ctf, ctf_url):
@@ -432,15 +452,10 @@ async def test_native_never_dispatched_cancel_and_retained_ownership(ctf, ctf_ur
 
     options = settings().model_copy(
         update={
+            "pi_site_id": "fixture-primary",
+            "pi_model_primary_site": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
-            "native_gateway_accounting_source_id": "synthetic-accounting-db",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "synthetic-native-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
     ctf.objects = Objects()
@@ -458,6 +473,7 @@ async def test_native_never_dispatched_cancel_and_retained_ownership(ctf, ctf_ur
                     "ctf_options": {"max_teammates": 1},
                 },
                 business_contract=BOARD_CONTRACT,
+                pi_model=fixture_pi_model(),
             )
             path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
             requested = await http.post(
@@ -558,7 +574,6 @@ async def test_native_never_dispatched_cancel_and_retained_ownership(ctf, ctf_ur
                     )
                 ).scalar_one()
                 assert conclusion["end_reason"] == "budget_exhausted"
-    await app.state.runner_gateway.native.admin.close()
 
 
 async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf, ctf_url):
@@ -566,15 +581,10 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
 
     options = settings().model_copy(
         update={
+            "pi_site_id": "fixture-primary",
+            "pi_model_primary_site": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
-            "native_gateway_accounting_source_id": "synthetic-accounting-db",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "synthetic-native-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
     ctf.objects = Objects()
@@ -588,6 +598,7 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             "ctf_options": {"max_teammates": 1},
         },
         business_contract=BOARD_CONTRACT,
+        pi_model=fixture_pi_model(),
     )
     path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
     deployment = config()
@@ -669,7 +680,9 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             "fence": owner["fence"],
             "control_url": f"https://blackboard.invalid/api/tasks/{tid}/runner-control",
             "model_proxy_url": "https://runtime.invalid",
-            "mcp_gateway_url": f"https://mcp.invalid/api/tasks/{tid}/mcp",
+            "mcp_targets": {
+                "business": f"https://blackboard.invalid/api/tasks/{tid}/business-mcp-v2/"
+            },
             "control_credential_ref": "control",
             "credential_file": "/var/run/bbx/credentials.json",
             "journal_root": "/journal",
@@ -679,6 +692,11 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             await native.repo.lock(conn, tid)
             record = await native._get(conn, tid)
             task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().one()
+            await conn.execute(
+                update(s.task_runner_resources)
+                .where(s.task_runner_resources.c.task_id == tid)
+                .values(sandbox_host={"ready": True, "context": {}})
+            )
             await native._set(
                 conn,
                 tid,
@@ -721,7 +739,6 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             raise AssertionError("Hold must not issue native model/MCP credentials")
 
         native.gateway.credentials = forbidden_io
-        native.gateway.native.prepare = forbidden_io
         response = await http.post(
             path + "/actions", headers=SERVICE, json={**actor, "action": "renew"}
         )
@@ -765,7 +782,6 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
             json.loads(c["payload_json"])["kind"] in {"close", "abort", "shutdown"}
             for c in polled.json()["commands"]
         )
-    await app.state.runner_gateway.native.admin.close()
 
 
 @pytest.mark.parametrize("reason", ["native_resource_unknown", "native_owner_expired"])
@@ -774,15 +790,10 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
 ):
     options = settings().model_copy(
         update={
+            "pi_site_id": "fixture-primary",
+            "pi_model_primary_site": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
-            "native_gateway_accounting_source_id": "fixture-accounting",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "fixture-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
     ctf.objects = Objects()
@@ -790,45 +801,18 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
     await app.state.profile_store.ensure_bundled(
         Path(__file__).resolve().parents[3] / "profiles/default"
     )
-    native = app.state.native_runner_bootstrap
-    fees = native.gateway.native
-    monkeypatch.setattr(fees, "prepare", AsyncMock())
-    monkeypatch.setattr(fees, "publish", AsyncMock())
-    monkeypatch.setattr(
-        fees,
-        "selection",
-        AsyncMock(
-            return_value={
-                "sdk_model": {
-                    "id": "fixture-model",
-                    "api": "openai-completions",
-                    "input": ["text", "image"],
-                    "reasoning": True,
-                    "thinking_level": "off",
-                    "context_window": 1048576,
-                    "max_output_tokens": 524288,
-                }
-            }
-        ),
-    )
-    credentials = AsyncMock(
-        return_value={
-            "mcp_gateway_url": "https://mcp.invalid/api/tasks/fixture/mcp",
-            "model": {"token": "never-in-recovery-view"},
-            "mcp": {"token": "synthetic-mcp"},
-        }
-    )
-    monkeypatch.setattr(native.gateway, "credentials", credentials)
     task_input = {
         "mode": "ctf",
         "goal": "Preserve the original journal and dispatched model attempt",
         "budget": {"max_cost": "1", "max_minutes": 5},
         "ctf_options": {"max_teammates": 1},
     }
-    tid = await ctf.create_task(task_input, business_contract=BOARD_CONTRACT)
+    tid = await ctf.create_task(
+        task_input, business_contract=BOARD_CONTRACT, pi_model=fixture_pi_model("fixture-model")
+    )
     path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
     user = {"Authorization": "Bearer " + issue_user_token(options, "fixture-owner")}
-    lock_settings, deployment = runtime_settings(ctf_url), config()
+    lock_settings, deployment = runtime_settings(ctf_url), {**config(), "sandbox_network": {}}
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test", trust_env=False
     ) as http:
@@ -842,7 +826,11 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             },
         }
         if reason == "native_resource_unknown":
-            preowned = await ctf.create_task(task_input, business_contract=BOARD_CONTRACT)
+            preowned = await ctf.create_task(
+                task_input,
+                business_contract=BOARD_CONTRACT,
+                pi_model=fixture_pi_model("fixture-model"),
+            )
             await register_owner(http, preowned)
             blocked_launch = await http.post(
                 path.replace(str(tid), str(preowned)), headers=SERVICE, json=request
@@ -893,6 +881,7 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             "journal_pvc": {"uid": str(uuid4())},
             "workspace_pvc": {"uid": str(uuid4())},
             "runner_secret": {"uid": str(uuid4())},
+            "sandbox_host_secret": {"uid": str(uuid4())},
             "sandbox": {
                 "id": str(uuid4()),
                 "cr_uid": str(uuid4()),
@@ -903,6 +892,8 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             "runner": {
                 "pod_uid": str(uuid4()),
                 "container_id": "fixture-runner",
+                "host_container_id": "fixture-sandbox-host",
+                "pod_ip": "10.12.0.2",
                 "phase": "Running",
             },
         }
@@ -920,6 +911,27 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             assert (
                 await http.post(mgmt(tid) + "/owners", headers=SERVICE, json=forged)
             ).status_code == 409
+            host = await act(
+                actor_a,
+                "sandbox_host_material",
+                proof={
+                    "context": {
+                        "sandbox_id": observation["sandbox"]["id"],
+                        "sandbox_pod_uid": observation["sandbox"]["pod_uid"],
+                        "environment_revision": deployment["environment_revision"],
+                        "execution_context_id": "f" * 64,
+                        "execd_endpoint": "fixture.invalid",
+                        "host_url": "http://10.12.0.2:8766",
+                    }
+                },
+            )
+            assert host.status_code == 200, host.text
+            ready = await act(
+                actor_a,
+                "sandbox_host_ready",
+                proof={"context_digest": host.json()["context_digest"]},
+            )
+            assert ready.status_code == 200, ready.text
             issued = await act(actor_a, "material")
             assert issued.status_code == 200, issued.text
             material = issued.json()
@@ -961,7 +973,6 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
                 renewal.status_code == 200
                 and renewal.json()["bootstrap"]["fence"] == owner["fence"]
             )
-            assert credentials.await_count == 2
             old_attempt, dispatch = str(uuid4()), str(uuid4())
             existing_hold = {"task_wide": True, "source": "fixture-independent"}
             async with ctf.repo.engine.begin() as conn:
@@ -1058,7 +1069,6 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             assert not (await act(actor_c, "sandbox_create")).json()["create_allowed"]
             for action in ("material", "renew", "activate", "sandbox_host_material"):
                 assert (await act(actor_c, action)).status_code == 409
-            assert credentials.await_count == 2
             assert (
                 await http.post(
                     mgmt(tid) + "/owners/renew", headers=SERVICE, json={"expected_epoch": epoch}
@@ -1091,9 +1101,9 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
                     "http_status": 200,
                 },
             )
-            assert observed.status_code == 200, observed.text
+            assert observed.status_code in {404, 409}, observed.text
             reconciled = await recovery()
-            assert reconciled["ledger"]["model_transport"] == {"response_ended": 1}
+            assert reconciled["ledger"]["model_transport"] == {"unconfirmed": 1}
             assert reconciled["ledger"]["model_attempts"] == {"dispatched": 1, "not_sent": 1}
             assert reconciled["bindings"][0]["confirmed_cursor"] == original_cursor
             async with ctf.repo.engine.connect() as conn:
@@ -1111,7 +1121,17 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
                     await conn.execute(select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid))
                 ).scalar_one()
                 assert task_control["failure_hold"] == existing_hold
-                budget = await fees._budget(conn, tid)
+                budget = (
+                    (
+                        await conn.execute(
+                            select(s.native_task_budgets).where(
+                                s.native_task_budgets.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert budget["status_snapshot"] == {"used_high_water_usd": "0.4"}
                 assert budget["hold_reason"] == "fixture-budget-hold"
             assert (await http.post(f"/api/tasks/{tid}/stop", headers=SERVICE)).status_code == 200
@@ -1131,4 +1151,3 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
             done = await act(actor_c, "cleanup", proof=proof)
             assert done.status_code == 200 and done.json()["state"] == "stopped", done.text
             assert (await recovery())["state"] == "stopped"
-    await fees.admin.close()

@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import httpx
+import jwt
 import pytest
 from bbx_blackboard import mcp_catalog
 from bbx_blackboard.api import create_app
 from bbx_blackboard.auth import issue_user_token
-from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_ctf_publication import NativeCtfPublication, PublicationState
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import schema as s
@@ -18,11 +18,11 @@ from bbx_contracts.challenge_board import DISPATCH_TOOL
 from bbx_contracts.pi_models import PiModelVersion
 from bbx_contracts.runner import RunnerBootstrap
 from bbx_runtime.scheduler.lock import RuntimeLock
+from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp_gateway_support import configured_mcp_settings
 from pydantic import SecretStr
 from runner_gateway_support import call_record, invocation
 from sqlalchemy import select
@@ -221,16 +221,7 @@ async def test_fresh_direct_bootstrap_and_sdk_without_agentgateway(ctf, ctf_url,
         Path(__file__).resolve().parents[3] / "profiles/default"
     )
     native = app.state.native_runner_bootstrap
-    forbidden = []
-
-    def old_gateway(*_args, **_kwargs):
-        forbidden.append(True)
-        raise AssertionError("direct startup touched the old Gateway")
-
-    for name in ("configuration", "prepare", "reconcile"):
-        monkeypatch.setattr(native.gateway.routes, name, old_gateway)
-    for name in ("_configured", "prepare", "publish"):
-        monkeypatch.setattr(native.gateway.native, name, old_gateway)
+    assert not hasattr(native.gateway, "native") and not hasattr(native.gateway, "routes")
     model_id = "fixture-" + uuid4().hex
     model = PiModelVersion.model_validate(
         {
@@ -480,7 +471,7 @@ async def test_fresh_direct_bootstrap_and_sdk_without_agentgateway(ctf, ctf_url,
         assert response.status_code == 200, response.text
         material = response.json()
         bootstrap = RunnerBootstrap.model_validate(material["bootstrap"])
-        assert bootstrap.mcp_gateway_url is None and set(bootstrap.mcp_targets or {}) == {
+        assert set(bootstrap.mcp_targets) == {
             "business",
             "sandbox",
         }
@@ -759,19 +750,15 @@ async def test_fresh_direct_bootstrap_and_sdk_without_agentgateway(ctf, ctf_url,
             wire, headers={**sdk_headers, "Authorization": sandbox_headers["Authorization"]}
         )
         assert swapped.status_code in {401, 403}
-        old_settings = configured_mcp_settings(conf)
-        async with ctf.repo.engine.connect() as conn:
-            owner_row = await native.control._current_owner(conn, tid)
-        old_mcp = issue_gateway_credentials(old_settings, owner_row, binding["binding_id"], "lead")[
-            "mcp"
-        ]
-        app.state.settings = old_settings
-        old_headers = {
-            **sdk_headers,
-            "Authorization": "Bearer " + old_mcp["token"],
-            "X-BBX-Gateway-Backend": old_settings.runner_mcp_backend_token.get_secret_value(),
-        }
-        legacy_denied = await http.post(f"/api/tasks/{tid}/business-mcp/", headers=old_headers)
-        direct_denied = await http.post(wire, headers=old_headers)
-        assert legacy_denied.status_code == 403 and direct_denied.status_code == 401
-        assert forbidden == []
+        claims = jwt.decode(credential["token"], options={"verify_signature": False})
+        old_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        old_token = jwt.encode(
+            {**claims, "iss": "bbx-runner-gateway-v1", "aud": "mcp"},
+            old_key,
+            algorithm="RS256",
+        )
+        old_headers = {**sdk_headers, "Authorization": "Bearer " + old_token}
+        assert (
+            await http.post(f"/api/tasks/{tid}/business-mcp/", headers=SERVICE)
+        ).status_code in {404, 409}
+        assert (await http.post(wire, headers=old_headers)).status_code == 401

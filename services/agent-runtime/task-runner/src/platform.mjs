@@ -50,7 +50,6 @@ export class HttpPlatform {
     this.credentials = credentials;
     this.transport = transport;
     this.control = safeUrl(config.control_url).href.replace(/\/$/, "");
-    this.model = safeUrl(config.model_proxy_url).href.replace(/\/$/, "");
   }
   async request(base, path, { method = "POST", body, audience = "runner-control", reference = this.config.control_credential_ref,
     bindingId = null, credentials = this.credentials, signal, timeoutMs = 20000, missing = false, notModified = false } = {}) {
@@ -110,7 +109,7 @@ export class HttpPlatform {
   async admitTool(slot, body, signal) {
     validate("ToolInvocation", body);
     const receipt = validate("ToolPermit", await this.request(this.control,
-      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(body.tool_name) : undefined),
+      `/bindings/${body.binding.binding_id}/tools/admit`, { body, signal, ...mcpScope(slot.spec, slot.mcpTarget(body.tool_name)),
         credentials: slot.credentials, bindingId: body.binding.binding_id }));
     if (receipt.invocation_id !== body.invocation_id || receipt.arguments_digest !== body.arguments_digest) throw new Error("Tool admission identity did not match");
     return receipt;
@@ -119,7 +118,7 @@ export class HttpPlatform {
     const body = validate("ToolResultConfirmation", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolResultReceipt", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/result`, {
-        body, signal, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(invocation.tool_name) : undefined),
+        body, signal, ...mcpScope(slot.spec, slot.mcpTarget(invocation.tool_name)),
         credentials: slot.credentials, bindingId: invocation.binding.binding_id,
       }));
     if (receipt.invocation_id !== invocation.invocation_id || digest(receipt.result_json) !== receipt.result_digest) throw new Error("Tool result receipt did not match");
@@ -144,35 +143,10 @@ export class HttpPlatform {
     const body = validate("ToolUnknownSubmission", { protocol: PROTOCOL, invocation });
     const receipt = validate("ToolPermit", await this.request(this.control,
       `/bindings/${invocation.binding.binding_id}/tools/${invocation.invocation_id}/unknown`, {
-        body, timeoutMs: 2000, ...mcpScope(slot.spec, slot.spec.mcp_tool_routes ? slot.mcpTarget(invocation.tool_name) : undefined),
+        body, timeoutMs: 2000, ...mcpScope(slot.spec, slot.mcpTarget(invocation.tool_name)),
         credentials: slot.credentials, bindingId: invocation.binding.binding_id,
       }));
     if (receipt.invocation_id !== invocation.invocation_id || receipt.arguments_digest !== invocation.arguments_digest
         || receipt.disposition === "admitted") throw new Error("The unknown tool receipt did not match");
-  }
-  async admitModel(slot, request) {
-    const body = validate("ModelAttemptRequest", { protocol: PROTOCOL, fence: this.config.fence, binding: slot.binding,
-      sdk_session_id: slot.session.sessionId, call_id: request.callId, attempt_id: request.attemptId,
-      journal: request.journal, purpose: request.purpose, profile_revision: slot.spec.profile_revision,
-      prompt_revision: slot.promptRevision, model_snapshot: slot.spec.model,
-      body_json: request.bodyJson, body_digest: request.bodyDigest });
-    const receipt = validate("ModelAdmissionReceipt", await this.request(this.model, "/attempts/admit", {
-      audience: "model", credentials: slot.credentials, reference: slot.spec.model_credential_ref, bindingId: slot.binding.binding_id,
-      body,
-    }));
-    if (receipt.call_id !== request.callId || receipt.attempt_id !== request.attemptId
-        || receipt.request_digest !== digest(JSON.stringify(body))) throw new Error("Model admission receipt did not match");
-    return { callId: request.callId, attemptId: request.attemptId };
-  }
-  async settleModel(slot, receipt) {
-    const body = validate("ModelOutcomeSubmission", { protocol: PROTOCOL, fence: this.config.fence,
-      binding_id: slot.binding.binding_id, sdk_session_id: slot.session.sessionId, call_id: receipt.callId,
-      attempt_id: receipt.attemptId, outcome: receipt.outcome, model_outcome: receipt.modelOutcome,
-      usage: receipt.usage, http_status: receipt.httpStatus });
-    const ack = validate("ModelOutcomeReceipt", await this.request(this.model, `/attempts/${receipt.attemptId}/receipt`, {
-      audience: "model", credentials: slot.credentials, reference: slot.spec.model_credential_ref, bindingId: slot.binding.binding_id,
-      body,
-    }));
-    if (ack.attempt_id !== receipt.attemptId || ack.request_digest !== digest(JSON.stringify(body))) throw new Error("Model settlement receipt did not match");
   }
 }

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
-import json
 import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -22,16 +20,10 @@ from bbx_contracts.pi_models import (
     PiModelRef,
     PiUsage,
 )
+from bbx_contracts.pi_models import context_sha256 as context_sha256
 
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.pi.bridge import PiBridge
-
-
-def context_sha256(context: Any, options: Any) -> str:
-    value = json.dumps(
-        [context, options], ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def endpoint_origin(value: str) -> str:
@@ -105,6 +97,9 @@ class PiSender:
             )
         )
         frozen = original.model
+        context_window, model_max = frozen.context_window, frozen.max_output_tokens
+        if context_window is None or model_max is None:
+            raise ValueError("The approved model limits are incomplete")
         if (
             original.call_id != body.call_id
             or original.attempt_id != body.attempt_id
@@ -162,9 +157,9 @@ class PiSender:
             if body.proof.kind == "native" and (allowed is None or not set(names) <= set(allowed)):
                 raise ValueError("The original Runner tool declaration changed")
             maximum = min(
-                options.get("maxTokens") or frozen.max_output_tokens,
-                frozen.max_output_tokens,
-                original.max_output_tokens or frozen.max_output_tokens,
+                options.get("maxTokens") or model_max,
+                model_max,
+                original.max_output_tokens or model_max,
             )
             send_options = {
                 **options,
@@ -183,8 +178,8 @@ class PiSender:
                 "baseUrl": frozen.base_url,
                 "input": list(frozen.input_modalities),
                 "reasoning": frozen.reasoning,
-                "contextWindow": frozen.context_window,
-                "maxTokens": frozen.max_output_tokens,
+                "contextWindow": context_window,
+                "maxTokens": model_max,
                 "cost": {
                     "input": float(rates.input) if rates is not None else 0,
                     "output": float(rates.output) if rates is not None else 0,
@@ -225,6 +220,23 @@ class PiSender:
                     and 200 <= status < 300
                     and (completed_message.get("stopReason") in {"stop", "length", "toolUse"})
                 )
+                reply = None
+                if complete and body.proof.kind == "playground":
+                    assert isinstance(completed_message, dict)
+                    content = completed_message.get("content") or []
+                    text = "".join(
+                        part["text"]
+                        for part in content
+                        if isinstance(part, dict)
+                        and part.get("type") == "text"
+                        and isinstance(part.get("text"), str)
+                    )
+                    reply = (
+                        text.replace(original.api_key, "[redacted]")
+                        .replace("\x00", "\ufffd")
+                        .encode("utf-8", "replace")
+                        .decode("utf-8")[:16384]
+                    )
                 settlement = PiCallSettle(
                     attempt_id=body.attempt_id,
                     request_sha256=claimed,
@@ -236,6 +248,7 @@ class PiSender:
                     usage=PiUsage.model_validate(usage) if complete and usage is not None else None,
                     amount_usd=accounting.get("amount_usd") if complete else None,
                     provider_request_id=accounting.get("provider_request_id"),
+                    result_text=reply,
                 )
 
                 # Finish the original ledger call despite a disappearing browser or Runner.

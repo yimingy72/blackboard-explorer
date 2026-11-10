@@ -35,7 +35,7 @@ from bbx_contracts.runner_control import (
     RunnerOwnerUpdate,
     RunnerPromptPublication,
 )
-from bbx_contracts.sandbox_tools import SANDBOX_TOOLS, tool_alias
+from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, insert, literal, or_, select, update
@@ -49,6 +49,15 @@ TERMINAL = {"finished", "failed", "stopped"}
 OWNER_SECONDS = 60
 PERMIT_SECONDS = 30
 POLL_RECHECK_SECONDS = 5
+
+
+def native_stopping(task):
+    return (
+        task["deleting"]
+        or task["ctf_control"].get("native_stop_requested")
+        or task["status"] in {"finished", "failed", "stopped", "closing"}
+        or task["ctf_control"].get("phase") in {"closing", "finished", "failed", "stopped"}
+    )
 
 
 async def row(conn, table, tid, oid=None):
@@ -602,45 +611,39 @@ class RunnerControl:
         ).model_dump(mode="json")
         from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 
-        from bbx_blackboard.gateway_auth import task_direct_mcp
-
         fields = body.model_dump(
             exclude={"request_id", "expected_epoch", "agent_id", "challenge_id"}
         )
-        if await task_direct_mcp(conn, tid):
-            external = (
-                await conn.scalar(
-                    select(s.task_runner_resources.c.data["native_mcp"][member["role"]]).where(
-                        s.task_runner_resources.c.task_id == tid
-                    )
+        external = (
+            await conn.scalar(
+                select(s.task_runner_resources.c.data["native_mcp"][member["role"]]).where(
+                    s.task_runner_resources.c.task_id == tid
                 )
-                if not helper
-                else {}
             )
-            if any(
-                name.startswith("mcp_") and name not in (external or {})
-                for name in body.allowed_tools
-            ):
-                raise HTTPException(403, "External MCP tools must belong to the original Task role")
-            base_ref = fields.pop("mcp_credential_ref")
-            routes = {
-                name: {
-                    "target": "sandbox" if name in SANDBOX_TOOLS else "business",
-                    "wire_name": name,
-                }
-                for name in body.allowed_tools
+            if not helper
+            else {}
+        )
+        if any(
+            name.startswith("mcp_") and name not in (external or {}) for name in body.allowed_tools
+        ):
+            raise HTTPException(403, "External MCP tools must belong to the original Task role")
+        base_ref = fields.pop("mcp_credential_ref")
+        routes = {
+            name: {
+                "target": "sandbox" if name in SANDBOX_TOOLS else "business",
+                "wire_name": name,
             }
-            targets = {route["target"] for route in routes.values()}
-            if helper:
-                targets.add("sandbox")
-            else:
-                targets.add("business")
-            fields.update(
-                mcp_tool_routes=routes,
-                mcp_target_credential_refs={target: f"{base_ref}-{target}" for target in targets},
-            )
+            for name in body.allowed_tools
+        }
+        targets = {route["target"] for route in routes.values()}
+        if helper:
+            targets.add("sandbox")
         else:
-            fields["mcp_tool_aliases"] = {name: tool_alias(name) for name in body.allowed_tools}
+            targets.add("business")
+        fields.update(
+            mcp_tool_routes=routes,
+            mcp_target_credential_refs={target: f"{base_ref}-{target}" for target in targets},
+        )
         spec = SessionSpec.model_validate(
             {
                 "binding": binding,
@@ -1495,7 +1498,7 @@ class RunnerControl:
         return command["status"] == "queued"
 
     async def _paused_journal_tail(self, conn, tid, owner, binding):
-        from bbx_blackboard.native_fees import threshold_hold_id
+        from bbx_blackboard.native_pause import threshold_hold_id
 
         task = await self._task(conn, tid)
         control = task["ctf_control"]

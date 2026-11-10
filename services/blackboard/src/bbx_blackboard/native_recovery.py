@@ -14,7 +14,6 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
-from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.native_inputs import require_inputs_confirmed
 from bbx_blackboard.native_traffic import epoch_capture_pending, network_scopes, opted_in
 from bbx_blackboard.native_vpn import vpn_enabled, vpn_exit_data, vpn_state
@@ -321,7 +320,6 @@ class NativeRecovery:
     def __init__(self, bootstrap):
         self.bootstrap = bootstrap
         self.repo, self.control = bootstrap.repo, bootstrap.control
-        self.native = bootstrap.gateway.native
 
     def _context(self, record, task, incident_id):
         data, control = record["data"], task["ctf_control"]
@@ -364,16 +362,19 @@ class NativeRecovery:
     async def request(self, tid, request):
         body = request.model_dump(mode="json")
         hashed = digest({"operation": "native_user_recovery", **body})
-        guarded = await self.native.original_model_guard(tid)
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            if guarded is not None:
-                await admission(conn, guarded[0])
             task, record = await self.control._task(conn, tid), await self.bootstrap._get(conn, tid)
-            if not record:
-                raise HTTPException(409, "Original recovery is unavailable")
+            frozen = await task_pi_model(conn, tid)
+            if (
+                not record
+                or record["data"].get("mcp_transport") != "direct-v2"
+                or frozen is None
+                or frozen[0] != self.bootstrap.settings.pi_model_authority
+            ):
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
             incident = self._context(record, task, request.incident_id)
             if self._independent_hold(task, incident) or incident.get("request"):
                 raise HTTPException(409, "Original recovery is held or already requested")
@@ -561,16 +562,13 @@ class NativeRecovery:
 
     async def act(self, tid, body):
         proof = body.proof
-        guarded = (
-            await self.native.original_model_guard(tid)
-            if body.action == "recovery_replace"
-            else None
-        )
         async with self.repo.engine.begin() as conn:
             record, task = await self.bootstrap._checked(conn, tid, body)
             if body.action == "recovery_verifier_observe":
                 return await self._observe_verifier(conn, tid, record, proof)
             incident = self._context(record, task, proof.get("incident_id"))
+            if record["data"].get("mcp_transport") != "direct-v2":
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
             if not incident.get("request"):
                 raise HTTPException(409, "User recovery is not requested")
             if body.action == "recovery_blocked":
@@ -667,7 +665,7 @@ class NativeRecovery:
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
         try:
-            native, used, exceeded = await self.read_budget(budget)
+            used, exceeded = await self.read_budget(budget)
         except HTTPException:
             async with self.repo.engine.begin() as conn:
                 record, task = await self.bootstrap._checked(conn, tid, body)
@@ -675,19 +673,6 @@ class NativeRecovery:
                 return await self._blocked(
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
-        direct = record["data"].get("mcp_transport") == "direct-v2"
-        if not direct and not exceeded and used < self._threshold(budget):
-            try:
-                await self.bootstrap.gateway.routes.retire_for_recovery(
-                    tid, body, self, budget, used, exceeded
-                )
-            except HTTPException:
-                async with self.repo.engine.begin() as conn:
-                    record, task = await self.bootstrap._checked(conn, tid, body)
-                    incident = self._context(record, task, proof.get("incident_id"))
-                    return await self._blocked(
-                        conn, tid, record, incident, "original_route_unconfirmed"
-                    )
         async with self.repo.engine.begin() as conn:
             record, task = await self.bootstrap._checked(conn, tid, body)
             incident = self._context(record, task, proof.get("incident_id"))
@@ -700,97 +685,54 @@ class NativeRecovery:
                 return await self._blocked(
                     conn, tid, record, incident, "original_budget_unconfirmed"
                 )
-            route = await self.bootstrap.gateway.routes._get(conn, tid)
-            if (direct and route is not None) or (
-                not direct
-                and (
-                    not route
-                    or (route["desired"], route["publication_state"]) != ("recovery", "retired")
+            if await conn.scalar(
+                select(s.native_task_mcp_routes.c.task_id).where(
+                    s.native_task_mcp_routes.c.task_id == tid
                 )
             ):
                 return await self._blocked(
                     conn, tid, record, incident, "original_route_unconfirmed"
                 )
-            if guarded is not None:
-                await admission(conn, guarded[0])
-            await self.record_usage(conn, tid, native, used)
-            return await self._replace(conn, tid, record, task, incident, manifest, proof, route)
+            return await self._replace(conn, tid, record, task, incident, manifest, proof)
 
     async def budget_snapshot(self, conn, tid):
-        if direct := await task_pi_model(conn, tid):
-            task = await self.control._task(conn, tid)
-            if (
-                task["budget"].get("currency") != "USD"
-                or direct[0] != self.bootstrap.settings.pi_model_authority
-            ):
-                raise HTTPException(409, "Frozen Pi budget authority changed")
-            return {
-                "pi_model": direct[1].model_dump(mode="json"),
-                "authority": direct[0],
-                "task_id": str(tid),
-                "threshold_usd": str(task["budget"]["max_cost"]),
-            }
-        return await self.native._budget(conn, tid)
-
-    @staticmethod
-    def _threshold(budget):
-        return Decimal(
-            budget["threshold_usd"] if "pi_model" in budget else budget["config"]["threshold_usd"]
-        )
+        frozen = await task_pi_model(conn, tid)
+        task = await self.control._task(conn, tid)
+        if (
+            frozen is None
+            or task["budget"].get("currency") != "USD"
+            or frozen[0] != self.bootstrap.settings.pi_model_authority
+        ):
+            raise HTTPException(409, "Frozen Pi budget authority changed")
+        return {
+            "pi_model": frozen[1].model_dump(mode="json"),
+            "authority": frozen[0],
+            "task_id": str(tid),
+            "threshold_usd": str(task["budget"]["max_cost"]),
+        }
 
     async def read_budget(self, budget):
-        if "pi_model" in budget:
-            async with self.repo.engine.connect() as conn:
-                amount, unknown = await pi_totals(
-                    conn, UUID(budget["task_id"]), self.bootstrap.settings.pi_site_id
-                )
-            if unknown:
-                raise HTTPException(409, "Original Pi costs are unresolved")
-            return {"source": "pi_ledger"}, amount, amount >= self._threshold(budget)
-        await self.native.verified_key(budget, budget["config"]["native_value"])
-        return await self.native.threshold_status(budget)
+        async with self.repo.engine.connect() as conn:
+            amount, unknown = await pi_totals(
+                conn, UUID(budget["task_id"]), self.bootstrap.settings.pi_site_id
+            )
+        if unknown:
+            raise HTTPException(409, "Original Pi costs are unresolved")
+        return amount, amount >= Decimal(budget["threshold_usd"])
 
     async def matching_budget(self, conn, tid, budget, used, exceeded):
-        if "pi_model" in budget:
-            current = await self.budget_snapshot(conn, tid)
-            amount, unknown = await pi_totals(conn, tid, self.bootstrap.settings.pi_site_id)
-            return (
-                current == budget
-                and not exceeded
-                and not unknown
-                and used <= amount < self._threshold(current)
-            )
-        current = await self.native._budget(conn, tid)
+        current = await self.budget_snapshot(conn, tid)
+        amount, unknown = await pi_totals(conn, tid, self.bootstrap.settings.pi_site_id)
         return (
-            self._budget_available(current)
-            and self.bootstrap.pause_control._budget_identity(current)
-            == self.bootstrap.pause_control._budget_identity(budget)
-            and current["config"] == budget["config"]
+            current == budget
             and not exceeded
-            and used < Decimal(current["config"]["threshold_usd"])
-            and used >= await self.native.usage_floor(conn, tid, current)
-        )
-
-    @staticmethod
-    async def record_usage(conn, tid, native, used):
-        if native.get("source") == "pi_ledger":
-            return
-        await conn.execute(
-            update(s.native_task_budgets)
-            .where(s.native_task_budgets.c.task_id == tid)
-            .values(status_snapshot={"latest": native, "used_high_water_usd": str(used)})
+            and not unknown
+            and used <= amount < Decimal(current["threshold_usd"])
         )
 
     @staticmethod
     def _budget_available(budget):
-        if "pi_model" in budget:
-            return bool(budget["pi_model"].get("usd_rates"))
-        return bool(
-            budget["publication_state"] == "ready"
-            and budget["native_resource_id"]
-            and not budget["hold_reason"]
-            and not budget["config"].get("pending_increase")
-        )
+        return bool(budget["pi_model"].get("usd_rates"))
 
     async def _observe_verifier(self, conn, tid, record, proof):
         incident = record["data"].get("recovery") or {}
@@ -867,7 +809,7 @@ class NativeRecovery:
         ):
             raise HTTPException(409, "Original journal working copy is not confirmed")
 
-    async def _replace(self, conn, tid, record, task, incident, manifest, proof, route):
+    async def _replace(self, conn, tid, record, task, incident, manifest, proof):
         generation = manifest["resource_generation"]
         data = record["data"]
         request = NativeResumeRequest(
@@ -896,16 +838,7 @@ class NativeRecovery:
             "blocker": None,
             "replacement_epoch": incident["original_epoch"] + 1,
             "replacement_proof": proof,
-            **(
-                {
-                    "original_route": {
-                        key: route[key]
-                        for key in ("resource_id", "revision", "operation_id", "value")
-                    }
-                }
-                if route is not None
-                else {"mcp_transport": "direct-v2"}
-            ),
+            "mcp_transport": "direct-v2",
         }
         require_inputs_confirmed(record)
         retained = {

@@ -571,7 +571,7 @@ def native_tool_alias(server: str, wire_name: str) -> str:
 async def freeze_native_grants(request: Request, grants: NativeMcpGrants) -> dict:
     registry = request.app.state.pi_registry
     settings = request.app.state.settings
-    if not registry.enabled or not settings.runner_mcp_direct_v2 or not settings.pi_model_authority:
+    if not registry.enabled or not settings.pi_model_authority:
         raise HTTPException(422, "当前原生 CTF 环境没有启用外部 MCP")
     available = {entry["name"]: entry for entry in await catalog(request)}
     output = {}

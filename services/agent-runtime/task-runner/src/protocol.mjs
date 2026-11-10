@@ -22,17 +22,9 @@ export function digest(value) {
 export function validate(name, value) {
   const invalid = () => Object.assign(new Error(`Invalid ${name}`), { code: "invalid_protocol" });
   if (!Check({ $ref: `#/$defs/${name}`, $defs: schema.$defs }, value)) throw invalid();
-  // Pydantic cross-field validators are not represented in the generated JSON Schema.
-  if (name === "RunnerBootstrap" &&
-      !(value.mcp_targets && Object.keys(value.mcp_targets).length && value.mcp_gateway_url === undefined ||
-        value.mcp_gateway_url && value.mcp_targets === undefined)) throw invalid();
-  if (name === "RunnerPayload" && value.kind === "prepare") {
-    const spec = value.spec;
-    if (!(spec.mcp_tool_routes && spec.mcp_target_credential_refs && spec.mcp_tool_aliases === undefined &&
-          spec.mcp_credential_ref === undefined ||
-          spec.mcp_tool_aliases && spec.mcp_credential_ref && spec.mcp_tool_routes === undefined &&
-          spec.mcp_target_credential_refs === undefined)) throw invalid();
-  }
+  if (name === "RunnerBootstrap" && !Object.keys(value.mcp_targets ?? {}).length) throw invalid();
+  if (name === "RunnerPayload" && value.kind === "prepare" &&
+      !(value.spec.mcp_tool_routes && Object.keys(value.spec.mcp_target_credential_refs ?? {}).length)) throw invalid();
   return value;
 }
 export const sameValue = isDeepStrictEqual;

@@ -4,16 +4,14 @@ import json
 from typing import Any, cast
 
 from bbx_contracts.model_limits import effective_max_input_tokens
-from bbx_contracts.models import ModelConfig, Price
+from bbx_contracts.models import ModelConfig
 
-from bbx_runtime.billing import _usage, _usage_known
 from bbx_runtime.clients.blackboard import BlackboardClient
 from bbx_runtime.ctf.context import (
     align_history_start,
     estimate_messages_tokens,
     fixed_prompt_tokens,
 )
-from bbx_runtime.model_errors import terminal_model_error
 from bbx_runtime.pi import AgentSession, Content, Message
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
@@ -64,66 +62,16 @@ def checkpoint_for(
     )
 
 
-async def flush_receipts(checkpoint: SessionCheckpoint, service: ProgressClient) -> None:
+def require_resolved_calls(checkpoint: SessionCheckpoint, service: ProgressClient) -> None:
     assert service.job is not None
-    receipts = checkpoint.session.state.setdefault("bbx_progress_receipts", {})
-    for request_id, receipt in receipts.items():
-        if receipt["job_id"] != str(service.job["job_id"]) or receipt.get("settled"):
-            continue
-        if receipt.get("status") not in {"completed", "failed"}:
-            raise ProgressUsageUnknown("Model request has no durable completed response")
-        result = await service.operation(
-            "settle",
-            request_id=request_id,
-            usage=receipt["usage"],
-            usage_known=receipt["usage_known"],
-            executed=True,
-        )
-        if result.get("status") != "settled":
-            raise ProgressUsageUnknown("Model usage requires confirmation")
-        receipt["settled"] = True
-    active = checkpoint.session.state.get("bbx_progress_active_request")
-    if active is not None:
+    state = checkpoint.session.state
+    if state.get("bbx_progress_active_request") is not None or any(
+        receipt.get("job_id") == str(service.job["job_id"]) and not receipt.get("settled")
+        for receipt in state.get("bbx_progress_receipts", {}).values()
+    ):
         raise ProgressUsageUnknown(
             "Prior model execution requires confirmation; it will not be replayed"
         )
-
-
-async def settle_terminal_failure(
-    checkpoint: SessionCheckpoint,
-    service: ProgressClient,
-    error: BaseException,
-    diagnostic: dict[str, Any],
-) -> bool:
-    """Persist terminal usage before charging a rejected response; never persist its contents."""
-    terminal = terminal_model_error(error)
-    active = checkpoint.session.state.get("bbx_progress_active_request")
-    assert service.job is not None
-    if (
-        terminal is None
-        or terminal.terminal_usage is None
-        or not active
-        or active.get("pi_direct")
-        or active.get("job_id") != str(service.job["job_id"])
-        or active.get("status") != "dispatching"
-    ):
-        return False
-    usage, warning = _usage(terminal.terminal_usage, Price.model_validate(active["price"]))
-    checkpoint.session.state.setdefault("bbx_progress_receipts", {})[active["request_id"]] = {
-        "job_id": active["job_id"],
-        "status": "failed",
-        "usage": usage.model_dump(mode="json"),
-        "usage_known": True,
-        "raw_usage": terminal.terminal_usage,
-        "pricing": active["pricing"],
-        "warning": warning,
-        "diagnostic": diagnostic,
-        "settled": False,
-    }
-    checkpoint.session.state.pop("bbx_progress_active_request")
-    await checkpoint.save()
-    await flush_receipts(checkpoint, service)
-    return True
 
 
 class ProgressHistoryProvider(CheckpointHistoryProvider):
@@ -146,7 +94,7 @@ class ProgressHistoryProvider(CheckpointHistoryProvider):
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
     ) -> list[Message]:
-        await flush_receipts(self.checkpoint, self.service)
+        require_resolved_calls(self.checkpoint, self.service)
         messages = await super().get_messages(session_id, state=state, **kwargs)
         input_limit = effective_max_input_tokens(self.model)
         threshold = int(input_limit * 0.8) if input_limit is not None else None
@@ -192,22 +140,6 @@ class ProgressHistoryProvider(CheckpointHistoryProvider):
         if response is not None and active is not None and active.get("pi_direct"):
             # The sender already settled before exposing this response.
             session.state.pop("bbx_progress_active_request", None)
-        elif response is not None and active is not None:
-            details = response.usage_details
-            usage, warning = _usage(
-                details, Price.model_validate(active["price"]), self.model.provider
-            )
-            session.state.setdefault("bbx_progress_receipts", {})[active["request_id"]] = {
-                "job_id": active["job_id"],
-                "status": "completed",
-                "usage": usage.model_dump(mode="json"),
-                "usage_known": _usage_known(details, self.model.provider),
-                "raw_usage": dict(details or {}),
-                "pricing": active["pricing"],
-                "warning": warning,
-                "settled": False,
-            }
-            session.state.pop("bbx_progress_active_request", None)
-        # The shared provider saves the model messages and receipt before billing or tools.
+        # The shared provider saves the exact model messages before tools.
         await super().after_run(agent=agent, session=session, context=context, state=state)
-        await flush_receipts(self.checkpoint, self.service)
+        require_resolved_calls(self.checkpoint, self.service)

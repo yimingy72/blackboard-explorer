@@ -1,7 +1,7 @@
 import { Alert, Button, Checkbox, Input, Select } from 'antd';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, piModelCanRunTask } from '../api/client';
 import LoadingState from '../components/LoadingState';
 import { progressApi } from './api';
 import type { ProgressSettings as Settings } from './types';
@@ -12,13 +12,8 @@ export default function ProgressSettings({ onDirtyChange, onBusyChange }: { onDi
   const query = useQuery({ queryKey: ['progress-settings'], queryFn: ({ signal }) => progressApi.settings(signal) });
   const client = useQueryClient();
   const directory = useQuery({ queryKey: ['pi-models'], queryFn: api.piModels });
-  const direct = directory.data?.enabled === true;
-  const models = useQuery({ queryKey: ['gateway-models'], queryFn: api.gatewayModels, enabled: directory.data?.enabled === false });
-  const available = direct
-    ? (directory.data?.models ?? []).filter(item => item.enabled && item.has_secret && item.tool_call && item.usd_rates)
-        .map(item => ({ id: item.id, label: item.label, pi: { model_id: item.id, model_revision: item.model_revision } }))
-    : (models.data?.models ?? []).filter(item => item.tool_call)
-        .map(item => ({ id: item.alias, label: item.label, gateway: { alias: item.alias, catalog_revision: item.catalog_revision } }));
+  const available = (directory.data?.models ?? []).filter(piModelCanRunTask)
+    .map(item => ({ id: item.id, label: item.label, pi: { model_id: item.id, model_revision: item.model_revision } }));
   const [saved, setSaved] = useState<Settings | null>(null), [draft, setDraft] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const dirty = Boolean(saved && draft && JSON.stringify(saved) !== JSON.stringify(draft));
@@ -26,7 +21,7 @@ export default function ProgressSettings({ onDirtyChange, onBusyChange }: { onDi
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   async function save() {
     if (!draft || busy) return; setBusy(true); onBusyChange(true); setError(''); setNotice('');
-    try { const value = await progressApi.saveSettings(draft); client.setQueryData(['progress-settings'], value); setSaved(value); setDraft(value); setNotice('已保存，之后的整理回合生效。'); }
+    try { const value = await progressApi.saveSettings({ revision: draft.revision, prompt: draft.prompt, pi_model: draft.pi_model, enabled_tools: draft.enabled_tools }); client.setQueryData(['progress-settings'], value); setSaved(value); setDraft(value); setNotice('已保存，之后的整理回合生效。'); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败，草稿已保留。'); }
     finally { setBusy(false); onBusyChange(false); }
   }
@@ -35,14 +30,12 @@ export default function ProgressSettings({ onDirtyChange, onBusyChange }: { onDi
   return <section className={styles.settings}>
     <div className={styles.settingsHeader}><h2>成果整理 Agent</h2><Button type="primary" size="small" disabled={!dirty || busy} loading={busy} onClick={() => void save()}>保存并应用</Button></div>
     {error && <Alert type="error" title={error} />}{notice && <Alert type="success" title={notice} />}
-    <div className={styles.settingsGrid}><label>完整系统提示词<Input.TextArea aria-label="成果整理系统提示词" value={draft.prompt} disabled={busy} onChange={event => update({ prompt: event.target.value })} autoSize={{ minRows: 22, maxRows: 38 }} style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 13 }} /></label><div className={styles.tools}><label>模型<Select aria-label="成果整理模型" style={{ width: '100%', marginTop: 8 }} disabled={busy || directory.isLoading || directory.isError || models.isLoading}
-        value={direct ? draft.pi_model?.model_id ?? '' : draft.gateway_model?.alias ?? ''}
+    <div className={styles.settingsGrid}><label>完整系统提示词<Input.TextArea aria-label="成果整理系统提示词" value={draft.prompt} disabled={busy} onChange={event => update({ prompt: event.target.value })} autoSize={{ minRows: 22, maxRows: 38 }} style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 13 }} /></label><div className={styles.tools}><label>模型<Select aria-label="成果整理模型" style={{ width: '100%', marginTop: 8 }} disabled={busy || directory.isLoading || directory.isError}
+        value={draft.pi_model?.model_id ?? ''}
         options={[{ value: '', label: '沿用任务模型' }, ...available.map(model => ({ value: model.id, label: model.label }))]}
         onChange={value => {
             const model = available.find(item => item.id === value);
-            update(direct
-                ? { pi_model: model && 'pi' in model ? model.pi : null, gateway_model: null }
-                : { gateway_model: model && 'gateway' in model ? model.gateway : null, pi_model: null });
+            update({ pi_model: model?.pi ?? null });
         }} /></label><p className={styles.modelInfo}>模型与价格在任务启用时固定；提示词在下一个整理回合应用。整理费用由任务单独限额控制。</p><h3>允许的工具</h3>{Object.entries(tools).map(([id, label]) => <Checkbox key={id} disabled={busy || ['read_progress_sources', 'get_progress_tree', 'update_progress_tree'].includes(id)} checked={draft.enabled_tools.includes(id)} onChange={event => update({ enabled_tools: event.target.checked ? [...draft.enabled_tools, id] : draft.enabled_tools.filter(tool => tool !== id) })}>{label}</Checkbox>)}<p className={styles.modelInfo}>只读任务资料，写入仅限成果树。没有命令、派工或黑板写权限。</p></div></div>
   </section>;
 }

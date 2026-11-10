@@ -77,7 +77,9 @@ test("the actual parent model launches one plugin child; cancelling a second par
       return parentIds.includes(bindingId) ? delegate : { name: "exec_command", arguments: { value: "marker" } };
     };
     function spec(id) {
-      return { ...h.spec(id), allowed_tools: ["exec_command"], mcp_tool_aliases: { exec_command: "exec_command" } };
+      return { ...h.spec(id), allowed_tools: ["exec_command"],
+        mcp_target_credential_refs: id.startsWith("child") ? { sandbox: `sandbox-${id}` } : { business: `mcp-${id}`, sandbox: `sandbox-${id}` },
+        mcp_tool_routes: { exec_command: { target: "sandbox", wire_name: "exec_command" } } };
     }
     h.state.helperApi = async ({ url, bindingId, body, response, send }) => {
       const action = url.pathname.split("/").at(-1);
@@ -100,7 +102,7 @@ test("the actual parent model launches one plugin child; cancelling a second par
           helper_child: { child_id: run.child_id, parent_binding_id: bindingId, deadline_ms: run.deadline_ms } } }, `prepare-${id}`);
         h.state.commands.pop(); // Its original prepare is available only through the launch grant.
         send(response, { ...run, launch_allowed: true, command: prepare, credentials: {
-          [`model-${id}`]: h.credentials[`model-${id}`], [`mcp-${id}`]: h.credentials[`mcp-${id}`],
+          [`model-${id}`]: h.credentials[`model-${id}`], [`sandbox-${id}`]: h.credentials[`sandbox-${id}`],
         } });
         return;
       } else if (action === "cancel") {
@@ -156,7 +158,7 @@ test("the actual parent model launches one plugin child; cancelling a second par
       const workerB = h.state.modelCalls.filter((item) => item.bindingId === "parent-b").at(-1);
       const childB = h.state.modelCalls.filter((item) => item.bindingId === "child-b").at(-1);
       assert.ok(JSON.stringify(childB.body.messages).includes("child-b remote result"));
-      assert.ok(JSON.stringify(workerB.body.messages.filter((item) => item.role === "tool")).includes("Done."));
+      assert.ok(JSON.stringify(workerB.body.messages.filter((item) => item.role === "toolResult")).includes("Done."));
       assert.ok(!JSON.parse(helper.get("parent-b").result_json).isError);
       h.assertClean();
     } catch (error) {

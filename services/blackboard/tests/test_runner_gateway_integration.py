@@ -12,9 +12,9 @@ from fastapi import HTTPException
 from runner_gateway_support import (
     cap,
     digest,
+    fixture_credentials,
     invocation,
     prepare,
-    private,
     worker_scope,
 )
 from sqlalchemy import select, update
@@ -27,18 +27,21 @@ from test_runner_control_integration import SERVICE, connect, mgmt, register_own
 pytestmark = pytest.mark.integration
 
 
-def gateway_identity(app, scope, audience="mcp"):
+def gateway_identity(app, scope, audience="business-mcp"):
     request = Request(
         {
             "type": "http",
             "app": app,
-            "headers": [(b"authorization", cap(scope, audience)["Authorization"].encode())],
+            "headers": [(b"authorization", cap(scope, "business")["Authorization"].encode())],
         }
     )
     return require_gateway_identity(request, scope["tid"], audience)
 
 
-async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ctf):
+async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ctf, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("bbx_blackboard.gateway_auth.task_direct_mcp", AsyncMock(return_value=True))
     async with connect(ctf) as (app, http):
         scope = await prepare(http, ctf, tools=["board_create_challenge", "board_finish_task"])
         body = invocation(scope, "board_create_challenge", {"title": "must-not-be-created"})
@@ -46,7 +49,7 @@ async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ct
             f"/api/tasks/{scope['tid']}/runner-control/bindings/"
             f"{scope['binding']['binding_id']}/tools"
         )
-        admitted = await http.post(path + "/admit", headers=cap(scope, "mcp"), json=body)
+        admitted = await http.post(path + "/admit", headers=cap(scope, "business"), json=body)
         assert admitted.status_code == 200, admitted.text
         identity = gateway_identity(app, scope)
         claimed, _ = await app.state.runner_gateway.claim_business_tool(
@@ -82,25 +85,24 @@ async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ct
         from test_runner_control_integration import acquire
 
         await acquire(http, scope["tid"], successor, scope["binding"], command)
-        response = await http.post(
-            private(scope) + f"/bindings/{scope['binding']['binding_id']}/credentials",
-            headers=SERVICE,
-            json={"expected_epoch": 2},
-        )
-        current = {**scope, "owner": successor, "credentials": response.json()}
+        current = {
+            **scope,
+            "owner": successor,
+            "credentials": await fixture_credentials(ctf, scope["tid"], scope["binding"], "lead"),
+        }
         updated = {**body, "fence": successor["fence"]}
-        replayed = await http.post(path + "/admit", headers=cap(current, "mcp"), json=updated)
+        replayed = await http.post(path + "/admit", headers=cap(current, "business"), json=updated)
         assert replayed.status_code == 200 and replayed.json()["disposition"] == "completed"
         confirmation = {"protocol": PROTOCOL, "invocation": updated}
         forged = await http.post(
             path + f"/{body['invocation_id']}/result",
-            headers=cap(current, "mcp"),
+            headers=cap(current, "business"),
             json={**confirmation, "result_json": "forged"},
         )
         assert forged.status_code == 422
         result = await http.post(
             path + f"/{body['invocation_id']}/result",
-            headers=cap(current, "mcp"),
+            headers=cap(current, "business"),
             json=confirmation,
         )
         assert (
@@ -169,7 +171,9 @@ async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ct
                 f"/api/tasks/{scope['tid']}/runner-control/bindings/"
                 f"{actor['binding']['binding_id']}/tools"
             )
-            admitted = await http.post(tool_path + "/admit", headers=cap(actor, "mcp"), json=inv)
+            admitted = await http.post(
+                tool_path + "/admit", headers=cap(actor, "business"), json=inv
+            )
             assert admitted.status_code == 200, admitted.text
             claimed, _ = await app.state.runner_gateway.claim_business_tool(
                 scope["tid"],
@@ -192,7 +196,7 @@ async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ct
             )
             confirmation = await http.post(
                 tool_path + f"/{inv['invocation_id']}/result",
-                headers=cap(actor, "mcp"),
+                headers=cap(actor, "business"),
                 json={"protocol": PROTOCOL, "invocation": inv},
             )
             assert confirmation.status_code == 200, confirmation.text
@@ -209,4 +213,3 @@ async def test_business_host_fence_saved_result_and_cross_owner_no_redispatch(ct
             "finish",
         )
         assert finished["phase"] == "closing"
-        await app.state.runner_gateway.native.admin.close()

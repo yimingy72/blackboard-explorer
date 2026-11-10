@@ -326,7 +326,7 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     import json
 
     original = json_value(secret["data"]["credentials.json"])
-    for audience in ["model", "mcp"]:
+    for audience in ["model", "business-mcp"]:
         original[audience] = {
             "audience": audience,
             "task_id": observation["task_id"],
@@ -339,7 +339,9 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     await adapter.publish_mount(observation, bootstrap, renewed, control_only=True)
     actual = json_value(sent[-1][1]["data"]["credentials.json"])
     assert actual["control"] == renewed["control"]
-    assert actual["model"] == original["model"] and actual["mcp"] == original["mcp"]
+    assert (
+        actual["model"] == original["model"] and actual["business-mcp"] == original["business-mcp"]
+    )
     assert sent[-1][1]["data"]["runner-bootstrap.json"] == before["runner-bootstrap.json"]
     assert sent[-1][1]["data"]["ca.pem"] == before["ca.pem"]
     with pytest.raises(ResourceUnknown):
@@ -353,7 +355,7 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     assert sent[-1][1]["data"]["ca.pem"] == before["ca.pem"]
 
     old_mcp = {
-        "audience": "mcp",
+        "audience": "business-mcp",
         "task_id": observation["task_id"],
         "binding_id": "draining",
         "expires_at": 4102444800,
@@ -365,9 +367,8 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
         **renewed,
         "native-mcp-draining-sandbox": old_sandbox,
         "native-mcp-draining-business": old_business,
-        "native-mcp-draining": old_mcp,
         "native-model-draining": {**old_mcp, "audience": "model", "expires_at": -1},
-        "native-mcp-unrelated": {**old_mcp, "binding_id": "unrelated"},
+        "native-mcp-unrelated-business": {**old_mcp, "binding_id": "unrelated"},
     }
     secret["data"] = {
         **sent[-1][1]["data"],
@@ -375,14 +376,17 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
     }
     replacement = {
         **renewed,
-        "native-mcp-replacement": {**old_mcp, "binding_id": "replacement", "token": "new-b"},
+        "native-mcp-replacement-business": {
+            **old_mcp,
+            "binding_id": "replacement",
+            "token": "new-b",
+        },
     }
     await adapter.publish_mount(
         observation, bootstrap, replacement, retain_binding_ids=["draining", "not-mounted"]
     )
     assert json_value(sent[-1][1]["data"]["credentials.json"]) == {
         **replacement,
-        "native-mcp-draining": old_mcp,
         "native-mcp-draining-sandbox": old_sandbox,
         "native-mcp-draining-business": old_business,
     }
@@ -390,10 +394,13 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
         await adapter.publish_mount(
             observation,
             bootstrap,
-            {**renewed, "native-mcp-draining": {**old_mcp, "token": "new-draining-token"}},
+            {
+                **renewed,
+                "native-mcp-draining-business": {**old_business, "token": "new-draining-token"},
+            },
             retain_binding_ids=["draining"],
         )
-    old_records["native-mcp-draining"] = {**old_mcp, "binding_id": "wrong-binding"}
+    old_records["native-mcp-draining-business"] = {**old_business, "binding_id": "wrong-binding"}
     secret["data"]["credentials.json"] = base64.b64encode(json.dumps(old_records).encode()).decode()
     with pytest.raises(ResourceUnknown, match="credential identity changed"):
         await adapter.publish_mount(
@@ -810,8 +817,7 @@ def test_sandbox_host_profile_keeps_mounts_separate_and_requires_both_original_e
         adapter._pod_projection(pod, with_host=True)
 
 
-@pytest.mark.parametrize("direct", [False, True])
-async def test_runner_egress_follows_each_frozen_task_mcp_transport(monkeypatch, direct):
+async def test_runner_egress_excludes_retired_gateway(monkeypatch):
     from bbx_runtime.runner_resources import SANDBOX_HOST_PROFILE
 
     adapter = RunnerResources(
@@ -832,7 +838,7 @@ async def test_runner_egress_follows_each_frozen_task_mcp_transport(monkeypatch,
         "operation_id": observation["operation_id"],
         "namespace": observation["namespace"],
         "hard_deadline": "2099-01-01T00:00:00Z",
-        "config": {"mcp_transport": "direct-v2"} if direct else {},
+        "config": {"mcp_transport": "direct-v2"},
     }
     targets = []
 
@@ -860,4 +866,89 @@ async def test_runner_egress_follows_each_frozen_task_mcp_transport(monkeypatch,
             admit_sandbox_create=unexpected_dispatch,
             checkpoint=unused,
         )
-    assert targets == (["28888"] if direct else ["3000", "28888"])
+    assert targets == ["28888"]
+
+
+@pytest.mark.parametrize("outcome", ["ready", "refused", "wrong_identity", "replaced"])
+async def test_sandbox_readiness_reconnects_only_to_the_original_host(monkeypatch, outcome):
+    import httpx
+
+    adapter = configured()
+    operation = {"observation": identity(adapter)[0]}
+    config = {
+        "task_id": "task",
+        "operation_id": "operation",
+        "runner_pod_uid": "runner-uid",
+        "sandbox_id": "sandbox",
+        "sandbox_pod_uid": "sandbox-uid",
+        "execution_context_id": "context",
+        "inbound_key": "synthetic-readiness-key",
+    }
+    validated = []
+    forwards = []
+    requests = []
+
+    async def verify(actual):
+        assert actual is operation
+        validated.append(actual["observation"]["runner"]["pod_uid"])
+        if outcome == "replaced" and len(validated) == 2:
+            raise ResourceUnknown("The original Sandbox host process is not live")
+        return "synthetic", {}, {"metadata": {"name": "bbx-runner"}}
+
+    class Forward:
+        def __init__(self, port):
+            self.port, self.returncode, self.stdout = port, None, self
+
+        async def readline(self):
+            return f"Forwarding from 127.0.0.1:{self.port} -> 8766\n".encode()
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            assert self.returncode is not None
+            return self.returncode
+
+    async def spawn(*args, **_kwargs):
+        assert args[args.index("port-forward") + 1 :] == (
+            "pod/bbx-runner",
+            ":8766",
+            "--address",
+            "127.0.0.1",
+        )
+        process = Forward(24000 + len(forwards))
+        forwards.append(process)
+        return process
+
+    async def request(probe):
+        assert probe.method == "GET" and probe.url.path == "/ready"
+        assert probe.headers["x-bbx-sandbox-inbound"] == config["inbound_key"]
+        requests.append(probe.url.port)
+        if outcome in {"ready", "replaced"} and len(requests) == 1:
+            forwards[-1].returncode = 1
+            raise httpx.ConnectError("Synthetic cold listener")
+        if outcome == "refused":
+            return httpx.Response(403)
+        ready = {k: v for k, v in config.items() if k != "inbound_key"}
+        if outcome == "wrong_identity":
+            ready["sandbox_pod_uid"] = "foreign"
+        return httpx.Response(200, json={**ready, "ready": True})
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(adapter, "_original_host_runner", verify)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr(
+        "bbx_runtime.runner_resources.httpx.AsyncClient",
+        lambda **kwargs: client(transport=httpx.MockTransport(request), **kwargs),
+    )
+    if outcome == "ready":
+        await adapter.wait_sandbox_host_ready(operation, config)
+        assert requests == [24000, 24001]
+        assert validated == ["runner-uid"] * 3
+    else:
+        with pytest.raises(ResourceUnknown):
+            await adapter.wait_sandbox_host_ready(operation, config)
+        assert requests == [24000]
+        assert len(forwards) == 1
+        assert len(validated) == (2 if outcome == "replaced" else 1)
+    assert all(p.returncode is not None for p in forwards)

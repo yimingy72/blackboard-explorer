@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import uvicorn
 from bbx_blackboard.store import schema
@@ -294,3 +295,121 @@ async def test_actual_claimed_review_and_progress_use_the_same_tls_sender(pi_app
     assert {row["request_sha256"] for row in rows} == {
         hashlib.sha256(post).hexdigest() for post in posts
     }
+
+
+async def test_operator_playground_sends_through_real_runtime_listener(pi_app, provider):
+    from bbx_runtime.runner_proxy import RunnerModelProxy
+    from sqlalchemy import delete
+
+    app, http, tid, model, _, auth, _, user = pi_app
+    origin, posts = provider
+    service = BlackboardClient("http://bbx.test", "not-a-model-sender", http)
+    runtime = RunnerModelProxy(
+        Settings(
+            service_token=SecretStr("unused-generic-runtime-token"),
+            minio_root_password=SecretStr("fixture-minio"),
+            envd_token_secret=SecretStr("fixture-envd"),
+            pi_runtime_sender_token=SecretStr(auth["X-BBX-Pi-Runtime"]),
+            pi_provider_allowed_origins=(origin,),
+        ),
+        service,
+    )
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    app.state.pi_registry.settings.pi_playground_runtime_url = url
+    server = uvicorn.Server(uvicorn.Config(runtime.app, log_level="critical", access_log=False))
+    running = asyncio.create_task(server.serve(sockets=[listener]))
+    request_ids = [str(uuid4()), str(uuid4())]
+    path = "/api/platform/pi-model-tests"
+
+    def original(index, revision):
+        return {
+            "request_id": request_ids[index],
+            "model_id": model["id"],
+            "model_revision": revision,
+            "prompt": f"Synthetic unshared prompt {index}",
+        }
+
+    try:
+        async with asyncio.timeout(5):
+            while not server.started:
+                await asyncio.sleep(0.01)
+        async with httpx.AsyncClient(trust_env=False) as wrong:
+            assert (await wrong.post(url + "/playground", json={})).status_code == 401
+            assert (await wrong.post(url + "/chat/completions", json={})).status_code == 404
+        priced = (
+            (await http.post(path, headers=user, json=original(0, 1))).raise_for_status().json()
+        )
+        assert priced["state"] == "complete" and priced["result_text"] == "Fixture result"
+        assert float(priced["amount_usd"]) == pytest.approx(0.00001)
+        assert priced["usage"]["totalTokens"] == 10
+        assert len(posts) == 1
+
+        saved = await http.put(
+            "/api/platform/pi-models/" + model["id"],
+            headers=user,
+            json={
+                "expected_revision": 1,
+                "label": model["label"],
+                "upstream_model": model["upstream_model"],
+                "base_url": model["base_url"],
+                "context_window": model["context_window"],
+                "max_output_tokens": model["max_output_tokens"],
+                "input_modalities": model["input_modalities"],
+                "usd_rates": None,
+            },
+        )
+        assert saved.status_code == 200 and saved.json()["model_revision"] == 2
+        unpriced = (
+            (await http.post(path, headers=user, json=original(1, 2))).raise_for_status().json()
+        )
+        assert unpriced["state"] == "complete" and unpriced["result_text"] == "Fixture result"
+        assert unpriced["amount_usd"] is None and unpriced["usage"]["totalTokens"] == 10
+        assert len(posts) == 2
+        replay = (
+            (await http.post(path, headers=user, json=original(0, 1))).raise_for_status().json()
+        )
+        restored = (
+            (await http.get(path + "/" + request_ids[0], headers=user)).raise_for_status().json()
+        )
+        assert replay == restored == priced
+        assert len(posts) == 2
+
+        async with app.state.engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        select(schema.pi_model_calls).where(
+                            schema.pi_model_calls.c.turn_id.in_(request_ids)
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert len(rows) == 2
+        assert all(row["purpose"] == "playground" and row["task_id"] is None for row in rows)
+        assert {row["request_sha256"] for row in rows} == {
+            hashlib.sha256(post).hexdigest() for post in posts
+        }
+        assert all("Synthetic unshared prompt" not in str(row["intent"]) for row in rows)
+        task_fees = (
+            (await http.get(f"/api/tasks/{tid}/pi-fees", headers=user)).raise_for_status().json()
+        )
+        assert float(task_fees["solver"]["estimated_usd"]) == 0
+        assert task_fees["solver"]["unknown_calls"] == 0
+    finally:
+        server.should_exit = True
+        await running
+        await runtime.close()
+        listener.close()
+        # The shared disposable PostgreSQL fixture tears down via a guarded downgrade.
+        async with app.state.engine.begin() as conn:
+            await conn.execute(
+                delete(schema.pi_model_calls).where(
+                    schema.pi_model_calls.c.purpose == "playground",
+                    schema.pi_model_calls.c.turn_id.in_(request_ids),
+                )
+            )

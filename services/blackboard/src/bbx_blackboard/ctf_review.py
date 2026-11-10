@@ -10,8 +10,11 @@ from bbx_contracts.pi_models import PiModelVersion
 from sqlalchemy import insert, select
 
 from bbx_blackboard.ctf_board import ensure
-from bbx_blackboard.gateway_maintenance import admission
-from bbx_blackboard.gateway_tasks import ctf_review_allowed, ctf_review_generation
+from bbx_blackboard.gateway_tasks import (
+    ctf_review_allowed,
+    ctf_review_closed,
+    ctf_review_generation,
+)
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
 
@@ -22,7 +25,7 @@ def review_projection(model):
     if (model or {}).get("pi_model"):
         reference = PiModelVersion.model_validate(model["pi_model"]).reference()
         return {"pi_model": reference.model_dump(mode="json")}
-    return {"gateway_model": model}
+    return {}
 
 
 class CtfReviewMixin:
@@ -55,8 +58,7 @@ class CtfReviewMixin:
                 return None
             if (
                 not ctf_review_allowed(task, member)
-                or task["status"] in TERMINAL
-                and not task["cleanup_ready"]
+                or not await ctf_review_closed(conn, task)
                 or task["ctf_control"].get("unresolved_checkpoints")
                 or member.get("pending_operation")
             ):
@@ -72,7 +74,7 @@ class CtfReviewMixin:
                 ):
                     selected = turn["review_model"]
                     if not (selected or {}).get("pi_model"):
-                        await admission(conn)
+                        return None
                     return {**turn, **review_projection(selected)}
                 return None
             source_generation = await ctf_review_generation(conn, tid, member)
@@ -85,7 +87,7 @@ class CtfReviewMixin:
                         s.ctf_messages.c.purpose == "review",
                         s.ctf_messages.c.request_run_number == task["run_number"],
                         s.ctf_messages.c.request_agent_generation == source_generation,
-                        s.ctf_messages.c.review_model.is_not(None),
+                        s.ctf_messages.c.review_model["pi_model"].astext.is_not(None),
                         s.ctf_messages.c.sender_kind == "user",
                         s.ctf_messages.c.status == "queued",
                         s.ctf_messages.c.deferred.is_(False),
@@ -96,8 +98,6 @@ class CtfReviewMixin:
             ).first()
             if pending is None:
                 return None
-            if not pending.review_model.get("pi_model"):
-                await admission(conn)
             values = dict(
                 id=str(uuid4()),
                 agent_id=agent_id,

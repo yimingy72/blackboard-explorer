@@ -1,5 +1,4 @@
 import { createInterface } from "node:readline";
-import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
@@ -148,16 +147,13 @@ const apiModules = {
 
 async function streamModel(job, params) {
   const { model } = params;
-  if (params.trusted_model && (params.gateway || params.custom_transport ||
+  if (params.trusted_model && (params.custom_transport ||
       model.api !== "openai-completions" || !params.api_key)) {
     throw new Error("Invalid trusted Pi model scope");
   }
   const usageEvidence = params.trusted_model ? openAiUsageEvidence() : null;
   const trustedTransport = params.trusted_model ? trustedModelTransport(model, params.trusted_model,
     (scope) => callback(job, "pi_dispatch", scope)) : null;
-  if (params.gateway && (model.api !== "openai-completions" || params.custom_transport)) {
-    throw new Error("Invalid AgentGateway transport");
-  }
   const module = apiModules[model.api];
   if (!module) throw new Error("Unsupported Pi model API");
   const api = await import(`@earendil-works/pi-ai/api/${module}`);
@@ -236,41 +232,13 @@ async function streamModel(job, params) {
       }
       return response;
     };
-    let gatewayClaimed = false;
     const transport = async (url, init) => {
       const headers = new Headers(init?.headers);
       if (trustedTransport) {
         const response = await trustedTransport.fetch(url, init);
-        // Unlike the legacy observation branch, this does not look inside provider SSE.
+        // Pi supplies the provider usage and response metadata.
         observeHeaders(response);
         return response;
-      }
-      if (params.gateway) {
-        const expected = new URL(params.gateway);
-        const request = new URL(url);
-        const body = init?.body;
-        if (gatewayClaimed || request.href !== expected.href || request.username || request.password ||
-            request.search || request.hash || init?.method !== "POST" || typeof body !== "string" ||
-            JSON.parse(body)?.model !== model.id) {
-          throw new Error("AgentGateway dispatch scope changed");
-        }
-        gatewayClaimed = true;
-        const body_sha256 = createHash("sha256").update(body, "utf8").digest("hex");
-        const grant = await callback(job, "gateway_dispatch", { body_sha256 });
-        if (grant.body_sha256 !== body_sha256 || !grant.key || !grant.headers) {
-          throw new Error("AgentGateway dispatch grant did not match");
-        }
-        for (const name of [...headers.keys()]) {
-          if (name.startsWith("x-bbx-") || ["authorization", "api-key", "x-api-key"].includes(name)) {
-            headers.delete(name);
-          }
-        }
-        for (const [name, value] of Object.entries(grant.headers)) {
-          if (!name.startsWith("x-bbx-")) throw new Error("Unexpected AgentGateway grant header");
-          headers.set(name, value);
-        }
-        headers.set("authorization", `Bearer ${grant.key}`);
-        return observeResponse(await nativeFetch(request, { ...init, headers, redirect: "error" }));
       }
       if (params.adapter === "azure_openai_chat" || params.adapter === "anthropic_foundry") {
         headers.set("api-key", params.api_key);

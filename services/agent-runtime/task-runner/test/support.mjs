@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
+import { getCurrentTools } from "@earendil-works/pi-ai";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,15 +16,25 @@ export async function waitFor(read, label, timeoutMs = 10000) {
   while (Date.now() < end) { const value = await read(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 20)); }
   throw new Error(`Timed out waiting for ${label}`);
 }
-export function sse(response, tool) {
+function sendPiMessage(response, tool) {
   response.writeHead(200, { "content-type": "text/event-stream" });
+  const event = (value) => response.write(`data: ${JSON.stringify(value)}\n\n`);
   const definition = typeof tool === "object" ? tool : { name: "remote_echo", arguments: { value: "same" } };
-  const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: "same-sdk-call", type: "function",
-    function: { name: definition.name, arguments: JSON.stringify(definition.arguments) } }] } : { role: "assistant", content: "Done." };
-  const chunk = (delta, finish_reason, usage) => ({ id: "fake", model: "fake", choices: [{ index: 0, delta, finish_reason }], ...(usage ? { usage } : {}) });
-  response.write(`data: ${JSON.stringify(chunk(delta, null))}\n\n`);
-  response.write(`data: ${JSON.stringify(chunk({}, tool ? "tool_calls" : "stop", { prompt_tokens: 30, completion_tokens: 5, total_tokens: 35 }))}\n\n`);
-  response.end("data: [DONE]\n\n");
+  event({ type: "start" });
+  if (tool) {
+    event({ type: "toolcall_start", contentIndex: 0, id: "same-sdk-call", toolName: definition.name });
+    event({ type: "toolcall_end", contentIndex: 0, toolCall: {
+      type: "toolCall", id: "same-sdk-call", name: definition.name, arguments: definition.arguments,
+    } });
+  } else {
+    event({ type: "text_start", contentIndex: 0 });
+    event({ type: "text_end", contentIndex: 0, content: "Done." });
+  }
+  event({ type: "done", reason: tool ? "toolUse" : "stop", usage: {
+    input: 30, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 35,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  } });
+  response.end();
 }
 
 export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
@@ -36,9 +47,9 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
     holdApplied: false, appliedGate: deferred(), appliedEntered: deferred(), actors: [], dropPrepare: false, dropped: false };
   const token = (binding, audience) => `private-${audience}-${binding}`;
   const credentials = { control: { audience: "runner-control", task_id: taskId, expires_at: 4102444800, token: token("task", "control") } };
-  for (const id of ids) for (const audience of ["model", "mcp"]) credentials[`${audience}-${id}`] = {
-    audience, binding_id: id, task_id: taskId, expires_at: 4102444800, token: token(id, audience),
-  };
+  for (const id of ids) for (const [ref, audience] of [["model", "model"], ["mcp", "business-mcp"], ["sandbox", "sandbox-mcp"]]) {
+    credentials[`${ref}-${id}`] = { audience, binding_id: id, task_id: taskId, expires_at: 4102444800, token: token(id, audience) };
+  }
   const send = (response, value, headers = {}) => { response.writeHead(200, { "content-type": "application/json", ...headers }); response.end(JSON.stringify(value)); };
   const server = createServer(async (request, response) => {
     try {
@@ -50,12 +61,13 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
       const wireDigest = digest(raw);
       if (url.pathname.startsWith("/blackboard/")) {
         const bindingId = url.pathname.split("/")[3];
-        const target = state.directMcp && (url.pathname.includes("/helpers/") ? "business" :
-          state.directTargetByTool?.get(body?.tool_name ?? body?.invocation?.tool_name));
+        const tool = body?.tool_name ?? body?.invocation?.tool_name;
+        const target = url.pathname.includes("/helpers/") ? "business" :
+          state.directTargetByTool?.get(tool) ?? (tool === "exec_command" ? "sandbox" : "business");
         assert.equal(request.headers.authorization, url.pathname.includes("/tools/") ||
           (url.pathname.includes("/helpers/") &&
             (/\/(reserve|launch)$/.test(url.pathname) || /\/helpers\/(status|cancel)$/.test(url.pathname)))
-          ? `Bearer ${token(bindingId, target ? `${target}-mcp` : "mcp")}` : `Bearer ${token("task", "control")}`);
+          ? `Bearer ${token(bindingId, `${target}-mcp`)}` : `Bearer ${token("task", "control")}`);
         if (url.pathname.includes("/helpers/") && state.helperApi) {
           await state.helperApi({ url, bindingId, body, response, send });
           return;
@@ -137,62 +149,43 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
         if (url.pathname.endsWith("/unknown")) { send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation.invocation_id,
           disposition: "unknown", arguments_digest: body.invocation.arguments_digest, result_digest: null, result_json: null }); return; }
       }
-      if (url.pathname === "/model/messages" && state.directModelUrl) {
+      if (url.pathname === "/model/messages") {
         const proof = body.bbx.proof;
         const bindingId = proof.binding.binding_id;
         assert.equal(request.headers.authorization, `Bearer ${token(bindingId, "model")}`);
         assert.deepEqual(proof.fence, fence);
         assert.equal(proof.sdk_session_id, state.journal.get(bindingId).sdk_session_id);
         assert.deepEqual(proof.journal, state.journal.get(bindingId).cursor);
-        state.modelCalls.push({ bindingId, body: body.context, action: body.bbx.action,
-          callId: body.bbx.call_id, logicalCallId: body.bbx.logical_call_id });
-        const forwarded = await fetch(state.directModelUrl + "/messages", {
-          method: "POST", body: raw,
-          headers: { "content-type": "application/json", authorization: request.headers.authorization },
-          redirect: "error",
-        });
-        response.writeHead(forwarded.status, { "content-type": forwarded.headers.get("content-type") ?? "text/plain" });
-        if (!forwarded.body) response.end();
-        else Readable.fromWeb(forwarded.body).pipe(response);
+        const context = { ...body.context,
+          messages: [{ role: "system", content: body.context.systemPrompt }, ...body.context.messages],
+          tools: getCurrentTools(body.context.messages).map(tool => ({ function: tool })),
+          reasoning_effort: body.options.reasoning, max_completion_tokens: body.options.maxTokens,
+        };
+        state.modelCalls.push({ bindingId, body: context, action: body.bbx.action,
+          promptRevision: proof.prompt_revision, callId: body.bbx.call_id, logicalCallId: body.bbx.logical_call_id });
+        if (state.directModelUrl) {
+          const forwarded = await fetch(state.directModelUrl + "/messages", {
+            method: "POST", body: raw,
+            headers: { "content-type": "application/json", authorization: request.headers.authorization },
+            redirect: "error",
+          });
+          response.writeHead(forwarded.status, { "content-type": forwarded.headers.get("content-type") ?? "text/plain" });
+          if (!forwarded.body) response.end();
+          else Readable.fromWeb(forwarded.body).pipe(response);
+          return;
+        }
+        const index = state.modelCalls.filter((call) => call.bindingId === bindingId).length;
+        if (state.modelGate) await state.modelGate(bindingId, index);
+        const tool = state.modelTool ? state.modelTool(bindingId, index, context) : state.useTools && index === 1;
+        state.modelReceipts.push({ binding_id: bindingId, model_outcome: "completed" });
+        sendPiMessage(response, tool);
         return;
-      }
-      if (url.pathname.startsWith("/model/")) {
-        const bindingId = body.binding?.binding_id ?? body.binding_id ?? request.headers["x-bbx-binding-id"];
-        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, "model")}`);
-        if (url.pathname.endsWith("/attempts/admit")) {
-          validate("ModelAttemptRequest", body);
-          assert.deepEqual(body.fence, fence);
-          assert.deepEqual(body.binding, state.leaseStates.get(bindingId).binding);
-          assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
-          assert.equal(body.prompt_revision, state.prompts.get(bindingId).prompt_revision);
-          assert.equal(state.attempts.has(body.attempt_id), false);
-          state.attempts.set(body.attempt_id, body);
-          send(response, { protocol: PROTOCOL, confirmed: true, call_id: body.call_id, attempt_id: body.attempt_id, request_digest: wireDigest }); return;
-        }
-        if (url.pathname.endsWith("/receipt")) {
-          state.modelReceipts.push(body);
-          send(response, { protocol: PROTOCOL, confirmed: true, attempt_id: body.attempt_id, request_digest: wireDigest }); return;
-        }
-        if (url.pathname.endsWith("/chat/completions")) {
-          assert.equal(request.headers["x-bbx-runtime-epoch"], String(fence.epoch));
-          const attempt = state.attempts.get(request.headers["x-bbx-attempt-id"]);
-          assert.equal(raw.toString("utf8"), attempt.body_json);
-          assert.equal(wireDigest, attempt.body_digest);
-          assert.equal(request.headers["x-bbx-body-digest"], attempt.body_digest);
-          assert.equal(attempt.binding.binding_id, bindingId);
-          assert.equal(attempt.sdk_session_id, request.headers["x-bbx-sdk-session-id"]);
-          assert.ok(state.leaseStates.get(bindingId).lease_expires_at > Date.now() / 1000);
-          state.modelCalls.push({ bindingId, body, promptRevision: attempt.prompt_revision });
-          const index = state.modelCalls.filter((call) => call.bindingId === bindingId).length;
-          if (state.modelGate) await state.modelGate(bindingId, index);
-          sse(response, state.modelTool ? state.modelTool(bindingId, index, body) : state.useTools && index === 1); return;
-        }
       }
       const target = url.pathname === "/mcp/" ? "sandbox" :
         url.pathname === `/api/tasks/${taskId}/business-mcp-v2/` ? "business" : undefined;
-      if (url.pathname === "/mcp" || (state.directMcp && target)) {
+      if (target) {
         const bindingId = request.headers["x-bbx-binding-id"];
-        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, target ? `${target}-mcp` : "mcp")}`);
+        assert.equal(request.headers.authorization, `Bearer ${token(bindingId, `${target}-mcp`)}`);
         if (request.method === "DELETE") { response.writeHead(204); response.end(); return; }
         if (body.id === undefined) { response.writeHead(202); response.end(); return; }
         let result;
@@ -203,17 +196,17 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
           result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "fake-gateway", version: "1" } };
         } else if (body.method === "tools/list") {
           if (state.holdToolsList === bindingId) { state.toolsListEntered.resolve(); await state.toolsListGate.promise; }
-          if (target) {
+          if (state.directMcp) {
             state.directLists ??= [];
             state.directLists.push({ target, cursor: body.params?.cursor ?? null, sdk: request.headers["x-bbx-sdk-session-id"] });
           }
-          result = { ...(target === "business" && !body.params?.cursor ? { nextCursor: "approved-page" } : {}),
-            tools: target ? state.directTools.get(target)(body.params?.cursor) : state.remoteTools?.get(bindingId) ?? [{ name: "remote_echo", description: "Only a remote fixture tool",
+          result = { ...(state.directMcp && target === "business" && !body.params?.cursor ? { nextCursor: "approved-page" } : {}),
+            tools: state.directMcp ? state.directTools.get(target)(body.params?.cursor) : state.remoteTools?.get(bindingId) ?? [{ name: "remote_echo", description: "Only a remote fixture tool",
             inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } }] };
         }
         else if (body.method === "tools/call") {
           const invocation = body.params._meta.bbx;
-          if (target) {
+          if (state.directMcp) {
             assert.equal(target, state.directTargetByTool.get(invocation.tool_name));
             assert.equal(body.params.name, "same_echo");
           } else {
@@ -254,8 +247,12 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const base = `http://127.0.0.1:${server.address().port}`;
-  const config = { protocol: PROTOCOL, fence, control_url: `${base}/blackboard`, model_proxy_url: `${base}/model`, mcp_gateway_url: `${base}/mcp`,
+  const config = { protocol: PROTOCOL, fence, control_url: `${base}/blackboard`, model_proxy_url: `${base}/model`, mcp_targets: { business: `${base}/api/tasks/${taskId}/business-mcp-v2/`, sandbox: "http://127.0.0.1:8766/mcp/" },
     control_credential_ref: "control", credential_file: join(directory, "mounted-credentials.json"), journal_root: join(directory, "pvc") };
+  const fixtureFetch = join(directory, "fixture-fetch.mjs");
+  await writeFile(fixtureFetch, `const originalFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => new URL(input).href === "http://127.0.0.1:8766/mcp/"
+  ? originalFetch(${JSON.stringify(base + "/mcp/")}, init) : originalFetch(input, init);\n`);
   await writeFile(config.credential_file, JSON.stringify(credentials));
   await writeFile(join(directory, "bootstrap.json"), JSON.stringify(config));
   async function stop(actor, signal = "SIGTERM") {
@@ -291,13 +288,13 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
       if (!state.prompts.has(id)) state.prompts.set(id, { prompt_revision: 1, instructions: `OLD ROLE ${id}` });
       return { binding: { business_contract: "challenge-board-v1", binding_id: id, platform_session_id: `platform-${id}`, agent_id: `agent-${id}`,
       generation: 1, journal_generation: `journal-${id}`, assignment_ref: null },
-      model: { id: "fake", api: "openai-completions", input: ["text"], reasoning: false, thinking_level: "off",
+      model: { id: "fake", model_revision: 2, api: "openai-completions", input: ["text"], reasoning: false, thinking_level: "off",
         thinking_level_map: null, thinking_budgets: null, context_window: 65536, max_output_tokens: 64 },
-      model_credential_ref: `model-${id}`, mcp_credential_ref: `mcp-${id}`, allowed_tools: ["remote_echo"],
-      mcp_tool_aliases: { remote_echo: "remote_echo" },
+      model_credential_ref: `model-${id}`, mcp_target_credential_refs: { business: `mcp-${id}` }, allowed_tools: ["remote_echo"],
+      mcp_tool_routes: { remote_echo: { target: "business", wire_name: "remote_echo" } },
       instructions: `OLD ROLE ${id}`, profile_revision: 1, prompt_revision: 1 }; },
     start() {
-      const child = spawn(process.execPath, [join(root, "src/main.mjs"), join(directory, "bootstrap.json")], {
+      const child = spawn(process.execPath, ["--import", fixtureFetch, join(root, "src/main.mjs"), join(directory, "bootstrap.json")], {
         env: { PATH: process.env.PATH, PI_OFFLINE: "1" }, stdio: ["ignore", "pipe", "pipe"],
       });
       const actor = { child, output: "", exited: once(child, "exit") };

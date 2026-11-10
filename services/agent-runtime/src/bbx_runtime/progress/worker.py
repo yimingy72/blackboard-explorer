@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
+from bbx_contracts.model_limits import effective_max_input_tokens
 from bbx_contracts.models import ModelConfig
 from bbx_contracts.progress import ProgressFailureDiagnostic
 
@@ -16,7 +16,7 @@ from bbx_runtime.chatworker import _completed_text, _has_user_message
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError, is_control_transport_error
 from bbx_runtime.ctf.context import estimate_messages_tokens, fixed_prompt_tokens
 from bbx_runtime.ctf.provider_boundary import provider_call_boundary
-from bbx_runtime.model_errors import OPENAI_PROVIDERS, ModelStreamError, model_error_metadata
+from bbx_runtime.model_errors import OPENAI_PROVIDERS, model_error_metadata
 from bbx_runtime.models import (
     close_model_client,
     make_task_model_client,
@@ -24,7 +24,6 @@ from bbx_runtime.models import (
 )
 from bbx_runtime.pi import (
     Agent,
-    AgentSession,
     BaseChatClient,
     Content,
     Message,
@@ -36,8 +35,7 @@ from bbx_runtime.progress.session import (
     ProgressSessionClient,
     ProgressUsageUnknown,
     checkpoint_for,
-    flush_receipts,
-    settle_terminal_failure,
+    require_resolved_calls,
 )
 from bbx_runtime.progress.tools import data_block, progress_tools
 from bbx_runtime.session import ToolResultCheckpointMiddleware, repair_unpaired_tool_calls
@@ -87,7 +85,6 @@ class ProgressWorker:
         request_started = monotonic()
         request_messages: list[Message] = []
         budget_exhausted = False
-        native_budget_exhausted = False
         try:
             page = await bound.sources(int(job["source_version"]))
             instructions = _instructions(job, page)
@@ -96,29 +93,7 @@ class ProgressWorker:
             assert isinstance(adapter, ProgressSessionClient)
             adapter.source_version = int(page["next_version"])
             repair_unpaired_tool_calls(checkpoint.session, include_interrupted=True)
-            await flush_receipts(checkpoint, bound)
-            failed_receipt = next(
-                (
-                    receipt
-                    for receipt in checkpoint.session.state.get(
-                        "bbx_progress_receipts", {}
-                    ).values()
-                    if receipt.get("job_id") == str(job["job_id"])
-                    and receipt.get("status") == "failed"
-                ),
-                None,
-            )
-            if failed_receipt:
-                # A failed terminal receipt can recover its charge, never replay its model turn.
-                prior = failed_receipt["diagnostic"]
-                raise ModelStreamError(
-                    prior["category"],
-                    event_type=prior.get("event_type"),
-                    provider_code=prior.get("provider_code"),
-                    incomplete_reason=prior.get("incomplete_reason"),
-                    finish_reason=prior.get("finish_reason"),
-                    provider_response_id=prior.get("provider_response_id"),
-                )
+            require_resolved_calls(checkpoint, bound)
             cached = checkpoint.session.state.get("bbx_progress_completion")
             if (
                 cached
@@ -167,11 +142,11 @@ class ProgressWorker:
             tools = progress_tools(bound, checkpoint, tree, job["settings"]["enabled_tools"])
             model = ModelConfig.model_validate(job["model"])
             history = ProgressHistoryProvider(checkpoint, bound, model, tree, instructions, tools)
-            max_output = effective_max_output_tokens(model)
             max_input = effective_max_input_tokens(model)
             fixed_input = fixed_prompt_tokens(instructions, tools)
             active_request: dict[str, Any] | None = None
-            direct = job.get("pi_model") is not None
+            if job.get("pi_model") is None:
+                raise ValueError("This historical progress job has no frozen platform model")
 
             async def before_send() -> None:
                 nonlocal active_request, request_started, budget_exhausted
@@ -179,7 +154,7 @@ class ProgressWorker:
                     raise vars(checkpoint)["progress_control_error"]
                 if checkpoint.session.state.get("bbx_progress_candidate_failures", 0) >= 2:
                     raise ValueError("Progress candidate correction budget exhausted")
-                await flush_receipts(checkpoint, bound)
+                require_resolved_calls(checkpoint, bound)
                 assert active_request is not None
                 request_id = str(uuid4())
                 pending = {
@@ -190,33 +165,8 @@ class ProgressWorker:
                 }
                 checkpoint.session.state["bbx_progress_active_request"] = pending
                 await checkpoint.save()
-                if direct:
-                    pending.update(status="dispatching", pi_direct=True)
-                    await checkpoint.save()
-                    request_started = monotonic()
-                    return
-                try:
-                    reservation = await bound.operation(
-                        "reserve",
-                        request_id=request_id,
-                        input_tokens=pending["input_tokens"],
-                        max_output_tokens=max_output,
-                    )
-                except RemoteError as error:
-                    budget_exhausted = error.status == 402
-                    if error.status < 500:
-                        # A definitive API rejection happened before provider dispatch.
-                        pending["reserve_rejected"] = True
-                    raise
-                pending.update(
-                    status="dispatching", price=reservation["price"], pricing=reservation["pricing"]
-                )
-                try:
-                    await checkpoint.save()
-                except BaseException:
-                    # The provider has not been entered, even if this PUT committed.
-                    pending["status"] = "preparing"
-                    raise
+                pending.update(status="dispatching", pi_direct=True)
+                await checkpoint.save()
                 request_started = monotonic()
 
             def prepare_messages(messages: Any) -> Any:
@@ -242,7 +192,7 @@ class ProgressWorker:
                 active_request = {"input_tokens": text_bytes + 1024}
                 return list(messages)
 
-            def gateway_proof() -> dict[str, Any]:
+            def model_proof() -> dict[str, Any]:
                 current = checkpoint.session.state.get("bbx_progress_active_request")
                 if not isinstance(current, dict) or current.get("status") != "dispatching":
                     raise ValueError("Original progress request is not reserved")
@@ -250,7 +200,6 @@ class ProgressWorker:
                     "job_id": str(job["job_id"]),
                     "claim_token": str(job["claim_token"]),
                     "run_number": job["run_number"],
-                    **({} if direct else {"reservation_id": current["request_id"]}),
                 }
 
             async def run_batch(prompt: Message) -> str:
@@ -261,11 +210,9 @@ class ProgressWorker:
                     return recovered
                 history.batch_message_id = prompt.message_id
                 if _has_user_message(checkpoint.session, prompt.message_id):
-                    if direct:
-                        raise ProgressUsageUnknown(
-                            "The original Pi batch result is unavailable; do not dispatch it again"
-                        )
-                    prompt.message_id += ":resume"
+                    raise ProgressUsageUnknown(
+                        "The original Pi batch result is unavailable; do not dispatch it again"
+                    )
                 if client is None:
                     client = make_task_model_client(
                         model,
@@ -274,7 +221,7 @@ class ProgressWorker:
                         service=self.service,
                         task_id=str(job["task_id"]),
                         purpose="progress",
-                        proof=gateway_proof,
+                        proof=model_proof,
                         explore_max_steps=11,
                         conclude_grace_calls=0,
                         max_duration_seconds=JOB_TIMEOUT_SECONDS,
@@ -367,7 +314,7 @@ class ProgressWorker:
                         raise ValueError("Progress source cursor did not advance")
                     page = await bound.sources(next_version)
                     adapter.source_version = max(adapter.source_version, int(page["next_version"]))
-                await flush_receipts(checkpoint, bound)
+                require_resolved_calls(checkpoint, bound)
                 checkpoint.session.state["bbx_progress_completion"] = {
                     "job_id": str(job["job_id"]),
                     "through_version": job["through_version"],
@@ -390,20 +337,6 @@ class ProgressWorker:
                     checkpoint.session.state.pop("bbx_progress_active_request", None)
                     await checkpoint.save()
                 budget_exhausted = True
-                native_budget_exhausted = True
-            elif (
-                isinstance(error, RemoteError)
-                and error.status == 429
-                and error.code == "gateway_budget_exhausted"
-                and checkpoint is not None
-            ):
-                # The original native budget stopped the request before the
-                # trusted claim. The local reservation was never dispatched.
-                current = checkpoint.session.state.get("bbx_progress_active_request")
-                if isinstance(current, dict) and current.get("status") == "dispatching":
-                    current["status"] = "preparing"
-                budget_exhausted = True
-                native_budget_exhausted = True
             diagnostic = ProgressFailureDiagnostic.model_validate(
                 model_error_metadata(
                     error,
@@ -422,8 +355,6 @@ class ProgressWorker:
                 bound,
                 checkpoint,
                 "成果整理的独立模型额度已耗尽。"
-                if native_budget_exhausted
-                else "整理额度不足以预留下一次模型调用，请调整模型输出上限或独立整理额度。"
                 if budget_exhausted
                 else error.message
                 if isinstance(error, RemoteError)
@@ -431,7 +362,6 @@ class ProgressWorker:
                     str(error) if isinstance(error, ProgressUsageUnknown) else type(error).__name__
                 ),
                 retryable=is_control_transport_error(error),
-                error=error,
                 diagnostic=diagnostic,
                 budget_exhausted=budget_exhausted,
             )
@@ -446,48 +376,14 @@ class ProgressWorker:
         message: str,
         *,
         retryable: bool,
-        error: BaseException | None = None,
         diagnostic: dict[str, Any] | None = None,
         budget_exhausted: bool = False,
     ) -> None:
         assert bound.job is not None
         try:
-            if error is not None and checkpoint is not None:
-                await settle_terminal_failure(checkpoint, bound, error, diagnostic or {})
-            active = (
-                checkpoint.session.state.get("bbx_progress_active_request") if checkpoint else None
-            )
-            if active and active.get("pi_direct"):
-                # The trusted Pi ledger is the only accounting source for this call.
-                retryable = False
-            elif active and active["job_id"] == str(bound.job["job_id"]):
-                assert checkpoint is not None
-                # Never release a reservation after crossing the provider dispatch boundary.
-                unsent = active["status"] == "preparing"
-                if not (unsent and active.get("reserve_rejected")):
-                    try:
-                        await bound.operation(
-                            "settle",
-                            request_id=active["request_id"],
-                            usage={},
-                            usage_known=unsent,
-                            executed=False if unsent else None,
-                        )
-                    except RemoteError as error:
-                        if not unsent or error.status != 404:
-                            raise
-                if unsent:
-                    # Cancellation settlement can itself save a newer Session revision.
-                    saved = await bound.session()
-                    checkpoint.session = AgentSession.from_dict(saved["session"])
-                    checkpoint.revision = int(saved["revision"])
-                    persisted = checkpoint.session.state.get("bbx_progress_active_request", {})
-                    if persisted.get("request_id") == active["request_id"]:
-                        checkpoint.session.state.pop("bbx_progress_active_request", None)
-                        await checkpoint.save()
-                else:
-                    retryable = False
-            elif active:
+            if checkpoint is not None and checkpoint.session.state.get(
+                "bbx_progress_active_request"
+            ):
                 retryable = False
             await bound.operation(
                 "fail",

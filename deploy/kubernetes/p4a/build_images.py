@@ -7,7 +7,7 @@ import runpy
 import subprocess
 from pathlib import Path
 
-from common import HERE, NODE, ROOT, STATE, owned_cluster
+from common import HERE, ROOT, STATE, owned_cluster
 
 TAGS = {
     role: f"bbx-p4a-{name}:20261107"
@@ -15,75 +15,6 @@ TAGS = {
 }
 TOOLS = "bbx-p4a-ubuntu-tools:20261107"
 SANDBOX = "bbx-p4a-sandbox:20261107"
-GATEWAY = (
-    "cr.agentgateway.dev/agentgateway@sha256:"
-    "60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b"
-)
-
-
-def gateway_image():
-    # Save the fixed digest without adding or deleting any host registry tag.
-    digest = GATEWAY.split("@", 1)[1]
-    inspect = ["docker", "image", "inspect", GATEWAY, "--format", "{{.Id}}"]
-    if subprocess.run(inspect, capture_output=True).returncode:
-        subprocess.run(["docker", "pull", "--platform", "linux/amd64", GATEWAY], check=True)
-    if subprocess.check_output(inspect, text=True).strip() != digest:
-        raise RuntimeError("The fixed gateway image identity changed")
-    ctr = ["docker", "exec", NODE, "ctr", "--namespace=k8s.io", "images"]
-    alias = subprocess.check_output([*ctr, "list", "--quiet", "name==" + GATEWAY]).strip()
-    if not alias:
-        saved = subprocess.Popen(["docker", "image", "save", GATEWAY], stdout=subprocess.PIPE)
-        try:
-            imported = subprocess.run(
-                [
-                    "docker",
-                    "exec",
-                    "-i",
-                    NODE,
-                    "ctr",
-                    "--namespace=k8s.io",
-                    "images",
-                    "import",
-                    "--platform",
-                    "linux/amd64",
-                    "--digests",
-                    "--label",
-                    "io.cri-containerd.image=managed",
-                    "-",
-                ],
-                stdin=saved.stdout,
-                capture_output=True,
-            )
-            assert saved.stdout is not None
-            saved.stdout.close()
-            if imported.returncode:
-                saved.terminate()
-            if saved.wait() or imported.returncode:
-                raise RuntimeError("The private gateway image import failed")
-        finally:
-            if saved.poll() is None:
-                saved.terminate()
-                saved.wait()
-    rows = subprocess.check_output([*ctr, "list", "name==" + GATEWAY], text=True).splitlines()
-    if len(rows) != 2 or rows[1].split()[2] != digest:
-        imported = [
-            cols[0]
-            for row in subprocess.check_output([*ctr, "list"], text=True).splitlines()[1:]
-            if len(cols := row.split()) >= 3 and cols[2] == digest and cols[0] != GATEWAY
-        ]
-        if not imported:
-            raise RuntimeError("The private node lacks the original gateway manifest")
-        subprocess.run(
-            [*ctr, "tag", "--force", imported[0], GATEWAY], check=True, capture_output=True
-        )
-        rows = subprocess.check_output([*ctr, "list", "name==" + GATEWAY], text=True).splitlines()
-    if len(rows) != 2 or rows[1].split()[2] != digest:
-        raise RuntimeError("The private node lacks the original gateway manifest")
-    subprocess.run(
-        [*ctr, "label", GATEWAY, "io.cri-containerd.image=managed"], check=True, capture_output=True
-    )
-
-
 def main(candidate):
     owned_cluster()
     tools = STATE / "tools-context/services/envd/Dockerfile"
@@ -139,8 +70,7 @@ def main(candidate):
         str(ROOT / "deploy/kubernetes/p3h/build_images.py"), run_name="p4a_sidecar_build"
     )
     shared["main"](candidate, tags=TAGS, sandbox_tag=SANDBOX)
-    gateway_image()
-    print("P4a candidate images and fixed gateway imported; no Task was launched.")
+    print("P4a candidate images imported; no Task was launched.")
 
 
 if __name__ == "__main__":

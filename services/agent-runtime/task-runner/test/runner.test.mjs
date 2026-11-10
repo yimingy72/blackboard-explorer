@@ -23,12 +23,12 @@ test("a resumed Lead uses a new native session without replaying the closed Lead
   oldSpec.binding.agent_id = newSpec.binding.agent_id = "lead";
   newSpec.binding.generation = oldSpec.binding.generation + 1;
   oldSpec.model_credential_ref = "native-model-lead";
-  oldSpec.mcp_credential_ref = "native-mcp-lead";
+  oldSpec.mcp_target_credential_refs.business = "native-mcp-lead";
   newSpec.model_credential_ref = "native-model-new-lead";
-  newSpec.mcp_credential_ref = "native-mcp-new-lead";
+  newSpec.mcp_target_credential_refs.business = "native-mcp-new-lead";
   const oldMount = { control: h.credentials.control,
     [oldSpec.model_credential_ref]: h.credentials["model-old-lead"],
-    [oldSpec.mcp_credential_ref]: h.credentials["mcp-old-lead"] };
+    [oldSpec.mcp_target_credential_refs.business]: h.credentials["mcp-old-lead"] };
   await project(h, oldMount);
   h.state.useTools = true;
   const credentials = new MountedCredentials(h.config.credential_file, "task");
@@ -63,7 +63,7 @@ test("a resumed Lead uses a new native session without replaying the closed Lead
   assert.equal(h.state.connections.filter((r) => r.bindingId === "new-lead").length, 0);
   await project(h, { control: h.credentials.control,
     [newSpec.model_credential_ref]: h.credentials["model-new-lead"],
-    [newSpec.mcp_credential_ref]: h.credentials["mcp-new-lead"] });
+    [newSpec.mcp_target_credential_refs.business]: h.credentials["mcp-new-lead"] });
   const replacement = await waitFor(() => h.state.receipts.find((r) => r.request_id === resumed.request_id && r.status === "prepared"), "new Lead prepared");
   assert.notEqual(replacement.sdk_session_id, prepared.sdk_session_id);
   assert.deepEqual(replacement.fence, prepared.fence);
@@ -178,17 +178,17 @@ test("trusted MCP aliases reject missing declarations, ambiguous catalogs and fo
   ]);
   for (const id of ids) {
     const spec = h.spec(id);
-    spec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
-    if (id === "missing") delete spec.mcp_tool_aliases;
-    if (id === "keys") spec.mcp_tool_aliases = { undeclared: "business_remote_echo" };
+    spec.mcp_tool_routes = { remote_echo: { target: "business", wire_name: "business_remote_echo" } };
+    if (id === "missing") delete spec.mcp_tool_routes;
+    if (id === "keys") spec.mcp_tool_routes = { undeclared: { target: "business", wire_name: "business_remote_echo" } };
     if (id === "duplicate") {
       spec.allowed_tools.push("other");
-      spec.mcp_tool_aliases.other = "business_remote_echo";
+      spec.mcp_tool_routes.other = { target: "business", wire_name: "business_remote_echo" };
     }
     if (id === "allowed") spec.allowed_tools.push("remote_echo");
     const command = h.command({ kind: "prepare", spec });
     if (id === "missing") assert.throws(() => decodeCommand(command), /Invalid RunnerPayload/);
-    else await assert.rejects(runner.handle(decodeCommand(command)), /aliases|unavailable, ambiguous/);
+    else await assert.rejects(runner.handle(decodeCommand(command)), /routes|unavailable, ambiguous/);
   }
   assert.equal(runner.sessions.size, 0);
   assert.equal(h.state.modelCalls.length, 0);
@@ -266,11 +266,11 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   await h.configure({ mcp_metadata_timeout_ms: 500 });
   h.state.toolBarrier = deferred();
   const firstSpec = h.spec("one");
-  firstSpec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
+  firstSpec.mcp_tool_routes = { remote_echo: { target: "business", wire_name: "business_remote_echo" } };
   firstSpec.model = { ...firstSpec.model, input: ["text", "image"], reasoning: true, thinking_level: "high",
     thinking_level_map: { off: "none", high: "high" } };
   const secondSpec = h.spec("two");
-  secondSpec.mcp_tool_aliases = { remote_echo: "business_remote_echo" };
+  secondSpec.mcp_tool_routes = { remote_echo: { target: "business", wire_name: "business_remote_echo" } };
   secondSpec.model = { ...secondSpec.model, reasoning: true, thinking_level: "high",
     thinking_level_map: { off: "none", high: "high" } };
   h.command({ kind: "prepare", spec: firstSpec }, "prepare-one");
@@ -323,7 +323,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.ok(firstCalls.every((call) => call.body.max_completion_tokens === firstSpec.model.max_output_tokens && call.body.max_tokens === undefined));
   assert.equal(h.state.droppedToolReply, true);
   assert.deepEqual(firstCalls.map((call) => call.body.tools.map((tool) => tool.function.name)), [["remote_echo"], ["remote_echo"]]);
-  assert.deepEqual([...h.state.attempts.values()].filter((attempt) => attempt.binding.binding_id === "one")[0].model_snapshot.input, ["text", "image"]);
+  assert.equal(h.state.attempts.size, 0, "Runner forwards only the frozen Pi model reference");
   for (const id of ["one", "two"]) {
     const journal = await readFile(join(h.config.journal_root, id, "session.jsonl"), "utf8");
     for (const credential of Object.values(h.credentials)) assert.equal(journal.includes(credential.token), false);
@@ -346,7 +346,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
     lease_expires_at: Math.floor(Date.now() / 1000) + 10, sdk_session_id: h.state.journal.get("one").sdk_session_id,
     cursor: h.state.journal.get("one").cursor });
   const one = runner.sessions.get("one");
-  const oneMcp = one.mcpClients.get("legacy");
+  const oneMcp = one.mcpClients.get("business");
   const oneFile = one.journal.file;
   one.unresolvedAttempts.add("unresolved-attempt"); one.unresolvedInvocations.add("unresolved-invocation");
   const closeOne = h.command({ kind: "close", binding_id: "one" });
@@ -379,7 +379,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   const preparing = h.command({ kind: "prepare", spec: h.spec("preparing") });
   await h.state.toolsListEntered.promise;
   const preparingSlot = runner.preparingSlots.get("preparing");
-  const preparingMcp = preparingSlot.mcpClients.get("legacy");
+  const preparingMcp = preparingSlot.mcpClients.get("business");
   assert.equal(typeof preparingSlot.sdkSessionId, "string");
   assert.equal(preparingSlot.session, undefined);
   const closePreparing = h.command({ kind: "close", binding_id: "preparing" });
@@ -410,7 +410,7 @@ test("two native sessions concurrently calling the same MCP tool and arguments k
   assert.equal(exitCode, null, "a benign late renewal must not terminate the task runner");
   assert.equal(h.state.modelCalls.length, 5);
   const two = runner.sessions.get("two");
-  const twoMcp = two.mcpClients.get("legacy");
+  const twoMcp = two.mcpClients.get("business");
   const twoFile = two.journal.file;
   const closeMcp = twoMcp.close.bind(twoMcp);
   twoMcp.close = async () => { await closeMcp(); throw new Error("Injected MCP close failure"); };

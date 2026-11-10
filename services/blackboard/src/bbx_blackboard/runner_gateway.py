@@ -96,12 +96,6 @@ class RunnerGateway:
             + settings.agent_token_secret.get_secret_value().encode()
         ).digest()
         self.cipher = Fernet(base64.urlsafe_b64encode(key))
-        from bbx_blackboard.native_fees import NativeFees
-
-        self.native = NativeFees(self)
-        from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
-
-        self.routes = NativeMCPRoutes(self)
         from bbx_blackboard.sandbox_tools import SandboxTools
 
         self.sandbox = SandboxTools(self)
@@ -143,43 +137,29 @@ class RunnerGateway:
             binding = await self.control._binding(conn, tid, bid, owner, live=True)
             if binding["business"].get("native_child_id"):
                 raise HTTPException(403, "Helper credentials require the original launch claim")
-            if await task_direct_mcp(conn, tid):
-                spec = json.loads(binding["payload_json"])["spec"]
-                targets = spec.get("mcp_target_credential_refs")
-                if not targets:
-                    raise HTTPException(409, "Direct MCP binding is missing its target identities")
-                member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
-                config = await conn.scalar(
-                    select(s.task_runner_resources.c.config).where(
-                        s.task_runner_resources.c.task_id == tid
-                    )
-                )
-                if not config or config.get("mcp_transport") != "direct-v2":
-                    raise HTTPException(409, "Direct MCP deployment is not frozen")
-                return {
-                    **issue_gateway_credentials(
-                        self.settings, owner, bid, member["role"], targets=targets
-                    ),
-                    "mcp_targets": {
-                        "business": config["runner_blackboard_url"].rstrip("/")
-                        + f"/api/tasks/{tid}/business-mcp-v2/",
-                        "sandbox": "http://127.0.0.1:8766/mcp/",
-                    },
-                }
-            await self.routes.prepare(conn, tid)
-        verified_revision = await self.routes.reconcile(tid)
-        async with self.repo.engine.begin() as conn:
-            await self.repo.lock(conn, tid)
-            await self.control._task(conn, tid, live=True)
-            owner = await self.control._current_owner(conn, tid)
-            if body.expected_epoch != owner["epoch"]:
-                raise HTTPException(409, "Runner owner changed")
-            binding = await self.control._binding(conn, tid, bid, owner, live=True)
-            mcp_gateway_url = await self.routes.require_ready(conn, tid, verified_revision)
+            if not await task_direct_mcp(conn, tid):
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
+            spec = json.loads(binding["payload_json"])["spec"]
+            targets = spec.get("mcp_target_credential_refs")
+            if not targets:
+                raise HTTPException(409, "Direct MCP binding is missing its target identities")
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+            config = await conn.scalar(
+                select(s.task_runner_resources.c.config).where(
+                    s.task_runner_resources.c.task_id == tid
+                )
+            )
+            if not config or config.get("mcp_transport") != "direct-v2":
+                raise HTTPException(409, "Direct MCP deployment is not frozen")
             return {
-                **issue_gateway_credentials(self.settings, owner, bid, member["role"]),
-                "mcp_gateway_url": mcp_gateway_url,
+                **issue_gateway_credentials(
+                    self.settings, owner, bid, member["role"], targets=targets
+                ),
+                "mcp_targets": {
+                    "business": config["runner_blackboard_url"].rstrip("/")
+                    + f"/api/tasks/{tid}/business-mcp-v2/",
+                    "sandbox": "http://127.0.0.1:8766/mcp/",
+                },
             }
 
     async def _call(self, conn, tid, key):
@@ -234,13 +214,11 @@ class RunnerGateway:
                 else set(roles.get(member["role"], [])) | set(SANDBOX_TOOLS)
             )
             spec = json.loads(binding["payload_json"])["spec"]
-            declared = set(spec["allowed_tools"])
-            if identity.audience != "mcp":
-                declared = {
-                    name
-                    for name, route in spec.get("mcp_tool_routes", {}).items()
-                    if DIRECT_MCP[route["target"]][0] == identity.audience
-                }
+            declared = {
+                name
+                for name, route in spec.get("mcp_tool_routes", {}).items()
+                if DIRECT_MCP[route["target"]][0] == identity.audience
+            }
             return sorted(allowed & declared)
 
     async def _tool(self, conn, tid, identity, invocation, *, live=True):
@@ -267,16 +245,15 @@ class RunnerGateway:
             )
             binding = await row(conn, s.runner_bindings, tid, identity.binding_id)
         await require_mcp_transport(conn, tid, identity)
-        if identity.audience != "mcp":
-            spec = json.loads(binding["payload_json"])["spec"]
-            route = spec.get("mcp_tool_routes", {}).get(invocation.tool_name)
-            target = route["target"] if route else None
-            if invocation.tool_name in {"delegate_helper", *BACKGROUND_HELPER_TOOLS} and (
-                spec.get("helper_foreground") or spec.get("helper_background")
-            ):
-                target = "business"
-            if target is None or DIRECT_MCP[target][0] != identity.audience:
-                raise HTTPException(403, "MCP capability does not match the frozen tool target")
+        spec = json.loads(binding["payload_json"])["spec"]
+        route = spec.get("mcp_tool_routes", {}).get(invocation.tool_name)
+        target = route["target"] if route else None
+        if invocation.tool_name in {"delegate_helper", *BACKGROUND_HELPER_TOOLS} and (
+            spec.get("helper_foreground") or spec.get("helper_background")
+        ):
+            target = "business"
+        if target is None or DIRECT_MCP[target][0] != identity.audience:
+            raise HTTPException(403, "MCP capability does not match the frozen tool target")
         identity_fields = [
             str(tid),
             identity.binding_id,

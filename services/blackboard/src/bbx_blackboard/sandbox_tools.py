@@ -31,7 +31,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from bbx_blackboard.auth import require_task_reader
 from bbx_blackboard.gateway_auth import mcp_identity, require_gateway_identity
-from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_traffic import (
     PART_LIMIT,
     CaptureReady,
@@ -40,7 +39,7 @@ from bbx_blackboard.native_traffic import (
     opted_in,
 )
 from bbx_blackboard.native_vpn import vpn_enabled, vpn_solver_deadline
-from bbx_blackboard.runner_control import row
+from bbx_blackboard.runner_control import native_stopping, row
 from bbx_blackboard.runner_gateway import decode
 from bbx_blackboard.store import schema as s
 
@@ -627,7 +626,7 @@ class SandboxTools:
     async def _scope_live(self, conn, tid, binding_id):
         try:
             task = await self.gateway.control._task(conn, tid)
-            if NativeMCPRoutes.stopping(task):
+            if native_stopping(task):
                 return False
             owner = await self.gateway.control._current_owner(conn, tid)
             binding = await row(conn, s.runner_bindings, tid, binding_id)
@@ -865,7 +864,7 @@ async def _host_body(request, model, maximum):
 
 def sandbox_mcp_identity(request: Request, tid: UUID):
     identity = mcp_identity(request, tid)
-    if identity.audience not in {"mcp", "sandbox-mcp"}:
+    if identity.audience != "sandbox-mcp":
         raise HTTPException(403, "A Sandbox target capability is required")
     return identity
 

@@ -82,7 +82,6 @@ def main(candidate, *, capture_source=None):
         "reference": capture_tag.rsplit(":", 1)[0] + "@" + capture_id,
     }
     path.write_text(json.dumps(inventory, indent=2) + "\n")
-    runpy.run_path(str(ROOT / "deploy/kubernetes/p4g/build_images.py"))["gateway_image"]()
 
 
 def revised(candidate):

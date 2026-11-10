@@ -19,7 +19,7 @@ from test_board_flags_integration import Objects
 from test_ctf_api import settings
 from test_ctf_integration import ctf as ctf
 from test_ctf_integration import ctf_url as ctf_url
-from test_native_runner_bootstrap_integration import config, runtime_settings
+from test_native_runner_bootstrap_integration import config, fixture_pi_model, runtime_settings
 from test_runner_control_integration import SERVICE
 
 pytestmark = pytest.mark.integration
@@ -28,15 +28,10 @@ pytestmark = pytest.mark.integration
 async def test_explicit_delete_retirement_manifest_and_purge(ctf, ctf_url):
     options = settings().model_copy(
         update={
+            "pi_site_id": "fixture-primary",
+            "pi_model_primary_site": "fixture-primary",
+            "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("fixture-resolver"),
-            "native_gateway_accounting_source_id": "fixture-accounting-db",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "fixture-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
         }
     )
     objects = Objects()
@@ -50,6 +45,7 @@ async def test_explicit_delete_retirement_manifest_and_purge(ctf, ctf_url):
             "ctf_options": {"max_teammates": 1},
         },
         business_contract=BOARD_CONTRACT,
+        pi_model=fixture_pi_model("fixture-model"),
     )
     path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap"
     deployment = {**config(), "storage_class": "fixture-delete-class"}

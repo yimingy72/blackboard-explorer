@@ -1,7 +1,6 @@
 """Manual pause and fresh continuation under the original native Task fence."""
 
 import json
-from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
 from bbx_contracts.challenge_board import native_dispatch_enabled
@@ -12,8 +11,6 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 
 from bbx_blackboard.board_events import digest, emit, prior
-from bbx_blackboard.gateway_maintenance import admission
-from bbx_blackboard.native_fees import threshold_hold_id
 from bbx_blackboard.native_vpn import require_vpn_resume
 from bbx_blackboard.pi_ledger import pi_budget_available, task_pi_model, uncertain
 from bbx_blackboard.runner_control import row
@@ -22,6 +19,24 @@ from bbx_blackboard.store import schema as s
 
 def operation_id(*parts):
     return str(uuid5(NAMESPACE_URL, "native-pause:" + ":".join(map(str, parts))))
+
+
+def threshold_hold_id(task):
+    control = task["ctf_control"]
+    hold = control.get("native_budget_hold") or {}
+    hold_id = hold.get("id")
+    if (
+        hold_id
+        and hold.get("reason") == "budget_exceeded"
+        and not hold.get("recovery_blocker")
+        and control.get("failure_hold") == budget_failure_hold(hold_id)
+    ):
+        return hold_id
+    return None
+
+
+def budget_failure_hold(hold_id):
+    return {"task_wide": True, "source": "native_gateway", "budget_hold_id": hold_id}
 
 
 def pause_status(task):
@@ -56,8 +71,6 @@ class NativePause:
     def __init__(self, bootstrap):
         self.bootstrap = bootstrap
         self.repo, self.control, self.ctf = bootstrap.repo, bootstrap.control, bootstrap.ctf
-        self.native = bootstrap.gateway.native
-        self.native.pause_control = self
 
     async def _context(self, conn, tid):
         task = await self.control._task(conn, tid)
@@ -126,24 +139,6 @@ class NativePause:
                 hashed,
                 pause,
             )
-
-    async def start_budget(self, conn, tid, hold_id, budget):
-        task, record, owner = await self._context(conn, tid)
-        captured = {
-            "budget_hold_id": hold_id,
-            "budget_key": list(self._budget_identity(budget)[:-1]),
-        }
-        state = native_pause_state(task)
-        if state in {"draining", "paused"}:
-            data = record["data"]
-            snapshot = data["pause_snapshot"]
-            if any(snapshot.get(k) != v for k, v in self._identity(record, owner).items()):
-                raise HTTPException(409, "Original budget pause resources changed")
-            await self.bootstrap._set(
-                conn, tid, data={**data, "pause_snapshot": {**snapshot, **captured}}
-            )
-        elif state != "resuming":
-            await self._start(conn, tid, task, record, owner, hold_id, budget=captured)
 
     async def _start(self, conn, tid, task, record, owner, pause_id, *, budget=None):
         data, control = dict(record["data"]), dict(task["ctf_control"])
@@ -356,18 +351,6 @@ class NativePause:
             )
             await self.bootstrap._set(conn, tid, data={**data, "pause_state": pause["state"]})
 
-    @staticmethod
-    def _budget_identity(budget):
-        return tuple(
-            budget[name]
-            for name in (
-                "accounting_source_id",
-                "native_resource_id",
-                "key_fingerprint",
-                "key_name",
-            )
-        ) + (budget["config"]["threshold_usd"],)
-
     def _resume_snapshot(self, task, record, owner, pause_id):
         pause = task["ctf_control"].get("native_pause", {})
         snapshot = record["data"].get("pause_snapshot", {})
@@ -389,84 +372,25 @@ class NativePause:
             raise HTTPException(409, blocker)
         return task, record, owner, snapshot
 
-    def _budget_pause(self, task, snapshot, budget):
-        hold_id = snapshot.get("budget_hold_id")
-        if (
-            not hold_id
-            or threshold_hold_id(task) != hold_id
-            or budget["hold_reason"] != "budget_exceeded"
-            or budget["publication_state"] != "ready"
-            or not budget["native_resource_id"]
-            or snapshot.get("budget_key") != list(self._budget_identity(budget)[:-1])
-            or task["ctf_control"]["native_budget_hold"]["source_id"]
-            != budget["accounting_source_id"]
-        ):
-            raise HTTPException(409, "Original threshold pause is unavailable")
-        return hold_id
-
-    def _resume_budget(self, task, snapshot, budget):
-        if budget["publication_state"] != "ready" or budget["config"].get("pending_increase"):
-            raise HTTPException(409, "Original native budget is not confirmed")
-        if not snapshot.get("budget_hold_id") and not budget["hold_reason"]:
-            return False
-        hold_id = self._budget_pause(task, snapshot, budget)
-        if budget["config"].get("last_increase_hold_id") != hold_id:
-            raise HTTPException(409, "Original threshold pause needs a confirmed increase")
-        return True
-
     async def resume(self, tid, request):
         hashed = digest({"operation": "native_user_resume", **request.model_dump(mode="json")})
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             if previous := await prior(conn, tid, "user", request.request_id, hashed):
                 return previous
-            task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
-            require_vpn_resume(record, request.pause_id)
-            if await task_pi_model(conn, tid) is not None:
-                if not await pi_budget_available(conn, tid, self.bootstrap.settings.pi_site_id):
-                    raise HTTPException(409, "Original Pi budget cannot authorize continuation")
-                return await self._continue(
-                    conn, tid, task, record, owner, snapshot, request, hashed
-                )
-            budget = await self.native._budget(conn, tid)
-            budget_resume = self._resume_budget(task, snapshot, budget)
-        guarded = await self.native.original_model_guard(tid)
-        if budget_resume:
-            await self.native.verified_key(budget, budget["config"]["native_value"], exact=True)
-        native, used, exceeded = await self.native.threshold_status(budget)
-        async with self.repo.engine.begin() as conn:
-            await self.repo.lock(conn, tid)
-            if previous := await prior(conn, tid, "user", request.request_id, hashed):
-                return previous
-            if guarded is not None:
-                await admission(conn, guarded[0])
-            task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
-            require_vpn_resume(record, request.pause_id)
-            current = await self.native._budget(conn, tid)
+            frozen = await task_pi_model(conn, tid)
+            resource = await self.bootstrap._get(conn, tid)
             if (
-                self._budget_identity(current) != self._budget_identity(budget)
-                or current["config"] != budget["config"]
-                or self._resume_budget(task, snapshot, current) != budget_resume
-                or exceeded
-                or used >= Decimal(current["config"]["threshold_usd"])
-                or used < await self.native.usage_floor(conn, tid, current)
+                not resource
+                or resource["data"].get("mcp_transport") != "direct-v2"
+                or frozen is None
+                or frozen[0] != self.bootstrap.settings.pi_model_authority
             ):
-                raise HTTPException(409, "Original native budget cannot authorize continuation")
-            if budget_resume:
-                control = dict(task["ctf_control"])
-                del control["native_budget_hold"], control["failure_hold"]
-                task = {**task, "ctf_control": control}
-                await conn.execute(
-                    update(s.tasks).where(s.tasks.c.id == tid).values(ctf_control=control)
-                )
-            await conn.execute(
-                update(s.native_task_budgets)
-                .where(s.native_task_budgets.c.task_id == tid)
-                .values(
-                    hold_reason=None,
-                    status_snapshot={"latest": native, "used_high_water_usd": str(used)},
-                )
-            )
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
+            task, record, owner, snapshot = await self._confirmed_pause(conn, tid, request.pause_id)
+            require_vpn_resume(record, request.pause_id)
+            if not await pi_budget_available(conn, tid, self.bootstrap.settings.pi_site_id):
+                raise HTTPException(409, "Original Pi budget cannot authorize continuation")
             return await self._continue(conn, tid, task, record, owner, snapshot, request, hashed)
 
     async def _known_results(self, conn, tid, bid):
@@ -660,7 +584,7 @@ class NativePause:
         bid = continuation["binding_id"]
         spec = json.loads(old_lead["payload_json"])["spec"]
         spec.pop("binding")
-        for field in ("mcp_tool_aliases", "mcp_tool_routes", "mcp_target_credential_refs"):
+        for field in ("mcp_tool_routes", "mcp_target_credential_refs"):
             spec.pop(field, None)
         binding = await self.control._register_binding(
             conn,

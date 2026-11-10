@@ -8,10 +8,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price, token_cost
-from bbx_contracts.gateway_models import GatewayModelRef, GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
 from bbx_contracts.models import ModelConfig, Price
 from bbx_contracts.pi_models import PiModelRef, PiModelVersion
@@ -44,13 +43,6 @@ from bbx_blackboard.auth import (
 )
 from bbx_blackboard.conversations import Conversations, _public
 from bbx_blackboard.domain.rules import event
-from bbx_blackboard.gateway_budgets import GatewayBudgets
-from bbx_blackboard.gateway_maintenance import admission, observed_generation
-from bbx_blackboard.gateway_tasks import (
-    gateway_display_model,
-    require_original_model,
-    task_gateway_model,
-)
 from bbx_blackboard.pi_ledger import pi_totals, task_pi_model
 from bbx_blackboard.pi_registry import display_pi_model
 from bbx_blackboard.store import Repository
@@ -211,14 +203,14 @@ class ProgressService:
         objects=None,
         profiles_dir: Path | None = None,
         *,
-        require_gateway=False,
+        require_pi=False,
         pi_site_id: str = "",
     ):
         self.repo = Repository(engine)
         self.conversations = Conversations(engine)
         self.objects = objects
         self.profiles_dir = profiles_dir
-        self.require_gateway = require_gateway
+        self.require_pi = require_pi
         self.pi_site_id = pi_site_id
 
     async def task(self, conn, tid, *, writable=False, allow_deleting=False):
@@ -301,7 +293,7 @@ class ProgressService:
                     "Core progress tools cannot be disabled",
                     422,
                 )
-                if self.require_gateway and body.model_id is not None:
+                if self.require_pi and body.model_id is not None:
                     raise HTTPException(422, "Progress can only reference an AgentGateway model")
                 if body.model_id is not None:
                     model = (
@@ -329,11 +321,10 @@ class ProgressService:
                 )
             return value
 
-    async def settings(self, tid, body, *, gateway_scope=None, pi_scope=None):
+    async def settings(self, tid, body, *, pi_scope=None):
         async with self.repo.engine.begin() as conn:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
-            budget_request = None
             if body.enabled and pi_scope is not None:
                 authority, model, site_id = pi_scope
                 frozen = {"authority": authority, "snapshot": model.model_dump(mode="json")}
@@ -347,39 +338,12 @@ class ProgressService:
                 state["pi_model"] = frozen
                 state["budget_currency"] = "USD"
                 state["model"] = display_pi_model(model).model_dump(mode="json")
-            elif body.enabled:
-                await admission(conn)
-                if self.require_gateway:
-                    if (
-                        gateway_scope is None
-                        or body.model_id is not None
-                        or body.model_version is not None
-                    ):
-                        raise HTTPException(409, "Progress needs an applied AgentGateway model")
-                    model, generation, budget_request = gateway_scope
-                    await admission(conn, generation)
-                    original = state.get("gateway_model")
-                    if original is not None and original != model.model_dump(mode="json"):
-                        raise HTTPException(409, "The original Progress model cannot change")
-                    state["gateway_model"] = model.model_dump(mode="json")
-                    state["budget_currency"] = "USD"
-                    state["model"] = gateway_display_model(model).model_dump(mode="json")
+            elif body.enabled and self.require_pi:
+                raise HTTPException(409, "Historical Progress remains read-only")
             check(
                 not body.enabled or body.max_cost >= self.occupied(state),
                 "Limit is below committed or reserved use",
             )
-            if self.require_gateway and body.enabled and pi_scope is None:
-                assert gateway_scope is not None
-                native = await GatewayBudgets.find(conn, tid, "progress")
-                if native is not None and native["publication_state"] == "ready":
-                    await GatewayBudgets.confirm_platform_limit(
-                        conn,
-                        tid,
-                        "progress",
-                        body.max_cost,
-                        budget_request,
-                        {"operation": "progress-settings", "currency": "USD"},
-                    )
             effective = {**state["settings"], **body.model_dump(mode="json", exclude_unset=True)}
             if pi_scope is not None:
                 chosen = pi_scope[1]
@@ -388,7 +352,7 @@ class ProgressService:
                     "model_revision": chosen.model_revision,
                 }
             if (
-                not self.require_gateway
+                not self.require_pi
                 and effective["enabled"]
                 and (
                     not state["settings"]["enabled"]
@@ -619,9 +583,8 @@ class ProgressService:
         async with self.repo.engine.begin() as conn:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
-            await admission(conn)
-            if self.require_gateway and not (state.get("gateway_model") or state.get("pi_model")):
-                raise HTTPException(409, "Progress needs an applied AgentGateway model")
+            if self.require_pi and not state.get("pi_model"):
+                raise HTTPException(409, "Historical Progress remains read-only")
             check(state["settings"]["enabled"], "Progress is disabled")
             existing = (
                 (
@@ -652,9 +615,8 @@ class ProgressService:
         async with self.repo.engine.begin() as conn:
             task = await self.task(conn, tid, writable=True)
             state = await self.state(conn, task)
-            await admission(conn)
-            if self.require_gateway and not (state.get("gateway_model") or state.get("pi_model")):
-                raise HTTPException(409, "Progress needs an applied AgentGateway model")
+            if self.require_pi and not state.get("pi_model"):
+                raise HTTPException(409, "Historical Progress remains read-only")
             check(state["settings"]["enabled"], "Progress is disabled")
             existing = (
                 (
@@ -1213,12 +1175,8 @@ class ProgressService:
                     effective_settings["model_id"] = effective_settings.get(
                         "model_id"
                     ) or global_value.get("model_id")
-                    if self.require_gateway and not (
-                        state.get("gateway_model") or state.get("pi_model")
-                    ):
+                    if self.require_pi and not state.get("pi_model"):
                         continue
-                    if not state.get("pi_model"):
-                        await admission(conn)
                     model = state.get("model") or await self.model(conn, task, effective_settings)
                     floor = max(
                         state["source_version"],
@@ -1253,7 +1211,6 @@ class ProgressService:
                         scanned_version=state["source_version"],
                         candidate=None,
                         model=model,
-                        gateway_model=state.get("gateway_model"),
                         pi_model=state.get("pi_model"),
                         budget_currency=state.get("budget_currency"),
                         settings=effective_settings,
@@ -1295,7 +1252,6 @@ class ProgressService:
                         "source_version": state["source_version"],
                         "settings": effective_settings,
                         "model": model,
-                        "gateway_model": state.get("gateway_model"),
                         **(
                             {
                                 "pi_model": PiModelVersion.model_validate(
@@ -1598,8 +1554,7 @@ class ProgressService:
             model = ModelConfig.model_validate(job["data"]["model"])
             price, pricing = effective_price(model, now())
             check(
-                price.currency == ("USD" if self.require_gateway else "CNY")
-                and price.is_complete(),
+                price.currency == ("USD" if self.require_pi else "CNY") and price.is_complete(),
                 "Complete prices in the original Progress currency are required",
             )
             assert (
@@ -2096,7 +2051,7 @@ def service(request: Request) -> ProgressService:
         request.app.state.engine,
         request.app.state.objects,
         request.app.state.settings.profiles_dir,
-        require_gateway=True,
+        require_pi=True,
         pi_site_id=request.app.state.settings.pi_site_id,
     )
 
@@ -2128,11 +2083,6 @@ async def global_put(request: Request, body: ProgressGlobalSettings):
     require_user_or_service(request)
     if body.pi_model is not None:
         await request.app.state.pi_registry.selected(body.pi_model)
-    elif body.gateway_model is not None:
-        selected = await request.app.state.gateway_models.require_active(
-            body.gateway_model.alias, body.gateway_model.catalog_revision
-        )
-        check(selected.tool_call, "Progress requires a model with tools", 422)
     return await service(request).global_settings(body)
 
 
@@ -2168,14 +2118,13 @@ async def settings_put(request: Request, tid: UUID, body: ProgressSettings):
     require_user_or_service(request)
     check("at_version" not in request.query_params, "Historical progress is read-only", 403)
     progress = service(request)
-    scope = None
     registry = request.app.state.pi_registry
     async with progress.repo.engine.connect() as conn:
         task_model = await task_pi_model(conn, tid)
-    if body.pi_model is not None and task_model is None:
-        raise HTTPException(409, "此旧任务仍使用原冻结模型")
+    if body.enabled and (task_model is None or registry is None or not registry.enabled):
+        raise HTTPException(409, "原成果整理无法安全迁移；旧记录仍可查看")
     if body.enabled and task_model is not None and registry is not None and registry.enabled:
-        if body.currency != "USD" or body.gateway_model is not None or body.max_cost <= 0:
+        if body.currency != "USD" or body.max_cost <= 0:
             raise HTTPException(422, "成果整理需要已定价的 Pi 模型和正数 USD 额度")
         async with progress.repo.engine.connect() as conn:
             task = await progress.task(conn, tid)
@@ -2201,68 +2150,7 @@ async def settings_put(request: Request, tid: UUID, body: ProgressSettings):
             tid, body, pi_scope=(task_model[0], model, registry.settings.pi_site_id)
         )
         return await progress.view(tid)
-    if body.enabled:
-        manager = request.app.state.gateway_models
-        generation = await observed_generation(progress.repo.engine)
-        async with progress.repo.engine.connect() as conn:
-            task = await progress.task(conn, tid)
-            state = await progress.state(conn, task)
-            original_task = await task_gateway_model(conn, tid)
-        if original_task is None or original_task[1] != "USD" or body.currency != "USD":
-            raise HTTPException(
-                409, "New Progress execution requires a USD AgentGateway Task and budget"
-            )
-        if state.get("model") and not state.get("gateway_model"):
-            raise HTTPException(409, "Historical Progress remains read-only")
-        if state.get("gateway_model"):
-            model = GatewayModelSnapshot.model_validate(state["gateway_model"])
-            if body.gateway_model is not None and body.gateway_model.alias != model.alias:
-                raise HTTPException(409, "The original Progress model cannot change")
-            await require_original_model(manager, model)
-        else:
-            global_value = await progress.global_settings()
-            selected = body.gateway_model or (
-                GatewayModelRef.model_validate(global_value["gateway_model"])
-                if global_value.get("gateway_model")
-                else None
-            )
-            if selected is not None:
-                model = await manager.require_active(selected.alias, selected.catalog_revision)
-            elif original_task is not None:
-                model = await require_original_model(manager, original_task[0])
-            else:
-                raise HTTPException(422, "Select an applied AgentGateway model for Progress")
-        check(model.tool_call, "Progress requires a model with tools", 422)
-        check(body.max_cost > 0, "Enabled Progress needs a positive budget", 422)
-        check(body.max_cost >= progress.occupied(state), "Limit is below committed or reserved use")
-        budgets = request.app.state.gateway_execution.budgets
-        async with progress.repo.engine.connect() as conn:
-            original = await budgets.find(conn, tid, "progress")
-        budget_request = None
-        if original is not None:
-            config = original["config"]
-            current = Decimal(config["threshold_usd"])
-            pending = config.get("pending_increase")
-            receipt = config.get("last_increase") or {}
-            if pending:
-                if Decimal(pending["threshold_usd"]) != body.max_cost:
-                    raise HTTPException(409, "Read back the original Progress budget update first")
-                budget_request = UUID(pending["request_id"])
-                delta = Decimal(pending["additional_usd"])
-            elif current != body.max_cost:
-                budget_request = uuid5(
-                    NAMESPACE_URL, f"bbx-progress-budget:{tid}:{current}:{body.max_cost}"
-                )
-                delta = body.max_cost - current
-            elif receipt and "platform_payload" not in receipt:
-                budget_request = UUID(receipt["request_id"])
-                delta = Decimal(receipt["additional_usd"])
-            else:
-                delta = Decimal(0)
-            if budget_request is not None:
-                await budgets.increase(tid, "progress", budget_request, delta, current)
-        scope = model, generation, budget_request
-    await progress.settings(tid, body, gateway_scope=scope)
+    await progress.settings(tid, body)
     return await progress.view(tid)
 
 

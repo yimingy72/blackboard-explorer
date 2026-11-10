@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import Field
 
-from .gateway_models import GatewayModelRef
 from .models import ContractModel, Usage
 from .pi_models import PiModelRef
 
@@ -46,7 +45,6 @@ class ProgressSettings(ContractModel):
     currency: Literal["USD", "CNY"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    gateway_model: GatewayModelRef | None = None
     enabled: bool = False
     max_cost: Decimal = Field(default=Decimal("2"), ge=0, le=10000)
     model_id: str | None = None
@@ -64,7 +62,6 @@ class ProgressSettings(ContractModel):
 
 class ProgressGlobalSettings(ContractModel):
     pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
-    gateway_model: GatewayModelRef | None = None
     revision: int | None = Field(default=None, ge=0)
     expected_revision: int = Field(ge=0)
     prompt: str = Field(default="", max_length=40000)

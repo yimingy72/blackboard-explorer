@@ -26,8 +26,6 @@ test("official Pi Runner connects both frozen MCP targets, pages and routes the 
   t.after(() => { globalThis.fetch = originalFetch; });
 
   const spec = h.spec("one");
-  delete spec.mcp_credential_ref;
-  delete spec.mcp_tool_aliases;
   spec.allowed_tools = ["business_echo", "sandbox_echo"];
   spec.mcp_target_credential_refs = { business: "business-ref", sandbox: "sandbox-ref" };
   spec.mcp_tool_routes = Object.fromEntries([...h.state.directTargetByTool].map(([name, target]) =>
@@ -38,7 +36,7 @@ test("official Pi Runner connects both frozen MCP targets, pages and routes the 
     token: h.token("one", `${target}-mcp`),
   };
   await writeFile(h.config.credential_file, JSON.stringify(credentials));
-  await h.configure({ mcp_gateway_url: undefined, mcp_targets: {
+  await h.configure({ mcp_targets: {
     business: h.base + "/api/tasks/task/business-mcp-v2/", sandbox: "http://127.0.0.1:8766/mcp/",
   } });
   const config = validate("RunnerBootstrap", JSON.parse(JSON.stringify(h.config)));

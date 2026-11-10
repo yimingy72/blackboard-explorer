@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.task_board import TaskBoardService
@@ -13,6 +14,7 @@ from bbx_contracts.ctf import CtfAgentProfile, load_ctf_profile
 from bbx_contracts.runner import PROTOCOL, runner_json_text
 from sqlalchemy import select
 from test_board_flags_integration import Objects, bind_owner, identity, install_fake_runner
+from test_ctf_api import settings
 from test_runner_control_integration import (
     SERVICE,
     acquire,
@@ -42,6 +44,24 @@ def private(scope):
     return f"/api/tasks/{scope['tid']}/ctf/runtime/runner-gateway"
 
 
+async def fixture_credentials(ctf, tid, binding, role):
+    async with ctf.repo.engine.connect() as conn:
+        owner = (
+            (
+                await conn.execute(
+                    select(s.runner_owners).where(
+                        s.runner_owners.c.task_id == tid, s.runner_owners.c.current.is_(True)
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    return issue_gateway_credentials(
+        settings(), owner, binding["binding_id"], role, targets={"business", "sandbox"}
+    )
+
+
 async def prepare(
     http,
     ctf,
@@ -53,7 +73,6 @@ async def prepare(
     concurrent=2,
     tools=None,
     native=True,
-    credentials_status=200,
 ):
     if ctf.objects is None:
         ctf.objects = Objects()
@@ -132,18 +151,12 @@ async def prepare(
         params=poll_query(owner),
     )
     command = commands.json()["commands"][0]
-    response = await http.post(
-        f"/api/tasks/{tid}/ctf/runtime/runner-gateway/bindings/{binding['binding_id']}/credentials",
-        headers=SERVICE,
-        json={"expected_epoch": 1},
-    )
-    assert response.status_code == credentials_status, response.text
     scope = {
         "tid": tid,
         "owner": owner,
         "binding": binding,
         "command": command,
-        "credentials": response.json(),
+        "credentials": await fixture_credentials(ctf, tid, binding, "lead"),
         "model": model,
         "config": config,
         "profile_revision": profile["version"],
@@ -156,56 +169,6 @@ async def prepare(
         await confirm(http, tid, owner, binding, body)
         scope.update(sdk=body["sdk_session_id"], journal=first)
     return scope
-
-
-def attempt(scope, *, purpose="turn", marker="DO_NOT_COPY_FULL_MODEL_HISTORY"):
-    wire = {
-        "model": scope["config"]["model"],
-        "messages": [{"role": "user", "content": marker}],
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "max_completion_tokens": scope["model"]["max_output_tokens"],
-    }
-    body_json = runner_json_text(wire)
-    return {
-        "protocol": PROTOCOL,
-        "fence": scope["owner"]["fence"],
-        "binding": scope["binding"],
-        "sdk_session_id": scope["sdk"],
-        "call_id": "call-" + uuid4().hex,
-        "attempt_id": "attempt-" + uuid4().hex,
-        "journal": scope["journal"],
-        "purpose": purpose,
-        "profile_revision": scope["profile_revision"],
-        "prompt_revision": 1,
-        "model_snapshot": scope["model"],
-        "body_json": body_json,
-        "body_digest": digest(body_json),
-    }
-
-
-async def admit(http, scope, body):
-    return await http.post(
-        f"/api/tasks/{scope['tid']}/runner-model/attempts/admit",
-        headers=cap(scope),
-        content=runner_json_text(body).encode(),
-    )
-
-
-async def dispatch(http, scope, body):
-    return await http.post(
-        private(scope) + f"/model/{body['attempt_id']}/dispatch",
-        headers={**SERVICE, "X-BBX-Runner-Authorization": cap(scope)["Authorization"]},
-        json={
-            "protocol": PROTOCOL,
-            "fence": scope["owner"]["fence"],
-            "binding_id": scope["binding"]["binding_id"],
-            "sdk_session_id": body["sdk_session_id"],
-            "call_id": body["call_id"],
-            "attempt_id": body["attempt_id"],
-            "body_digest": body["body_digest"],
-        },
-    )
 
 
 async def call_record(ctf, tid, key):
@@ -277,17 +240,11 @@ async def worker_scope(http, ctf, scope, *, tools=None, output_cap=64):
     body = confirmation(scope["owner"], binding, empty_cursor(), first)
     body["sdk_session_id"] = "gateway-worker-sdk-" + uuid4().hex
     await confirm(http, tid, scope["owner"], binding, body)
-    response = await http.post(
-        f"/api/tasks/{tid}/ctf/runtime/runner-gateway/bindings/{binding['binding_id']}/credentials",
-        headers=SERVICE,
-        json={"expected_epoch": epoch},
-    )
-    assert response.status_code == 200, response.text
     return {
         **scope,
         "binding": binding,
         "command": command,
-        "credentials": response.json(),
+        "credentials": await fixture_credentials(ctf, tid, binding, "teammate"),
         "sdk": body["sdk_session_id"],
         "journal": first,
         "model": model,

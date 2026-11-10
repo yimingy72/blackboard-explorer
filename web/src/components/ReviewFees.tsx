@@ -7,8 +7,8 @@ export default function ReviewFees({ taskId, agentId, direct }: {
     taskId?: string; agentId?: string; direct?: boolean;
 }) {
     const [open, setOpen] = useState(false);
-    const directory = useQuery({ queryKey: ['pi-models'], queryFn: api.piModels, enabled: open && direct === undefined });
-    const piMode = direct ?? directory.data?.enabled;
+    const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.getTask(taskId!), enabled: open && !!taskId && direct === undefined });
+    const piMode = direct ?? (!taskId || (task.data ? Boolean(task.data.pi_model) : undefined));
     const directFees = useQuery({
         queryKey: ['pi-review-fees'],
         queryFn: api.piReviewFees,
@@ -17,15 +17,15 @@ export default function ReviewFees({ taskId, agentId, direct }: {
     });
     const fees = useQuery({
         queryKey: ['gateway-review-fees', taskId],
-        queryFn: () => api.gatewayReviewFees(taskId),
-        enabled: open && piMode === false,
+        queryFn: () => api.gatewayReviewFees(taskId!),
+        enabled: open && piMode === false && !!taskId,
         refetchInterval: query => open && query.state.data?.pending ? 4000 : false,
     });
     const rows = fees.data?.calls.filter(item => !agentId || item.agent_id === agentId);
     return <Collapse size="small" ghost activeKey={open ? ['fees'] : []} onChange={value => setOpen(value.includes('fees'))}
         items={[{ key: 'fees', label: '复盘费用', children: <>
-            {(piMode === undefined && directory.isPending || piMode === true && directFees.isPending || piMode === false && fees.isPending) && <p role="status">正在读取费用…</p>}
-            {directory.isError && <p role="alert">费用目录暂不可用。<Button type="link" onClick={() => void directory.refetch()}>重试</Button></p>}
+            {(piMode === undefined && task.isPending || piMode === true && directFees.isPending || piMode === false && fees.isPending) && <p role="status">正在读取费用…</p>}
+            {task.isError && <p role="alert">费用目录暂不可用。<Button type="link" onClick={() => void task.refetch()}>重试</Button></p>}
             {piMode === true && directFees.isError && <p role="alert">复盘费用暂不可用。<Button type="link" onClick={() => void directFees.refetch()}>重试</Button></p>}
             {piMode === true && directFees.data && <>
                 <p>本账户复盘费用：{directFees.data.unknown_calls && Number(directFees.data.estimated_usd) === 0
@@ -37,7 +37,7 @@ export default function ReviewFees({ taskId, agentId, direct }: {
             </>}
             {piMode === false && fees.isError && <p role="alert">费用暂不可用。<Button type="link" onClick={() => void fees.refetch()}>重试</Button></p>}
             {piMode === false && fees.data && <>
-                <p>{taskId ? '本任务' : '两站共用复盘密钥'}已确认费用：{fees.data.confirmed_usd == null ? '暂无已确认记录' : `${fees.data.confirmed_usd} USD`}
+                <p>本任务已确认费用：{fees.data.confirmed_usd == null ? '暂无已确认记录' : `${fees.data.confirmed_usd} USD`}
                     {fees.data.pending > 0 && ` · ${fees.data.pending} 笔待核`}
                     {fees.data.more && ' · 明细仅显示最近记录'}
                 </p>

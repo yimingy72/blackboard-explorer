@@ -287,45 +287,44 @@ def test_unicode_credentials() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_freezes_gateway_and_preserves_nonmodel_profile_parameters(monkeypatch):
-    from bbx_contracts.gateway_models import GatewayModelSnapshot, GatewayUsdRates
+async def test_task_freezes_pi_model_and_preserves_nonmodel_profile_parameters():
+    from bbx_contracts.pi_models import PiModelVersion
 
-    model = GatewayModelSnapshot(
-        alias="fixture-route",
-        label="Gateway fixture",
-        catalog_revision="a" * 64,
-        accounting_source_id="fixture",
-        route_revision=1,
-        route_digest="b" * 64,
-        model_catalog_digest="c" * 64,
-        context_window=32000,
-        max_input_tokens=12000,
-        max_output_tokens=1000,
-        input_modalities=["text"],
-        tool_call=True,
-        usd_rates=GatewayUsdRates.model_validate(
-            {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"}
-        ),
+    model = PiModelVersion.model_validate(
+        {
+            "id": "fixture-model",
+            "model_revision": 1,
+            "label": "Pi fixture",
+            "upstream_model": "fixture-model",
+            "base_url": "https://fixture.invalid/v1",
+            "context_window": 32000,
+            "max_output_tokens": 1000,
+            "input_modalities": ["text"],
+            "has_secret": True,
+            "tool_call": True,
+            "usd_rates": {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"},
+            "pricing_source": "Synthetic USD",
+        }
     )
-    config = settings()
+    config = settings().model_copy(update={"pi_model_authority": "fixture-authority"})
     profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
     old = {"name": "custom", "version": 4, **profile.model_dump(mode="json")}
     old["params"]["explore_max_steps"] = 7
 
     async def create_snapshot(name, snapshot, actor):
         assert (name, actor) == ("task-settings", "task")
-        assert snapshot.params.context_threshold == 9600
-        assert snapshot.models.explore.model == model.alias
+        assert snapshot.params.context_threshold == 24800
+        assert snapshot.models.explore.model == model.id
         assert snapshot.models.explore.price.currency == "USD"
         return {"name": name, "version": 5, **snapshot.model_dump(mode="json")}
 
-    async def create_task(spec, *, profile_version, legacy_network, gateway_model):
+    async def create_task(spec, *, profile_version, legacy_network, pi_model):
         assert legacy_network.mode == "default"
-        assert spec["params"]["context_threshold"] == 9600
+        assert spec["params"]["context_threshold"] == 24800
         assert spec["params"]["explore_max_steps"] == 7
         assert spec["params"]["seed_max_steps"] == 5
-        assert "gateway_model" not in spec and profile_version == 5
-        assert gateway_model == (model, 8)
+        assert "pi_model" not in spec and profile_version == 5
+        assert pi_model == ("fixture-authority", model)
         return uuid4()
 
     app = api.create_app(config)
@@ -333,8 +332,7 @@ async def test_task_freezes_gateway_and_preserves_nonmodel_profile_parameters(mo
         get=AsyncMock(return_value=old), create=create_snapshot
     )
     app.state.board_service = SimpleNamespace(create_task=create_task)
-    app.state.gateway_models = SimpleNamespace(require_active=AsyncMock(return_value=model))
-    monkeypatch.setattr(api, "observed_generation", AsyncMock(return_value=8))
+    app.state.pi_registry = SimpleNamespace(enabled=True, selected=AsyncMock(return_value=model))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -348,7 +346,7 @@ async def test_task_freezes_gateway_and_preserves_nonmodel_profile_parameters(mo
                 "agent_profile": "custom",
                 "profile_version": 4,
                 "params": {"seed_max_steps": 5, "context_threshold": 128000},
-                "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
+                "pi_model": {"model_id": model.id, "model_revision": model.model_revision},
             },
         )
     assert response.status_code == 200, response.text

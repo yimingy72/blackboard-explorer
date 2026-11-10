@@ -37,7 +37,6 @@ class Settings(ControlSettings):
     runner_proxy_host: str = "127.0.0.1"
     runner_proxy_port: int | None = Field(default=None, ge=1, le=65535)
     runner_proxy_max_inflight: int = Field(default=8, ge=1, le=128)
-    runner_gateway_url: str | None = None
     otel_enabled: bool = False
     traffic_enabled: bool = True
     traffic_poll_seconds: float = Field(default=1, ge=0.1, le=60)
@@ -61,7 +60,6 @@ class NativeRunnerSettings(ControlSettings):
     runner_resource_config_file: Path
     runner_blackboard_url: str
     runner_model_proxy_url: str
-    runner_gateway_url: str | None = None
     runner_proxy_host: str = "0.0.0.0"
     runner_proxy_port: int = Field(default=8081, ge=1, le=65535)
     runner_proxy_max_inflight: int = Field(default=8, ge=1, le=128)

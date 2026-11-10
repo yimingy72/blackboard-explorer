@@ -140,40 +140,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/platform/gateway-models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Gateway Directory */
-        get: operations["gateway_directory_api_platform_gateway_models_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/gateway-models/review-costs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Shared Review Costs */
-        get: operations["shared_review_costs_api_platform_gateway_models_review_costs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/platform/mcp-servers": {
         parameters: {
             query?: never;
@@ -269,6 +235,40 @@ export interface paths {
         };
         /** Tool Details */
         get: operations["tool_details_api_platform_mcp_servers__name__versions__version__tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/pi-model-tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run */
+        post: operations["run_api_platform_pi_model_tests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/pi-model-tests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read */
+        get: operations["read_api_platform_pi_model_tests__request_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1655,108 +1655,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/mcp-route": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Mcp Route Status */
-        get: operations["mcp_route_status_api_tasks__task_id__ctf_runtime_runner_gateway_mcp_route_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/dispatch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Dispatch */
-        post: operations["dispatch_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__dispatch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/model/{attempt_id}/transport": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Transport */
-        post: operations["transport_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__transport_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/model": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Native Model */
-        get: operations["native_model_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_model_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/prepare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Prepare Budget */
-        post: operations["prepare_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_prepare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/native-budget/publish": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Publish Budget */
-        post: operations["publish_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_publish_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
         parameters: {
             query?: never;
@@ -1995,57 +1893,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tasks/{task_id}/gateway-model/attempts/{attempt_id}/result": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Attempt Result */
-        post: operations["attempt_result_api_tasks__task_id__gateway_model_attempts__attempt_id__result_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/gateway-model/ordinary/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claim Ordinary */
-        post: operations["claim_ordinary_api_tasks__task_id__gateway_model_ordinary_claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/gateway-model/progress/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claim Progress */
-        post: operations["claim_progress_api_tasks__task_id__gateway_model_progress_claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tasks/{task_id}/gateway-model/review-costs": {
         parameters: {
             query?: never;
@@ -2053,27 +1900,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Task Review Costs */
-        get: operations["task_review_costs_api_tasks__task_id__gateway_model_review_costs_get"];
+        /** Review Costs */
+        get: operations["review_costs_api_tasks__task_id__gateway_model_review_costs_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/gateway-model/review/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claim Review */
-        post: operations["claim_review_api_tasks__task_id__gateway_model_review_claim_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2533,57 +2363,6 @@ export interface paths {
         put?: never;
         /** Acknowledge */
         post: operations["acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/runner-model/attempts/admit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Admit Model */
-        post: operations["admit_model_api_tasks__task_id__runner_model_attempts_admit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/runner-model/attempts/{attempt_id}/observation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Observation */
-        post: operations["observation_api_tasks__task_id__runner_model_attempts__attempt_id__observation_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/{task_id}/runner-model/fees": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Fees */
-        get: operations["fees_api_tasks__task_id__runner_model_fees_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4420,7 +4199,6 @@ export interface components {
             domain_context?: string | null;
             /** Egress Allowlist */
             egress_allowlist?: string[];
-            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /** Goal */
             goal: string;
             /** Input File Ids */
@@ -4994,7 +4772,7 @@ export interface components {
             value: string;
         };
         /** FrozenExchangeRate */
-        "FrozenExchangeRate-Input": {
+        FrozenExchangeRate: {
             /**
              * Observed At
              * Format: date-time
@@ -5017,81 +4795,10 @@ export interface components {
              */
             usd_decimal_places: 9;
         };
-        /** FrozenExchangeRate */
-        "FrozenExchangeRate-Output": {
-            /**
-             * Observed At
-             * Format: date-time
-             */
-            observed_at: string;
-            /** Rate Cny Per Usd */
-            rate_cny_per_usd: string;
-            /**
-             * Rounding
-             * @default ROUND_DOWN
-             * @constant
-             */
-            rounding: "ROUND_DOWN";
-            /** Source Ref */
-            source_ref: string;
-            /**
-             * Usd Decimal Places
-             * @default 9
-             * @constant
-             */
-            usd_decimal_places: 9;
-        };
         /** GatewayCredentialsRequest */
         GatewayCredentialsRequest: {
             /** Expected Epoch */
             expected_epoch: number;
-        };
-        /** GatewayDirectory */
-        GatewayDirectory: {
-            /**
-             * Maintenance
-             * @default false
-             */
-            maintenance: boolean;
-            /** Management Url */
-            management_url?: string | null;
-            /** Models */
-            models: components["schemas"]["GatewayModelView"][];
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "ready" | "unavailable";
-        };
-        /** GatewayExecutionGrant */
-        GatewayExecutionGrant: {
-            /**
-             * Attempt Id
-             * Format: uuid
-             */
-            attempt_id: string;
-            /** Body Sha256 */
-            body_sha256: string;
-            /** Gateway Url */
-            gateway_url: string;
-            /** Headers */
-            headers: {
-                [key: string]: string;
-            };
-            /** Key */
-            key: string;
-        };
-        /** GatewayExecutionResult */
-        GatewayExecutionResult: {
-            /** Body Sha256 */
-            body_sha256: string;
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "complete" | "unknown";
-            /** Status Code */
-            status_code?: number | null;
         };
         /** GatewayFeeScope */
         GatewayFeeScope: {
@@ -5102,13 +4809,6 @@ export interface components {
              * @default 0
              */
             pending: number;
-        };
-        /** GatewayModelRef */
-        GatewayModelRef: {
-            /** Alias */
-            alias: string;
-            /** Catalog Revision */
-            catalog_revision: string;
         };
         /** GatewayModelView */
         GatewayModelView: {
@@ -5758,56 +5458,6 @@ export interface components {
             /** Schema Digest */
             schema_digest: string;
         };
-        /** ModelAdmissionReceipt */
-        ModelAdmissionReceipt: {
-            /** Attempt Id */
-            attempt_id: string;
-            /** Call Id */
-            call_id: string;
-            /**
-             * Confirmed
-             * @constant
-             */
-            confirmed: true;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Request Digest */
-            request_digest: string;
-        };
-        /** ModelAttemptRequest */
-        ModelAttemptRequest: {
-            /** Attempt Id */
-            attempt_id: string;
-            binding: components["schemas"]["RunnerBinding"];
-            /** Body Digest */
-            body_digest: string;
-            /** Body Json */
-            body_json: string;
-            /** Call Id */
-            call_id: string;
-            fence: components["schemas"]["RunnerFence"];
-            journal: components["schemas"]["JournalCursor"];
-            model_snapshot: components["schemas"]["EffectiveRunnerModel"];
-            /** Profile Revision */
-            profile_revision: number;
-            /** Prompt Revision */
-            prompt_revision: number;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /**
-             * Purpose
-             * @enum {string}
-             */
-            purpose: "turn" | "summary";
-            /** Sdk Session Id */
-            sdk_session_id: string;
-        };
         /** ModelConfig */
         "ModelConfig-Input": {
             /**
@@ -5916,59 +5566,6 @@ export interface components {
              */
             supports_vision?: boolean | null;
         };
-        /** ModelOutcomeReceipt */
-        ModelOutcomeReceipt: {
-            /** Attempt Id */
-            attempt_id: string;
-            /**
-             * Confirmed
-             * @constant
-             */
-            confirmed: true;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Request Digest */
-            request_digest: string;
-        };
-        /**
-         * ModelOutcomeSubmission
-         * @description SDK observations only; native gateway evidence owns fees and accounting outcomes.
-         */
-        ModelOutcomeSubmission: {
-            /** Attempt Id */
-            attempt_id: string;
-            /** Binding Id */
-            binding_id: string;
-            /** Call Id */
-            call_id: string;
-            fence: components["schemas"]["RunnerFence"];
-            /** Http Status */
-            http_status: number | null;
-            /**
-             * Model Outcome
-             * @enum {string}
-             */
-            model_outcome: "completed" | "error" | "aborted";
-            /**
-             * Outcome
-             * @enum {string}
-             */
-            outcome: "completed" | "unknown" | "not_sent";
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Sdk Session Id */
-            sdk_session_id: string;
-            /** Usage */
-            usage: {
-                [key: string]: unknown;
-            } | null;
-        };
         /** ModelSet */
         "ModelSet-Input": {
             close: components["schemas"]["ModelConfig-Input"];
@@ -5980,33 +5577,6 @@ export interface components {
             close: components["schemas"]["ModelConfig-Output"];
             derive: components["schemas"]["ModelConfig-Output"];
             explore: components["schemas"]["ModelConfig-Output"];
-        };
-        /** NativeBudgetBinding */
-        NativeBudgetBinding: {
-            /** Accounting Source Id */
-            accounting_source_id: string;
-            /** Budget Currency */
-            budget_currency?: "USD" | null;
-            /** Budget Name */
-            budget_name: string;
-            exchange_rate?: components["schemas"]["FrozenExchangeRate-Output"] | null;
-            /** Key Fingerprint */
-            key_fingerprint: string;
-            /** Key Name */
-            key_name: string;
-            /** Native Resource Id */
-            native_resource_id?: string | null;
-            /**
-             * Publication State
-             * @enum {string}
-             */
-            publication_state: "prepared" | "creating" | "creating_unknown" | "ready" | "retired";
-            /** Selected Models */
-            selected_models: string[];
-            /** Task Id */
-            task_id: string;
-            /** Threshold Usd */
-            threshold_usd: string;
         };
         /** NativeBudgetIncreaseRequest */
         NativeBudgetIncreaseRequest: {
@@ -6044,18 +5614,6 @@ export interface components {
             /** Threshold Usd */
             threshold_usd: string;
         };
-        /** NativeBudgetPrepare */
-        NativeBudgetPrepare: {
-            /** Accounting Source Id */
-            accounting_source_id: string;
-            /** Budget Currency */
-            budget_currency?: "USD" | null;
-            exchange_rate?: components["schemas"]["FrozenExchangeRate-Input"] | null;
-            /** Expected Epoch */
-            expected_epoch: number;
-            /** Selected Models */
-            selected_models: string[];
-        };
         /** NativeCtfEnvironment */
         NativeCtfEnvironment: {
             /**
@@ -6082,36 +5640,6 @@ export interface components {
             publication_stamp: string;
             /** Revision */
             revision: number;
-        };
-        /** NativeFeeView */
-        NativeFeeView: {
-            /** Accounting Source Id */
-            accounting_source_id: string;
-            /** Budget Currency */
-            budget_currency?: "USD" | null;
-            /** Catalog Revision */
-            catalog_revision: string;
-            /** Confirmed Usd */
-            confirmed_usd: string;
-            /** Converted Cny */
-            converted_cny?: string | null;
-            /**
-             * Currency
-             * @default USD
-             * @constant
-             */
-            currency: "USD";
-            exchange_rate?: components["schemas"]["FrozenExchangeRate-Output"] | null;
-            /** Hold Reason */
-            hold_reason?: string | null;
-            /** Native Used High Water Usd */
-            native_used_high_water_usd?: string | null;
-            /** Overage Usd */
-            overage_usd: string;
-            /** Pending Attempts */
-            pending_attempts: number;
-            /** Threshold Usd */
-            threshold_usd: string;
         };
         /** NativeInputClaimResult */
         NativeInputClaimResult: {
@@ -6192,75 +5720,6 @@ export interface components {
             lead?: components["schemas"]["NativeMcpGrant"][];
             /** Teammate */
             teammate?: components["schemas"]["NativeMcpGrant"][];
-        };
-        /** NativeModelDispatchGrant */
-        NativeModelDispatchGrant: {
-            /** Accounting Source Id */
-            accounting_source_id?: string | null;
-            /** Attempt Id */
-            attempt_id: string;
-            /** Authorized Wait Until Ms */
-            authorized_wait_until_ms?: number | null;
-            /** Body Digest */
-            body_digest: string;
-            /**
-             * Confirmed
-             * @constant
-             */
-            confirmed: true;
-            /** Dispatch Id */
-            dispatch_id?: string | null;
-            /** Native Gateway Url */
-            native_gateway_url?: string | null;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Send Allowed */
-            send_allowed: boolean;
-            /** State */
-            state: string;
-            /** Task Gateway Key */
-            task_gateway_key?: string | null;
-            /** Trusted Attributes */
-            trusted_attributes?: {
-                [key: string]: string;
-            };
-        };
-        /** NativeModelDispatchRequest */
-        NativeModelDispatchRequest: {
-            /** Attempt Id */
-            attempt_id: string;
-            /** Binding Id */
-            binding_id: string;
-            /** Body Digest */
-            body_digest: string;
-            /** Call Id */
-            call_id: string;
-            fence: components["schemas"]["RunnerFence"];
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Sdk Session Id */
-            sdk_session_id: string;
-        };
-        /** NativeModelSelection */
-        NativeModelSelection: {
-            /** Accounting Source Id */
-            accounting_source_id: string;
-            /** Catalog Revision */
-            catalog_revision: string;
-            /** Model Alias */
-            model_alias: string;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            sdk_model: components["schemas"]["EffectiveRunnerModel"];
         };
         /** NativePauseRequest */
         NativePauseRequest: {
@@ -6451,7 +5910,7 @@ export interface components {
         NativeRunnerLaunch: {
             /** Budget Currency */
             budget_currency?: "USD" | null;
-            exchange_rate?: components["schemas"]["FrozenExchangeRate-Input"] | null;
+            exchange_rate?: components["schemas"]["FrozenExchangeRate"] | null;
             /**
              * Helper Background
              * @default false
@@ -6509,44 +5968,6 @@ export interface components {
              */
             state: "unselected" | "preparing" | "ready" | "failed" | "disconnected" | "stopped";
         };
-        /** NativeTransportObservation */
-        NativeTransportObservation: {
-            /** Attempt Id */
-            attempt_id: string;
-            /** Dispatch Id */
-            dispatch_id: string;
-            /** Http Status */
-            http_status?: number | null;
-            /**
-             * Phase
-             * @enum {string}
-             */
-            phase: "response_ended" | "disconnected" | "not_sent";
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-        };
-        /** NativeTransportReceipt */
-        NativeTransportReceipt: {
-            /** Attempt Id */
-            attempt_id: string;
-            /**
-             * Confirmed
-             * @constant
-             */
-            confirmed: true;
-            /** Dispatch Id */
-            dispatch_id: string;
-            /**
-             * Protocol
-             * @constant
-             */
-            protocol: "bbx.task-runner.v1";
-            /** Request Digest */
-            request_digest: string;
-        };
         /** NativeVpnCapability */
         NativeVpnCapability: {
             /** Id */
@@ -6577,31 +5998,6 @@ export interface components {
             request_id: string;
             /** Status */
             status: string;
-        };
-        /** OrdinaryGatewayAttempt */
-        OrdinaryGatewayAttempt: {
-            /** Agent Id */
-            agent_id: string;
-            /** Alias */
-            alias: string;
-            /**
-             * Attempt Id
-             * Format: uuid
-             */
-            attempt_id: string;
-            /** Body Sha256 */
-            body_sha256: string;
-            /** Catalog Revision */
-            catalog_revision: string;
-            /** Expected Derive Round */
-            expected_derive_round?: number | null;
-            /**
-             * Expected Started At
-             * Format: date-time
-             */
-            expected_started_at: string;
-            /** Run Number */
-            run_number: number;
         };
         /** Params */
         "Params-Input": {
@@ -6781,6 +6177,11 @@ export interface components {
         PiModelDirectory: {
             /** Can Manage */
             can_manage: boolean;
+            /**
+             * Can Test
+             * @default false
+             */
+            can_test: boolean;
             /** Enabled */
             enabled: boolean;
             /** Models */
@@ -6807,7 +6208,7 @@ export interface components {
              */
             confirmed_free: boolean;
             /** Context Window */
-            context_window: number;
+            context_window: number | null;
             /**
              * Enabled
              * @default true
@@ -6820,7 +6221,7 @@ export interface components {
             /** Label */
             label: string;
             /** Max Output Tokens */
-            max_output_tokens: number;
+            max_output_tokens: number | null;
             /**
              * Pricing Source
              * @default
@@ -6843,7 +6244,7 @@ export interface components {
              * Tool Call
              * @default true
              */
-            tool_call: boolean;
+            tool_call: boolean | null;
             /** Upstream Model */
             upstream_model: string;
             usd_rates?: components["schemas"]["PiUsdRates-Input"] | null;
@@ -6871,7 +6272,7 @@ export interface components {
              */
             confirmed_free: boolean;
             /** Context Window */
-            context_window: number;
+            context_window?: number | null;
             /**
              * Enabled
              * @default true
@@ -6882,11 +6283,11 @@ export interface components {
             /** Id */
             id: string;
             /** Input Modalities */
-            input_modalities: ("text" | "image")[];
+            input_modalities?: ("text" | "image")[];
             /** Label */
             label: string;
             /** Max Output Tokens */
-            max_output_tokens: number;
+            max_output_tokens?: number | null;
             /** Model Revision */
             model_revision: number;
             /**
@@ -6905,14 +6306,64 @@ export interface components {
              * @default false
              */
             reasoning: boolean;
-            /**
-             * Tool Call
-             * @default true
-             */
-            tool_call: boolean;
+            /** Tool Call */
+            tool_call?: boolean | null;
             /** Upstream Model */
             upstream_model: string;
             usd_rates?: components["schemas"]["PiUsdRates-Output"] | null;
+        };
+        /** PiPlaygroundRequest */
+        PiPlaygroundRequest: {
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** PiPlaygroundView */
+        PiPlaygroundView: {
+            /** Amount Usd */
+            amount_usd?: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Result Text */
+            result_text?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "prepared" | "dispatched" | "complete" | "unknown" | "not_sent";
+            usage?: components["schemas"]["PiUsage"] | null;
+        };
+        /** PiUsage */
+        PiUsage: {
+            /** Cacheread */
+            cacheRead: number;
+            /** Cachewrite */
+            cacheWrite: number;
+            /** Cachewrite1H */
+            cacheWrite1h?: number | null;
+            /** Input */
+            input: number;
+            /** Output */
+            output: number;
+            /** Reasoning */
+            reasoning?: number | null;
+            /** Totaltokens */
+            totalTokens: number;
         };
         /** PiUsdRates */
         "PiUsdRates-Input": {
@@ -7244,44 +6695,12 @@ export interface components {
             /** Transport Type */
             transport_type?: ("ProxyError" | "ConnectError" | "ReadError" | "RemoteProtocolError" | "LocalProtocolError" | "ConnectTimeout" | "ReadTimeout" | "WriteError" | "WriteTimeout" | "PoolTimeout") | null;
         };
-        /** ProgressGatewayAttempt */
-        ProgressGatewayAttempt: {
-            /** Alias */
-            alias: string;
-            /**
-             * Attempt Id
-             * Format: uuid
-             */
-            attempt_id: string;
-            /** Body Sha256 */
-            body_sha256: string;
-            /** Catalog Revision */
-            catalog_revision: string;
-            /**
-             * Claim Token
-             * Format: uuid
-             */
-            claim_token: string;
-            /**
-             * Job Id
-             * Format: uuid
-             */
-            job_id: string;
-            /**
-             * Reservation Id
-             * Format: uuid
-             */
-            reservation_id: string;
-            /** Run Number */
-            run_number: number;
-        };
         /** ProgressGlobalSettings */
         ProgressGlobalSettings: {
             /** Enabled Tools */
             enabled_tools?: string[];
             /** Expected Revision */
             expected_revision: number;
-            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /** Model Id */
             model_id?: string | null;
             pi_model?: components["schemas"]["PiModelRef"] | null;
@@ -7406,7 +6825,6 @@ export interface components {
              * @default false
              */
             enabled: boolean;
-            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /**
              * Max Cost
              * @default 2
@@ -7569,32 +6987,6 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
-        };
-        /** ReviewGatewayAttempt */
-        ReviewGatewayAttempt: {
-            /** Agent Id */
-            agent_id: string;
-            /** Alias */
-            alias: string;
-            /**
-             * Attempt Id
-             * Format: uuid
-             */
-            attempt_id: string;
-            /** Body Sha256 */
-            body_sha256: string;
-            /** Catalog Revision */
-            catalog_revision: string;
-            /** Claim Token */
-            claim_token?: string | null;
-            /** Generation */
-            generation?: number | null;
-            /** Message Id */
-            message_id?: string | null;
-            /** Run Number */
-            run_number: number;
-            /** Turn Id */
-            turn_id?: string | null;
         };
         /** RunnerBinding */
         RunnerBinding: {
@@ -7977,7 +7369,6 @@ export interface components {
              * @description 任务希望访问的域名（仅记录，不限制默认直连）
              */
             egress_allowlist?: string[];
-            gateway_model?: components["schemas"]["GatewayModelRef"] | null;
             /**
              * Goal
              * @description 任务目标
@@ -8108,6 +7499,8 @@ export interface components {
             ctf_phase?: string | null;
             /** Deleting */
             deleting: boolean;
+            /** Execution Blocked Reason */
+            execution_blocked_reason?: "legacy_execution_unmapped" | null;
             gateway_fees?: components["schemas"]["GatewayTaskFees"] | null;
             gateway_model?: components["schemas"]["GatewayModelView"] | null;
             /** Goal */
@@ -9253,48 +8646,6 @@ export interface operations {
             };
         };
     };
-    gateway_directory_api_platform_gateway_models_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GatewayDirectory"];
-                };
-            };
-        };
-    };
-    shared_review_costs_api_platform_gateway_models_review_costs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     mcp_servers_api_platform_mcp_servers_get: {
         parameters: {
             query?: never;
@@ -9500,6 +8851,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["McpDiscovery"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_api_platform_pi_model_tests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PiPlaygroundRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiPlaygroundView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_api_platform_pi_model_tests__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiPlaygroundView"];
                 };
             };
             /** @description Validation Error */
@@ -12790,208 +12205,6 @@ export interface operations {
             };
         };
     };
-    mcp_route_status_api_tasks__task_id__ctf_runtime_runner_gateway_mcp_route_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dispatch_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__dispatch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-                attempt_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NativeModelDispatchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeModelDispatchGrant"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    transport_api_tasks__task_id__ctf_runtime_runner_gateway_model__attempt_id__transport_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-                attempt_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NativeTransportObservation"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeTransportReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    native_model_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_model_get: {
-        parameters: {
-            query: {
-                model_alias: string;
-            };
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeModelSelection"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    prepare_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_prepare_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NativeBudgetPrepare"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeBudgetBinding"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    publish_budget_api_tasks__task_id__ctf_runtime_runner_gateway_native_budget_publish_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeBudgetBinding"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post: {
         parameters: {
             query?: never;
@@ -13490,115 +12703,7 @@ export interface operations {
             };
         };
     };
-    attempt_result_api_tasks__task_id__gateway_model_attempts__attempt_id__result_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-                attempt_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GatewayExecutionResult"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    claim_ordinary_api_tasks__task_id__gateway_model_ordinary_claim_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OrdinaryGatewayAttempt"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GatewayExecutionGrant"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    claim_progress_api_tasks__task_id__gateway_model_progress_claim_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProgressGatewayAttempt"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GatewayExecutionGrant"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    task_review_costs_api_tasks__task_id__gateway_model_review_costs_get: {
+    review_costs_api_tasks__task_id__gateway_model_review_costs_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -13618,41 +12723,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    claim_review_api_tasks__task_id__gateway_model_review_claim_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReviewGatewayAttempt"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GatewayExecutionGrant"];
                 };
             };
             /** @description Validation Error */
@@ -14612,108 +13682,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationAck"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    admit_model_api_tasks__task_id__runner_model_attempts_admit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelAttemptRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelAdmissionReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    observation_api_tasks__task_id__runner_model_attempts__attempt_id__observation_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-                attempt_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelOutcomeSubmission"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelOutcomeReceipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    fees_api_tasks__task_id__runner_model_fees_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NativeFeeView"];
                 };
             };
             /** @description Validation Error */

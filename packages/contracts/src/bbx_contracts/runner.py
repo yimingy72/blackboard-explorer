@@ -105,17 +105,9 @@ class SessionSpec(ContractModel):
     binding: RunnerBinding
     model: EffectiveRunnerModel
     model_credential_ref: RunnerId
-    mcp_credential_ref: RunnerId | None = Field(default=None, exclude_if=lambda v: v is None)
-    mcp_target_credential_refs: dict[McpTarget, RunnerId] | None = Field(
-        default=None, exclude_if=lambda v: v is None
-    )
+    mcp_target_credential_refs: dict[McpTarget, RunnerId]
     allowed_tools: list[RunnerId] = Field(max_length=128)
-    mcp_tool_aliases: dict[RunnerId, RunnerId] | None = Field(
-        default=None, max_length=128, exclude_if=lambda v: v is None
-    )
-    mcp_tool_routes: dict[RunnerId, RunnerMcpRoute] | None = Field(
-        default=None, max_length=128, exclude_if=lambda v: v is None
-    )
+    mcp_tool_routes: dict[RunnerId, RunnerMcpRoute] = Field(max_length=128)
     instructions: str = Field(max_length=131072)
     profile_revision: int = Field(ge=1)
     prompt_revision: int = Field(ge=1)
@@ -129,29 +121,18 @@ class SessionSpec(ContractModel):
             raise ValueError("Helpers cannot delegate")
         if len(set(self.allowed_tools)) != len(self.allowed_tools):
             raise ValueError("Declared tools must be distinct")
-        if self.mcp_tool_routes is not None:
-            refs = self.mcp_target_credential_refs or {}
-            routes = [(route.target, route.wire_name) for route in self.mcp_tool_routes.values()]
-            if (
-                self.mcp_tool_aliases is not None
-                or self.mcp_credential_ref is not None
-                or not refs
-                or len(set(refs.values())) != len(refs)
-                or set(self.mcp_tool_routes) != set(self.allowed_tools)
-                or len(set(routes)) != len(routes)
-                or any(target not in refs for target, _ in routes)
-                or self.helper_child
-                and set(refs) != {"sandbox"}
-            ):
-                raise ValueError("Invalid direct MCP target binding")
-        elif (
-            self.mcp_target_credential_refs is not None
-            or self.mcp_credential_ref is None
-            or self.mcp_tool_aliases is None
-            or set(self.mcp_tool_aliases) != set(self.allowed_tools)
-            or len(set(self.mcp_tool_aliases.values())) != len(self.mcp_tool_aliases)
+        refs = self.mcp_target_credential_refs
+        routes = [(route.target, route.wire_name) for route in self.mcp_tool_routes.values()]
+        if (
+            not refs
+            or len(set(refs.values())) != len(refs)
+            or set(self.mcp_tool_routes) != set(self.allowed_tools)
+            or len(set(routes)) != len(routes)
+            or any(target not in refs for target, _ in routes)
+            or self.helper_child
+            and set(refs) != {"sandbox"}
         ):
-            raise ValueError("MCP aliases must map every declared tool to a distinct wire name")
+            raise ValueError("Invalid direct MCP target binding")
         return self
 
 
@@ -346,65 +327,12 @@ class ToolUnknownSubmission(ContractModel):
     invocation: ToolInvocation
 
 
-class ModelAttemptRequest(ContractModel):
-    protocol: Literal["bbx.task-runner.v1"]
-    fence: RunnerFence
-    binding: RunnerBinding
-    sdk_session_id: RunnerId
-    call_id: RunnerId
-    attempt_id: RunnerId
-    journal: JournalCursor
-    purpose: Literal["turn", "summary"]
-    profile_revision: int = Field(ge=1)
-    prompt_revision: int = Field(ge=1)
-    model_snapshot: EffectiveRunnerModel
-    body_json: str = Field(min_length=1, max_length=MAX_MODEL_BODY_BYTES)
-    body_digest: Digest
-
-    @model_validator(mode="after")
-    def exact_body(self):
-        if len(self.body_json.encode("utf-8")) > MAX_MODEL_BODY_BYTES:
-            raise ValueError("Model body exceeds its UTF-8 byte bound")
-        validate_runner_json_object(self.body_json, self.body_digest)
-        return self
-
-
 class PublishedPrompt(ContractModel):
     protocol: Literal["bbx.task-runner.v1"]
     fence: RunnerFence
     binding_id: RunnerId
     prompt_revision: int = Field(ge=1)
     instructions: str = Field(max_length=131072)
-
-
-class ModelAdmissionReceipt(ContractModel):
-    protocol: Literal["bbx.task-runner.v1"]
-    confirmed: Literal[True]
-    call_id: RunnerId
-    attempt_id: RunnerId
-    request_digest: Digest
-
-
-class ModelOutcomeSubmission(ContractModel):
-    """SDK observations only; native gateway evidence owns fees and accounting outcomes."""
-
-    protocol: Literal["bbx.task-runner.v1"]
-    fence: RunnerFence
-    binding_id: RunnerId
-    sdk_session_id: RunnerId
-    call_id: RunnerId
-    attempt_id: RunnerId
-    outcome: Literal["completed", "unknown", "not_sent"]
-    model_outcome: Literal["completed", "error", "aborted"]
-    usage: dict | None
-    http_status: int | None
-
-
-class ModelOutcomeReceipt(ContractModel):
-    protocol: Literal["bbx.task-runner.v1"]
-    confirmed: Literal[True]
-    attempt_id: RunnerId
-    request_digest: Digest
 
 
 class OperationAck(ContractModel):
@@ -449,22 +377,13 @@ class RunnerBootstrap(ContractModel):
     fence: RunnerFence
     control_url: str
     model_proxy_url: str
-    mcp_gateway_url: str | None = Field(default=None, exclude_if=lambda v: v is None)
-    mcp_targets: dict[McpTarget, str] | None = Field(default=None, exclude_if=lambda v: v is None)
+    mcp_targets: dict[McpTarget, str] = Field(min_length=1)
     control_credential_ref: RunnerId
     credential_file: str
     journal_root: str
     mcp_metadata_timeout_ms: int = Field(default=15000, ge=50, le=30000)
     helper_foreground: bool = False
     helper_background: bool = False
-
-    @model_validator(mode="after")
-    def exclusive_mcp_transport(self):
-        if (self.mcp_targets is None) == (self.mcp_gateway_url is None) or not (
-            self.mcp_targets or self.mcp_gateway_url
-        ):
-            raise ValueError("Exactly one MCP transport is required")
-        return self
 
 
 class RunnerSchemaBundle(ContractModel):
@@ -483,11 +402,7 @@ class RunnerSchemaBundle(ContractModel):
     tool_result_receipt: ToolResultReceipt
     tool_result_confirmation: ToolResultConfirmation
     tool_unknown_submission: ToolUnknownSubmission
-    model_attempt_request: ModelAttemptRequest
     published_prompt: PublishedPrompt
-    model_admission_receipt: ModelAdmissionReceipt
-    model_outcome_submission: ModelOutcomeSubmission
-    model_outcome_receipt: ModelOutcomeReceipt
     operation_ack: OperationAck
 
 

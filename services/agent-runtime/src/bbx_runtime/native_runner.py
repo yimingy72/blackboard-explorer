@@ -746,7 +746,7 @@ async def serve_native(settings: NativeRunnerSettings):
             ) as service,
         ):
             controller = NativeRunnerController(settings, service, resources, instance)
-            proxy = RunnerModelProxy(settings, service, http=control_http)
+            proxy = RunnerModelProxy(settings, service)
             server = uvicorn.Server(
                 uvicorn.Config(
                     proxy.app,

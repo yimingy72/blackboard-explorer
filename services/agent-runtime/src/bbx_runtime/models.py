@@ -1,23 +1,24 @@
-"""Frozen model context and scoped AgentGateway sends through Pi."""
+"""Frozen model context and scoped sends through Pi."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
-from bbx_contracts.gateway_models import GatewayModelRef, GatewayModelSnapshot
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.models import AgentProfile, ModelConfig
 from bbx_contracts.pi_models import PiModelRef
 from bbx_contracts.profile import load_profile
 
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.gateway_model import GatewayDispatch, Proof, Purpose, gateway_origin
 from bbx_runtime.pi import BaseChatClient, PiChatClient
 from bbx_runtime.pi.bridge import PiBridge
 from bbx_runtime.pi_sender import OrdinaryPiModel, PiSender
 from bbx_runtime.settings import NativeRunnerSettings, Settings
+
+Purpose = Literal["ordinary", "progress", "review"]
+Proof = dict[str, Any] | Callable[[], dict[str, Any]]
 
 
 class DeepSeekChatOptions(TypedDict, total=False):
@@ -35,53 +36,6 @@ def load_runtime_profile(source: Path | Mapping[str, Any]) -> AgentProfile:
     return AgentProfile.model_validate(source.get("profile", source))
 
 
-def make_gateway_client(
-    model: ModelConfig,
-    *,
-    snapshot: GatewayModelSnapshot,
-    service: BlackboardClient,
-    task_id: str,
-    purpose: Purpose,
-    gateway_url: str | None,
-    proof: Proof,
-    explore_max_steps: int,
-    conclude_grace_calls: int,
-    max_duration_seconds: int,
-) -> PiChatClient:
-    origin = gateway_origin(gateway_url)
-    dispatch = GatewayDispatch(
-        service,
-        task_id,
-        purpose,
-        GatewayModelRef(alias=snapshot.alias, catalog_revision=snapshot.catalog_revision),
-        origin,
-        proof,
-    )
-    selected = model.model_copy(
-        update={
-            "model": snapshot.alias,
-            "provider": "openai_compatible",
-            "provider_options": {},
-            "base_url": origin + "/v1",
-            "context_window": snapshot.context_window,
-            "max_input_tokens": snapshot.max_input_tokens,
-            "max_output_tokens": snapshot.max_output_tokens,
-            "supports_vision": "image" in snapshot.input_modalities,
-            "reasoning_effort": model.reasoning_effort if snapshot.reasoning is True else "off",
-        }
-    )
-    return PiChatClient(
-        selected,
-        credentials={},
-        function_invocation_configuration={
-            "max_iterations": explore_max_steps + conclude_grace_calls + 5,
-            "max_duration_seconds": max_duration_seconds,
-        },
-        max_retries=0,
-        gateway=dispatch,
-    )
-
-
 def make_task_model_client(
     model: ModelConfig,
     *,
@@ -97,18 +51,7 @@ def make_task_model_client(
 ) -> PiChatClient:
     direct = source.get("pi_model")
     if direct is None:
-        return make_gateway_client(
-            model,
-            snapshot=GatewayModelSnapshot.model_validate(source.get("gateway_model")),
-            service=service,
-            task_id=task_id,
-            purpose=purpose,
-            gateway_url=settings.runner_gateway_url,
-            proof=proof,
-            explore_max_steps=explore_max_steps,
-            conclude_grace_calls=conclude_grace_calls,
-            max_duration_seconds=max_duration_seconds,
-        )
+        raise ValueError("This historical execution has no frozen platform model")
     reference = PiModelRef.model_validate(direct)
     token = settings.pi_runtime_sender_token
     if token is None:

@@ -45,7 +45,7 @@ async def test_platform_has_no_provider_model_write_surface():
             assert result.status_code in {404, 405}
         assert (
             await client.post("/api/internal/gateway-review-key/prepare", headers=headers)
-        ).status_code == 403
+        ).status_code == 404
 
 
 async def test_mcp_discovery_lists_all_pages_without_executing_tools(monkeypatch):

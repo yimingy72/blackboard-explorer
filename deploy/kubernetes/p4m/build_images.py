@@ -110,7 +110,6 @@ def build(*, refresh=False):
     images[CAPTURE] = {"digest": digest, "reference": CAPTURE_BASE}
     if not refresh:
         loader(PLUGIN, PLUGIN_DIGEST)
-        runpy.run_path(str(SOURCE / "deploy/kubernetes/p4g/build_images.py"))["gateway_image"]()
     path.write_text(
         json.dumps(
             {

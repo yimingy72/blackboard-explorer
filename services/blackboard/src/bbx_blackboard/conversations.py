@@ -20,7 +20,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from bbx_blackboard.domain.rules import dispute_fields, event, pending_claims
-from bbx_blackboard.gateway_maintenance import admission
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import agent_execution_matches
@@ -584,7 +583,6 @@ class Conversations:
         content: str,
         *,
         review_model=None,
-        review_generation=None,
         review_origin=None,
         request_user=None,
     ) -> dict[str, Any]:
@@ -595,14 +593,17 @@ class Conversations:
             task, agent = await self._task_agent(conn, tid, aid, writable=True)
             review = agent["status"] in {"finished", "failed"}
             if review:
-                if review_model is None or review_origin != {
-                    "started_at": agent["started_at"],
-                    "derive_round": agent["derive_round"],
-                    "run_number": task["run_number"],
-                }:
+                if (
+                    review_model is None
+                    or request_user is None
+                    or review_origin
+                    != {
+                        "started_at": agent["started_at"],
+                        "derive_round": agent["derive_round"],
+                        "run_number": task["run_number"],
+                    }
+                ):
                     raise HTTPException(409, "No original terminal review scope is available")
-                if review_generation is not None or request_user is None:
-                    await admission(conn, review_generation)
             elif agent["status"] not in ACTIVE or review_origin is not None:
                 raise HTTPException(409, "This Agent cannot be reviewed while the Task is active")
             result = await conn.execute(
@@ -717,7 +718,7 @@ class Conversations:
                     raise HTTPException(409, "Agent review is already processing")
             message = await self._message(conn, tid, aid, mid)
             if mode == "review" and not (message.get("review_model") or {}).get("pi_model"):
-                await admission(conn)
+                raise HTTPException(409, "Original legacy review cannot be reissued")
             if mode == "review" and (
                 message["purpose"] != "review"
                 or message["request_run_number"] != task["run_number"]
@@ -771,8 +772,6 @@ class Conversations:
                         .model_dump(mode="json")
                     }
                     if mode == "review" and message["review_model"].get("pi_model")
-                    else {"gateway_model": message["review_model"]}
-                    if mode == "review"
                     else {}
                 ),
             }
@@ -923,7 +922,7 @@ class Conversations:
                             s.agent_messages.c.request_run_number == s.tasks.c.run_number,
                             s.agent_messages.c.request_started_at == s.agent_runs.c.started_at,
                             s.agent_messages.c.request_derive_round == s.agent_runs.c.derive_round,
-                            s.agent_messages.c.review_model.is_not(None),
+                            s.agent_messages.c.review_model["pi_model"].astext.is_not(None),
                             ~_review_dispatched(),
                             s.agent_runs.c.status.not_in(ACTIVE),
                             or_(

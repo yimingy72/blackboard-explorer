@@ -1,9 +1,9 @@
-import { Alert, App, Button, Checkbox, Collapse, Empty, Form, Input, Table, Tag } from 'antd';
+import { Alert, App, Button, Checkbox, Collapse, Empty, Form, Input, Select, Space, Table, Tag } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { api, type PiModel, type PiModelInput, type PiUsdRates } from '../api/client';
-import GatewayCatalog from './GatewayCatalog';
+import { api, piModelCanTest, type PiModel, type PiModelInput, type PiUsdRates } from '../api/client';
+import PiModelTest from './PiModelTest';
 import LoadingState from './LoadingState';
 import ReviewFees from './ReviewFees';
 import styles from '../pages/ProfilesPage.module.css';
@@ -18,7 +18,10 @@ const emptyModel = (): PiModelInput => ({
     input_modalities: ['text'], reasoning: false, tool_call: true, usd_rates: null,
     pricing_source: '', confirmed_free: false, enabled: true,
 });
-function draftOf(model?: PiModel): PiModelInput {
+type ModelDraft = Omit<PiModelInput, 'context_window' | 'max_output_tokens' | 'tool_call'> & {
+    context_window: number | null; max_output_tokens: number | null; tool_call: boolean | null;
+};
+function draftOf(model?: PiModel): ModelDraft {
     if (!model) return emptyModel();
     return {
         label: model.label, upstream_model: model.upstream_model, base_url: model.base_url,
@@ -36,7 +39,8 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
     const client = useQueryClient();
     const { modal } = App.useApp();
     const [selected, setSelected] = useState<PiModel>();
-    const [draft, setDraft] = useState<PiModelInput | null>(null);
+    const [testModel, setTestModel] = useState<PiModel>();
+    const [draft, setDraft] = useState<ModelDraft | null>(null);
     const [rates, setRates] = useState<PiUsdRates>(emptyRates);
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
@@ -56,7 +60,7 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
         if (dirty && !force) modal.confirm({ title: '放弃尚未保存的修改？', okText: '放弃修改', cancelText: '继续编辑', onOk: apply });
         else apply();
     }
-    function patch(value: Partial<PiModelInput>) {
+    function patch(value: Partial<ModelDraft>) {
         if (!draft) return;
         setDraft({ ...draft, ...value });
         setNotice('');
@@ -66,6 +70,9 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
         const anyRate = Object.values(rates).some(value => value.trim());
         if (!draft.label.trim() || !draft.upstream_model.trim() || !draft.base_url.trim()) {
             setError('请填写显示名称、上游模型和 HTTPS 地址。'); return;
+        }
+        if (draft.context_window == null || draft.max_output_tokens == null || draft.tool_call == null || !draft.input_modalities.includes('text')) {
+            setError('请在能力与限制中填写已确认的上下文长度、最大输出，确认文本输入及是否启用工具。'); return;
         }
         if (anyRate && (Object.values(rates).some(value => !/^\d+(\.\d+)?$/.test(value.trim())) || !draft.pricing_source.trim())) {
             setError('请填写四项非负费率，并注明报价来源。'); return;
@@ -78,7 +85,8 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
         setNotice('');
         try {
             const saved = await api.savePiModel({
-                ...draft, label: draft.label.trim(), upstream_model: draft.upstream_model.trim(),
+                ...draft, context_window: draft.context_window, max_output_tokens: draft.max_output_tokens, tool_call: draft.tool_call,
+                label: draft.label.trim(), upstream_model: draft.upstream_model.trim(),
                 base_url: draft.base_url.trim(), secret: draft.secret || undefined,
                 usd_rates: anyRate ? rates : null,
             }, selected?.id);
@@ -90,7 +98,6 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
         } finally { setBusy(false); }
     }
     if (directory.isLoading) return <LoadingState label="正在读取平台模型目录" />;
-    if (directory.data?.enabled === false) return <GatewayCatalog />;
     const data = directory.data;
     return <section className={styles.catalogEditor} aria-label="平台模型">
         <div className={styles.contentHeader}>
@@ -102,15 +109,21 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
         </div>
         <div className={styles.formSection}>
             {directory.isError && <Alert type="warning" title="暂时无法读取平台模型目录" />}
-            {data && !data.can_manage && <p className={controls.hint}>此站点仅查看模型。连接、密钥和费率由主站管理员维护。</p>}
+            {data?.enabled === false && <Alert type="warning" title="平台模型目录暂不可用" />}
+            {data?.enabled && !data.can_manage && <p className={controls.hint}>此站点仅查看模型。连接、密钥和费率由主站管理员维护。</p>}
             {data && !data.models.length ? <Empty description="尚未登记模型" /> : <Table
                 size="small" rowKey="id" pagination={false} scroll={{ x: 620 }} dataSource={data?.models}
                 columns={[
                     { title: '模型', dataIndex: 'label', render: (label, model) => <>{label} <small>· v{model.model_revision}</small></> },
                     { title: '上游', dataIndex: 'upstream_model', ellipsis: true },
                     { title: '凭据', render: (_, model) => model.has_secret ? '已配置' : '待配置' },
-                    { title: '状态', render: (_, model) => <Tag>{!model.enabled ? '已停用' : !model.usd_rates ? '费率待配置' : !model.has_secret ? '凭据待配置' : model.tool_call ? '可用于任务' : '未启用工具'}</Tag> },
-                    ...(data?.can_manage ? [{ title: '操作', render: (_: unknown, model: PiModel) => <Button type="link" disabled={busy} onClick={() => choose(model)}>编辑</Button> }] : []),
+                    { title: '状态', render: (_, model) => <Tag>{!model.enabled ? '已停用' : model.context_window == null || model.max_output_tokens == null || model.tool_call == null ? '能力待完善' : !model.usd_rates ? '费率待配置' : !model.has_secret ? '凭据待配置' : model.tool_call ? '可用于任务' : '未启用工具'}</Tag> },
+                    ...(data?.can_manage || data?.can_test ? [{ title: '操作', render: (_: unknown, model: PiModel) => <Space wrap>
+                        {data.can_manage && <Button type="link" disabled={busy} onClick={() => choose(model)}>编辑</Button>}
+                        {data.can_test && <Button type="link" disabled={busy || !piModelCanTest(model)}
+                            title={!model.has_secret ? '请先配置上游密钥' : !piModelCanTest(model) ? '请完善文本输入和模型限制' : undefined}
+                            onClick={() => setTestModel(model)}>测试模型</Button>}
+                    </Space> }] : []),
                 ]}
             />}
         </div>
@@ -136,15 +149,19 @@ export default function PiModelCatalog({ onDirtyChange, onBusyChange }: {
                     <Checkbox checked={draft.confirmed_free} onChange={e => patch({ confirmed_free: e.target.checked })}>已确认该模型免费</Checkbox>
                 </> },
                 { key: 'capabilities', label: '能力与限制', children: <>
-                    <Form.Item label="上下文长度" htmlFor="pi-context"><Input id="pi-context" type="number" min={1024} value={draft.context_window} onChange={e => patch({ context_window: Number(e.target.value) })} /></Form.Item>
-                    <Form.Item label="最大输出 token" htmlFor="pi-max-output"><Input id="pi-max-output" type="number" min={1} value={draft.max_output_tokens} onChange={e => patch({ max_output_tokens: Number(e.target.value) })} /></Form.Item>
-                    <Checkbox checked={draft.tool_call} onChange={e => patch({ tool_call: e.target.checked })}>工具调用</Checkbox>
+                    <Form.Item label="上下文长度" htmlFor="pi-context"><Input id="pi-context" type="number" min={1024} value={draft.context_window ?? ''} onChange={e => patch({ context_window: e.target.value ? Number(e.target.value) : null })} /></Form.Item>
+                    <Form.Item label="最大输出 token" htmlFor="pi-max-output"><Input id="pi-max-output" type="number" min={1} value={draft.max_output_tokens ?? ''} onChange={e => patch({ max_output_tokens: e.target.value ? Number(e.target.value) : null })} /></Form.Item>
+                    <Form.Item label="工具调用" htmlFor="pi-tool-call"><Select id="pi-tool-call" value={draft.tool_call == null ? undefined : String(draft.tool_call)}
+                        placeholder="选择已确认的能力" options={[{ value: 'true', label: '启用' }, { value: 'false', label: '不启用' }]}
+                        onChange={value => patch({ tool_call: value === 'true' })} /></Form.Item>
                     <Checkbox checked={draft.reasoning} onChange={e => patch({ reasoning: e.target.checked })}>推理</Checkbox>
-                    <Checkbox checked={draft.input_modalities.includes('image')} onChange={e => patch({ input_modalities: e.target.checked ? ['text', 'image'] : ['text'] })}>图片输入</Checkbox>
+                    <Checkbox checked={draft.input_modalities.includes('text')} onChange={e => patch({ input_modalities: e.target.checked ? ['text'] : [] })}>文本输入</Checkbox>
+                    <Checkbox disabled={!draft.input_modalities.includes('text')} checked={draft.input_modalities.includes('image')} onChange={e => patch({ input_modalities: e.target.checked ? ['text', 'image'] : ['text'] })}>图片输入</Checkbox>
                 </> },
             ]} />
             <Checkbox checked={draft.enabled} onChange={e => patch({ enabled: e.target.checked })}>启用此模型</Checkbox>
         </Form>}
+        {testModel && <PiModelTest model={testModel} onClose={() => setTestModel(undefined)} />}
         <ReviewFees direct />
     </section>;
 }

@@ -1,7 +1,6 @@
 """One stateless, capability-bound MCP adapter over the existing business transactions."""
 
 import asyncio
-import hmac
 import json
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -25,8 +24,7 @@ request_scope = ContextVar("bbx_business_mcp_scope")
 
 
 class BusinessMCP:
-    def __init__(self, application, *, direct: bool = False):
-        self.direct = direct
+    def __init__(self, application):
         self.application = application
         self.server = Server("bbx-business-v1")
         self.manager = StreamableHTTPSessionManager(self.server, json_response=True, stateless=True)
@@ -46,7 +44,7 @@ class BusinessMCP:
                 for name in allowed
                 if name in catalog
             ]
-            external = await gateway.external_catalog(tid, identity) if self.direct else {}
+            external = await gateway.external_catalog(tid, identity)
             return [
                 *builtins,
                 *(
@@ -164,24 +162,11 @@ class BusinessMCP:
         request = Request({**scope, "app": self.application}, receive)
         try:
             tid = UUID(scope["path_params"]["task_id"])
-            if self.direct:
-                if request.headers.getlist("origin") or request.method != "POST":
-                    raise HTTPException(
-                        403, "Direct business MCP requires the private Runner transport"
-                    )
-                identity = require_gateway_identity(request, tid, "business-mcp")
-            else:
-                expected = (
-                    self.application.state.settings.runner_mcp_backend_token.get_secret_value()
+            if request.headers.getlist("origin") or request.method != "POST":
+                raise HTTPException(
+                    403, "Direct business MCP requires the private Runner transport"
                 )
-                if not expected:
-                    raise HTTPException(503, "Business MCP backend identity is unavailable")
-                supplied = request.headers.getlist("x-bbx-gateway-backend")
-                if len(supplied) != 1 or not hmac.compare_digest(
-                    supplied[0].encode(), expected.encode()
-                ):
-                    raise HTTPException(401, "Business MCP gateway identity required")
-                identity = require_gateway_identity(request, tid, "mcp")
+            identity = require_gateway_identity(request, tid, "business-mcp")
             if identity.role == "helper":
                 raise HTTPException(403, "Helper capability is scoped to the Sandbox target")
             gateway = self.application.state.runner_gateway

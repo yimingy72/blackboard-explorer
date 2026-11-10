@@ -229,6 +229,8 @@ class TaskSupervisor:
 
     async def recover(self) -> None:
         for listed in await self.service.list_tasks():
+            if listed.get("execution_blocked_reason"):
+                continue
             if listed.get("mode") == "ctf" and business_contract(listed) != BOARD_LEGACY:
                 continue
             if self.stopping.is_set():
@@ -579,7 +581,11 @@ class TaskSupervisor:
                     except Exception as error:
                         LOGGER.error("Protected network fence deferred: %s", type(error).__name__)
             if task.get("mode", "blackboard") == "ctf":
-                if task["status"] == "running" and tid not in self.ctf_tasks:
+                if (
+                    not task.get("execution_blocked_reason")
+                    and task["status"] == "running"
+                    and tid not in self.ctf_tasks
+                ):
                     # A coordinator can exit while its durable task still owns capacity.
                     # Recovery drains local writers before fencing and resuming it.
                     try:
@@ -591,7 +597,7 @@ class TaskSupervisor:
                         )
                 if task["status"] in TERMINAL and task.get("cleanup_ready"):
                     self.cleaned.add(tid)
-                    if not task.get("deleting"):
+                    if not task.get("deleting") and not task.get("execution_blocked_reason"):
                         try:
                             await self._ctf().review_tick(tid)
                         except Exception as error:
@@ -606,7 +612,8 @@ class TaskSupervisor:
                 self.pending_starts.pop(tid, None)
                 self.start_retries.pop(tid, None)
             elif (
-                task.get("mode", "blackboard") != "ctf"
+                not task.get("execution_blocked_reason")
+                and task.get("mode", "blackboard") != "ctf"
                 and task["status"] in {"running", "closing"}
                 and tid in self.pending_starts
                 and tid not in self.loops
@@ -636,13 +643,22 @@ class TaskSupervisor:
                 and tid not in self.cleanups
             ):
                 self.cleanups[tid] = asyncio.create_task(self._cleanup(tid), name=f"cleanup:{tid}")
-        occupied = {str(t["id"]) for t in tasks if t["status"] in {"running", "closing"}}
+        occupied = {
+            str(t["id"])
+            for t in tasks
+            if t["status"] in {"running", "closing"} and not t.get("execution_blocked_reason")
+        }
         occupied.update(self.cleanups)
         occupied.update(self.loops)
         occupied.update(self.ctf_tasks)
         occupied.update(self.pending_starts)
         queue = sorted(
-            (t for t in tasks if t["status"] == "provisioning"), key=lambda t: str(t["created_at"])
+            (
+                t
+                for t in tasks
+                if t["status"] == "provisioning" and not t.get("execution_blocked_reason")
+            ),
+            key=lambda t: str(t["created_at"]),
         )
         for task in queue:
             if task.get("mode") == "ctf" and business_contract(task) != BOARD_LEGACY:

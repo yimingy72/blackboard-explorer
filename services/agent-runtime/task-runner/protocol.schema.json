@@ -649,250 +649,6 @@
       "title": "JournalState",
       "type": "object"
     },
-    "ModelAdmissionReceipt": {
-      "additionalProperties": false,
-      "properties": {
-        "protocol": {
-          "const": "bbx.task-runner.v1",
-          "title": "Protocol",
-          "type": "string"
-        },
-        "confirmed": {
-          "const": true,
-          "title": "Confirmed",
-          "type": "boolean"
-        },
-        "call_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Call Id",
-          "type": "string"
-        },
-        "attempt_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Attempt Id",
-          "type": "string"
-        },
-        "request_digest": {
-          "pattern": "^[a-f0-9]{64}$",
-          "title": "Request Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "protocol",
-        "confirmed",
-        "call_id",
-        "attempt_id",
-        "request_digest"
-      ],
-      "title": "ModelAdmissionReceipt",
-      "type": "object"
-    },
-    "ModelAttemptRequest": {
-      "additionalProperties": false,
-      "properties": {
-        "protocol": {
-          "const": "bbx.task-runner.v1",
-          "title": "Protocol",
-          "type": "string"
-        },
-        "fence": {
-          "$ref": "#/$defs/RunnerFence"
-        },
-        "binding": {
-          "$ref": "#/$defs/RunnerBinding"
-        },
-        "sdk_session_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Sdk Session Id",
-          "type": "string"
-        },
-        "call_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Call Id",
-          "type": "string"
-        },
-        "attempt_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Attempt Id",
-          "type": "string"
-        },
-        "journal": {
-          "$ref": "#/$defs/JournalCursor"
-        },
-        "purpose": {
-          "enum": [
-            "turn",
-            "summary"
-          ],
-          "title": "Purpose",
-          "type": "string"
-        },
-        "profile_revision": {
-          "minimum": 1,
-          "title": "Profile Revision",
-          "type": "integer"
-        },
-        "prompt_revision": {
-          "minimum": 1,
-          "title": "Prompt Revision",
-          "type": "integer"
-        },
-        "model_snapshot": {
-          "$ref": "#/$defs/EffectiveRunnerModel"
-        },
-        "body_json": {
-          "maxLength": 8388608,
-          "minLength": 1,
-          "title": "Body Json",
-          "type": "string"
-        },
-        "body_digest": {
-          "pattern": "^[a-f0-9]{64}$",
-          "title": "Body Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "protocol",
-        "fence",
-        "binding",
-        "sdk_session_id",
-        "call_id",
-        "attempt_id",
-        "journal",
-        "purpose",
-        "profile_revision",
-        "prompt_revision",
-        "model_snapshot",
-        "body_json",
-        "body_digest"
-      ],
-      "title": "ModelAttemptRequest",
-      "type": "object"
-    },
-    "ModelOutcomeReceipt": {
-      "additionalProperties": false,
-      "properties": {
-        "protocol": {
-          "const": "bbx.task-runner.v1",
-          "title": "Protocol",
-          "type": "string"
-        },
-        "confirmed": {
-          "const": true,
-          "title": "Confirmed",
-          "type": "boolean"
-        },
-        "attempt_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Attempt Id",
-          "type": "string"
-        },
-        "request_digest": {
-          "pattern": "^[a-f0-9]{64}$",
-          "title": "Request Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "protocol",
-        "confirmed",
-        "attempt_id",
-        "request_digest"
-      ],
-      "title": "ModelOutcomeReceipt",
-      "type": "object"
-    },
-    "ModelOutcomeSubmission": {
-      "additionalProperties": false,
-      "description": "SDK observations only; native gateway evidence owns fees and accounting outcomes.",
-      "properties": {
-        "protocol": {
-          "const": "bbx.task-runner.v1",
-          "title": "Protocol",
-          "type": "string"
-        },
-        "fence": {
-          "$ref": "#/$defs/RunnerFence"
-        },
-        "binding_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Binding Id",
-          "type": "string"
-        },
-        "sdk_session_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Sdk Session Id",
-          "type": "string"
-        },
-        "call_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Call Id",
-          "type": "string"
-        },
-        "attempt_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-          "title": "Attempt Id",
-          "type": "string"
-        },
-        "outcome": {
-          "enum": [
-            "completed",
-            "unknown",
-            "not_sent"
-          ],
-          "title": "Outcome",
-          "type": "string"
-        },
-        "model_outcome": {
-          "enum": [
-            "completed",
-            "error",
-            "aborted"
-          ],
-          "title": "Model Outcome",
-          "type": "string"
-        },
-        "usage": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Usage"
-        },
-        "http_status": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Http Status"
-        }
-      },
-      "required": [
-        "protocol",
-        "fence",
-        "binding_id",
-        "sdk_session_id",
-        "call_id",
-        "attempt_id",
-        "outcome",
-        "model_outcome",
-        "usage",
-        "http_status"
-      ],
-      "title": "ModelOutcomeSubmission",
-      "type": "object"
-    },
     "OperationAck": {
       "additionalProperties": false,
       "properties": {
@@ -1064,38 +820,19 @@
           "title": "Model Proxy Url",
           "type": "string"
         },
-        "mcp_gateway_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcp Gateway Url"
-        },
         "mcp_targets": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "propertyNames": {
-                "enum": [
-                  "business",
-                  "sandbox"
-                ]
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcp Targets"
+          "additionalProperties": {
+            "type": "string"
+          },
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": [
+              "business",
+              "sandbox"
+            ]
+          },
+          "title": "Mcp Targets",
+          "type": "object"
         },
         "control_credential_ref": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -1133,6 +870,7 @@
         "fence",
         "control_url",
         "model_proxy_url",
+        "mcp_targets",
         "control_credential_ref",
         "credential_file",
         "journal_root"
@@ -1431,40 +1169,19 @@
           "title": "Model Credential Ref",
           "type": "string"
         },
-        "mcp_credential_ref": {
-          "anyOf": [
-            {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcp Credential Ref"
-        },
         "mcp_target_credential_refs": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-                "type": "string"
-              },
-              "propertyNames": {
-                "enum": [
-                  "business",
-                  "sandbox"
-                ]
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcp Target Credential Refs"
+          "additionalProperties": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "business",
+              "sandbox"
+            ]
+          },
+          "title": "Mcp Target Credential Refs",
+          "type": "object"
         },
         "allowed_tools": {
           "items": {
@@ -1475,42 +1192,15 @@
           "title": "Allowed Tools",
           "type": "array"
         },
-        "mcp_tool_aliases": {
-          "anyOf": [
-            {
-              "maxProperties": 128,
-              "patternProperties": {
-                "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcp Tool Aliases"
-        },
         "mcp_tool_routes": {
-          "anyOf": [
-            {
-              "maxProperties": 128,
-              "patternProperties": {
-                "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
-                  "$ref": "#/$defs/RunnerMcpRoute"
-                }
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$": {
+              "$ref": "#/$defs/RunnerMcpRoute"
             }
-          ],
-          "default": null,
-          "title": "Mcp Tool Routes"
+          },
+          "title": "Mcp Tool Routes",
+          "type": "object"
         },
         "instructions": {
           "maxLength": 131072,
@@ -1553,7 +1243,9 @@
         "binding",
         "model",
         "model_credential_ref",
+        "mcp_target_credential_refs",
         "allowed_tools",
+        "mcp_tool_routes",
         "instructions",
         "profile_revision",
         "prompt_revision"
@@ -1850,20 +1542,8 @@
     "tool_unknown_submission": {
       "$ref": "#/$defs/ToolUnknownSubmission"
     },
-    "model_attempt_request": {
-      "$ref": "#/$defs/ModelAttemptRequest"
-    },
     "published_prompt": {
       "$ref": "#/$defs/PublishedPrompt"
-    },
-    "model_admission_receipt": {
-      "$ref": "#/$defs/ModelAdmissionReceipt"
-    },
-    "model_outcome_submission": {
-      "$ref": "#/$defs/ModelOutcomeSubmission"
-    },
-    "model_outcome_receipt": {
-      "$ref": "#/$defs/ModelOutcomeReceipt"
     },
     "operation_ack": {
       "$ref": "#/$defs/OperationAck"
@@ -1885,11 +1565,7 @@
     "tool_result_receipt",
     "tool_result_confirmation",
     "tool_unknown_submission",
-    "model_attempt_request",
     "published_prompt",
-    "model_admission_receipt",
-    "model_outcome_submission",
-    "model_outcome_receipt",
     "operation_ack"
   ],
   "title": "RunnerSchemaBundle",

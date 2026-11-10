@@ -29,32 +29,13 @@ class Settings(BaseSettings):
     pi_model_operator: str = ""
     pi_model_allowed_origins: list[str] = Field(default_factory=list)
     pi_model_authority_token: SecretStr = SecretStr("")
+    pi_model_peer_ca_file: str = ""
     pi_model_runtime_token: SecretStr = SecretStr("")
+    pi_playground_runtime_url: str = ""
     pi_review_peer_url: str = ""
     pi_review_peer_site: str = ""
     otel_enabled: bool = False
     profiles_dir: Path = Path("profiles/default")
-    native_gateway_accounting_source_id: str = ""
-    native_gateway_admin_url: str = ""
-    native_gateway_data_url: str = ""
-    native_gateway_admin_token: SecretStr = SecretStr("")
-    native_gateway_catalog_revision: str = ""
-    gateway_catalog_read_key: SecretStr = SecretStr("")
-    gateway_review_key_owner: bool = False
-    gateway_model_management_url: str = ""
-    gateway_site_id: str = Field(default="", pattern=r"^[a-z0-9][a-z0-9_.-]{0,63}$|^$")
-    gateway_review_key: SecretStr = SecretStr("")
-    gateway_review_key_id: str = ""
-    gateway_runtime_data_url: str = ""
-    gateway_maintenance_key: SecretStr = SecretStr("")
-    gateway_maintenance_peers: dict[str, str] = Field(default_factory=dict)
-    runner_mcp_signing_key: SecretStr = SecretStr("")
-    runner_mcp_backend_token: SecretStr = SecretStr("")
-    runner_mcp_direct_v2: bool = False
-    native_mcp_gateway_url: str = ""
-    native_mcp_backend_url: str = ""
-    native_mcp_jwks_file: str = ""
-    native_mcp_backend_token_file: str = ""
     sandbox_tenant_resolver_token: SecretStr = SecretStr("")
     native_ctf_publication_file: Path | None = None
     legacy_network_policy_file: Path | None = None

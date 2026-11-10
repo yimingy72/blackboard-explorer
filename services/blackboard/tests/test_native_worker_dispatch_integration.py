@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,7 +24,7 @@ from bbx_contracts.challenge_board import (
     UPDATE_CHALLENGE_TOOL,
     business_manifest,
 )
-from bbx_contracts.runner import PROTOCOL, runner_json_text, runner_payload_digest
+from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
 from runner_gateway_support import invocation
@@ -34,7 +33,7 @@ from starlette.requests import Request
 from test_board_flags_integration import Objects
 from test_ctf_integration import ctf as ctf
 from test_ctf_integration import ctf_url as ctf_url
-from test_native_runner_bootstrap_integration import config, runtime_settings
+from test_native_runner_bootstrap_integration import config, fixture_pi_model, runtime_settings
 from test_runner_control_integration import (
     SERVICE,
     acknowledge,
@@ -57,52 +56,34 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.parametrize(
     ("revise_scope", "pause_kind"),
-    [
-        (False, None),
-        (True, None),
-        (False, "manual"),
-        (False, "budget"),
-        (False, "budget_blocked"),
-        (False, "budget_stopped"),
-    ],
-    ids=[
-        "withdraw",
-        "scope_revision",
-        "manual_pause",
-        "budget_pause",
-        "budget_blocked",
-        "budget_stopped",
-    ],
+    [(False, None), (True, None), (False, "manual")],
+    ids=["withdraw", "scope_revision", "manual_pause"],
 )
 async def test_native_worker_claim_evidence_and_original_drain(
     ctf, ctf_url, monkeypatch, revise_scope, pause_kind
 ):
-    budget_pause = pause_kind in {"budget", "budget_blocked", "budget_stopped"}
     ctf.objects = Objects()
     tid = await ctf.create_task(
         {
             "mode": "ctf",
             "goal": "Resolve two self-contained challenges",
-            "budget": {"max_cost": "7" if budget_pause else "1", "max_minutes": 5},
+            "budget": {"max_cost": "1", "currency": "USD", "max_minutes": 5},
             "ctf_options": {"dispatch_mode": "automatic", "max_teammates": 1},
         },
         business_contract=BOARD_CONTRACT,
+        pi_model=fixture_pi_model(),
     )
     operation_id, stamp = str(uuid4()), datetime.now(UTC)
     async with (
         connect(ctf) as (app, http),
         RuntimeLock(runtime_settings(ctf_url), fenced=True) as lock,
-        app.state.business_mcp.run(),
+        app.state.direct_business_mcp.run(),
     ):
         assert lock.backend_started_at is not None
         native = app.state.native_runner_bootstrap
         gateway = app.state.runner_gateway
-        read_budget = gateway.native._budget
-        monkeypatch.setattr(
-            gateway.native,
-            "_budget",
-            AsyncMock(return_value={"publication_state": "ready", "hold_reason": None}),
-        )
+        app.state.settings.pi_model_authority = "fixture-authority"
+        app.state.settings.pi_site_id = "fixture-primary"
         async with ctf.repo.engine.begin() as conn:
             await ctf.repo.lock(conn, tid)
             await native._lead(conn, tid, {"operation_id": operation_id})
@@ -193,7 +174,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
             c for c in await commands() if json.loads(c["payload_json"])["kind"] == "prepare"
         )
         lead_sdk, lead_cursor = await prepared(lead["binding"], lead_cmd, "lead")
-        deployment = {**config(), "runner_profile": "node-sandbox-host-v1"}
+        deployment = {**config(), "mcp_transport": "direct-v2"}
         observed = {
             "namespace_uid": str(uuid4()),
             "journal_pvc": {"uid": str(uuid4())},
@@ -248,6 +229,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
                     next_check_at=stamp,
                     created_at=stamp,
                     data={
+                        "mcp_transport": "direct-v2",
                         "activated": True,
                         "binding_id": lead_id,
                         "owner_epoch": epoch,
@@ -265,8 +247,8 @@ async def test_native_worker_claim_evidence_and_original_drain(
 
         def identity(binding, sdk, journal, role):
             credential = issue_gateway_credentials(
-                app.state.settings, owner_row, binding["id"], role
-            )["mcp"]
+                app.state.settings, owner_row, binding["id"], role, targets={"business"}
+            )["business"]
             request = Request(
                 {
                     "type": "http",
@@ -274,7 +256,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
                     "headers": [(b"authorization", ("Bearer " + credential["token"]).encode())],
                 }
             )
-            capability = require_gateway_identity(request, tid, "mcp")
+            capability = require_gateway_identity(request, tid, "business-mcp")
             return Principal(
                 "agent",
                 binding["binding"]["agent_id"],
@@ -304,22 +286,20 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 "journal": lead_cursor,
             }
             envelope = invocation(scope, UPDATE_CHALLENGE_TOOL, arguments, suffix)
-            credentials = issue_gateway_credentials(app.state.settings, owner_row, lead_id, "lead")[
-                "mcp"
-            ]
+            credentials = issue_gateway_credentials(
+                app.state.settings, owner_row, lead_id, "lead", targets={"business"}
+            )["business"]
             headers = {"Authorization": "Bearer " + credentials["token"]}
-            backend = app.state.settings.runner_mcp_backend_token.get_secret_value()
             permit = await http.post(
                 control(tid) + f"/bindings/{lead_id}/tools/admit", headers=headers, json=envelope
             )
             assert permit.status_code == 200, permit.text
             response = await http.post(
-                f"/api/tasks/{tid}/business-mcp/",
+                f"/api/tasks/{tid}/business-mcp-v2/",
                 headers={
                     **headers,
                     "Accept": "application/json, text/event-stream",
                     "x-bbx-sdk-session-id": lead_sdk,
-                    "x-bbx-gateway-backend": backend,
                 },
                 json={
                     "jsonrpc": "2.0",
@@ -521,7 +501,11 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 "control_url": deployment["runner_blackboard_url"]
                 + f"/api/tasks/{tid}/runner-control",
                 "model_proxy_url": deployment["runner_model_proxy_url"],
-                "mcp_gateway_url": f"http://scripted-mcp.invalid/api/tasks/{tid}/mcp",
+                "mcp_targets": {
+                    "business": deployment["runner_blackboard_url"]
+                    + f"/api/tasks/{tid}/business-mcp-v2/",
+                    "sandbox": "http://127.0.0.1:8766/mcp/",
+                },
                 "control_credential_ref": "control",
                 "credential_file": "/var/run/bbx/credentials.json",
                 "journal_root": "/journal",
@@ -534,21 +518,6 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 "path": "/workspace/shared/inputs/original.txt",
                 "uri": "inputs/original.txt",
                 "sha256": "a" * 64,
-            }
-            original_key = str(uuid4())
-            key_fingerprint = hashlib.sha256(tid.bytes).hexdigest()
-            key_name = f"fixture-task-{tid}"
-            native_value = {
-                "keyHash": "sha256:" + key_fingerprint,
-                "metadata": {"name": key_name},
-                "allowedModels": ["fixture"],
-                "budgets": [
-                    {
-                        "name": "task-usd",
-                        "limit": {"unit": "USD", "amount": 1},
-                        "onBudgetExceeded": "Block",
-                    }
-                ],
             }
             async with ctf.repo.engine.begin() as conn:
                 await ctf.repo.lock(conn, tid)
@@ -579,77 +548,17 @@ async def test_native_worker_claim_evidence_and_original_drain(
                         }
                     )
                 )
-                await conn.execute(
-                    insert(s.native_task_budgets).values(
-                        task_id=tid,
-                        accounting_source_id="fixture",
-                        key_name=key_name,
-                        key_fingerprint=key_fingerprint,
-                        key_ciphertext="original-secret-reference",
-                        native_resource_id=original_key,
-                        publication_state="ready",
-                        config={
-                            "threshold_usd": "1.00",
-                            "threshold_cny": "7.00",
-                            "exchange_rate": {"rate_cny_per_usd": "7"},
-                            "native_value": native_value,
-                        },
-                        status_snapshot={"used_high_water_usd": "0.10"},
-                        created_at=stamp,
-                    )
-                )
-
-            monkeypatch.setattr(gateway.native, "_budget", read_budget)
-            monkeypatch.setattr(
-                gateway.native,
-                "settings",
-                gateway.native.settings.model_copy(
-                    update={"native_gateway_accounting_source_id": "fixture"}
-                ),
-            )
-            amount = {"used": "0.05", "exceeded": False}
-            budget_status = {
-                "budgets": [
-                    {
-                        "apiKeyName": key_name,
-                        "name": "task-usd",
-                        "limit": {"unit": "USD", "amount": "1.00"},
-                        "usage": amount,
-                        "window": {"durationMs": None, "expired": False},
-                        "onBudgetExceeded": "Block",
-                    }
-                ]
-            }
-            readback = AsyncMock(return_value=budget_status)
-            monkeypatch.setattr(gateway.native.admin, "budget", readback)
-            managed_key = {
-                **native_value,
-                "metadata": {
-                    **native_value["metadata"],
-                    "agentgateway.dev/id": original_key,
-                    "agentgateway.dev/createdAt": int(stamp.timestamp() * 1000),
-                },
-            }
-            remote = [{"id": original_key, "value": managed_key}]
-            monkeypatch.setattr(gateway.native.admin, "resources", AsyncMock(return_value=remote))
-            write = AsyncMock(side_effect=HTTPException(503, "Synthetic lost write ACK"))
-            monkeypatch.setattr(gateway.native.admin, "update_key", write)
             before = await commands()
             pause_request = {"request_id": str(uuid4())}
             assert (
                 await http.post(prefix + "/pause", headers=SERVICE, json=pause_request)
             ).status_code == 403
-            if budget_pause:
-                amount.update(used="1.10", exceeded=True)
-                await gateway.native.consume(tid)
-                paused = (await http.get(prefix + "/pause", headers=user)).json()
-            else:
-                response = await http.post(prefix + "/pause", headers=user, json=pause_request)
-                assert response.status_code == 200, response.text
-                paused = response.json()
-                assert (
-                    await http.post(prefix + "/pause", headers=user, json=pause_request)
-                ).json() == paused
+            response = await http.post(prefix + "/pause", headers=user, json=pause_request)
+            assert response.status_code == 200, response.text
+            paused = response.json()
+            assert (
+                await http.post(prefix + "/pause", headers=user, json=pause_request)
+            ).json() == paused
             assert set(paused) == {"pause_id", "state", "blocker"} and paused["state"] == "draining"
             with pytest.raises(HTTPException, match="stopped"):
                 await gateway.catalog(tid, actor.runtime_context.identity)
@@ -720,142 +629,14 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 json={"result": {"content": [{"type": "text", "text": "Original final output"}]}},
             )
             assert late.status_code == 200, late.text
-            if budget_pause:
-                attempt, dispatch = str(uuid4()), str(uuid4())
-                async with ctf.repo.engine.begin() as conn:
-                    await ctf.repo.lock(conn, tid)
-                    await conn.execute(
-                        insert(s.runner_calls).values(
-                            task_id=tid,
-                            id="model:" + attempt,
-                            binding_id=bid,
-                            owner_epoch=epoch,
-                            kind="model",
-                            state="completed",
-                            concurrency_active=False,
-                            provider_key="native",
-                            data={
-                                "dispatch_id": dispatch,
-                                "fee_state": "known",
-                                "transport": {"phase": "disconnected"},
-                            },
-                            created_at=stamp,
-                        )
-                    )
-                await act("activate")
-                assert (await http.get(prefix + "/pause", headers=user)).json()["blocker"] == (
-                    "original_call_unresolved"
-                )
-                ended = await http.post(
-                    f"/api/tasks/{tid}/ctf/runtime/runner-gateway/model/{attempt}/transport",
-                    headers=SERVICE,
-                    json={
-                        "protocol": PROTOCOL,
-                        "attempt_id": attempt,
-                        "dispatch_id": dispatch,
-                        "phase": "response_ended",
-                        "http_status": 200,
-                    },
-                )
-                assert ended.status_code == 200, ended.text
             await act("activate")
             assert (await http.get(prefix + "/pause", headers=user)).json()["state"] == "paused"
-            assert (
-                await http.post(prefix + "/resume", headers=user, json=resume_request)
-            ).status_code == 409
-            if budget_pause:
-                increase = {
-                    "request_id": str(uuid4()),
-                    "pause_id": paused["pause_id"],
-                    "additional_cny": "7.00",
-                }
-
-                async def add(body, headers=user):
-                    return await http.post(prefix + "/budget-increase", headers=headers, json=body)
-
-                assert (await add(increase, SERVICE)).status_code == 403
-                remote[0]["value"] = {**managed_key, "key": "synthetic-unexpected-value"}
-                assert (await add(increase)).status_code == 503
-                remote[0]["value"] = managed_key
-                assert (await add({**increase, "additional_cny": "0.07"})).status_code == 422
-                assert write.await_count == 0
-                assert (await add(increase)).status_code == 503
-                assert (await add({**increase, "request_id": str(uuid4())})).status_code == 409
-                assert (await add(increase)).status_code == 503
-                write.assert_awaited_once()
-                assert write.await_args is not None
-                resource_id, desired = write.await_args.args
-                assert resource_id == original_key and desired == {
-                    **managed_key,
-                    "budgets": [
-                        {**native_value["budgets"][0], "limit": {"unit": "USD", "amount": 2}}
-                    ],
-                }
-                remote[0] = {"id": original_key, "value": desired}
-                budget_status["budgets"][0]["limit"]["amount"] = "2.00"
-                amount.update(used="1.00", exceeded=False)
-                assert (await add(increase)).status_code == 409
-                amount["used"] = "1.10"
-                if pause_kind == "budget_stopped":
-                    stop = await http.post(f"/api/tasks/{tid}/stop", headers=SERVICE)
-                    assert stop.status_code == 200, stop.text
-                    assert (await add(increase)).status_code == 409
-                    assert (
-                        await http.post(prefix + "/resume", headers=user, json=resume_request)
-                    ).status_code == 409
-                    write.assert_awaited_once()
-                    async with ctf.repo.engine.begin() as conn:
-                        # Only completed cleanup authorizes native key retirement.
-                        await conn.execute(
-                            update(s.tasks)
-                            .where(s.tasks.c.id == tid)
-                            .values(deleting=True, cleanup_ready=True, status="stopped")
-                        )
-                        old = await read_budget(conn, tid)
-                        assert old["hold_reason"] == "budget_exceeded"
-                        assert old["config"]["threshold_usd"] == "1.00"
-
-                    async def remove_key(resource_id):
-                        assert resource_id == original_key
-                        remote.clear()
-
-                    remove = AsyncMock(side_effect=remove_key)
-                    monkeypatch.setattr(gateway.native.admin, "delete_key", remove)
-                    await gateway.native.retire(tid)
-                    remove.assert_awaited_once_with(original_key)
-                    return
-                added = await add(increase)
-                assert added.status_code == 200, added.text
-                assert added.json() == (await add(increase)).json()
-                write.assert_awaited_once()
-                assert (await http.get(prefix + "/pause", headers=user)).json()["state"] == "paused"
-                with pytest.raises(HTTPException, match="stopped"):
-                    await gateway.catalog(tid, actor.runtime_context.identity)
-                if pause_kind == "budget_blocked":
-                    await gateway.native.hold(tid, "native_fee_pending")
-                    blocked = await http.post(prefix + "/resume", headers=user, json=resume_request)
-                    assert blocked.status_code == 409
-                    async with ctf.repo.engine.connect() as conn:
-                        control_state = (
-                            await conn.execute(
-                                select(s.tasks.c.ctf_control).where(s.tasks.c.id == tid)
-                            )
-                        ).scalar_one()
-                        assert (
-                            control_state["native_budget_hold"]["recovery_blocker"]
-                            == "native_fee_pending"
-                        )
-                        assert control_state["failure_hold"]["source"] == "native_gateway"
-                    return
-            else:
-                amount["used"] = "0.20"
             response = await http.post(prefix + "/resume", headers=user, json=resume_request)
             assert response.status_code == 200, response.text
             assert response.json()["state"] == "resuming"
             assert (
                 await http.post(prefix + "/resume", headers=user, json=resume_request)
             ).json() == response.json()
-            assert all(call.args == (key_name,) for call in readback.await_args_list)
             pending = await commands()
             assert len(pending) == 1
             replacement = json.loads(pending[0]["payload_json"])["spec"]
@@ -882,20 +663,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
                     "work_id"
                 ] == str(cid)
                 assert continued["priority"] == 0 and continued["epoch"] == epoch
-                budget = await read_budget(conn, tid)
-                assert (
-                    budget["key_fingerprint"] == key_fingerprint
-                    and budget["native_resource_id"] == original_key
-                )
-                assert budget["config"]["threshold_usd"] == (
-                    "2.000000000" if budget_pause else "1.00"
-                ) and budget["status_snapshot"]["used_high_water_usd"] == (
-                    "1.10" if budget_pause else "0.20"
-                )
-                assert not budget["hold_reason"] and not task["ctf_control"].get(
-                    "native_budget_hold"
-                )
-                assert budget["config"]["exchange_rate"] == {"rate_cny_per_usd": "7"}
+                assert task["budget"]["max_cost"] == "1"
                 assert (await native._get(conn, tid))["hard_deadline"] == stamp + timedelta(
                     minutes=5
                 )

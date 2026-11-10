@@ -31,12 +31,6 @@ from bbx_blackboard.settings import Settings
 LIMIT = 256 * 1024
 
 
-class PublishedModel(ContractModel):
-    id: str = Field(min_length=1, max_length=200)
-    version: int = Field(ge=1, strict=True)
-    gateway_alias: str = Field(min_length=1, max_length=512)
-
-
 ORIGINAL_KALI = (
     "bbx-exec-env-kali@sha256:c79ded7b50e9a7ea2433e9740c48417ce08601948196ec497ad403c779da58ae"
 )
@@ -48,7 +42,13 @@ class AcceptanceReference(ContractModel):
 
 
 class CaptureAcceptance(ContractModel):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
+    pi_model_protocol: Literal["pi-messages-v1"]
+    mcp_transport: Literal["direct-v2"]
+    runner_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
+    sandbox_host_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
+    runtime_artifact_sha256: Digest
+    runtime_config_digest: Digest
     base_source: Literal["original", "reconstructed"]
     base_tool_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
     recipe_sha256: Digest | None = None
@@ -70,7 +70,6 @@ class NativeCtfPublication(ContractModel):
     label: str = Field(min_length=1, max_length=100)
     release: Literal["verified", "test_only"]
     ctf_profile_version: int = Field(ge=1, strict=True)
-    model: PublishedModel | None = Field(default=None, exclude_if=lambda value: value is None)
     budget_currency: Literal["USD"] = "USD"
     runtime_resource_config: dict[str, Any]
     acceptance: AcceptanceReference | None = None
@@ -159,7 +158,7 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
                 raise ValueError("Fixture publications are not accepted by the application")
         else:
             ref = publication.acceptance
-            if publication.model is not None or ref is None:
+            if ref is None:
                 raise ValueError("Original image publication requires acceptance evidence")
             raw = _bounded_file(path.parent / ref.file)
             if hashlib.sha256(raw).hexdigest() != ref.sha256:
@@ -168,7 +167,14 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
             original_digest = ORIGINAL_KALI.rsplit("@", 1)[-1]
             uses_original = accepted.base_tool_image.rsplit("@", 1)[-1] == original_digest
             if (
-                (accepted.base_source == "original" and not uses_original)
+                accepted.runner_image != publication.runtime_resource_config.get("runner_image")
+                or accepted.sandbox_host_image
+                != publication.runtime_resource_config.get("sandbox_host_image")
+                or accepted.runtime_artifact_sha256
+                != publication.runtime_resource_config.get("runtime_artifact_sha256")
+                or accepted.runtime_config_digest
+                != management_document_digest(publication.runtime_resource_config)
+                or (accepted.base_source == "original" and not uses_original)
                 or (
                     accepted.base_source == "reconstructed"
                     and (uses_original or accepted.recipe_sha256 is None)
@@ -201,8 +207,15 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
             ):
                 raise ValueError("Original image acceptance does not match this deployment")
         config = publication.runtime_resource_config
-        if "retirement_single_apiserver" in config:
-            raise ValueError("Expected the exact Runtime claim configuration")
+        if {
+            "retirement_single_apiserver",
+            "mcp_transport",
+            "mcp_gateway_url",
+            "runner_gateway_url",
+            "native_mcp_gateway_url",
+            "native_gateway_data_url",
+        } & config.keys():
+            raise ValueError("Expected the exact direct Runtime claim configuration")
         if not BINDING_CAPTURE_CONFIG_FIELDS <= config.keys():
             raise ValueError("Published native CTF requires binding capture")
         NativeRunnerBootstrap._configuration(config)

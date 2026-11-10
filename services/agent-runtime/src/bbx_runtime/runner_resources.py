@@ -13,6 +13,7 @@ import secrets
 import ssl
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -860,8 +861,6 @@ class RunnerResources:
                     "28888",
                 )
             ]
-            if operation.get("config", {}).get("mcp_transport") != "direct-v2":
-                targets.insert(0, ({"k8s:bbx.dev/component": "native-mcp-gateway"}, "3000"))
             for target, port in targets:
                 runner_policy["spec"]["egress"].append(
                     {
@@ -1611,7 +1610,7 @@ class RunnerResources:
         if not isinstance(value, dict) or any(
             not isinstance(item, dict)
             or item.get("audience")
-            not in {"runner-control", "model", "mcp", "business-mcp", "sandbox-mcp"}
+            not in {"runner-control", "model", "business-mcp", "sandbox-mcp"}
             or item.get("task_id") != task_id
             for item in value.values()
         ):
@@ -1826,11 +1825,7 @@ class RunnerResources:
         observed = operation["observation"]
         expected = {
             "version": 1,
-            **(
-                {"mcp_transport": "direct-v2"}
-                if operation.get("config", {}).get("mcp_transport") == "direct-v2"
-                else {}
-            ),
+            "mcp_transport": "direct-v2",
             "task_id": operation["task_id"],
             "operation_id": operation["operation_id"],
             "runner_pod_uid": observed["runner"]["pod_uid"],
@@ -1889,82 +1884,89 @@ class RunnerResources:
         await self._kubectl("replace", "-f", "-", body=secret)
 
     async def wait_sandbox_host_ready(self, operation, configuration):
-        namespace, _, pod = await self._original_host_runner(operation)
-        process = await asyncio.create_subprocess_exec(
-            "kubectl",
-            "--kubeconfig",
-            self.config["kubeconfig"],
-            "--context",
-            self.config["context"],
-            "-n",
-            namespace,
-            "port-forward",
-            "pod/" + pod["metadata"]["name"],
-            f":{SANDBOX_HOST_PORT}",
-            "--address",
-            "127.0.0.1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
         try:
-            async with asyncio.timeout(120):
-                assert process.stdout is not None
-                port = None
-                while port is None:
-                    line = await process.stdout.readline()
-                    if not line:
-                        raise ResourceUnknown("The original Sandbox host readiness forward failed")
-                    match = re.fullmatch(rb"Forwarding from 127\.0\.0\.1:(\d+) -> 8766\s*", line)
-                    if match:
-                        port = int(match[1])
-                async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
-                    while process.returncode is None:
-                        try:
-                            response = await client.get(
-                                f"http://127.0.0.1:{port}/ready",
-                                headers={"x-bbx-sandbox-inbound": configuration["inbound_key"]},
-                            )
-                        except httpx.RequestError:
-                            await asyncio.sleep(0.2)
-                            continue
-                        if response.status_code == 200:
-                            value = response.json()
-                            if (
-                                not isinstance(value, dict)
-                                or value.get("ready") is not True
-                                or any(
-                                    value.get(k) != configuration[k]
-                                    for k in (
-                                        "task_id",
-                                        "operation_id",
-                                        "runner_pod_uid",
-                                        "sandbox_id",
-                                        "sandbox_pod_uid",
-                                        "execution_context_id",
-                                    )
-                                )
-                            ):
+            async with (
+                asyncio.timeout(120),
+                httpx.AsyncClient(timeout=3, trust_env=False) as client,
+            ):
+                while True:
+                    namespace, _, pod = await self._original_host_runner(operation)
+                    process = await asyncio.create_subprocess_exec(
+                        "kubectl",
+                        "--kubeconfig",
+                        self.config["kubeconfig"],
+                        "--context",
+                        self.config["context"],
+                        "-n",
+                        namespace,
+                        "port-forward",
+                        "pod/" + pod["metadata"]["name"],
+                        f":{SANDBOX_HOST_PORT}",
+                        "--address",
+                        "127.0.0.1",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    try:
+                        assert process.stdout is not None
+                        while True:
+                            line = await process.stdout.readline()
+                            if not line:
                                 raise ResourceUnknown(
-                                    "Sandbox host readiness belongs to a different identity"
+                                    "The original Sandbox host readiness forward failed"
                                 )
-                            await self._original_host_runner(operation)
-                            return
-                        if response.status_code < 500:
-                            raise ResourceUnknown(
-                                "The original Sandbox host readiness authority was refused"
+                            match = re.fullmatch(
+                                rb"Forwarding from 127\.0\.0\.1:(\d+) -> 8766\s*", line
                             )
-                        await asyncio.sleep(0.2)
+                            if match:
+                                port = int(match[1])
+                                break
+                        while process.returncode is None:
+                            try:
+                                response = await client.get(
+                                    f"http://127.0.0.1:{port}/ready",
+                                    headers={"x-bbx-sandbox-inbound": configuration["inbound_key"]},
+                                )
+                            except httpx.RequestError:
+                                await asyncio.sleep(0.2)
+                                continue
+                            if response.status_code == 200:
+                                value = response.json()
+                                if (
+                                    not isinstance(value, dict)
+                                    or value.get("ready") is not True
+                                    or any(
+                                        value.get(k) != configuration[k]
+                                        for k in (
+                                            "task_id",
+                                            "operation_id",
+                                            "runner_pod_uid",
+                                            "sandbox_id",
+                                            "sandbox_pod_uid",
+                                            "execution_context_id",
+                                        )
+                                    )
+                                ):
+                                    raise ResourceUnknown(
+                                        "Sandbox host readiness belongs to a different identity"
+                                    )
+                                await self._original_host_runner(operation)
+                                return
+                            if response.status_code < 500:
+                                raise ResourceUnknown(
+                                    "The original Sandbox host readiness authority was refused"
+                                )
+                            await asyncio.sleep(0.2)
+                    finally:
+                        if process.returncode is None:
+                            with suppress(ProcessLookupError):
+                                process.kill()
+                        await process.wait()
+                    # kubectl can lose an announced forward while the sidecar is still binding.
+                    # Retry only the readiness read, after verifying the original Pod again.
+                    await asyncio.sleep(0.2)
         except (TimeoutError, ValueError):
             raise ResourceUnknown("The original Sandbox host readiness is unresolved") from None
-        finally:
-            if process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), 3)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
-        raise ResourceUnknown("The original Sandbox host readiness is unresolved")
 
     async def publish_mount(
         self, observation, bootstrap, credentials, *, control_only=False, retain_binding_ids=()
@@ -2062,7 +2064,7 @@ class RunnerResources:
                 raise ResourceUnknown("The original credential mount is unavailable") from None
             credentials = dict(credentials)
             for bid in retain_binding_ids:
-                for audience in ("model", "mcp", "business-mcp", "sandbox-mcp"):
+                for audience in ("model", "business-mcp", "sandbox-mcp"):
                     if audience in {"business-mcp", "sandbox-mcp"}:
                         ref = f"native-mcp-{bid}-{audience.removesuffix('-mcp')}"
                     else:

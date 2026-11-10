@@ -2358,8 +2358,8 @@ async def test_worker_settings_and_gateway_task_keep_original_profile_versions(b
     from bbx_blackboard.api import create_app
     from bbx_blackboard.profiles import ProfileStore
     from bbx_blackboard.settings import Settings
-    from bbx_contracts.gateway_models import GatewayModelSnapshot
     from bbx_contracts.models import BUILTIN_TOOLS
+    from bbx_contracts.pi_models import PiModelVersion
     from pydantic import SecretStr
 
     profiles = ProfileStore(board_service.repo.engine)
@@ -2403,34 +2403,36 @@ async def test_worker_settings_and_gateway_task_keep_original_profile_versions(b
         assert bad.status_code == 422
         assert "models" not in saved.json()["profile"]
         assert (await client.post("/api/platform/models", json={})).status_code in {404, 405}
-        model = GatewayModelSnapshot.model_validate(
+        model = PiModelVersion.model_validate(
             {
-                "alias": "chosen-model",
-                "label": "Chosen gateway model",
-                "catalog_revision": "a" * 64,
-                "accounting_source_id": "fixture",
-                "route_revision": 1,
-                "route_digest": "b" * 64,
-                "model_catalog_digest": "c" * 64,
+                "id": "chosen-model",
+                "model_revision": 1,
+                "label": "Chosen Pi model",
+                "upstream_model": "fixture",
+                "base_url": "https://fixture.invalid/v1",
                 "context_window": 500000,
-                "max_input_tokens": 490000,
                 "max_output_tokens": 8192,
                 "input_modalities": ["text"],
                 "tool_call": True,
+                "has_secret": True,
                 "usd_rates": {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"},
+                "pricing_source": "Synthetic USD",
             }
         )
 
-        async def require_active(alias, revision):
-            assert (alias, revision) == (model.alias, model.catalog_revision)
+        async def selected(reference):
+            assert reference == model.reference()
             return model
 
-        app.state.gateway_models.require_active = require_active
+        app.state.settings.pi_site_id = "fixture-primary"
+        app.state.settings.pi_model_authority = "fixture-authority"
+        app.state.pi_registry.enabled = True
+        app.state.pi_registry.selected = selected
         spec = {
             "goal": "Check task model",
             "acceptance": [{"id": "A1", "desc": "Evidence"}],
             "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 10},
-            "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
+            "pi_model": model.reference().model_dump(mode="json"),
             "agent_profile": "default",
         }
         created = await client.post("/api/tasks", json=spec)
@@ -2439,10 +2441,10 @@ async def test_worker_settings_and_gateway_task_keep_original_profile_versions(b
         snapshot = await profiles.get(task["agent_profile"], task["agent_profile_version"])
         assert {item["model"] for item in snapshot["models"].values()} == {"chosen-model"}
         assert {item["context_window"] for item in snapshot["models"].values()} == {500000}
-        assert snapshot["params"]["context_threshold"] == 392000
+        assert snapshot["params"]["context_threshold"] == 393446
         assert (await board_service.state(UUID(task["id"])))["task"]["params"][
             "context_threshold"
-        ] == 392000
+        ] == 393446
         assert snapshot["prompt_templates"]["explore"] == body["prompt"]
         await client.put(
             "/api/settings/workers/explore",

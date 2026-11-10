@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -24,19 +25,23 @@ from sqlalchemy import and_, false, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from bbx_blackboard.auth import require_task_reader, require_user_or_service
-from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.gateway_auth import require_gateway_identity, task_direct_mcp
 from bbx_blackboard.pi_registry import (
     AUTHORITY_HEADER,
     RUNTIME_HEADER,
     normalized_url,
+    peer_tls,
     registry,
     trusted_header,
 )
+from bbx_blackboard.pi_scopes import ordinary_scope, progress_scope, review_scope
 from bbx_blackboard.runner_control import row
+from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 
 CALLS = "/api/runtime/pi-model-calls"
 RUNNER_HEADER = "x-bbx-runner-model"
+PLAYGROUND_TTL = timedelta(minutes=5)
 router = APIRouter(include_in_schema=False)
 public = APIRouter(tags=["pi-fees"])
 t = s.pi_model_calls
@@ -124,9 +129,8 @@ class PiLedger:
         self.request = request
         self.site = settings.pi_site_id
         self.authority = settings.pi_model_authority
-        self.legacy = request.app.state.gateway_execution
         self.runner = request.app.state.runner_gateway
-        self.repo = self.legacy.repo
+        self.repo = Repository(request.app.state.engine)
         if not self.registry.enabled:
             raise HTTPException(503, "Pi call accounting is not configured")
 
@@ -135,6 +139,8 @@ class PiLedger:
         if len(headers) != 1:
             raise HTTPException(401, "A scoped Runner capability is required")
         token = headers[0]
+        if body.task_id is None:
+            raise denied()
         identity = require_gateway_identity(
             self.request,
             body.task_id,
@@ -150,9 +156,31 @@ class PiLedger:
 
     async def scope(self, conn, body: PiCallPrepare) -> Scope:
         tid, proof = body.task_id, body.proof
+        if proof.kind == "playground":
+            item = await self.lookup(conn, body.call_id)
+            if (
+                not self.registry.primary
+                or proof.authority != self.authority
+                or item["purpose"] != "playground"
+                or item["task_id"] is not None
+                or item["request_user"] != self.registry.settings.pi_model_operator
+                or item["intent"] != body.model_dump(mode="json")
+            ):
+                raise denied("The original model test is not authorized")
+            return Scope(
+                "playground",
+                "",
+                str(proof.request_id),
+                PiModelVersion.model_validate(item["model_snapshot"]),
+                None,
+                item["request_user"],
+                allowed_tools=[],
+                max_output_tokens=1024,
+            )
+        assert tid is not None
         frozen = await task_pi_model(conn, tid)
         if proof.kind == "review":
-            turn, review = await self.legacy._review(conn, tid, proof)
+            turn, review = await review_scope(conn, tid, proof)
             if not isinstance(review, dict) or review.get("authority") != self.authority:
                 raise denied("The original review did not freeze a Pi model")
             model = PiModelVersion.model_validate(review["pi_model"])
@@ -181,7 +209,7 @@ class PiLedger:
                 raise denied("Review must retain its original user")
             scope = Scope("review", proof.agent_id, turn, model, None, user)
         elif proof.kind == "progress":
-            _, job, current = await self.legacy._progress_scope(conn, tid, proof, pi=True)
+            _, job, current = await progress_scope(conn, tid, proof)
             spec = job["data"]["pi_model"]
             if spec["authority"] != self.authority:
                 raise denied("Progress model authority changed")
@@ -196,7 +224,7 @@ class PiLedger:
         elif frozen is None or frozen[0] != self.authority:
             raise denied("The Task did not freeze a model from this Pi authority")
         elif proof.kind == "ordinary":
-            task, agent = await self.legacy._ordinary_scope(conn, tid, proof)
+            task, agent = await ordinary_scope(conn, tid, proof)
             if task["budget"].get("currency") != "USD":
                 raise denied("The frozen Task budget is not USD")
             scope = Scope(
@@ -207,6 +235,8 @@ class PiLedger:
                 Decimal(str(task["budget"]["max_cost"])),
             )
         else:
+            if not await task_direct_mcp(conn, tid):
+                raise denied("The original Runner does not use direct Pi execution")
             _, _, binding = await self.runner._scope(
                 conn,
                 tid,
@@ -248,21 +278,38 @@ class PiLedger:
     def key(self, call_id):
         return and_(t.c.site_id == self.site, t.c.call_id == call_id)
 
-    async def lookup(self, conn, call_id):
-        found = (await conn.execute(select(t).where(self.key(call_id)))).mappings().first()
+    async def lookup(self, conn, call_id, *, lock=False):
+        query = select(t).where(self.key(call_id))
+        if lock:
+            query = query.with_for_update()
+        found = (await conn.execute(query)).mappings().first()
         if found is None:
             raise denied("Pi call is not prepared")
         return found
 
     async def locked(self, conn, call_id, attempt_id):
         existing = await self.lookup(conn, call_id)
-        await self.repo.lock(conn, existing["task_id"])
-        current = await self.lookup(conn, call_id)
+        if existing["task_id"] is None:
+            current = await self.lookup(conn, call_id, lock=True)
+        else:
+            await self.repo.lock(conn, existing["task_id"])
+            current = await self.lookup(conn, call_id)
         if current["attempt_id"] != attempt_id:
             raise denied("The original Pi attempt changed")
         return current
 
     async def prepare(self, body: PiCallPrepare) -> PiCallPrepared:
+        if body.proof.kind == "playground":
+            async with self.repo.engine.begin() as conn:
+                item = await self.locked(conn, body.call_id, body.attempt_id)
+                scope = await self.scope(conn, body)
+                if (
+                    item["state"] != "prepared"
+                    or item["created_at"] < datetime.now(UTC) - PLAYGROUND_TTL
+                ):
+                    raise denied("The model test has crossed or expired its send window")
+            return await self.material(body, item, scope)
+        assert body.task_id is not None
         intent = body.model_dump(mode="json")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, body.task_id)
@@ -316,6 +363,9 @@ class PiLedger:
                 or item["request_user"] != scope.request_user
             ):
                 raise denied("The original Pi call already crossed its send boundary or conflicts")
+        return await self.material(body, item, scope)
+
+    async def material(self, body, item, scope) -> PiCallPrepared:
         model, secret = await self.registry.frozen(
             PiModelRef(model_id=body.model_id, model_revision=body.model_revision)
         )
@@ -337,6 +387,16 @@ class PiLedger:
                 if current["request_sha256"] != body.request_sha256:
                     raise denied("The original Pi payload changed")
                 return PiCallDispatchResult(send_allowed=False, state=current["state"])
+            if (
+                current["purpose"] == "playground"
+                and current["created_at"] < datetime.now(UTC) - PLAYGROUND_TTL
+            ):
+                await conn.execute(
+                    update(t)
+                    .where(self.key(call_id))
+                    .values(state="not_sent", updated_at=func.now())
+                )
+                return PiCallDispatchResult(send_allowed=False, state="not_sent")
             scope = await self.scope(conn, PiCallPrepare.model_validate(current["intent"]))
             if (
                 scope.purpose != current["purpose"]
@@ -348,6 +408,8 @@ class PiLedger:
                 t.c.task_id == current["task_id"],
                 t.c.purpose == scope.purpose,
             ]
+            if scope.purpose == "playground":
+                group.append(t.c.call_id == call_id)
             if scope.cap is None:
                 group.append(t.c.turn_id == scope.turn)
             unresolved = await conn.scalar(
@@ -387,6 +449,18 @@ class PiLedger:
             current = await self.locked(conn, call_id, body.attempt_id)
             if current["request_sha256"] != body.request_sha256:
                 raise denied("Pi settlement must match the original provider payload")
+            if (
+                current["purpose"] == "playground"
+                and body.outcome == "complete"
+                and body.result_text is None
+                or current["purpose"] != "playground"
+                and body.result_text is not None
+            ):
+                raise denied("Only a complete model test may record a reply")
+            if current["purpose"] == "playground" and current["state"] == "complete":
+                original = current["settlement"] or {}
+                if original.get("result_text") != body.result_text:
+                    raise denied("The original model test reply cannot change")
             if current["settlement"] == result:
                 return {
                     "call_id": call_id,
@@ -405,11 +479,18 @@ class PiLedger:
                     or previous.get("usage") in (None, result["usage"])
                 )
             )
+            late_playground = (
+                current["purpose"] == "playground"
+                and current["state"] == "unknown"
+                and current["settlement"] is None
+                and body.outcome in {"unknown", "complete"}
+            )
             if not (
                 current["state"] == "dispatched"
                 or current["state"] == "prepared"
                 and body.outcome == "not_sent"
                 or resolving
+                or late_playground
             ):
                 raise denied(
                     "A different Pi settlement already exists or the call was never dispatched"
@@ -560,7 +641,7 @@ async def review_fees(request: Request, response: Response) -> dict:
             if len(token) < 32 or token == settings.service_token.get_secret_value():
                 raise ValueError("A dedicated peer identity is required")
             async with httpx.AsyncClient(
-                timeout=5, trust_env=False, follow_redirects=False
+                timeout=5, trust_env=False, follow_redirects=False, verify=peer_tls(settings)
             ) as http:
                 result = await http.get(
                     target + "/api/runtime/pi-review-fees",
@@ -580,7 +661,7 @@ async def review_fees(request: Request, response: Response) -> dict:
             ):
                 raise ValueError("Invalid review projection")
             sites.append(peer)
-        except (httpx.HTTPError, ValueError, TypeError, KeyError, ArithmeticError):
+        except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, ArithmeticError):
             pass
     return {
         "currency": "USD",

@@ -3,7 +3,7 @@ import { ArrowLeftOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, ApiError, type TaskCreateInput } from '../api/client';
+import { api, ApiError, piModelCanRunTask, type TaskCreateInput } from '../api/client';
 import styles from './NewTaskPage.module.css';
 import controls from '../styles/controls.module.css';
 import TaskAttachments from '../components/TaskAttachments';
@@ -77,20 +77,14 @@ export default function NewTaskPage() {
     const creationBlocked = !capabilities.isSuccess || nativeDeployment && !nativeEnvironment;
     const mode = nativeDeployment ? 'ctf' : 'blackboard';
     const piDirectory = useQuery({ queryKey: ['pi-models'], queryFn: api.piModels, refetchOnWindowFocus: true });
-    const direct = piDirectory.data?.enabled === true;
-    const models = useQuery({ queryKey: ['gateway-models'], queryFn: api.gatewayModels,
-        enabled: piDirectory.data?.enabled === false, refetchOnWindowFocus: true });
-    const available = direct
-        ? (piDirectory.data?.models ?? []).filter(item => item.enabled && item.has_secret && item.tool_call && item.usd_rates)
-            .map(item => ({ id: item.id, label: item.label, reference: { pi_model: { model_id: item.id, model_revision: item.model_revision } } }))
-        : (piDirectory.data?.enabled === false && models.data?.status === 'ready' ? models.data.models.filter(item => item.tool_call) : [])
-            .map(item => ({ id: item.alias, label: item.label, reference: { gateway_model: { alias: item.alias, catalog_revision: item.catalog_revision } } }));
+    const available = (piDirectory.data?.models ?? []).filter(piModelCanRunTask)
+        .map(item => ({ id: item.id, label: item.label, reference: { pi_model: { model_id: item.id, model_revision: item.model_revision } } }));
     const selectedModel = available.find(item => item.id === modelId);
     const currencyLabel = 'USD';
-    const modelPending = piDirectory.isLoading || (piDirectory.data?.enabled === false && models.isLoading);
-    const modelError = piDirectory.error ?? models.error;
-    const modelUnavailable = Boolean(modelError) || (!direct && models.data?.status === 'unavailable');
-    const refreshModels = () => void (direct || !piDirectory.data ? piDirectory.refetch() : models.refetch());
+    const modelPending = piDirectory.isLoading;
+    const modelError = piDirectory.error;
+    const modelUnavailable = Boolean(modelError) || piDirectory.data?.enabled === false;
+    const refreshModels = () => void piDirectory.refetch();
     const authError = capabilities.error ?? modelError;
     const unauthorized = authError instanceof ApiError && authError.status === 401;
     const onlyModel = available.length === 1 ? available[0].id : undefined;
@@ -240,10 +234,10 @@ export default function NewTaskPage() {
                 <p className={controls.hint}>Lead 按任务说明选择默认网络或共享 VPN。可以在说明中提供无凭据的 HTTPS 下载地址；上传的配置不会放到共享工作区。</p>
               </section>}
               {nativeEnvironment && <Alert type="info" title={nativeEnvironment.label} description={taskNetwork ? '同一任务入口支持默认网络与 Lead 配置的共享 VPN，Agent 流量均按来源采集。' : nativeEnvironment.vpn ? '此环境由 Lead 配置已发布的 VPN，仅开放已配置的数字 IPv4 TCP 目标。断开后模型、平台控制与文件读取仍可用，求解命令不可用；凭据占用保留到原任务容器全部结束。' : '此环境使用管理员配置的 IPv4 TCP 目标。已封存的逐 Agent 流量可在任务内查看。'} />}
-              <Form.Item label={`金额${direct ? "阈值" : "上限"}（${currencyLabel}）`} htmlFor="max-cost" required><Input id="max-cost" type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required prefix="US$" /></Form.Item>
+              <Form.Item label={`金额阈值（${currencyLabel}）`} htmlFor="max-cost" required><Input id="max-cost" type="number" min="0.000001" step="any" inputMode="decimal" value={maxCost} onChange={(event) => setMaxCost(event.target.value)} required prefix="US$" /></Form.Item>
               <div className={styles.settingsGrid}><Form.Item label="时长上限（分钟）" htmlFor="max-minutes" required><Input id="max-minutes" type="number" min="1" step="1" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} required /></Form.Item>
               {mode === 'ctf' ? <Form.Item label="队友上限（不含 Lead）" htmlFor="max-teammates"><Input id="max-teammates" type="number" min={nativeDeployment ? 1 : 0} max={nativeDeployment ? 20 : undefined} step="1" value={maxTeammates} onChange={(event) => setMaxTeammates(event.target.value)} required /></Form.Item> : <Form.Item label="并发 Agent 上限" htmlFor="max-agents" required><Input id="max-agents" type="number" min="1" step="1" value={maxAgents} onChange={(event) => setMaxAgents(event.target.value)} required /></Form.Item>}</div>
-              <Form.Item label={<span className={styles.modelHeading}>{direct ? '平台模型' : '模型'}<Button type="text" size="small" icon={<ReloadOutlined />} aria-label="刷新模型" loading={piDirectory.isFetching || models.isFetching} onClick={refreshModels} /></span>} htmlFor="model" required>
+              <Form.Item label={<span className={styles.modelHeading}>平台模型<Button type="text" size="small" icon={<ReloadOutlined />} aria-label="刷新模型" loading={piDirectory.isFetching} onClick={refreshModels} /></span>} htmlFor="model" required>
                 <Select id="model" aria-label="任务模型" value={selectedModel?.id} placeholder="选择可用于任务的模型" loading={modelPending}
                   options={available.map(item => ({ value: item.id, label: `${item.label} · ${item.id}` }))} onChange={setModelId} />
               </Form.Item>
@@ -258,9 +252,9 @@ export default function NewTaskPage() {
                     onChange={grants => setMcpGrants(current => ({ ...current, [mcpRole]: grants }))} />
                 </>,
               }]} />}
-              {direct && <p className={controls.hint}>到达金额阈值后停止新调用；已在途的调用仍会计费，实际金额可能超过阈值。</p>}
+              <p className={controls.hint}>到达金额阈值后停止新调用；已在途的调用仍会计费，实际金额可能超过阈值。</p>
               {modelUnavailable && !unauthorized && <Alert type="error" title="模型目录暂不可用" action={<Button size="small" onClick={refreshModels}>重试</Button>} />}
-              {!modelPending && !modelUnavailable && !available.length && <Alert type="warning" title="尚无可用于任务的模型" action={<Button href="/profiles?section=models">模型管理</Button>} />}
+              {!modelPending && !modelUnavailable && !available.length && <Alert type="warning" title="尚无可用于任务的模型" description="任务模型需要启用、配置上游密钥和费率，并支持工具调用。" action={<Button href="/profiles?section=models">模型管理</Button>} />}
               {mode === 'blackboard' && <Form.Item label={<Checkbox checked={progressEnabled} onChange={event => setProgressEnabled(event.target.checked)}>自动整理成果树</Checkbox>}><Input prefix="额外 US$" suffix="独立上限" type="number" aria-label="创建任务成果整理上限" min="0.01" step="any" value={progressCap} disabled={!progressEnabled || pending || locked} onChange={event => setProgressCap(event.target.value)} /><span className={controls.hint}>独立于求解预算，触顶不影响探索。</span></Form.Item>}
               {!nativeDeployment && <Collapse ghost size="small" items={[{ key: 'network', label: '目标域名（可选）', children: <Input.TextArea aria-label="任务所需域名（记录）" autoSize={{ minRows: 2, maxRows: 5 }} value={allowlist} onChange={(event) => setAllowlist(event.target.value)} placeholder="每行一个域名，或用逗号分隔" /> }]} />}
               <footer className={styles.footer}>{formError && <Alert type="error" title={formError} showIcon />}<div className={styles.footerActions}><Button disabled={false} onClick={() => navigate('/tasks')}>取消</Button><Button aria-label="创建任务" aria-busy={pending} type="primary" htmlType="submit" loading={pending} disabled={pending || uploadsBusy || uploadsInvalid || (!locked && !selectedModel)}>创建任务</Button></div></footer>

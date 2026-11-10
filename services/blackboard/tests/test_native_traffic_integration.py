@@ -85,7 +85,11 @@ async def test_original_network_admit_seal_and_durable_upload(ctf):
                     "sandbox": {"id": context["sandbox_id"], "pod_uid": context["sandbox_pod_uid"]},
                     "runner": {"pod_uid": owner["pod_uid"], "pod_ip": "10.1.0.2"},
                 },
-                data={"owner_epoch": owner["epoch"], "traffic_profile": PROFILE},
+                data={
+                    "owner_epoch": owner["epoch"],
+                    "traffic_profile": PROFILE,
+                    "mcp_transport": "direct-v2",
+                },
                 sandbox_host={},
                 next_check_at=stamp,
                 created_at=stamp,
@@ -100,7 +104,7 @@ async def test_original_network_admit_seal_and_durable_upload(ctf):
             )
 
         report = {"x-bbx-sandbox-report": material["report_key"]}
-        agent = {**cap(lead, "mcp"), **report, "x-bbx-sdk-session-id": lead["sdk"]}
+        agent = {**cap(lead, "sandbox"), **report, "x-bbx-sdk-session-id": lead["sdk"]}
         path = f"/api/tasks/{tid}/sandbox-host"
         tool = control(tid) + f"/bindings/{lead['binding']['binding_id']}/tools/admit"
         arguments = {"command": "printf hello"}

@@ -60,9 +60,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
     async with connect(ctf) as (app, http):
         native, gateway = app.state.native_runner_bootstrap, app.state.runner_gateway
         monkeypatch.setattr(
-            gateway.native,
-            "_budget",
-            AsyncMock(return_value={"publication_state": "ready", "hold_reason": None}),
+            "bbx_blackboard.native_helpers.pi_budget_available", AsyncMock(return_value=True)
         )
         async with ctf.repo.engine.begin() as conn:
             await ctf.repo.lock(conn, tid)
@@ -166,6 +164,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
                         },
                     },
                     data={
+                        "mcp_transport": "direct-v2",
                         "activated": True,
                         "credentials_issued": True,
                         "binding_id": lead_bid,
@@ -236,8 +235,8 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
         )
         parent = await prepared(parent_command, "parent")
         parent_mcp = issue_gateway_credentials(
-            app.state.settings, owner_row, parent_bid, "teammate"
-        )["mcp"]
+            app.state.settings, owner_row, parent_bid, "teammate", targets={"business"}
+        )["business"]
         headers = {"Authorization": "Bearer " + parent_mcp["token"]}
         base = control(tid) + f"/bindings/{parent_bid}/helpers"
 
@@ -353,10 +352,10 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
         assert "Current description" in spec["instructions"] and not spec.get("helper_foreground")
         assert spec["model"] == json.loads(parent_command["payload_json"])["spec"]["model"]
         child = await prepared(launch["command"], "child", helper=True)
-        child_mcp = launch["credentials"][spec["mcp_credential_ref"]]["token"]
+        child_mcp = launch["credentials"][spec["mcp_target_credential_refs"]["sandbox"]]["token"]
         child_headers = {"Authorization": "Bearer " + child_mcp}
         assert (
-            launch["credentials"][spec["mcp_credential_ref"]]["expires_at"]
+            launch["credentials"][spec["mcp_target_credential_refs"]["sandbox"]]["expires_at"]
             <= (launch["child_deadline_ms"] if background else launch["deadline_ms"]) // 1000
         )
         child_admit = control(tid) + f"/bindings/{reserved['binding_id']}/tools/admit"
@@ -379,7 +378,7 @@ async def test_native_helper_borrow_once_and_preserve_frozen_parent_scope(
                 headers=child_headers,
                 json=recursive,
             )
-        ).status_code == 403
+        ).status_code == 401
         assert "credentials" not in (await http.get(path, headers=auth(owner))).json()
         if background:
             assert accepted is not None

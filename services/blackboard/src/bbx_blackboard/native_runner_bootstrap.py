@@ -60,7 +60,6 @@ from bbx_blackboard.native_inputs import (
     freeze_native_inputs,
     require_inputs_confirmed,
 )
-from bbx_blackboard.native_mcp_routes import NativeMCPRoutes
 from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_traffic import PROFILE, lost_captures, opted_in
 from bbx_blackboard.native_vpn import (
@@ -74,7 +73,7 @@ from bbx_blackboard.native_worker_dispatch import NativeWorkers
 from bbx_blackboard.pi_ledger import pi_budget_available, task_pi_model
 from bbx_blackboard.profiles import ProfileStore, ctf_profile
 from bbx_blackboard.runner_auth import issue_runner_control_token, runner_credential_expiry
-from bbx_blackboard.runner_control import OWNER_SECONDS, fence, row
+from bbx_blackboard.runner_control import OWNER_SECONDS, fence, native_stopping, row
 from bbx_blackboard.runner_gateway import decode
 from bbx_blackboard.store import schema as s
 
@@ -155,7 +154,7 @@ class NativeRunnerBootstrap:
             record["desired"] == "stopped"
             or task["ctf_control"].get("native_stop_requested")
             or instant() >= record["hard_deadline"]
-            or NativeMCPRoutes.stopping(task)
+            or native_stopping(task)
         )
 
     async def _global_fence(self, conn, generation, pid, started_at):
@@ -208,6 +207,8 @@ class NativeRunnerBootstrap:
             record["controller_backend_start"],
         )
         task = await self.control._task(conn, tid)
+        if live and record["data"].get("mcp_transport") != "direct-v2":
+            raise HTTPException(409, "Original execution cannot safely migrate to Pi")
         if live and self._stopping(task, record):
             raise HTTPException(409, "Native Runner bootstrap is stopped")
         if live and (record["data"].get("recovery") or native_recovery_frozen(task)):
@@ -253,10 +254,8 @@ class NativeRunnerBootstrap:
     def require_launch_configuration(self):
         if not self.settings.sandbox_tenant_resolver_token.get_secret_value():
             raise HTTPException(503, "Sandbox tenant resolver is unavailable")
-        if not self.settings.pi_site_id:
-            self.gateway.native._configured()
-        if not self.settings.runner_mcp_direct_v2:
-            self.gateway.routes.configuration()
+        if not self.settings.pi_site_id or not self.settings.pi_model_authority:
+            raise HTTPException(503, "Pi model authority is unavailable")
 
     async def launch(self, tid, raw):
         body, digest = decode(NativeRunnerLaunch, raw, 262144)
@@ -266,8 +265,6 @@ class NativeRunnerBootstrap:
             return await self.queue_locked(conn, tid, body, digest)
 
     async def queue_locked(self, conn, tid, body, digest, *, publication=None, native_grants=None):
-        if native_grants and not self.settings.runner_mcp_direct_v2:
-            raise HTTPException(409, "Native MCP grants require the direct transport")
         if body.exchange_rate is not None and body.exchange_rate.observed_at.tzinfo is None:
             raise HTTPException(422, "Frozen exchange rate requires a timezone")
         task = await self.control._task(conn, tid, live=True)
@@ -276,6 +273,13 @@ class NativeRunnerBootstrap:
             if old["request_digest"] != digest:
                 raise HTTPException(409, "Native Runner launch request changed")
             return self._public(old)
+        frozen = await task_pi_model(conn, tid)
+        if (
+            frozen is None
+            or frozen[0] != self.settings.pi_model_authority
+            or frozen[1].id != body.model_alias
+        ):
+            raise HTTPException(409, "Original execution cannot safely migrate to Pi")
         if task["status"] not in {"created", "provisioning"}:
             raise HTTPException(409, "Only an unstarted V1 Task can bootstrap")
         if (
@@ -331,7 +335,7 @@ class NativeRunnerBootstrap:
             tenant_key_ciphertext=self.gateway.cipher.encrypt(key.encode()).decode(),
             observation={},
             data={
-                **({"mcp_transport": "direct-v2"} if self.settings.runner_mcp_direct_v2 else {}),
+                "mcp_transport": "direct-v2",
                 **({"native_mcp": native_grants} if native_grants else {}),
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
@@ -445,6 +449,9 @@ class NativeRunnerBootstrap:
                 raise HTTPException(404, "Native Runner bootstrap is not registered")
             task = await self.control._task(conn, tid)
             direct = record["data"].get("mcp_transport") == "direct-v2"
+            if not direct and not self._stopping(task, record):
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
+
             if "mcp_transport" in config:
                 raise HTTPException(409, "MCP transport is owned by the frozen Task")
             if direct and config.get("runner_profile") != "node-sandbox-host-v1":
@@ -1251,6 +1258,14 @@ class NativeRunnerBootstrap:
         owner = None
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
+            frozen = await task_pi_model(conn, tid)
+            if (
+                record["data"].get("mcp_transport") != "direct-v2"
+                or frozen is None
+                or frozen[0] != self.settings.pi_model_authority
+            ):
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
+
             require_inputs_confirmed(record)
             if vpn_enabled(record) and (
                 not vpn_state(record).get("material")
@@ -1321,14 +1336,8 @@ class NativeRunnerBootstrap:
                     raise HTTPException(409, "Original native owner scope changed")
                 owner = await self.control._update_owner(conn, tid, owner["epoch"])
                 if continuation and not data.get("binding_id"):
-                    direct = await task_pi_model(conn, tid)
-                    if direct is not None:
-                        if not await pi_budget_available(conn, tid, self.settings.pi_site_id):
-                            raise HTTPException(409, "Original Pi budget is unconfirmed")
-                    else:
-                        budget = await self.gateway.native._budget(conn, tid)
-                        if not self.recovery._budget_available(budget):
-                            raise HTTPException(409, "Original native budget is unconfirmed")
+                    if not await pi_budget_available(conn, tid, self.settings.pi_site_id):
+                        raise HTTPException(409, "Original Pi budget is unconfirmed")
                     binding = await self.pause_control.register_continuation(
                         conn, tid, owner, continuation
                     )
@@ -1341,42 +1350,22 @@ class NativeRunnerBootstrap:
             async with self.repo.engine.connect() as conn:
                 direct = await task_pi_model(conn, tid)
             if direct is None:
-                source_id = self.settings.native_gateway_accounting_source_id
-                await self.gateway.native.prepare(
-                    tid,
-                    runner_json_text(
-                        {
-                            "expected_epoch": owner["epoch"],
-                            "accounting_source_id": source_id,
-                            "selected_models": [record["request"]["model_alias"]],
-                            **(
-                                {"budget_currency": "USD"}
-                                if record["request"].get("budget_currency") == "USD"
-                                else {"exchange_rate": record["request"]["exchange_rate"]}
-                            ),
-                        }
-                    ).encode(),
-                )
-                await self.gateway.native.publish(tid)
-                selected = (
-                    await self.gateway.native.selection(tid, record["request"]["model_alias"])
-                )["sdk_model"]
-            else:
-                authority, frozen = direct
-                if (
-                    authority != self.settings.pi_model_authority
-                    or frozen.id != record["request"]["model_alias"]
-                ):
-                    raise HTTPException(409, "Frozen Pi launch model changed")
-                selected = {
-                    "id": frozen.id,
-                    "model_revision": frozen.model_revision,
-                    "api": frozen.api,
-                    "input": frozen.input_modalities,
-                    "reasoning": frozen.reasoning,
-                    "context_window": frozen.context_window,
-                    "max_output_tokens": frozen.max_output_tokens,
-                }
+                raise HTTPException(409, "Original execution cannot safely migrate to Pi")
+            authority, frozen = direct
+            if (
+                authority != self.settings.pi_model_authority
+                or frozen.id != record["request"]["model_alias"]
+            ):
+                raise HTTPException(409, "Frozen Pi launch model changed")
+            selected = {
+                "id": frozen.id,
+                "model_revision": frozen.model_revision,
+                "api": frozen.api,
+                "input": frozen.input_modalities,
+                "reasoning": frozen.reasoning,
+                "context_window": frozen.context_window,
+                "max_output_tokens": frozen.max_output_tokens,
+            }
             document = await ProfileStore(self.repo.engine).get(
                 task["agent_profile"], task["agent_profile_version"]
             )
@@ -1494,11 +1483,7 @@ class NativeRunnerBootstrap:
                 "control_url": current["config"]["runner_blackboard_url"].rstrip("/")
                 + f"/api/tasks/{tid}/runner-control",
                 "model_proxy_url": current["config"]["runner_model_proxy_url"].rstrip("/"),
-                **(
-                    {"mcp_targets": scoped["mcp_targets"]}
-                    if "mcp_targets" in scoped
-                    else {"mcp_gateway_url": scoped["mcp_gateway_url"]}
-                ),
+                "mcp_targets": scoped["mcp_targets"],
                 "control_credential_ref": "control",
                 "credential_file": "/var/run/bbx/credentials.json",
                 "journal_root": "/journal",
@@ -1528,14 +1513,10 @@ class NativeRunnerBootstrap:
                     "token": issue_runner_control_token(self.settings, owner, expires_at=expires),
                 },
                 lead_spec["model_credential_ref"]: scoped["model"],
-                **(
-                    {
-                        ref: scoped[target]
-                        for target, ref in lead_spec["mcp_target_credential_refs"].items()
-                    }
-                    if lead_spec.get("mcp_target_credential_refs")
-                    else {lead_spec["mcp_credential_ref"]: scoped["mcp"]}
-                ),
+                **{
+                    ref: scoped[target]
+                    for target, ref in lead_spec["mcp_target_credential_refs"].items()
+                },
             }
             retained = []
             for assignment in task["ctf_control"].get("native_worker_active", {}).values():
@@ -1550,15 +1531,12 @@ class NativeRunnerBootstrap:
                     retained.append(bid)
                     continue
                 worker_spec = json.loads(worker_binding["payload_json"])["spec"]
-                target_refs = worker_spec.get("mcp_target_credential_refs")
+                target_refs = worker_spec["mcp_target_credential_refs"]
                 worker = issue_gateway_credentials(
                     self.settings, owner, bid, "teammate", targets=target_refs
                 )
                 credentials[worker_spec["model_credential_ref"]] = worker["model"]
-                if target_refs is not None:
-                    credentials.update({ref: worker[target] for target, ref in target_refs.items()})
-                else:
-                    credentials[worker_spec["mcp_credential_ref"]] = worker["mcp"]
+                credentials.update({ref: worker[target] for target, ref in target_refs.items()})
             data = {
                 **current["data"],
                 "bootstrap": bootstrap,
@@ -1674,7 +1652,7 @@ class NativeRunnerBootstrap:
                     data["pause_state"] = "resumed"
                 if recovery_id := control.pop("native_recovery_rebuilding", None):
                     if not budget_proof or not await self.recovery.matching_budget(
-                        conn, tid, budget_proof[0], budget_proof[2], budget_proof[3]
+                        conn, tid, budget_proof[0], budget_proof[1], budget_proof[2]
                     ):
                         if not data.get("recovery_activation_blocker"):
                             await self._set(
@@ -1687,7 +1665,6 @@ class NativeRunnerBootstrap:
                             )
                         return self._public(await self._get(conn, tid))
                     data.pop("recovery_activation_blocker", None)
-                    await self.recovery.record_usage(conn, tid, budget_proof[1], budget_proof[2])
                     history = data["recovery_history"]
                     if (
                         history[-1]["incident_id"] != recovery_id
@@ -1712,13 +1689,7 @@ class NativeRunnerBootstrap:
                 data.update(activated=True, sdk_session_id=binding["sdk_session_id"])
             if data.get("worker_spec"):
                 task = await row(conn, s.tasks, tid)
-                if await task_pi_model(conn, tid) is not None:
-                    budget_ready = await pi_budget_available(conn, tid, self.settings.pi_site_id)
-                else:
-                    budget = await self.gateway.native._budget(conn, tid)
-                    budget_ready = (
-                        budget["publication_state"] == "ready" and not budget["hold_reason"]
-                    )
+                budget_ready = await pi_budget_available(conn, tid, self.settings.pi_site_id)
                 allow_new = (
                     budget_ready
                     and task["status"] == "running"

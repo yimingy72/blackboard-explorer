@@ -7,14 +7,14 @@ export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'
   pi_model?: PiModelRef | null;
   run_number: number;
   active_seconds: number;
+  execution_blocked_reason?: string | null;
   active_since: string | null;
   cleanup_ready: boolean;
   runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
 };
 export type TaskPage = Omit<components['schemas']['TaskPage'], 'items'> & { items: TaskView[] };
-export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { gateway_model?: GatewayModelRef; pi_model?: PiModelRef; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
+export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { pi_model?: PiModelRef; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
 export type CtfTaskCreateInput = Omit<components['schemas']['CtfTaskCreate'], 'ctf_options'> & {
-  gateway_model?: GatewayModelRef;
   pi_model?: PiModelRef;
   ctf_options?: Partial<components['schemas']['CtfOptions-Input']>;
 };
@@ -166,9 +166,25 @@ export type PiModelConfig = {
   input_modalities: ('text' | 'image')[]; reasoning: boolean; tool_call: boolean;
   usd_rates: PiUsdRates | null; pricing_source: string; confirmed_free: boolean; enabled: boolean;
 };
-export type PiModel = PiModelConfig & { id: string; model_revision: number; has_secret: boolean };
+export type PiModel = Omit<PiModelConfig, 'context_window' | 'max_output_tokens' | 'tool_call'> & {
+  id: string; model_revision: number; has_secret: boolean;
+  context_window: number | null; max_output_tokens: number | null; tool_call: boolean | null;
+};
+export function piModelCanTest(model: PiModel): boolean {
+  return model.enabled && model.has_secret && model.context_window != null && model.max_output_tokens != null
+    && model.input_modalities.includes('text');
+}
+export function piModelCanRunTask(model: PiModel): boolean {
+  return piModelCanTest(model) && model.tool_call === true && model.usd_rates != null;
+}
 export type PiModelInput = PiModelConfig & { secret?: string; clear_secret?: boolean; expected_revision?: number };
-export type PiModelDirectory = { enabled: boolean; can_manage: boolean; models: PiModel[] };
+export type PiModelDirectory = { enabled: boolean; can_manage: boolean; can_test?: boolean; models: PiModel[] };
+export type PiModelTestView = {
+  request_id: string; model_id: string; model_revision: number;
+  state: 'prepared' | 'dispatched' | 'complete' | 'unknown' | 'not_sent';
+  result_text?: string | null; amount_usd?: string | null;
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+};
 export type PiFeeSummary = { estimated_usd: string; unknown_calls: number };
 type PiTaskFees = { enabled: false } | { enabled: true; currency: 'USD'; threshold_usd: string; solver: PiFeeSummary; progress: PiFeeSummary; agents?: Record<string, PiFeeSummary> };
 type PiReviewFees = PiFeeSummary & { currency: 'USD'; sites: (PiFeeSummary & { site_id: string })[]; partial: boolean };
@@ -178,9 +194,6 @@ type GatewayUsdRates = { input: string; output: string; cache_read: string; cach
 export type GatewayModel = GatewayModelRef & {
   label: string; context_window: number; max_output_tokens: number; max_input_tokens?: number;
   input_modalities: ('text' | 'image')[]; tool_call: boolean; reasoning?: boolean; usd_rates: GatewayUsdRates;
-};
-type GatewayDirectory = {
-  status: 'ready' | 'unavailable'; models: GatewayModel[]; management_url?: string; maintenance?: boolean;
 };
 export type ReviewFees = {
   confirmed_usd: string | null; pending: number; more: boolean;
@@ -211,14 +224,17 @@ export const api = {
   deleteInput: (group: string, id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(group)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
   piModels: () => request<PiModelDirectory>('/platform/pi-models'),
+  testPiModel: (input: { request_id: string; model_id: string; model_revision: number; prompt: string }) =>
+    request<PiModelTestView>('/platform/pi-model-tests', { method: 'POST', body: JSON.stringify(input) }),
+  readPiModelTest: (requestId: string) =>
+    request<PiModelTestView>(`/platform/pi-model-tests/${encodeURIComponent(requestId)}`),
   savePiModel: (input: PiModelInput, id?: string) => request<PiModel>(
     id ? `/platform/pi-models/${encodeURIComponent(id)}` : '/platform/pi-models',
     { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) },
   ),
   piTaskFees: (taskId: string) => request<PiTaskFees>(`${taskPath(taskId)}/pi-fees`),
   piReviewFees: () => request<PiReviewFees>('/platform/pi-review-fees'),
-  gatewayModels: () => request<GatewayDirectory>('/platform/gateway-models'),
-  gatewayReviewFees: (taskId?: string) => request<ReviewFees>(taskId ? `${taskPath(taskId)}/gateway-model/review-costs` : '/platform/gateway-models/review-costs'),
+  gatewayReviewFees: (taskId: string) => request<ReviewFees>(`${taskPath(taskId)}/gateway-model/review-costs`),
   taskCreationCapabilities: () => request<components['schemas']['TaskCreationCapabilities']>('/task-creation-capabilities'),
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),

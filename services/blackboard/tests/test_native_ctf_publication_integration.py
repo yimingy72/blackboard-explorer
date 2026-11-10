@@ -18,7 +18,8 @@ from bbx_blackboard.profiles import ctf_profile
 from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
 from bbx_contracts.ctf import CtfTaskCreate, load_ctf_profile
-from bbx_contracts.gateway_models import GatewayModelSnapshot, GatewayUsdRates
+from bbx_contracts.pi_models import PiModelVersion
+from bbx_contracts.runner_bootstrap import management_document_digest
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
@@ -47,40 +48,35 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         update={
             "native_ctf_publication_file": path,
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
-            "native_gateway_accounting_source_id": "fixture-accounting",
-            "native_gateway_admin_url": "https://native.invalid",
-            "native_gateway_data_url": "https://native.invalid",
-            "native_gateway_catalog_revision": "fixture-catalog",
-            "native_mcp_gateway_url": "https://mcp.invalid",
-            "native_mcp_backend_url": "https://blackboard.invalid",
-            "native_mcp_jwks_file": "/private/public-jwks.json",
-            "native_mcp_backend_token_file": "/private/backend-token",
+            "pi_site_id": "primary",
+            "pi_model_primary_site": "primary",
+            "pi_model_authority": "fixture-authority",
         }
     )
     app = create_app(options, engine=ctf.repo.engine, objects=UploadObjects())
     app.state.native_ctf_publication = PublicationState()
-    model = GatewayModelSnapshot(
-        alias="fixture-native",
-        label="Synthetic CTF model",
-        catalog_revision="a" * 64,
-        accounting_source_id="fixture-accounting",
-        route_revision=1,
-        route_digest="b" * 64,
-        model_catalog_digest="c" * 64,
-        context_window=16384,
-        max_output_tokens=128,
-        input_modalities=["text"],
-        tool_call=True,
-        usd_rates=GatewayUsdRates.model_validate(
-            {"input": "1", "output": "1", "cache_read": "1", "cache_write": "1"}
-        ),
+    model = PiModelVersion.model_validate(
+        {
+            "id": "fixture-native",
+            "model_revision": 1,
+            "label": "Synthetic CTF model",
+            "upstream_model": "fixture",
+            "base_url": "https://provider.invalid/v1",
+            "context_window": 32000,
+            "max_output_tokens": 128,
+            "input_modalities": ["text"],
+            "tool_call": True,
+            "has_secret": True,
+            "usd_rates": {"input": "1", "output": "1", "cache_read": "1", "cache_write": "1"},
+            "pricing_source": "Synthetic USD",
+        }
     )
 
-    async def require_active(alias, revision=None):
-        assert alias == model.alias and revision in (None, model.catalog_revision)
+    async def select_fixture_model(reference):
+        assert reference == model.reference()
         return model
 
-    monkeypatch.setattr(app.state.gateway_models, "require_active", require_active)
+    monkeypatch.setattr(app.state.pi_registry, "selected", select_fixture_model)
     profile = await app.state.profile_store.create(
         "ctf", load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf"), "test"
     )
@@ -88,6 +84,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         **config(),
         "runner_profile": "node-sandbox-host-v1",
         "sandbox_host_image": "fixture-host@sha256:" + "c" * 64,
+        "runtime_artifact_sha256": "1" * 64,
         "traffic_sandbox_image": "fixture-capture@sha256:" + "d" * 64,
         "sandbox_network": {
             "namespace": "worker-a",
@@ -113,7 +110,13 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     }
     receipt = tmp_path / "acceptance.json"
     accepted = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "pi_model_protocol": "pi-messages-v1",
+        "mcp_transport": "direct-v2",
+        "runner_image": resource["runner_image"],
+        "sandbox_host_image": resource["sandbox_host_image"],
+        "runtime_artifact_sha256": resource["runtime_artifact_sha256"],
+        "runtime_config_digest": management_document_digest(resource),
         "base_source": "reconstructed",
         "base_tool_image": "fixture-reconstructed@sha256:" + "e" * 64,
         "recipe_sha256": "f" * 64,
@@ -131,6 +134,16 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     }
     path.write_text(json.dumps(verified))
     assert load_publication(options).publication
+    path.write_text(
+        json.dumps(
+            {
+                **verified,
+                "runtime_resource_config": {**resource, "runtime_artifact_sha256": "2" * 64},
+            }
+        )
+    )
+    assert load_publication(options).publication is None
+
     path.write_text(
         json.dumps(
             {
@@ -157,7 +170,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         "mode": "ctf",
         "goal": "Verify a published native setup",
         "budget": {"currency": "USD", "max_cost": "2", "max_minutes": 5},
-        "gateway_model": {"alias": model.alias, "catalog_revision": model.catalog_revision},
+        "pi_model": model.reference().model_dump(mode="json"),
         "ctf_options": {"max_teammates": 2},
     }
     async with httpx.AsyncClient(
@@ -169,7 +182,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             assert response.status_code == 200, response.text
             return str(response.json()["id"])
 
-        legacy_body = {key: value for key, value in create.items() if key != "gateway_model"}
+        legacy_body = {key: value for key, value in create.items() if key != "pi_model"}
         legacy_body["budget"] = {"max_cost": "2", "max_minutes": 5}
         legacy_body["input_group_id"] = await group()
         parsed = CtfTaskCreate.model_validate(legacy_body)
@@ -217,6 +230,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             "revision",
             "publication_stamp",
             "label",
+            "external_mcp",
         }
         reference = {key: environment[key] for key in ("id", "revision", "publication_stamp")}
         assert (await http.post("/api/tasks", headers=user, json=legacy_body)).json()[

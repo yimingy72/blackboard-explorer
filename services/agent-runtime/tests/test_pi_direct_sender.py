@@ -18,7 +18,7 @@ from bbx_runtime.models import make_task_model_client
 from bbx_runtime.pi import Message
 from bbx_runtime.pi.bridge import PiBridge
 from bbx_runtime.runner_proxy import RunnerModelProxy
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 from pydantic import SecretStr
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -347,14 +347,16 @@ async def test_actual_pi_15_receives_runtime_events_after_settlement(approve_fix
         authority = FakeAuthority(provider, origin)
         async with httpx.AsyncClient(transport=httpx.MockTransport(authority)) as internal:
             service = BlackboardClient("http://authority.fixture", "not-the-sender", internal)
-            settings = Settings(
+            settings = NativeRunnerSettings(
                 service_token=SecretStr("synthetic-service-only"),
-                minio_root_password=SecretStr("fake-minio"),
-                envd_token_secret=SecretStr("fake-envd"),
+                postgres_password=SecretStr("synthetic-postgres"),
+                runner_resource_config_file=Path("/unused"),
+                runner_blackboard_url="https://authority.fixture",
+                runner_model_proxy_url="https://runtime.fixture",
                 pi_runtime_sender_token=SecretStr("synthetic-runtime-sender"),
                 pi_provider_allowed_origins=("https://approved.example",),
             )
-            runtime = RunnerModelProxy(settings, service, http=internal)
+            runtime = RunnerModelProxy(settings, service)
             async with listen(runtime.app) as runtime_origin:
                 node = Path(__file__).resolve().parents[1] / "task-runner"
                 proc = await asyncio.create_subprocess_exec(
@@ -413,14 +415,16 @@ async def test_native_runner_tool_and_summaries_use_actual_provider(approve_fixt
         authority = FakeAuthority(provider, origin)
         async with httpx.AsyncClient(transport=httpx.MockTransport(authority)) as internal:
             service = BlackboardClient("http://authority.fixture", "not-the-sender", internal)
-            settings = Settings(
+            settings = NativeRunnerSettings(
                 service_token=SecretStr("synthetic-service-only"),
-                minio_root_password=SecretStr("fake-minio"),
-                envd_token_secret=SecretStr("fake-envd"),
+                postgres_password=SecretStr("synthetic-postgres"),
+                runner_resource_config_file=Path("/unused"),
+                runner_blackboard_url="https://authority.fixture",
+                runner_model_proxy_url="https://runtime.fixture",
                 pi_runtime_sender_token=SecretStr("synthetic-runtime-sender"),
                 pi_provider_allowed_origins=("https://approved.example",),
             )
-            runtime = RunnerModelProxy(settings, service, http=internal)
+            runtime = RunnerModelProxy(settings, service)
             async with listen(runtime.app) as runtime_origin:
                 node = Path(__file__).resolve().parents[1] / "task-runner"
                 proc = await asyncio.create_subprocess_exec(
@@ -520,14 +524,16 @@ async def test_native_hosted_helper_actual_provider(approve_fixture_loopback):
         authority = FakeAuthority(provider, origin)
         async with httpx.AsyncClient(transport=httpx.MockTransport(authority)) as internal:
             service = BlackboardClient("http://authority.fixture", "not-the-sender", internal)
-            settings = Settings(
+            settings = NativeRunnerSettings(
                 service_token=SecretStr("synthetic-service-only"),
-                minio_root_password=SecretStr("fake-minio"),
-                envd_token_secret=SecretStr("fake-envd"),
+                postgres_password=SecretStr("synthetic-postgres"),
+                runner_resource_config_file=Path("/unused"),
+                runner_blackboard_url="https://authority.fixture",
+                runner_model_proxy_url="https://runtime.fixture",
                 pi_runtime_sender_token=SecretStr("synthetic-runtime-sender"),
                 pi_provider_allowed_origins=("https://approved.example",),
             )
-            runtime = RunnerModelProxy(settings, service, http=internal)
+            runtime = RunnerModelProxy(settings, service)
             async with listen(runtime.app) as runtime_origin:
                 node = Path(__file__).resolve().parents[1] / "task-runner"
                 proc = await asyncio.create_subprocess_exec(
@@ -554,9 +560,7 @@ async def test_native_hosted_helper_actual_provider(approve_fixture_loopback):
             await runtime.close()
 
 
-async def test_legacy_review_model_metadata_does_not_choose_pi():
-    from bbx_runtime.settings import Settings
-
+async def test_historical_review_without_frozen_pi_model_cannot_send():
     old_snapshot = {
         "alias": "original-review-model",
         "catalog_revision": "a" * 64,
@@ -584,23 +588,18 @@ async def test_legacy_review_model_metadata_does_not_choose_pi():
         service_token=SecretStr("fixture"),
         minio_root_password=SecretStr("fixture"),
         envd_token_secret=SecretStr("fixture"),
-        runner_gateway_url="https://original-gateway.invalid",
     )
     async with BlackboardClient("http://authority.fixture", "fixture") as service:
-        client = make_task_model_client(
-            profile,
-            source={"review_model": old_snapshot, "gateway_model": old_snapshot},
-            settings=settings,
-            service=service,
-            task_id="original-task",
-            purpose="review",
-            proof={},
-            explore_max_steps=1,
-            conclude_grace_calls=0,
-            max_duration_seconds=30,
-        )
-        try:
-            assert client.gateway is not None
-            assert client.trusted_model is None
-        finally:
-            await client.close()
+        with pytest.raises(ValueError, match="no frozen platform model"):
+            make_task_model_client(
+                profile,
+                source={"review_model": old_snapshot, "gateway_model": old_snapshot},
+                settings=settings,
+                service=service,
+                task_id="original-task",
+                purpose="review",
+                proof={},
+                explore_max_steps=1,
+                conclude_grace_calls=0,
+                max_duration_seconds=30,
+            )

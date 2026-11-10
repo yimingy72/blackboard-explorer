@@ -180,8 +180,9 @@ export default function BlackboardWorkbenchPage() {
     const piSolver = directFees.data?.enabled ? directFees.data.solver : undefined;
     const piAgents = directFees.data?.enabled ? directFees.data.agents : undefined;
     const usedCost = version === null && task?.pi_model
-        ? piSolver?.unknown_calls && Number(piSolver.estimated_usd) === 0 ? null : piSolver?.estimated_usd ?? null : version === null && task?.gateway_fees
-            ? task.gateway_fees.solver.confirmed_usd : historicalCost;
+        ? piSolver?.unknown_calls && Number(piSolver.estimated_usd) === 0 ? null : piSolver?.estimated_usd ?? null : historicalCost;
+    const historicalGatewayFees = version === null && !task?.pi_model ? task?.gateway_fees?.solver : null;
+    const canExecute = Boolean(task?.pi_model && !task.execution_blocked_reason);
     const maxCost = boardTask?.budget.max_cost;
     const costLimit = Number(maxCost);
     const costProgress = Number.isFinite(costLimit) && costLimit > 0 ? Math.min(100, Math.max(0, Number(usedCost) / costLimit * 100)) : 0;
@@ -203,17 +204,18 @@ export default function BlackboardWorkbenchPage() {
         <Button type="text" icon={<Icon name="back" />} aria-label="返回任务" onClick={() => navigate(taskListUrl(location.state))} />
         <h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
-        <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{usedCost == null ? "费用待核" : task?.pi_model && version === null ? `估算 ${formatMoney(usedCost, 'USD')}` : formatMoney(usedCost,task?.cost_currency)}{Boolean(piSolver?.unknown_calls) && ` · ${piSolver?.unknown_calls} 笔待核`}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span><span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span>{networkMode && <Tag title="逐 Agent 流量采集必需">{networkMode} · {networkStage}</Tag>}</div>
+        <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{usedCost == null ? "费用待核" : task?.pi_model && version === null ? `估算 ${formatMoney(usedCost, 'USD')}` : formatMoney(usedCost,task?.cost_currency)}{Boolean(piSolver?.unknown_calls) && ` · ${piSolver?.unknown_calls} 笔待核`}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span>{historicalGatewayFees && <span>旧网关：{historicalGatewayFees.confirmed_usd == null ? '费用待核' : formatMoney(historicalGatewayFees.confirmed_usd, 'USD')}</span>}<span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span>{networkMode && <Tag title="逐 Agent 流量采集必需">{networkMode} · {networkStage}</Tag>}</div>
         <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')openRecords();if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
           {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
-          {['finished','failed','stopped'].includes(status) && (task?.gateway_model || task?.pi_model) && <Button disabled={version !== null} onClick={() => {resumeRequest.current=randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
-          {status==='created' && (task?.gateway_model || task?.pi_model) && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
+          {['finished','failed','stopped'].includes(status) && canExecute && <Button disabled={version !== null} onClick={() => {resumeRequest.current=randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
+          {status==='created' && canExecute && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
           {['created','provisioning','running'].includes(status) && <Button aria-label="停止" aria-busy={action==='stop'} danger loading={action==='stop'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('stop')}>停止</Button>}
         </div>
       </div>
       {task && task.run_number>1 && (task.runs?.length??0)>0 && <nav className={styles.runHistory} aria-label="历史轮次">{task.runs?.map(run=><span key={run.run_number}>第{run.run_number}轮 {run.report_uri&&<Link to={`/tasks/${encodeURIComponent(taskId)}/report?run=${run.run_number}`}>报告</Link>} {run.workspace_uri&&<a href={`/api/tasks/${encodeURIComponent(taskId)}/workspace?run=${run.run_number}`}>归档</a>}</span>)}</nav>}
       <div className={styles.runSummary}><nav className={styles.viewNav} aria-label="任务视图"><Link aria-current="page" to={`/tasks/${taskId}`}>协作黑板</Link><Link to={`/tasks/${taskId}/progress`}>成果树</Link></nav>{explanation&&<p className={styles.endReason} title={explanation}>结束原因：{explanation}</p>}<span className={styles.runStats} aria-label="运行统计">{boardTask?.usageIncomplete&&<span title="模型未提供完整用量，金额仅包含已记录部分。">用量不完整 · </span>}对象 {totalObjects} · 并发 {workers}/{workerLimit} · 模型调用 {steps} · 缓存命中 {cachePercent} · 预算 {Math.round(costProgress)}%</span></div>
       {version!==null&&<Alert type="warning" title={`历史回放 · v${version}`} description={`已接收 ${board.events.length-viewEvents.length} 条后续事件；当前视图只读。`} action={<Button onClick={()=>setVersion(null)}>返回实时</Button>} />}
+      {task?.execution_blocked_reason && <Alert type="info" title="旧执行无法安全恢复" description="可继续查看任务、会话、费用和归档。旧执行不会重新发送。" />}
       {(actionError || (board.error&&!unauthorized))&&<Alert type="error" title={actionError||board.error?.message} action={board.error?<Button onClick={()=>window.location.reload()}>重新连接</Button>:undefined} />}
       {board.connection==='reconnecting'&&!board.error&&<Alert type="warning" title="实时连接暂时中断，正在自动重连" />}
       </header>
@@ -240,7 +242,7 @@ export default function BlackboardWorkbenchPage() {
           <p className={styles.resumeHint}>当前总限额：{formatMoney(task?.budget?.max_cost ?? boardTask?.budget.max_cost, task?.cost_currency)}、{String(task?.budget?.max_minutes ?? boardTask?.budget.max_minutes ?? 0)} 分钟；已累计运行 {duration}。追加后须留有可探索额度。</p>
           {!task?.cleanup_ready && <p className={styles.resumeHint} role="status">正在归档已登记文件并清理任务容器，完成后即可续跑。</p>}
           {resumeError && <p className={controls.error} role="alert">{resumeError}</p>}
-          <div className={styles.resumeActions}><Button className={controls.button} disabled={resuming} onClick={() => setResumeOpen(false)} htmlType={"button"}>取消</Button><Button className={`${controls.button} ${controls.primary}`} disabled={resuming || !task?.cleanup_ready || !(task?.gateway_model || task?.pi_model)} htmlType={"submit"} type={"primary"}>{resuming ? '正在续跑…' : '确认续跑'}</Button></div>
+          <div className={styles.resumeActions}><Button className={controls.button} disabled={resuming} onClick={() => setResumeOpen(false)} htmlType={"button"}>取消</Button><Button className={`${controls.button} ${controls.primary}`} disabled={resuming || !task?.cleanup_ready || !canExecute} htmlType={"submit"} type={"primary"}>{resuming ? '正在续跑…' : '确认续跑'}</Button></div>
         </form>
       </Modal>
     </div></TaskCurrency.Provider>;
