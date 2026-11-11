@@ -30,6 +30,13 @@ export type WorkerRole = 'explore' | 'derive' | 'close';
 export type WorkerTools = components['schemas']['WorkerTools'];
 export type WorkerSettingsProfile = Omit<ProfileInput, 'models' | 'privileged_allowlist'>;
 export type WorkerSettings = { revision: number; profile: WorkerSettingsProfile };
+export type SettingsRole = WorkerRole | 'lead' | 'teammate' | 'progress';
+export type SettingsTool = {
+  name: string; group: 'platform' | 'sandbox'; access: 'read' | 'write' | 'execute';
+  required: boolean; configurable: boolean; setting_key: string | null;
+  input_schema: Record<string, unknown>; description: string | null;
+};
+export type SettingsToolCatalog = { roles: Partial<Record<SettingsRole, { tools: SettingsTool[]; external_mcp: boolean }>> };
 export type PublishedCtfSettings = { published: false } | {
   published: true; revision: number; task_network: boolean;
   prompt_templates: Record<'lead' | 'teammate', string>;
@@ -269,6 +276,7 @@ export const api = {
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions/${version}`),
   createProfileVersion: (name: string, profile: ProfileInput) =>
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
+  getSettingsToolCatalog: (signal?: AbortSignal) => request<SettingsToolCatalog>('/settings/tool-catalog', { signal }),
   getWorkerSettings: () => request<WorkerSettings>('/settings/workers'),
   getCtfWorkerSettings: () => request<PublishedCtfSettings>('/settings/ctf/workers'),
   saveWorkerSettings: (role: WorkerRole, expected_revision: number, prompt: string, tools: WorkerTools) =>

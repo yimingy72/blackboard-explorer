@@ -1,15 +1,16 @@
 import { Alert, Button, Form, Input, Modal, Space } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type PiModel, type PiModelTestView } from '../api/client';
 import controls from '../styles/controls.module.css';
 
-export default function PiModelTest({ model, onClose }: { model: PiModel; onClose: () => void }) {
+export default function PiModelTest({ model, onClose, onBusyChange }: { model: PiModel; onClose: () => void; onBusyChange?: (busy: boolean) => void }) {
     const [prompt, setPrompt] = useState('');
     const [requestId, setRequestId] = useState<string>();
     const [result, setResult] = useState<PiModelTestView>();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const inFlight = useRef(false);
+    useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
     const hasPrompt = prompt.trim().length > 0 && new TextEncoder().encode(prompt).length <= 8192;
     async function run(read: boolean) {
         if (inFlight.current || (read ? !requestId : requestId || !hasPrompt)) return;
@@ -35,7 +36,7 @@ export default function PiModelTest({ model, onClose }: { model: PiModel; onClos
         }
     }
     return <Modal title={`测试模型：${model.label} · v${model.model_revision}`} open footer={null}
-        onCancel={onClose} closable={!busy} keyboard={!busy} maskClosable={false}>
+        onCancel={onClose} closable={!busy} keyboard={!busy} mask={{ closable: false }}>
         <p className={controls.hint}>发送一轮文本，由供应商计费。费用独立于任务和复盘。没有费率时仍可测试，费用显示为未知。</p>
         <Form layout="vertical" onFinish={() => void run(false)}>
             <Form.Item label="测试消息" htmlFor="pi-test-prompt" required>

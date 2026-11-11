@@ -106,7 +106,7 @@ test('整理设置只读显示模型输出上限，只保存独立费用额度',
   await expect(dialog.getByText(/65,?536/)).toBeVisible();
   await expect(dialog.getByLabel('整理单次输出上限', { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('combobox', { name: '整理推理强度', exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('link')).toHaveAttribute('href', '/profiles?section=models');
+  await expect(dialog.getByRole('link')).toHaveAttribute('href', '/models');
   await dialog.getByLabel('修改独立整理上限', { exact: true }).fill('4');
   await dialog.getByRole('button', { name: '保存并启用', exact: true }).click();
   await expect(dialog).not.toBeVisible();

@@ -17,6 +17,7 @@
 .contentLayout { min-width:0; min-height:0; flex:1; }
 .topbar { position:sticky; top:0; z-index:var(--z-sticky); display:flex; align-items:center; justify-content:space-between; gap:16px; height:var(--app-bar-height); line-height:normal; padding:0 20px; border-bottom:1px solid var(--color-line); background:#fff; }
 .context { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
+.contextTitle { padding-left:9px; border-left:1px solid var(--color-line); font-size:12px; font-weight:600; }
 .context > span { color:var(--color-muted); font-size:12px; font-weight:500; }
 .mobileToggle { display:none; }
 .account { display:flex; gap:8px; align-items:center; height:32px; padding:2px 5px; }

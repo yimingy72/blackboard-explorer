@@ -5,11 +5,12 @@ import { usePublishedMcpServers, type McpGrant } from './mcpGrants';
 import controls from '../styles/controls.module.css';
 import styles from '../pages/ProfilesPage.module.css';
 
-export default function McpGrantPicker({ role, selected, onChange, disabled }: {
+export default function McpGrantPicker({ role, selected, onChange, disabled, onToolDetails }: {
     role: McpRole;
     selected: McpGrant[];
     onChange: (value: McpGrant[]) => void;
     disabled: boolean;
+    onToolDetails?: (tool: McpTool, source: string) => void;
 }) {
     const [inspected, setInspected] = useState('');
     const [toolError, setToolError] = useState('');
@@ -77,13 +78,16 @@ export default function McpGrantPicker({ role, selected, onChange, disabled }: {
                     </Button>
                     {inspected === key && toolError && <p className={controls.error} role="alert">{toolError}</p>}
                     {inspected === key && toolList && <div className={styles.toolChecks}>
-                        {toolList.map(tool => <label key={tool.name} className={styles.checkRow}>
-                            <Checkbox checked={bound.allowed_tools?.includes(tool.name) === true} disabled={disabled} onChange={event => {
+                        {toolList.map(tool => <div key={tool.name}>
+                            <label className={styles.checkRow}><Checkbox checked={bound.allowed_tools?.includes(tool.name) === true} disabled={disabled} onChange={event => {
                                 const current = bound.allowed_tools ?? [];
                                 const allowed_tools = event.target.checked ? [...current, tool.name] : current.filter(item => item !== tool.name);
                                 onChange(selected.map(entry => entry === bound ? { ...entry, allowed_tools } : entry));
-                            }} />{tool.name}<small>{tool.description}</small>
-                        </label>)}
+                            }} />{tool.name}<small>{tool.description}</small></label>
+                            {onToolDetails && <Button type="link" size="small" onClick={() => onToolDetails(tool, server.label + ' · v' + server.version)}>
+                              查看 {tool.name} 参数
+                            </Button>}
+                        </div>)}
                     </div>}
                 </>}
             </div>;

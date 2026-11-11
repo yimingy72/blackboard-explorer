@@ -1,3 +1,4 @@
+import { fixtureToolCatalog } from './settings-fixture';
 import { taskListResponse } from './task-list-fixture';
 import type { Page, Route } from '@playwright/test';
 import { createHash } from 'node:crypto';
@@ -325,6 +326,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       profiles.set(version, body);
       return json(route, profileDocument(version, body));
     }
+    if (path === '/api/settings/tool-catalog' && method === 'GET') return json(route, fixtureToolCatalog);
     if (path === '/api/settings/workers' && method === 'GET') return json(route, { revision, profile: settingsProfile });
     const workerMatch = /^\/api\/settings\/workers\/(explore|derive|close)$/.exec(path);
     if (workerMatch && method === 'PUT') {

@@ -11,5 +11,6 @@ export const progressApi = {
   source: (id: string, objectId: string, through: number, signal?: AbortSignal) => request<{ object: Record<string, unknown> }>(`${path(id)}/sources?object_id=${encodeURIComponent(objectId)}&through_version=${through}`, { signal }),
   send: (id: string, value: { id: string; content: string; node_id?: string | null }) => request<ProgressMessage>(`${path(id)}/messages`, json('POST', value)),
   settings: (signal?: AbortSignal) => request<ProgressSettings>('/progress/settings', { signal }),
-  saveSettings: (value: ProgressSettings) => request<ProgressSettings>('/progress/settings', json('PUT', { ...value, expected_revision: value.revision })),
+  saveSettings: ({ revision, prompt, pi_model, enabled_tools }: ProgressSettings) =>
+    request<ProgressSettings>('/progress/settings', json('PUT', { expected_revision: revision, prompt, pi_model, enabled_tools })),
 };

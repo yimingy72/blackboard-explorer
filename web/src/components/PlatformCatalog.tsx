@@ -1,57 +1,30 @@
-import { Alert, App, Button, Checkbox, Collapse, Empty, Form, Input, Select, Space, Switch, Tag } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Checkbox, Empty, Form, Input, Select, Switch, Tag } from 'antd';
+import { ApiOutlined, ExperimentOutlined, PlusOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { api, type McpRole, type McpDiscovery, type McpServer, type McpServerInput, type McpTool } from '../api/client';
+import { Link } from 'react-router-dom';
+import { api, ApiError, type McpRole, type McpDiscovery, type McpServer, type McpServerInput, type McpTool } from '../api/client';
 import LoadingState from './LoadingState';
 import { MCP_ROLE_LABELS } from './mcpGrants';
-import controls from '../styles/controls.module.css';
-import styles from '../pages/ProfilesPage.module.css';
+import { DetailHeading, SettingsFrame, SettingsHeading, SettingsRail } from '../settings/SettingsShell';
+import { useSettingsLogin, useTrackSettings, type ChangeTracking } from '../settings/settingsChanges';
+import { McpToolDrawer } from '../settings/ToolPermissions';
+import styles from '../settings/Settings.module.css';
 
 const blankServer: McpServerInput = { label: '', url: '', auth_header: 'Authorization', auth_scheme: 'Bearer', enabled: true };
 
-function object(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
+const draftOf = (item?: McpServer): McpServerInput => item ? {
+    label: item.label, url: item.url, auth_header: item.auth_header,
+    auth_scheme: item.auth_scheme, enabled: item.enabled,
+} : blankServer;
 
-function schemaType(value: unknown) {
-    if (typeof value === 'string') return value;
-    if (Array.isArray(value) && value.every(item => typeof item === 'string')) return value.join(' / ');
-    return '见原始 Schema';
-}
-
-function ToolDetails({ tool }: { tool: McpTool }) {
-    const properties = Object.entries(object(tool.input_schema?.properties));
-    const required = Array.isArray(tool.input_schema?.required) ? tool.input_schema.required : [];
-    return <details className={styles.mcpToolDetail}>
-        <summary>工具详情：<strong>{tool.name}</strong></summary>
-        {tool.description && <p>{tool.description}</p>}
-        {properties.length > 0 && <dl className={styles.mcpParameters}>
-            {properties.map(([name, value]) => {
-                const property = object(value);
-                return <div key={name}>
-                    <dt><code>{name}</code> · {schemaType(property.type)} · {required.includes(name) ? '必填' : '可选'}</dt>
-                    {typeof property.description === 'string' && <dd>{property.description}</dd>}
-                </div>;
-            })}
-        </dl>}
-        <details><summary>完整输入 Schema</summary><pre>{JSON.stringify(tool.input_schema ?? {}, null, 2)}</pre></details>
-        {tool.output_schema && <details><summary>完整输出 Schema</summary><pre>{JSON.stringify(tool.output_schema, null, 2)}</pre></details>}
-        {tool.annotations && <details><summary>服务声明（不代表平台权限）</summary>
-            <pre>{JSON.stringify(tool.annotations, null, 2)}</pre>
-        </details>}
-    </details>;
-}
-
-export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
-    onDirtyChange: (dirty: boolean) => void;
-    onBusyChange: (busy: boolean) => void;
-}) {
+export default function PlatformCatalog(tracking: ChangeTracking) {
     const { modal } = App.useApp();
     const client = useQueryClient();
     const servers = useQuery({ queryKey: ['mcp-servers'], queryFn: api.listMcpServers });
     const capabilities = useQuery({ queryKey: ['mcp-capabilities'], queryFn: api.mcpCapabilities });
-    const canManage = capabilities.data?.can_manage === true;
+    useSettingsLogin(servers.error ?? capabilities.error);
+    const canManage = capabilities.data?.can_manage === true && !capabilities.isError && !servers.isError;
     const [name, setName] = useState('');
     const [server, setServer] = useState<McpServerInput | null>(null);
     const [original, setOriginal] = useState('');
@@ -62,17 +35,20 @@ export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
     const [chosen, setChosen] = useState<string[]>([]);
     const [chosenRoles, setChosenRoles] = useState<McpRole[]>([]);
     const [loadingTools, setLoadingTools] = useState(false);
-    const inspection = useRef(0);
+    const inspection = useRef(0), inFlight = useRef(false);
+    const [detail, setDetail] = useState<{ tool: McpTool; source: string; scope: string } | null>(null);
     const active = servers.data?.find(item => item.name === name);
-    const dirty = server !== null && JSON.stringify(server) !== original;
-    useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
-    useEffect(() => { onBusyChange(saving || loadingTools); }, [saving, loadingTools, onBusyChange]);
+    const formDirty = server !== null && JSON.stringify(server) !== original;
+    const dirty = formDirty || chosen.length > 0 || chosenRoles.length > 0;
+    useTrackSettings(dirty, saving || loadingTools, tracking);
+    useEffect(() => {
+        const first = servers.data?.[0];
+        if (!server && first) { setName(first.name); setServer(draftOf(first)); setOriginal(JSON.stringify(draftOf(first))); }
+    }, [servers.data, server]);
     function choose(item?: McpServer, force = false) {
+        if (inFlight.current && !force) return;
         const update = () => {
-            const next: McpServerInput = item ? {
-                label: item.label, url: item.url, auth_header: item.auth_header,
-                auth_scheme: item.auth_scheme, enabled: item.enabled,
-            } : blankServer;
+            const next = draftOf(item);
             inspection.current += 1;
             setLoadingTools(false);
             setName(item?.name ?? '');
@@ -99,12 +75,13 @@ export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
         setNotice('');
     }
     async function save() {
-        if (!canManage || !server || saving || loadingTools) return;
+        if (!canManage || !server || inFlight.current || loadingTools) return;
         try {
             const url = new URL(server.url);
             if (!server.label.trim() || url.protocol !== 'https:') throw Error();
         } catch { setError('请填写名称和公网 HTTPS 地址。'); return; }
         setError('');
+        inFlight.current = true;
         setSaving(true);
         try {
             const payload = { ...server, secret: server.secret || undefined };
@@ -113,11 +90,11 @@ export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
             choose(saved, true);
             setNotice(`已保存草稿 v${saved.version}。测试并发布后，获准角色才能选择新版本。`);
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : '保存失败。');
-        } finally { setSaving(false); }
+            setError(cause instanceof ApiError && cause.status === 409 ? '服务版本已更新。当前草稿已保留。' : cause instanceof Error ? cause.message : '保存失败。');
+        } finally { inFlight.current = false; setSaving(false); }
     }
     async function inspect(item: McpServer, version: number, discover = false) {
-        if (dirty || saving || loadingTools || (discover && !canManage)) return;
+        if (formDirty || saving || loadingTools || (discover && !canManage)) return;
         const sequence = ++inspection.current;
         setLoadingTools(true);
         setDiscovery(null);
@@ -135,7 +112,8 @@ export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
         }
     }
     async function publish() {
-        if (!active || !discovery?.discovery_digest || dirty || saving || !canManage || !chosen.length || !chosenRoles.length) return;
+        if (!active || !discovery?.discovery_digest || discovery.version !== active.version || formDirty || inFlight.current || !canManage || !chosen.length || !chosenRoles.length) return;
+        inFlight.current = true;
         setSaving(true);
         setError('');
         try {
@@ -144,91 +122,125 @@ export default function PlatformCatalog({ onDirtyChange, onBusyChange }: {
             choose(published, true);
             setNotice(`已发布 v${published.version}。获准角色可选择已批准的工具。`);
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : '发布失败。');
-        } finally { setSaving(false); }
+            setError(cause instanceof ApiError && cause.status === 409 ? '服务版本或发现结果已更新。已保留选择，请核对最新版本后再发布。' : cause instanceof Error ? cause.message : '发布失败。');
+        } finally { inFlight.current = false; setSaving(false); }
     }
-    if (servers.isLoading) return <LoadingState label="正在读取 MCP 服务" />;
-    return <section className={styles.catalogEditor} aria-label="MCP 服务编辑">
-        <Form component={false} disabled={saving}>
-            <form className={styles.catalogForm} onSubmit={event => { event.preventDefault(); void save(); }}>
-                <header className={styles.contentHeader}>
-                    <div className={styles.connectionPicker}>
-                        <Select aria-label="MCP 服务" className={styles.resourceSelect} value={name || undefined}
-                            placeholder={server ? '新增服务' : '选择服务'} disabled={saving}
-                            options={servers.data?.map(item => ({ value: item.name, label: item.label })) ?? []}
-                            onChange={value => { const item = servers.data?.find(entry => entry.name === value); if (item) choose(item); }} />
-                        {canManage && <Button type="text" icon={<PlusOutlined />} onClick={() => choose()} disabled={saving || loadingTools}>新增 MCP 服务</Button>}
+    async function reload() {
+        if (inFlight.current || loadingTools) return;
+        if (dirty && !await new Promise<boolean>(resolve => modal.confirm({
+            title: '放弃草稿并重新读取？', okText: '放弃并读取', cancelText: '继续编辑', onOk: () => resolve(true), onCancel: () => resolve(false),
+        }))) return;
+        if (inFlight.current) return;
+        inFlight.current = true; setSaving(true);
+        try {
+            const result = await servers.refetch({ throwOnError: true });
+            const items = result.data ?? [];
+            const next = items.find(item => item.name === name) ?? items[0];
+            if (next) choose(next, true);
+            else { choose(undefined, true); setServer(null); }
+        } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取 MCP 服务。'); }
+        finally { inFlight.current = false; setSaving(false); }
+    }
+    const busy = saving || loadingTools;
+    const canPublish = canManage && discovery?.status === 'ready' && !discovery.published && discovery.version === active?.version;
+    const caption = (item: McpServer) => !item.enabled ? '已停用' : item.published ? '已发布 · v' + item.version : '草稿 · v' + item.version;
+    return <div className={styles.page}>
+      <SettingsHeading title="MCP 管理" description="登记外部服务，核对工具参数，指定工具可供哪些角色选用。" actions={<>
+        <Button disabled={busy} onClick={() => void reload()}>重新读取</Button>
+        {canManage && <Button icon={<PlusOutlined aria-hidden="true" />} onClick={() => choose()} disabled={busy}>新增 MCP 服务</Button>}
+      </>} />
+      {servers.isLoading ? <LoadingState label="正在读取 MCP 服务" /> : <>
+        {capabilities.isError && <Alert className={styles.feedback} type="warning" title="无法读取管理权限；可查看已保存配置。"
+          action={<Button onClick={() => void capabilities.refetch()}>重试</Button>} />}
+        {capabilities.data && !canManage && !capabilities.isError && <Alert className={styles.feedback} type="info" title="当前为只读，发布需要平台管理权限。" />}
+        {servers.isError && <Alert className={styles.feedback} type="error" title="无法读取 MCP 服务" />}
+        <SettingsFrame>
+          <SettingsRail title="服务列表" intro="注册、发现与发布工具" note="发现工具、发布范围与任务授权分别管理。"
+            items={(servers.data ?? []).map(item => ({ id: item.name, title: item.label, caption: caption(item), icon: <ApiOutlined /> }))}
+            active={name} disabled={busy} onSelect={value => {
+              const item = servers.data?.find(entry => entry.name === value); if (item && value !== name) choose(item);
+            }} />
+          <section className={styles.main} aria-label="MCP 服务编辑">
+            {!server ? <Empty className={styles.emptyPanel} description="尚未登记 MCP 服务" /> : <>
+              <DetailHeading icon={<ApiOutlined />} title={active?.label ?? '新增 MCP 服务'} description="Streamable HTTP · 外部工具来源"
+                actions={<>
+                  {active && <Tag color={active.published && active.enabled ? 'processing' : undefined}>{caption(active)}</Tag>}
+                  {active && canManage && !active.published && active.enabled &&
+                    <Button icon={<ExperimentOutlined aria-hidden="true" />} loading={loadingTools} disabled={busy || dirty}
+                      onClick={() => void inspect(active, active.version, true)}>测试连接并发现工具</Button>}
+                  {canManage && <Button type="primary" form="mcp-config" htmlType="submit" loading={saving}
+                    disabled={busy || (!formDirty && Boolean(name))}>保存草稿</Button>}
+                </>} />
+              <div className={styles.body}>
+                {error && <Alert className={styles.feedback} type="error" title={error} showIcon />}
+                {notice && <Alert className={styles.feedback} role="status" type="success" title={notice} showIcon />}
+                <Form id="mcp-config" layout="vertical" disabled={!canManage || busy} onFinish={() => void save()}>
+                  <section className={styles.formBlock}><h3>服务连接</h3><div className={styles.fields}>
+                    <Form.Item label="显示名称" htmlFor="mcp-label" required><Input id="mcp-label" value={server.label} onChange={e => patch({ label: e.target.value })} /></Form.Item>
+                    <Form.Item label="Streamable HTTP URL（公网 HTTPS）" htmlFor="mcp-url" required><Input id="mcp-url" value={server.url} onChange={e => patch({ url: e.target.value })} /></Form.Item>
+                    <Form.Item label="认证 Header" htmlFor="mcp-header"><Select id="mcp-header" value={server.auth_header}
+                      options={['Authorization', 'X-API-Key', 'Api-Key'].map(value => ({ value }))}
+                      onChange={auth_header => patch({ auth_header, auth_scheme: auth_header === 'Authorization' ? 'Bearer' : '' })} /></Form.Item>
+                    <Form.Item label="认证 Scheme" htmlFor="mcp-scheme"><Input id="mcp-scheme" value={server.auth_scheme} onChange={e => patch({ auth_scheme: e.target.value })} /></Form.Item>
+                    <Form.Item label="认证密钥" htmlFor="mcp-key"><Input.Password id="mcp-key" autoComplete="new-password" value={server.secret ?? ''}
+                      disabled={!canManage || busy || server.clear_secret} placeholder={active?.has_secret ? '留空沿用当前密钥' : '可留空'}
+                      onChange={e => patch({ secret: e.target.value })} /></Form.Item>
+                    <div className={styles.field}><span>启用此服务</span><Switch className={styles.fieldSwitch} aria-label="启用此服务" checked={server.enabled} onChange={enabled => patch({ enabled })} /></div>
+                  </div>
+                  {active?.has_secret && canManage && <Checkbox checked={Boolean(server.clear_secret)} onChange={event => {
+                    if (!event.target.checked) patch({ clear_secret: undefined });
+                    else modal.confirm({ title: '清除当前密钥？', content: '确认后仍需保存草稿，才会清除新版本的密钥。', okText: '确认清除', cancelText: '取消',
+                        onOk: () => patch({ clear_secret: true, secret: undefined }) });
+                  }}>清除当前密钥</Checkbox>}
+                  <p className={styles.formHint}>平台发起连接测试；外部请求不经过任务沙箱或 VPN，也不计入任务流量采集。</p>
+                  </section>
+                </Form>
+                <section className={styles.formBlock}><h3>工具清单</h3>
+                  {!active ? <p className={styles.formHint}>保存草稿后，可以测试连接并发现工具。</p> : <>
+                    <p className={styles.formHint}>{formDirty ? '先保存修改，再读取工具清单或测试连接。' : '发现工具只返回清单和 Schema；请选择要发布的工具。'}</p>
+                    <div className={styles.actions}>
+                      <Button loading={loadingTools} disabled={busy || dirty} onClick={() => void inspect(active, active.version)}>查看工具清单</Button>
+                      {!!active.published_version && active.published_version !== active.version &&
+                        <Button disabled={busy || dirty} onClick={() => void inspect(active, active.published_version!)}>查看已发布工具</Button>}
                     </div>
-                    {server && canManage && <div className={styles.headerActions}>
-                        <Switch aria-label="启用此服务" size="small" checked={server.enabled} onChange={enabled => patch({ enabled })} />
-                        <span className={controls.hint}>启用</span>
-                        <Button type="primary" size="small" htmlType="submit" aria-busy={saving} loading={saving} disabled={saving || loadingTools || (!dirty && Boolean(name))}>保存草稿</Button>
-                    </div>}
-                </header>
-                <p className={`${controls.hint} ${styles.feedback}`}>平台发起连接测试。普通任务由运行服务调用；原生 CTF 由黑板业务服务调用。外部请求不走任务沙箱或 VPN，也不计入任务流量采集。</p>
-                {capabilities.isError && <Alert type="warning" title="无法读取管理权限；可查看已保存配置。" />}
-                {capabilities.data && !canManage && <Alert type="info" title="当前为只读，发布需要平台管理权限。" />}
-                {servers.isError && <Alert type="error" title="无法读取 MCP 服务" action={<Button onClick={() => void servers.refetch()}>重试</Button>} />}
-                {error && <Alert type="error" title={error} showIcon />}
-                {notice && <Alert role="status" type="success" title={notice} showIcon />}
-                {!server && !servers.isError && <Empty className={styles.emptyDetail} description="添加或选择 MCP 服务" />}
-                {server && <div className={styles.formSection}>
-                    <p className={controls.hint}>外部服务及其认证密钥决定远端资源的访问范围。平台按任务与角色限制可调用的工具。</p>
-                    <p className={controls.hint}>保存停用后，新任务不能再授权此服务；已有任务继续使用原来选定的版本，直到结束。保存仍启用的草稿会保留上次发布的版本。</p>
-                    <fieldset className={`${styles.formGrid} ${styles.catalogFields}`} disabled={!canManage}>
-                        <label className={controls.field}><span className={controls.label}>显示名称</span><Input value={server.label} onChange={e => patch({ label: e.target.value })} /></label>
-                        <label className={`${controls.field} ${styles.spanTwo}`}><span className={controls.label}>Streamable HTTP URL</span><Input value={server.url} onChange={e => patch({ url: e.target.value })} /></label>
-                        <label className={controls.field}><span className={controls.label}>认证 Header</span><Select aria-label="认证 Header" disabled={!canManage} value={server.auth_header} options={['Authorization', 'X-API-Key', 'Api-Key'].map(value => ({ value }))} onChange={auth_header => patch({ auth_header, auth_scheme: auth_header === 'Authorization' ? 'Bearer' : '' })} /></label>
-                        <label className={controls.field}><span className={controls.label}>认证 Scheme</span><Input value={server.auth_scheme} onChange={e => patch({ auth_scheme: e.target.value })} /></label>
-                        <label className={controls.field}><span className={controls.label}>认证密钥</span><Input.Password autoComplete="new-password" value={server.secret ?? ''} placeholder={active?.has_secret ? '已保存；留空沿用当前密钥' : '可留空'} onChange={e => patch({ secret: e.target.value })} /></label>
-                        {active?.has_secret && canManage && <Checkbox checked={Boolean(server.clear_secret)} onChange={e => patch({ clear_secret: e.target.checked })}>清除当前密钥</Checkbox>}
+                    {discovery && <>
+                      <p className={styles.formHint}>v{discovery.version} · {discovery.published ? '已发布'
+                        : discovery.status === 'ready' ? '连接成功，待选择并发布' : discovery.status === 'error' ? '连接测试失败' : '尚未测试连接'}</p>
+                      {discovery.error && <Alert type="error" title={discovery.error} />}
+                      {discovery.status === 'ready' && discovery.tools.length === 0 && <p>该服务没有公开工具。</p>}
+                      {discovery.tools.length > 0 && <ul className={styles.discoveredTools}>{discovery.tools.map(tool => <li key={tool.name}>
+                        <div><strong>{tool.name}</strong>{tool.description && <p>{tool.description}</p>}</div>
+                        <Button size="small" onClick={() => setDetail({ tool, source: active.label + ' · v' + discovery.version,
+                            scope: discovery.published ? '已发布工具仍须由相应角色明确选用。' : '发现结果仅供审阅，尚未发布。' })}>查看 Schema</Button>
+                        {canPublish && <Checkbox aria-label={'批准 ' + tool.name} disabled={busy} checked={chosen.includes(tool.name)}
+                          onChange={event => setChosen(old => event.target.checked ? [...old, tool.name] : old.filter(name => name !== tool.name))}>纳入发布</Checkbox>}
+                      </li>)}</ul>}
+                    </>}
+                  </>}
+                </section>
+                <section className={styles.formBlock}><h3>发布范围与角色授权</h3>
+                  <p className={styles.releaseNote}>当前发布版本：{active?.published_version ? 'v' + active.published_version : '未发布'}
+                    {!!active?.published_roles?.length && ' · ' + active.published_roles.map(role => MCP_ROLE_LABELS[role]).join('、')}</p>
+                  <p className={styles.formHint}>发布决定可选范围。Explore 在角色配置逐工具选用，CTF 在新建任务时逐工具授权。</p>
+                  <Link className={styles.textLink} to="/profiles?source=mcp">前往 Explore 工具权限</Link>
+                  {canPublish && <div className={styles.publishControls}>
+                    <fieldset className={styles.roleOptions}><legend>选择发布角色</legend>
+                      <div className={styles.actions}>{capabilities.data?.external_roles.map(role =>
+                        <Checkbox key={role} checked={chosenRoles.includes(role)} disabled={busy}
+                          onChange={event => setChosenRoles(old => event.target.checked ? [...old, role] : old.filter(item => item !== role))}>{MCP_ROLE_LABELS[role]}</Checkbox>)}</div>
                     </fieldset>
-                    {active && <Space className={styles.mcpVersionStatus} wrap>
-                        <Tag>{active.published ? '已发布' : '草稿'} v{active.version}</Tag>
-                        {!!active.published_version && active.published_version !== active.version && <Tag>当前已发布 v{active.published_version}</Tag>}
-                        <Tag>{active.has_secret ? '已保存认证密钥' : '未配置认证密钥'}</Tag>
-                        {!active.enabled && <Tag>已停用</Tag>}
-                    </Space>}
-                    {active && <Collapse ghost size="small" items={[{ key: 'tools', label: '工具清单', children: <div className={styles.mcpTools}>
-                        {dirty && <p className={controls.hint}>先保存修改，再读取工具清单或测试连接。</p>}
-                        <Space wrap>
-                            <Button loading={loadingTools} aria-busy={loadingTools} disabled={saving || loadingTools || dirty} onClick={() => void inspect(active, active.version)}>查看工具清单</Button>
-                            {!!active.published_version && active.published_version !== active.version &&
-                                <Button disabled={saving || loadingTools || dirty} onClick={() => void inspect(active, active.published_version!)}>查看已发布工具</Button>}
-                            {canManage && !active.published && active.enabled && <Button loading={loadingTools}
-                                disabled={saving || loadingTools || dirty} onClick={() => void inspect(active, active.version, true)}>测试连接并发现工具</Button>}
-                        </Space>
-                        {discovery && <>
-                            <p className={controls.hint}>v{discovery.version} · {discovery.published ? '已发布' : discovery.status === 'ready' ? '连接成功，待选择并发布' : discovery.status === 'error' ? '连接测试失败' : '尚未测试连接'}</p>
-                            {discovery.published && !!discovery.roles?.length && <p className={controls.hint}>授权角色：{discovery.roles.map(role => MCP_ROLE_LABELS[role]).join('、')}</p>}
-                            {discovery.error && <Alert type="error" title={discovery.error} />}
-                            {discovery.status === 'ready' && discovery.tools.length === 0 && <p>该服务没有公开工具。</p>}
-                            {discovery.tools.length > 0 && <ul className={styles.mcpToolList}>{discovery.tools.map(tool => <li key={tool.name}>
-                                {canManage && !discovery.published && discovery.status === 'ready' && <Checkbox
-                                    disabled={saving}
-                                    checked={chosen.includes(tool.name)}
-                                    onChange={event => setChosen(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))}
-                                >批准 {tool.name}</Checkbox>}
-                                <ToolDetails tool={tool} />
-                            </li>)}</ul>}
-                            {canManage && !discovery.published && discovery.status === 'ready' && <>
-                                <fieldset className={styles.toolFieldset}><legend>授权角色</legend>
-                                    <Space wrap>{capabilities.data?.external_roles?.map(role =>
-                                        <Checkbox key={role} checked={chosenRoles.includes(role)} disabled={saving}
-                                            onChange={event => setChosenRoles(current => event.target.checked
-                                                ? [...current, role] : current.filter(item => item !== role))}>
-                                            {MCP_ROLE_LABELS[role]}
-                                        </Checkbox>
-                                    )}</Space>
-                                </fieldset>
-                                <Space wrap><Button type="primary" loading={saving}
-                                    disabled={saving || dirty || !chosen.length || !chosenRoles.length}
-                                    onClick={() => void publish()}>发布已选工具</Button></Space>
-                            </>}
-                        </>}
-                    </div> }]} />}
-                </div>}
-            </form>
-        </Form>
-    </section>;
+                    <Button type="primary" loading={saving} disabled={busy || formDirty || !chosen.length || !chosenRoles.length}
+                      onClick={() => void publish()}>发布已选工具</Button>
+                  </div>}
+                  {canPublish && (chosen.length > 0 || chosenRoles.length > 0) && <Button size="small" type="link" disabled={busy}
+                    onClick={() => { setChosen([]); setChosenRoles([]); }}>清空发布选择</Button>}
+                </section>
+                <p className={styles.note}>停用只阻止新任务选用。已有任务继续使用原版本；保存仍启用的草稿会保留上次发布版本。</p>
+              </div>
+            </>}
+          </section>
+        </SettingsFrame>
+      </>}
+      <McpToolDrawer details={detail} onClose={() => setDetail(null)} />
+    </div>;
 }

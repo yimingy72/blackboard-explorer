@@ -30,7 +30,7 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
   await page.getByRole('button', { name: '添加模型', exact: true }).click();
   await page.getByLabel('显示名称', { exact: true }).fill('测试模型');
   await page.getByLabel('上游模型', { exact: true }).fill('physical-model');
-  await page.getByLabel('HTTPS 地址', { exact: true }).fill('https://fixture.example/v1');
+  await page.getByLabel('HTTPS Base URL', { exact: true }).fill('https://fixture.example/v1');
   await page.getByLabel('上游 API 密钥', { exact: true }).fill('synthetic-model-key');
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   await expect(page.getByText('费率待配置', { exact: true })).toBeVisible();
@@ -41,8 +41,6 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
   await expect(page.getByRole('button', { name: '创建任务', exact: true })).toBeDisabled();
 
   await page.goto('/profiles?section=models');
-  await page.getByRole('button', { name: '编辑', exact: true }).click();
-  await page.getByRole('button', { name: /费率（USD \/ 百万 token）/ }).click();
   for (const label of ['输入', '输出', '缓存读取', '缓存写入']) {
     await page.getByLabel(label, { exact: true }).fill('1.5');
   }

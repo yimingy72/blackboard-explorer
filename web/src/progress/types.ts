@@ -20,5 +20,5 @@ export type ProgressView = {
   budget: { max_cost: string; spent: string; reserved: string; unknown: string; currency?: string | null };
   cost_breakdown?: { total: string | null };
 };
-export type ProgressSettings = { revision: number; prompt: string; pi_model?: PiModelRef | null; enabled_tools: string[] };
+export type ProgressSettings = { revision: number; prompt: string; default_prompt?: string; pi_model?: PiModelRef | null; enabled_tools: string[] };
 export type ProgressMessage = AgentMessage & { node_id?: string | null };
