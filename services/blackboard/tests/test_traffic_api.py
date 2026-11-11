@@ -1,7 +1,9 @@
 """Traffic reads stay task/run scoped and never turn missing archive data into success."""
 
 import gzip
+import hashlib
 import json
+import struct
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +14,7 @@ import pytest
 from bbx_blackboard import api
 from bbx_blackboard.auth import issue_agent_token, issue_user_token
 from bbx_blackboard.conversations import Conversations
+from bbx_blackboard.native_traffic import PROFILE, _index
 from bbx_contracts.traffic import TrafficMessage, TrafficRecordDetail, TrafficRecordSummary
 from fastapi import HTTPException
 from test_api_auth import settings
@@ -615,3 +618,101 @@ async def test_protected_raw_archive_exposes_agent_sources_without_p4i_file_layo
     assert [(ref["agent_id"], ref["packet_count"]) for ref in page["native_sources"]] == [("b", 5)]
     raw = await t.client.get(t.path + "/files/raw", headers=t.headers, params={"run": 1})
     assert raw.status_code == 200 and raw.content == b"raw-pcap"
+
+
+async def test_ordinary_native_traffic_keeps_bound_files_and_historical_run_scope(traffic):
+    t = traffic
+    conn = AsyncMock()
+    result = MagicMock()
+    conn.execute.return_value = result
+    t.app.state.engine = MagicMock()
+    t.app.state.engine.connect.return_value.__aenter__.return_value = conn
+    found = result.mappings.return_value
+    found.first.return_value = None
+
+    # A pre-native task with no resource row keeps its object manifest and file.
+    legacy = await t.client.get(t.path + "/files/raw?run=1", headers=t.headers)
+    assert legacy.status_code == 200 and legacy.content == b"raw-pcap"
+
+    def publish_native(run):
+        source = f"binding-{run}"
+        raw = (
+            struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 512, 1)
+            + struct.pack("<IIII", 1, 0, 60, 60)
+            + bytes([run]) * 60
+        )
+        sha = hashlib.sha256(raw).hexdigest()
+        scope = {
+            "task_id": t.tid,
+            "agent_id": f"agent-{run}",
+            "source_id": source,
+            "binding_id": str(uuid4()),
+            "assignment_id": str(uuid4()),
+            "generation": run,
+            "epoch": run,
+            "role": "explore",
+            "parent_agent_id": None,
+            "sandbox_pod_uid": str(uuid4()),
+            "ipv4": "198.19.1.2",
+            "host_interface": "bv001",
+        }
+        seal = {
+            "packet_count": 1,
+            "complete": True,
+            "error": None,
+            "sha256": sha,
+            "size_bytes": len(raw),
+            "netns_inode": "123",
+            "host_ifindex": 1,
+            "dropped_packets": 0,
+            "truncated_packets": 0,
+            "discarded_tail_bytes": 0,
+        }
+        entry = {"run": run, "state": "archived", "scope": scope, "seal": seal}
+        index, ref, encoded = _index(entry)
+        root = f"traffic/{t.tid}/run-{run}/native/{source}/"
+        t.objects.data[root + f"indexes/{ref.revision}.json"] = encoded
+        t.objects.data[root + f"parts/{index.parts[0].id}.bin"] = raw
+        return source, {**entry, "ref": ref.model_dump(mode="json")}, sha
+
+    old, first, old_sha = publish_native(1)
+    new, second, _ = publish_native(2)
+    found.first.return_value = {
+        "request": {"traffic_profile": PROFILE},
+        "state": "active",
+        "created_at": datetime.now(UTC),
+        "data": {
+            "network_scopes": {old: first, new: second},
+            "board_history": [{"archive": {"run_number": 1}}],
+        },
+    }
+
+    past = await t.client.get(t.path + "?run=1", headers=t.headers)
+    assert past.status_code == 200, past.text
+    page = past.json()
+    assert page["availability"] == "recorded" and page["native_bound"]
+    assert page["capture"]["status"] == "complete"
+    assert [(ref["source_id"], ref["scope"]["role"]) for ref in page["native_sources"]] == [
+        (old, "explore")
+    ]
+    assert [item["id"] for item in page["files"]] == [old]
+    present = await t.client.get(t.path, headers=t.headers)
+    assert present.status_code == 200, present.text
+    assert present.json()["capture"]["status"] == "collecting"
+    assert [ref["source_id"] for ref in present.json()["native_sources"]] == [new]
+
+    download = t.path + "/files/" + old
+    assert (await t.client.get(download + "?run=1")).status_code == 401
+    original = await t.client.get(download + "?run=1", headers=t.headers)
+    assert original.status_code == 200, original.text
+    assert hashlib.sha256(original.content).hexdigest() == old_sha
+    assert (await t.client.get(download, headers=t.headers)).status_code == 404
+    assert (await t.client.get(t.path + "?run=3", headers=t.headers)).status_code == 404
+    before = conn.execute.await_count
+    foreign = download.replace(str(t.tid), str(uuid4())) + "?run=1"
+    assert (await t.client.get(foreign, headers=t.headers)).status_code == 404
+    assert conn.execute.await_count == before
+    assert all(
+        list(call.args[0].compile().params.values()) == [t.tid]
+        for call in conn.execute.await_args_list
+    )

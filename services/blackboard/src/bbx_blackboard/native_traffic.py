@@ -655,7 +655,9 @@ def capture_manifest(record, task_id, run):
         not entry["seal"]["complete"] if scope_done(entry) else bool(entry.get("loss"))
         for entry in entries
     )
-    stopped = record["state"] == "stopped"
+    stopped = record["state"] == "stopped" or any(
+        item["archive"]["run_number"] == run for item in record["data"].get("board_history", [])
+    )
     partial |= stopped and any(not scope_done(entry) for entry in entries)
     status: Literal["partial", "complete", "collecting"] = (
         "partial" if partial else "complete" if stopped else "collecting"

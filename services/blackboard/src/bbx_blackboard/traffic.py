@@ -90,7 +90,7 @@ async def _manifest(
         raise _unavailable()
     try:
         engine = getattr(request.app.state, "engine", None)
-        if task.get("mode") == "ctf" and engine is not None:
+        if engine is not None:
             async with engine.connect() as conn:
                 record = (
                     (
