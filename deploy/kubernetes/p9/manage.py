@@ -88,9 +88,11 @@ absent={'NoSuchBucketPolicy','ObjectLockConfigurationNotFoundError',
         'NoSuchLifecycleConfiguration','ReplicationConfigurationNotFoundError',
         'ServerSideEncryptionConfigurationNotFoundError','NoSuchTagSet'}
 def encode(value):
+    if isinstance(value,(dict,list)):
+        return value
     if hasattr(value,'toxml'):
         return tostring(value.toxml(None)).decode()
-    return value if isinstance(value,(str,bool,int,list,dict,type(None))) else str(value)
+    return value if isinstance(value,(str,bool,int,type(None))) else str(value)
 def digest(value):
     data=json.dumps(value,sort_keys=True,separators=(',',':')).encode()
     return hashlib.sha256(data).hexdigest()

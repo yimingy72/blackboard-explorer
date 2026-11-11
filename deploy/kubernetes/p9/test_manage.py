@@ -1,9 +1,14 @@
 """Maintenance must preserve scope and refuse pending or unreviewed work."""
 
+import ast
+import hashlib
+import json
 from copy import deepcopy
+from xml.etree.ElementTree import tostring
 
 import manage
 import pytest
+from minio.commonconfig import Tags
 
 
 class FixtureSite:
@@ -124,3 +129,20 @@ def test_failed_stop_does_not_reopen_an_unconfirmed_writer():
         manage.redeploy(site, manage.digest(site.snapshot()))
     assert site.calls == [("blackboard", 0)]
     assert site.replicas["runtime"] == 1
+
+
+def test_minio_nonempty_tags_use_canonical_mapping_not_xml_serializer():
+    readback = ast.parse(manage.APP_READBACK)
+    helpers = [
+        item
+        for item in readback.body
+        if isinstance(item, ast.FunctionDef) and item.name in {"encode", "digest"}
+    ]
+    namespace = {"hashlib": hashlib, "json": json, "tostring": tostring}
+    exec(compile(ast.Module(body=helpers, type_ignores=[]), "<app-readback>", "exec"), namespace)
+    first, second = Tags.new_bucket_tags(), Tags.new_bucket_tags()
+    first.update({"a": "1", "b": "2"})
+    second.update({"b": "2", "a": "1"})
+    encode, digest = namespace["encode"], namespace["digest"]
+    assert encode(first) == {"a": "1", "b": "2"}
+    assert digest(encode(first)) == digest(encode(second))
