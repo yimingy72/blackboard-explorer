@@ -1,4 +1,4 @@
-"""Build and import one P9 Runtime artifact from an exact reviewed Git revision."""
+"""Build and import a P9 App or Runtime artifact from an exact Git revision."""
 
 import argparse
 import hashlib
@@ -52,28 +52,44 @@ def manifest_digest(path, tag):
             descriptor = candidates[0]
 
 
-def build(git_dir, revision, output):
+def build(git_dir, revision, output, component="runtime"):
     assert re.fullmatch(r"[a-f0-9]{40}", revision)
     os.umask(0o077)
     output.mkdir(mode=0o700)
     source, source_tar, image_tar = (
-        output / name for name in ("source", "source.tar", "runtime.oci.tar")
+        output / name for name in ("source", "source.tar", f"{component}.oci.tar")
     )
     source.mkdir(mode=0o700)
     git = ("git", f"--git-dir={git_dir}")
     tree = checked((*git, "rev-parse", f"{revision}^{{tree}}")).decode().strip()
     with source_tar.open("wb") as file:
         subprocess.run((*git, "archive", "--format=tar", revision), stdout=file, check=True)
-    # The enclosing artifact directory stays private. The reviewed image source must
-    # be traversable by the image's non-root Runtime user.
+    # The enclosing artifact directory stays private. The image source and generated
+    # web assets must be readable by the workload's non-root user.
     previous_umask = os.umask(0o022)
     try:
         with tarfile.open(source_tar) as bundle:
             bundle.extractall(source, filter="data")
+        if component == "blackboard":
+            with (output / "web-build.log").open("wb") as log:
+                for command in (("install", "--frozen-lockfile"), ("build",)):
+                    subprocess.run(
+                        ("pnpm", "--dir", str(source / "web"), *command),
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        check=True,
+                    )
+            assert (source / "web/dist/index.html").is_file()
     finally:
         os.umask(previous_umask)
     assert not (source / ".git").exists() and not (source / ".env").exists()
-    tag = f"bbx-p9-runtime:{revision[:12]}"
+    tag = f"bbx-p9-{component}:{revision[:12]}"
+    service = "agent-runtime" if component == "runtime" else "blackboard"
+    options = (
+        ("--target=kubernetes", "--build-arg", f"NODE_IMAGE={NODE_IMAGE}")
+        if component == "runtime"
+        else ()
+    )
     with (output / "build.log").open("wb") as log:
         subprocess.run(
             (
@@ -83,15 +99,13 @@ def build(git_dir, revision, output):
                 "--load",
                 "--provenance=false",
                 "--platform=linux/amd64",
-                "--target=kubernetes",
                 "--label",
                 f"org.opencontainers.image.revision={revision}",
                 "--build-arg",
-                f"NODE_IMAGE={NODE_IMAGE}",
-                "--build-arg",
                 f"PYTHON_IMAGE={PYTHON_IMAGE}",
+                *options,
                 "-f",
-                str(source / "services/agent-runtime/Dockerfile"),
+                str(source / "services" / service / "Dockerfile"),
                 "-t",
                 tag,
                 str(source),
@@ -100,9 +114,28 @@ def build(git_dir, revision, output):
             stderr=subprocess.STDOUT,
             check=True,
         )
+    probe = (
+        "import bbx_runtime.native_runner"
+        if component == "runtime"
+        else "import bbx_blackboard.api; from pathlib import Path; "
+        "assert Path('/app/web/dist/index.html').is_file()"
+    )
+    checked(
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            "--user=10001:10001",
+            "--entrypoint=python",
+            tag,
+            "-c",
+            probe,
+        )
+    )
     checked(("docker", "image", "save", "--output", str(image_tar), tag))
     sha = manifest_digest(image_tar, tag)
-    alias = f"docker.io/library/bbx-p9-runtime@{sha}"
+    alias = f"docker.io/library/bbx-p9-{component}@{sha}"
     ctr = ("docker", "exec", NODE, "ctr", "--namespace=k8s.io", "images")
     with image_tar.open("rb") as file:
         subprocess.run(
@@ -139,17 +172,21 @@ def build(git_dir, revision, output):
         "source_archive_sha256": digest_file(source_tar),
         "image": alias,
         "cri_id": cri["id"],
-        "node_base": NODE_IMAGE,
+        "non_root_import_verified": True,
+        **({"node_base": NODE_IMAGE} if component == "runtime" else {}),
         "python_base": PYTHON_IMAGE,
     }
-    (output / "runtime-image.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    (output / f"{component}-image.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 
 
 if __name__ == "__main__":
+    if not __debug__:
+        raise SystemExit("Use Python without -O for artifact integrity checks")
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--git-dir", required=True, type=Path)
     cli.add_argument("--revision", required=True)
     cli.add_argument("--output", required=True, type=Path)
+    cli.add_argument("--component", choices=("runtime", "blackboard"), default="runtime")
     args = cli.parse_args()
-    print(json.dumps(build(args.git_dir, args.revision, args.output), indent=2))
+    print(json.dumps(build(args.git_dir, args.revision, args.output, args.component), indent=2))

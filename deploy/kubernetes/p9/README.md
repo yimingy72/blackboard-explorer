@@ -1,24 +1,111 @@
-# P9 · 现有本地 Kubernetes 平台
+# 本地 Kubernetes 部署与维护
 
-部署范围和切换条件见 [P9 任务说明](../../../docs/tasks/P9-平台全量本地Kubernetes-20261111.md)。这里的清单针对现有 `kind-bbx-local-native-k8s`；使用该集群的显式 kubeconfig，不切换全局 context。OpenSandbox controller、ingress、原执行镜像和 TUN 继续在现有集群中运行。
+本手册针对 P9 的单节点 Kind 拓扑：平台位于 `bbx-platform`，复用 `bbx-local-native` 中的 OpenSandbox controller/ingress、Cilium、TUN 和已验任务镜像。[P9 实施报告](../../../docs/tasks/P9-平台全量本地Kubernetes-20261111-report.md)记录了首次切换证据。下列命令从仓库根目录运行，使用显式 kubeconfig 和 context，不修改全局 context。
 
-- `platform.yaml`：平台 Namespace、持久卷类、应用、共同 Runtime、内部 TLS、前门 Service。应用与 Runtime 初始为零副本；把两个 `:verified` 镜像引用替换成验收过的 OCI digest 后才启动。
-- `storage.yaml`：PostgreSQL 和 MinIO。两个 StatefulSet 初始为零副本，最终卷名分别为 `data-postgres-0` 和 `data-minio-0`。卷使用 `bbx-platform-retain`；PostgreSQL 数据目录为 `/data/pgdata`，MinIO 为 `/data`。从现站迁移时，先恢复再启动写者。
-- `runtime-rbac.yaml`、`sandbox-admission.yaml`：只给 Runtime 和 P9 OpenSandbox Server 自己的任务权限，限制两条创建任务资源的路径。Runtime 的 kubeconfig 读取轮换的 Pod tokenFile，不含用户或管理员凭据。`check_rbac.py --kubeconfig <文件>` 在可清理的任务空间复核实际允许和拒绝的操作。
-- `network.yaml`：内部服务互联与任务控制边界。普通执行环境的已发布路由及 DNS 由任务配置提供。Sandbox host 的 `8766` 仍只绑定任务 Pod 内回环；Runtime 通过 Kubernetes API 短时核对原 Pod 的就绪，平台网络不对该端口放行。
-- `sandbox.yaml` 和 `sandbox-config.toml.in`：P9 专属 Server 及其配置模板。`bbx-p9-sandbox-server-config` 的 `config.toml` 由部署者在内存中替换 resolver token 后写入 Secret。`bbx-p9-sandbox-template` 复制现有可信 Pod 模板，只更新模板名和 `BBX_ENVIRONMENT_REVISION` 为 P9 发布值；原 P8 ConfigMap 保持原样。
+## 现有站点：检查、重新部署、接入
 
-`bbx-platform` 需要 `postgres-auth`、`minio-auth`、`blackboard-auth`、`runtime-auth`、`blackboard-control-tls` 和 `runtime-control-tls` Secrets，以及 `platform-control-ca` 和 `platform-publications` ConfigMaps。`bbx-local-native` 内的 P9 Server 使用相同信任锚的 `bbx-p9-platform-control-ca` ConfigMap，以及现有 ingress 签名 Secret 的引用。服务 DNS `blackboard-control.bbx-platform.svc.cluster.local`、`runtime-control.bbx-platform.svc.cluster.local` 应分别出现在证书 SAN。原认证值从受保护的发布来源传入，保留加密配置的密钥；凭据不进清单和输出回执。
+用部署时的 kubeconfig 和 context 替换变量。需要有权读取所列资源、在现有 App/PG 容器内执行检查，以及变更四个工作负载副本的运维身份。Runtime 的任务 ServiceAccount 不用于维护。
 
-签发服务证书时写入 `subjectKeyIdentifier` 和 `authorityKeyIdentifier`，并用 `openssl verify -x509_strict -CAfile <CA> -verify_hostname <服务DNS> <证书>` 检查。VPN 边车使用严格校验，不能以普通客户端握手代替。证书轮换后等 Secret 文件投射完成，再重载对应 TLS 代理并读回新叶证书。
+```bash
+export BBX_KIND_KUBECONFIG=/path/to/the/owned/kubeconfig
+export BBX_KIND_CONTEXT=kind-bbx-local-native-k8s
+p9=(python3 deploy/kubernetes/p9/manage.py --kubeconfig "$BBX_KIND_KUBECONFIG"
+    --context "$BBX_KIND_CONTEXT" --namespace bbx-platform)
 
-只在所用镜像、配置、身份、证书和数据均通过 P9 验收后开启平台写入。生产 `platform-publications` 必须包含匹配同一 Runtime 配置 digest 的两套已验发布与验收文件。仅预验夹具使用的入口、凭据和模型目录不得挂到正式 Deployment。发生故障时先按任务说明确认数据写入边界再回切。
+"${p9[@]}" check
+```
 
-本机访问使用现有 Service，不修改 Kind 的 API 端口映射：
+`check` 只读显示实际 Pod、镜像摘要、PVC/PV、数据库和对象库存摘要、待处理事项与 Runtime 锁，生成指纹。Secret 只读取 UID/资源版本，不输出值。开始前确认没有运行、暂停、删除、清理或未结算的任务与调用；排除未知结果，不能靠重试或清数据通过。重要数据先按下文留独立备份。
+
+1. 暂停其他调用方，停止已确认属于本部署的 15800 浏览器转发，保留其他进程。浏览器页面与会话记录不会被重置。
+2. 重新运行 `check`，复核目标集群、摘要与 `pending: false`、`holders: 1`。把该次输出的指纹传给下一条命令。
+3. 运行原地重部署。默认只重建 App 和 Runtime；需要重建四个业务 Pod 时加 `--restart-stores`。
+
+```bash
+"${p9[@]}" redeploy --expect '<fingerprint-from-check>' --restart-stores
+"${p9[@]}" check
+```
+
+命令关 App 后再次核对任务，等 Runtime 退出且原库锁清零；若重建存储，先停 MinIO 和 PG，再在原卷启动 PG、MinIO。随后启动 App、Runtime，核对原配置、数据库/对象库存、镜像、卷与唯一的新锁。工作负载规格只修改副本数，不应用零副本安装模板，不改密钥、PVC 或发布文件。若命令报错，保持入口关闭，检查现有集群对象和日志；恢复只使用现有工作负载和卷，不启动原 Docker 站点或覆盖数据库。若状态未明，勿直接再次执行。
+
+转发是浏览器入口，与集群内写者和存储无关。重新打开时用：
 
 ```sh
-kubectl --kubeconfig "$BBX_KIND_KUBECONFIG" --context kind-bbx-local-native-k8s \
+kubectl --kubeconfig "$BBX_KIND_KUBECONFIG" --context "$BBX_KIND_CONTEXT" \
   -n bbx-platform port-forward --address 127.0.0.1 service/blackboard 15800:80
 ```
 
-打开 `http://127.0.0.1:15800/login`。应用 Pod 重建时重新运行上面的命令；即使浏览器转发断开，平台仍在集群内工作。
+用原账号打开 [127.0.0.1:15800/login](http://127.0.0.1:15800/login)，核对黑板和原生 CTF 两种创建能力、Worker/CTF/成果整理/模型/MCP 页面以及已有任务数据。此检查不用创建任务、调用模型或发现外部 MCP。
+
+## 构建与载入候选镜像
+
+先完成源码检查和独立复核。构建机需要 Git、Python 3.12+、Docker Buildx、Node 和与 `web/package.json` 一致的 pnpm。现有脚本载入名为 `bbx-local-native-k8s-control-plane` 的专属 Kind 节点；使用其他集群时，先由操作者把已验 OCI 制品载入目标节点并核对 CRI digest，不能无声导入当前 Docker 节点。
+
+```sh
+BBX_RELEASE_SHA=$(git rev-parse HEAD)
+BBX_RELEASE_GIT_DIR=$(git rev-parse --absolute-git-dir)
+BBX_RELEASE_OUTPUT=/path/to/new/private-artifact-directory
+python3 deploy/kubernetes/p9/build_runtime.py --git-dir "$BBX_RELEASE_GIT_DIR" \
+  --revision "$BBX_RELEASE_SHA" --component blackboard --output "$BBX_RELEASE_OUTPUT/app"
+python3 deploy/kubernetes/p9/build_runtime.py --git-dir "$BBX_RELEASE_GIT_DIR" \
+  --revision "$BBX_RELEASE_SHA" --component runtime --output "$BBX_RELEASE_OUTPUT/runtime"
+```
+
+输出目录的父目录预先建立且对外不可读。构建只从 Git 归档取源码，使用固定 Linux/amd64 基础镜像和依赖锁，检查非 root 导入、App 网页资源和节点 CRI digest。回执记录 Git commit、tree、源码归档及 OCI 身份；发布使用 `repo@sha256:...`，不用构建标签。重启既有站点无需重新构建已验镜像。更换镜像或发布配置是另一次升级：先在同一拓扑验收新组合及回退，再在关闭写入、释放旧 Runtime 锁的维护窗口逐项更新。保持 Secret、PVC 和数据权威；不要用首次安装命令升级，也不要以旧验收声称新组合通过。
+
+## 首次安装前置与私有输入
+
+首次安装只用于没有现有平台或数据卷的新环境；已有站点使用上方命令。此目录不是创建任意新集群的一键安装器。先核对：
+
+- Kind 有可用的单节点 Linux/amd64、Cilium、现有 OpenSandbox BatchSandbox/controller/ingress 及 TUN。具备 `standard` 任务卷类、Retain 平台卷类对应的 local-path provisioner，以及清单固定的存储、代理和执行镜像；核对实际资源上限能满足两任务并发。
+- 已确认 `kube-system` 的 UID、P9 命名空间和 Server 身份，已隔离合成环境。P9 的集群角色、准入策略、网络和 8766 回环规则须通过服务端与实际正反向测试。历史 P7/P8 验收不替代 P9 的真实 Service、DNS、CA 与两个模式。
+- 已验私有发布目录包含 `board.json`、`ctf.json`、`board-runtime.json`、`ctf-runtime.json`、`board-acceptance.json`、`ctf-acceptance.json`。两个发布中的 `runtime_resource_config` 分别与对应 Runtime 文件完全相同；验收引用绑定原文件 SHA、规范资源摘要、制品和实测能力。P9 的 `runtime_artifact_sha256` 填已验 Runtime OCI manifest digest 的 64 位十六进制正文，独立记录源码归档 SHA。[字段与占位样例](release-inputs.example.json)不是可用发布或验收。
+- 使用严格 TLS SAN：`blackboard-control.bbx-platform.svc.cluster.local` 和 `runtime-control.bbx-platform.svc.cluster.local`。证书含 `subjectKeyIdentifier` 和 `authorityKeyIdentifier`，分别运行 `openssl verify -x509_strict -CAfile <CA> -verify_hostname <服务DNS> <证书>`。证书轮换等 Secret 文件投射，再重载代理并核对新叶证书。
+- 拟安装卷为空或已完成受控恢复。MinIO 目标目录必须允许其非 root UID 写入，先用隔离卷实测 provisioner/文件权限；不把旧源卷重新初始化。已有数据、密钥、Vault 和目录的迁移必须另验。
+
+准备一个仓库外的私有目录，权限 0700，认证文件仅操作者可读。上面 JSON 只列字段；四份 `.vars` 实际按每行 `KEY=value` 编写。Runtime 与 App 的服务 token 配对，发送 token 与 App 的 Runtime token 配对；原站迁移/恢复保留原签名及 Vault 密钥。OpenSandbox 签名 Secret `bbx-p3f-signing` 由已验基础设施提供；把同一 resolver token 填入 `sandbox-config.toml.in` 的私有副本。用已验 OpenSandbox 模板做 `sandbox-template.json`，环境 revision 与发布一致。Secret、证书私钥、生产环境值和验收私有目录不进入 Git。
+
+## 首次安装操作
+
+先确认目标没有现有 `bbx-platform`、目标平台卷和同名发布对象；已有任一项时停止，按现有站点或恢复流程处理。以下仅在该前提下执行，`BBX_RELEASE_INPUT` 为上段已验私有目录：
+
+```bash
+k=(kubectl --kubeconfig "$BBX_KIND_KUBECONFIG" --context "$BBX_KIND_CONTEXT")
+p=deploy/kubernetes/p9
+"${k[@]}" apply -f "$p/platform.yaml" -f "$p/storage.yaml" \
+  -f "$p/runtime-rbac.yaml" -f "$p/sandbox-admission.yaml" -f "$p/network.yaml"
+
+for name in postgres-auth minio-auth blackboard-auth runtime-auth; do
+  "${k[@]}" -n bbx-platform create secret generic "$name" \
+    --from-env-file="$BBX_RELEASE_INPUT/$name.vars"
+done
+for name in blackboard-control runtime-control; do
+  "${k[@]}" -n bbx-platform create secret tls "$name-tls" \
+    --cert="$BBX_RELEASE_INPUT/$name.crt" --key="$BBX_RELEASE_INPUT/$name.key"
+done
+"${k[@]}" -n bbx-platform create configmap platform-control-ca \
+  --from-file="ca.pem=$BBX_RELEASE_INPUT/ca.pem"
+"${k[@]}" -n bbx-platform create configmap platform-publications \
+  --from-file="$BBX_RELEASE_INPUT/board.json" --from-file="$BBX_RELEASE_INPUT/ctf.json" \
+  --from-file="$BBX_RELEASE_INPUT/board-runtime.json" --from-file="$BBX_RELEASE_INPUT/ctf-runtime.json" \
+  --from-file="$BBX_RELEASE_INPUT/board-acceptance.json" --from-file="$BBX_RELEASE_INPUT/ctf-acceptance.json"
+"${k[@]}" -n bbx-local-native create configmap bbx-p9-platform-control-ca \
+  --from-file="ca.pem=$BBX_RELEASE_INPUT/ca.pem"
+"${k[@]}" -n bbx-local-native create configmap bbx-p9-sandbox-template \
+  --from-file="template.json=$BBX_RELEASE_INPUT/sandbox-template.json"
+"${k[@]}" -n bbx-local-native create secret generic bbx-p9-sandbox-server-config \
+  --from-file="config.toml=$BBX_RELEASE_INPUT/sandbox-server-config.toml"
+"${k[@]}" apply -f "$p/sandbox.yaml"
+"${k[@]}" -n bbx-platform set image deployment/blackboard "app=$BBX_APP_IMAGE"
+"${k[@]}" -n bbx-platform set image deployment/runtime "runtime=$BBX_RUNTIME_IMAGE"
+```
+
+两个镜像变量必须为各自已验的 `repo@sha256:...`。用零副本配置先校验 Service、准入、Secret 引用、模板及镜像，再按顺序启动并等待就绪：PostgreSQL → MinIO → App → Runtime。对于确认是全新初始化、或已完成存储恢复的环境，可逐项使用 `kubectl ... -n bbx-platform scale statefulset/postgres --replicas=1` 和 `rollout status statefulset/postgres`，随后同样处理 `statefulset/minio`、`deployment/blackboard`、`deployment/runtime`。先关闭用户入口，用已验合成流程证明两种模式、身份拒绝、归档、流量、存储重建与唯一 Runtime 锁；正式阶段使用原身份和真实数据的只读核验。缺任一验收项不启正式写入。服务端权限实测工具为 `python3 deploy/kubernetes/p9/check_rbac.py --kubeconfig <文件>`；它会创建并清理测试命名空间，不是常规只读检查。
+
+## 备份、恢复与回退
+
+- Retain 只防止 PV 随声明自动回收。节点、卷或宿主丢失仍需要独立备份。记录工作负载/镜像、密钥引用、配置摘要及卷身份；在仓库外另保全原签名/Vault 密钥、数据库/对象认证和信任链。
+- PostgreSQL 从停写切点备份整库（`pg_dump --format=custom --create`）和全局对象（`pg_dumpall --globals-only`），分别认证加密。独立恢复到新卷，严格核对角色、所有者、ACL、扩展、库/表数据、序列和大对象。逻辑恢复的物理系统 ID 可以不同；本手册的同卷重启必须相同。
+- MinIO 同镜像、同版本、同目录与单盘形态才使用 P9 的全盘冷备，包括隐藏元数据、桶版本、删除标记和 IAM。先停源写者及 MinIO，再只读归档；不要用 `mc mirror` 替代版本历史。目标为空卷，先验证认证包和归档路径，再恢复并校验字节/属主；只在目标按原运行身份做必要的权限映射。启目标后读取版本与对象、校验 IAM 和数据。
+- [data_transfer.py](data_transfer.py) 提供 P9 实际使用的认证加密流、恢复前认证、归档清单与 PostgreSQL 语义摘要原语。先在隔离目标实做恢复演练，再申请生产切点；工具不替操作者决定源/目标和写入权威。不要把恢复流或凭据放在命令行、日志或 Git。
+- 新目标的 App 或 Runtime 启动即可能写入。只有在目标业务写者从未启动、无新写且旧写者仍可受控恢复时，才能直接回旧环境；启写后保目标权威，冻结并验证独立备份再做前向修复或另行迁回。原地同卷重启不触发任何恢复或迁库。

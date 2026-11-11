@@ -1,0 +1,148 @@
+{
+  "_note": "Field map only. Replace placeholders with independently verified input. Never apply this file or manufacture acceptance evidence.",
+  "private_environment_files": {
+    "postgres-auth.vars": {
+      "POSTGRES_USER": "<existing-db-role>",
+      "POSTGRES_PASSWORD": "<private>",
+      "POSTGRES_DB": "<existing-db-name>"
+    },
+    "minio-auth.vars": {
+      "MINIO_ROOT_USER": "<private>",
+      "MINIO_ROOT_PASSWORD": "<private>",
+      "MINIO_BUCKET": "<site-bucket>"
+    },
+    "blackboard-auth.vars": {
+      "AGENT_TOKEN_SECRET": "<preserve-existing-signing-and-vault-key>",
+      "ADMIN_USERS": "<existing-admin-configuration>",
+      "SERVICE_TOKEN": "<same-service-token-as-runtime>",
+      "PI_MODEL_RUNTIME_TOKEN": "<same-value-as-PI_RUNTIME_SENDER_TOKEN>",
+      "SANDBOX_TENANT_RESOLVER_TOKEN": "<same-value-as-the-private-server-toml>",
+      "PI_SITE_ID": "<site-id>",
+      "PI_MODEL_AUTHORITY": "<authority-id>",
+      "PI_MODEL_OPERATOR": "<operator-username>",
+      "PI_MODEL_ALLOWED_ORIGINS": "<JSON array of approved HTTPS origins>"
+    },
+    "runtime-auth.vars": {
+      "SERVICE_TOKEN": "<same-service-token-as-blackboard>",
+      "PI_RUNTIME_SENDER_TOKEN": "<same-value-as-PI_MODEL_RUNTIME_TOKEN>",
+      "PI_PROVIDER_ALLOWED_ORIGINS": "<same-JSON-array-of-approved-HTTPS-origins>"
+    }
+  },
+  "runtime_resource_config_common": {
+    "source_id": "bbx-local-native-1effbcb",
+    "cluster_uid": "<observed-cluster-uid>",
+    "context": "in-cluster",
+    "kubeconfig": "/run/bbx/kubeconfig/config",
+    "system_namespace": "bbx-local-native",
+    "kubernetes_platform_namespace": "bbx-platform",
+    "storage_class": "standard",
+    "ca_file": "/run/bbx/ca/ca.pem",
+    "environment_revision": "<accepted-environment-revision>",
+    "runtime_artifact_sha256": "<accepted-Runtime-OCI-manifest-digest-hex-without-prefix>",
+    "runner_blackboard_url": "https://blackboard-control.bbx-platform.svc.cluster.local",
+    "runner_model_proxy_url": "https://runtime-control.bbx-platform.svc.cluster.local",
+    "runner_control_egress": [],
+    "runner_profile": "node-sandbox-host-v1",
+    "runner_image": "<accepted-digest-pinned-Runner-image>",
+    "sandbox_host_image": "<accepted-digest-pinned-Sandbox-host-image>",
+    "sandbox_image": "<accepted-digest-pinned-base-tool-image>",
+    "traffic_sandbox_image": "<accepted-digest-pinned-mode-capture-image>",
+    "sandbox_server_url": "http://bbx-p9-sandbox-server.bbx-local-native.svc.cluster.local",
+    "sandbox_host_execd_origin": "<accepted-OpenSandbox-ingress-origin>",
+    "sandbox_network": {
+      "ipv4": "<approved-task-bridge-address>",
+      "namespace": "<approved-network-namespace>",
+      "network_identity": "<approved-network-identity>"
+    },
+    "traffic_target_namespace": "<accepted-traffic-target-namespace>",
+    "traffic_targets": [],
+    "journal_writer_lock": true
+  },
+  "board_runtime_additions": {
+    "board_network": {
+      "mode": "default",
+      "dns_ipv4": "<approved-resolver-ipv4>",
+      "allow_cidrs": ["<approved-solver-egress-cidr>"],
+      "deny_cidrs": ["<all-node-pod-service-and-control-cidrs>"]
+    }
+  },
+  "ctf_runtime_additions": {
+    "vpn": {
+      "profile": "openvpn-task-ipv4-tcp-v1",
+      "id": "<verified-vpn-deployment-id>",
+      "label": "<verified-vpn-label>",
+      "egress_image": "<admitted-vpn-egress-image-digest>",
+      "sandbox_image": "<admitted-vpn-sandbox-image-digest>",
+      "tun_resource": "<existing-TUN-device-plugin-resource>",
+      "source_cidrs": ["<approved-profile-source-cidr>"],
+      "source_origins": ["<approved-profile-source-origin>"],
+      "peer_cidrs": ["<approved-vpn-peer-cidr>"],
+      "target_cidrs": ["<approved-vpn-target-cidr>"],
+      "default_cidrs": ["<approved-default-egress-cidr>"],
+      "deny_cidrs": ["<all-node-pod-service-and-control-cidrs>"]
+    }
+  },
+  "board.json": {
+    "revision": "<verified-positive-integer>",
+    "runtime_resource_config": "<exact-board-runtime.json-object>",
+    "acceptance": {"file": "board-acceptance.json", "sha256": "<actual-evidence-file-sha256>"}
+  },
+  "ctf.json": {
+    "id": "<verified-publication-id>",
+    "revision": "<verified-positive-integer>",
+    "label": "<publication-label>",
+    "release": "verified",
+    "ctf_profile_version": "<existing-published-CTF-profile-version>",
+    "budget_currency": "USD",
+    "runtime_resource_config": "<exact-ctf-runtime.json-object>",
+    "acceptance": {"file": "ctf-acceptance.json", "sha256": "<actual-evidence-file-sha256>"},
+    "vpn_profile": "openvpn-task-ipv4-tcp-v1"
+  },
+  "acceptance_file_shapes": {
+    "board-acceptance.json": {
+      "schema_version": 1,
+      "execution_contract": "exploration-board-v1",
+      "pi_model_protocol": "pi-messages-v1",
+      "mcp_transport": "direct-v2",
+      "runtime_config_digest": "<canonical-board-runtime-config-digest>",
+      "runtime_artifact_sha256": "<accepted-Runtime-OCI-manifest-digest-hex-without-prefix>",
+      "runner_image": "<accepted-Runner-image-digest>",
+      "sandbox_host_image": "<accepted-Sandbox-host-image-digest>",
+      "network_mode": "<verified-board-network-mode>",
+      "ordinary_task_and_close": "<true-only-after-observed>",
+      "input_and_archive": "<true-only-after-observed>",
+      "no_network_fallback": "<true-only-after-observed>"
+    },
+    "ctf-acceptance.json": {
+      "schema_version": 3,
+      "pi_model_protocol": "pi-messages-v1",
+      "mcp_transport": "direct-v2",
+      "runner_image": "<accepted-Runner-image-digest>",
+      "sandbox_host_image": "<accepted-Sandbox-host-image-digest>",
+      "runtime_artifact_sha256": "<accepted-Runtime-OCI-manifest-digest-hex-without-prefix>",
+      "runtime_config_digest": "<canonical-ctf-runtime-config-digest>",
+      "base_source": "<original-or-reconstructed-as-verified>",
+      "base_tool_image": "<accepted-base-tool-image-digest>",
+      "recipe_sha256": "<build-recipe-digest-if-reconstructed>",
+      "traffic_sandbox_image": "<accepted-traffic-image-digest>",
+      "public_create_and_archive": "<true-only-after-observed>",
+      "inputs_profile": "<optional-shared-input-profile>",
+      "inputs_host_image": "<optional-shared-input-host-image>",
+      "vpn_profile": "openvpn-task-ipv4-tcp-v1",
+      "vpn_egress_image": "<accepted-vpn-egress-image-digest>",
+      "vpn_sandbox_image": "<accepted-vpn-sandbox-image-digest>",
+      "vpn_host_image": "<accepted-vpn-host-image-digest>",
+      "vpn_roundtrip_and_disconnect": "<true-only-after-observed>",
+      "task_network_default_and_vpn": "<true-only-after-observed>"
+    }
+  },
+  "other_private_files": [
+    "ca.pem",
+    "blackboard-control.crt",
+    "blackboard-control.key",
+    "runtime-control.crt",
+    "runtime-control.key",
+    "sandbox-server-config.toml",
+    "sandbox-template.json"
+  ]
+}
