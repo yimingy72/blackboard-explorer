@@ -1,0 +1,94 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: bbx-platform-sandbox-resource}
+spec:
+  failurePolicy: Fail
+  matchConditions:
+    - name: p9-sandbox-server
+      expression: request.userInfo.username == 'system:serviceaccount:bbx-local-native:bbx-p9-sandbox-server'
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [sandbox.opensandbox.io]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [batchsandboxes]
+  validations:
+    - expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels) &&
+        'bbx.dev/kubernetes-platform' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['bbx.dev/kubernetes-platform'] == 'bbx-platform' &&
+        (!has(object.spec.poolRef) || object.spec.poolRef == '') &&
+        object.spec.replicas == 1
+      message: P9 Sandbox Server may manage only individual sandboxes in a P9 task namespace
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: bbx-platform-sandbox-resource}
+spec:
+  policyName: bbx-platform-sandbox-resource
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: bbx-platform-sandbox-pod}
+spec:
+  failurePolicy: Fail
+  matchConditions:
+    - name: controller
+      expression: request.userInfo.username == 'system:serviceaccount:bbx-local-native:opensandbox-controller-manager'
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {bbx.dev/kubernetes-platform: bbx-platform}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  variables:
+    - name: pod
+      expression: object.spec
+    - name: solver
+      expression: object.spec.containers[0]
+    - name: allowedImages
+      expression: >-
+        ['bbx-p4k-shared-inputs:20261108@sha256:cf92f672344d39569af7c206cff10b723f3da334160e7269b7809bfac16f2c7d',
+         'bbx-p4j-kali-traffic:eae04778af44-1026cd2c@sha256:c7386ae9055d1a31580bb92224b062aa62ef24f18d6301bd9a1f42dd60344f71',
+         'bbx-p4m-vpn-sandbox@sha256:05a46bc49dc8e0123063a304b4c531020f651b3b82c5b0a2aeea4f4ee8181ccb']
+    - name: allowedCaps
+      expression: "['SYS_ADMIN','NET_ADMIN','NET_RAW','SETUID','SETGID','SETPCAP','KILL','CHOWN','DAC_OVERRIDE','FOWNER']"
+  validations:
+    - expression: >-
+        (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) &&
+        (!has(variables.pod.hostPID) || !variables.pod.hostPID) &&
+        (!has(variables.pod.hostIPC) || !variables.pod.hostIPC) &&
+        (!has(variables.pod.shareProcessNamespace) || !variables.pod.shareProcessNamespace) &&
+        has(variables.pod.automountServiceAccountToken) && !variables.pod.automountServiceAccountToken &&
+        (!has(variables.pod.volumes) || variables.pod.volumes.all(v,
+          has(v.emptyDir) ||
+          (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'bbx-workspace') ||
+          (has(v.secret) && v.secret.secretName == 'bbx-execd'))) &&
+        has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o,
+          o.apiVersion == 'sandbox.opensandbox.io/v1alpha1' && o.kind == 'BatchSandbox') &&
+        size(variables.pod.containers) == 1 && variables.solver.name == 'sandbox' &&
+        variables.solver.image in variables.allowedImages &&
+        variables.solver.command == ['/opt/bbx/control/launcher','--kubernetes-bootstrap-cgroup-v2'] &&
+        has(variables.solver.securityContext) &&
+        (!has(variables.solver.securityContext.privileged) || !variables.solver.securityContext.privileged) &&
+        has(variables.solver.securityContext.capabilities) &&
+        variables.solver.securityContext.capabilities.drop == ['ALL'] &&
+        variables.solver.securityContext.capabilities.add.all(c, c in variables.allowedCaps) &&
+        (!has(variables.solver.ports) || variables.solver.ports.all(p, !has(p.hostPort) || p.hostPort == 0)) &&
+        (!has(variables.pod.initContainers) || variables.pod.initContainers.all(c,
+          c.image == 'opensandbox/execd:release-1.2.0@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c' &&
+          (!has(c.securityContext) ||
+           ((!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+            (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) ||
+             size(c.securityContext.capabilities.add) == 0)))))
+      message: OpenSandbox controller pods must keep the P9 sandbox launcher and volume boundary
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: bbx-platform-sandbox-pod}
+spec:
+  policyName: bbx-platform-sandbox-pod
+  validationActions: [Deny]

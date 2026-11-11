@@ -1,0 +1,42 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+api_key = ""
+
+[log]
+level = "WARNING"
+
+[runtime]
+type = "kubernetes"
+execd_image = "opensandbox/execd:release-1.2.0@sha256:c75836c46ef4302afccec182d5d7339eb2f905f51e3d73b7aa17bb76c832526c"
+execd_run_as_init = true
+
+[kubernetes]
+namespace = "bbx-p3f-unallocated"
+workload_provider = "batchsandbox"
+batchsandbox_template_file = "/etc/opensandbox/p3f-template.json"
+batchsandbox_informer_enabled = false
+image_pull_policy = "IfNotPresent"
+read_qps = 20
+read_burst = 40
+
+[kubernetes.execd_init_resources]
+requests = {cpu = "10m", memory = "32Mi"}
+limits = {cpu = "200m", memory = "128Mi"}
+
+[storage]
+allowed_host_paths = []
+
+[tenants]
+provider = "http"
+endpoint = "https://blackboard-control.bbx-platform.svc.cluster.local/api/opensandbox/tenants"
+auth_header = "x-bbx-sandbox-resolver"
+auth_token = "__BBX_RESOLVER__"
+cache_max_entries = 32
+max_stale_seconds = 0
+timeout_seconds = 3
+
+[ingress]
+mode = "gateway"
+gateway.address = "bbx-p3f-ingress.bbx-local-native.svc.cluster.local:80"
+gateway.route.mode = "header"

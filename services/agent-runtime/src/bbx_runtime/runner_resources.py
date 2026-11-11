@@ -54,6 +54,12 @@ TRAFFIC_CONFIG_FIELDS = BINDING_CAPTURE_CONFIG_FIELDS
 SANDBOX_HOST_SECRET = "bbx-sandbox-host"
 SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
 SANDBOX_HOST_PORT = 8766
+PLATFORM_CONTROL_PORT = "8443"
+PLATFORM_RUNTIME_ACCOUNT = "bbx-runtime"
+PLATFORM_TASK_ROLE = "bbx-platform-task-resources"
+PLATFORM_SANDBOX_ACCOUNT = "bbx-p9-sandbox-server"
+PLATFORM_SANDBOX_ROLE = "bbx-platform-sandbox-resources"
+PLATFORM_NAMESPACE_LABEL = "bbx.dev/kubernetes-platform"
 VPN_EGRESS = "vpn-egress"
 VPN_SECRET = "bbx-vpn-egress"
 VPN_MOUNT = "/var/run/bbx-vpn/config"
@@ -138,6 +144,22 @@ class RunnerResources:
             raise ValueError("A fixed native Sandbox Server origin is required")
         self.server = url
         self._name(self.config["system_namespace"])
+        self.platform_namespace = self.config.get("kubernetes_platform_namespace")
+        if self.platform_namespace is not None:
+            self._name(self.platform_namespace)
+            if (
+                self.platform_namespace == self.config["system_namespace"]
+                or self.config.get("runner_control_egress")
+                or any(
+                    self.config.get(key)
+                    != f"https://{service}.{self.platform_namespace}.svc.cluster.local"
+                    for key, service in (
+                        ("runner_blackboard_url", "blackboard-control"),
+                        ("runner_model_proxy_url", "runtime-control"),
+                    )
+                )
+            ):
+                raise ValueError("In-cluster Runner control must use only the platform services")
 
     async def _kubectl(
         self, *args: str, body: dict | None = None, expected_denial: tuple[str, str] | None = None
@@ -271,6 +293,37 @@ class RunnerResources:
             },
             **fields,
         }
+
+    async def _ensure_platform_binding(self, namespace, labels):
+        if self.platform_namespace is None:
+            return
+        for account, home, name in (
+            (PLATFORM_RUNTIME_ACCOUNT, self.platform_namespace, PLATFORM_TASK_ROLE),
+            (PLATFORM_SANDBOX_ACCOUNT, self.config["system_namespace"], PLATFORM_SANDBOX_ROLE),
+        ):
+            role = {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": name}
+            subjects = [{"kind": "ServiceAccount", "name": account, "namespace": home}]
+            binding = self._document(
+                "RoleBinding", account, labels, namespace, roleRef=role, subjects=subjects
+            )
+            binding["apiVersion"] = "rbac.authorization.k8s.io/v1"
+            actual = await self._ensure(binding, labels)
+            if actual.get("roleRef") != role or actual.get("subjects") != subjects:
+                raise ResourceUnknown("The Task-local control authorization changed")
+
+    def _platform_control_egress(self):
+        if self.platform_namespace is None:
+            return []
+        namespace = {"k8s:io.kubernetes.pod.namespace": self.platform_namespace}
+        return [
+            {
+                "toEndpoints": [
+                    {"matchLabels": {**namespace, "k8s:app.kubernetes.io/name": name}}
+                    for name in ("blackboard", "runtime")
+                ],
+                "toPorts": [{"ports": [{"port": PLATFORM_CONTROL_PORT, "protocol": "TCP"}]}],
+            }
+        ]
 
     def _connection(self, tenant_key, execd_token=None):
         if not isinstance(tenant_key, str) or not tenant_key.strip():
@@ -782,9 +835,15 @@ class RunnerResources:
         remaining = (deadline - datetime.now(UTC)).total_seconds()
         if remaining <= 0:
             raise ResourceUnknown("The Task resource deadline has expired")
+        ns_labels = dict(labels)
+        if self.platform_namespace is not None:
+            ns_labels[PLATFORM_NAMESPACE_LABEL] = self.platform_namespace
         ns = await self._ensure(
-            self._document("Namespace", namespace, labels), labels, observed.get("namespace_uid")
+            self._document("Namespace", namespace, ns_labels),
+            ns_labels,
+            observed.get("namespace_uid"),
         )
+        await self._ensure_platform_binding(namespace, labels)
         await self._ensure(
             self._document(
                 "ServiceAccount",
@@ -900,7 +959,8 @@ class RunnerResources:
             namespace,
             spec={
                 "endpointSelector": {"matchLabels": {"bbx.dev/component": "runner"}},
-                "egress": [
+                "egress": self._platform_control_egress()
+                + [
                     {
                         "toCIDR": entry["cidrs"],
                         "toPorts": [

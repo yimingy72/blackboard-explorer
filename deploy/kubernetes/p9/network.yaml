@@ -1,0 +1,108 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: blackboard, namespace: bbx-platform}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/name: blackboard}}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {app.kubernetes.io/name: runtime}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: bbx-local-native
+            app.kubernetes.io/instance: bbx-p9-sandbox-server
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.bbx.dev/kubernetes-platform: bbx-platform
+            bbx.dev/component: runner
+            bbx.dev/managed-by: runner-resources
+      toPorts: [{ports: [{port: "8443", protocol: TCP}]}]
+  egress:
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: postgres}}]
+      toPorts: [{ports: [{port: "5432", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: minio}}]
+      toPorts: [{ports: [{port: "9000", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: runtime}}]
+      toPorts: [{ports: [{port: "8443", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns}}]
+      toPorts: [{ports: [{port: "53", protocol: ANY}]}]
+    - toEntities: [world]
+      toPorts: [{ports: [{port: "1", endPort: 65535, protocol: TCP}]}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: runtime, namespace: bbx-platform}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/name: runtime}}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {app.kubernetes.io/name: blackboard}
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.bbx.dev/kubernetes-platform: bbx-platform
+            bbx.dev/component: runner
+            bbx.dev/managed-by: runner-resources
+      toPorts: [{ports: [{port: "8443", protocol: TCP}]}]
+  egress:
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: postgres}}]
+      toPorts: [{ports: [{port: "5432", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: minio}}]
+      toPorts: [{ports: [{port: "9000", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {app.kubernetes.io/name: blackboard}}]
+      toPorts: [{ports: [{port: "8443", protocol: TCP}]}]
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: bbx-local-native
+            app.kubernetes.io/instance: bbx-p9-sandbox-server
+      toPorts: [{ports: [{port: "8080", protocol: TCP}]}]
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: bbx-local-native
+            app.kubernetes.io/instance: bbx-p3f-ingress
+      toPorts: [{ports: [{port: "28888", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns}}]
+      toPorts: [{ports: [{port: "53", protocol: ANY}]}]
+    - toEntities: [kube-apiserver]
+    - toEntities: [world]
+      toPorts: [{ports: [{port: "1", endPort: 65535, protocol: TCP}]}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: postgres, namespace: bbx-platform}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/name: postgres}}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {app.kubernetes.io/name: runtime}
+        - matchLabels: {app.kubernetes.io/name: blackboard}
+      toPorts: [{ports: [{port: "5432", protocol: TCP}]}]
+  egressDeny: [{toEntities: [all]}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: minio, namespace: bbx-platform}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/name: minio}}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {app.kubernetes.io/name: runtime}
+        - matchLabels: {app.kubernetes.io/name: blackboard}
+      toPorts: [{ports: [{port: "9000", protocol: TCP}]}]
+  egressDeny: [{toEntities: [all]}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: bbx-p9-sandbox-server, namespace: bbx-local-native}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/instance: bbx-p9-sandbox-server}}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: bbx-platform
+            app.kubernetes.io/name: runtime
+      toPorts: [{ports: [{port: "8080", protocol: TCP}]}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: bbx-platform
+            app.kubernetes.io/name: blackboard
+      toPorts: [{ports: [{port: "8443", protocol: TCP}]}]
+    - toEndpoints: [{matchLabels: {k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns}}]
+      toPorts: [{ports: [{port: "53", protocol: ANY}]}]
+    - toEntities: [kube-apiserver]

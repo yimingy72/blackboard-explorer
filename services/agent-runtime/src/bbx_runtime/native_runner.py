@@ -1258,6 +1258,14 @@ class NativeRunnerController:
 async def serve_native(settings: NativeRunnerSettings):
     config = json.loads(settings.runner_resource_config_file.read_text())
     resources = RunnerResources(config)
+    if resources.platform_namespace and (
+        settings.blackboard_url.rstrip("/") != config["runner_blackboard_url"]
+        or any(
+            getattr(settings, key).rstrip("/") != config[key]
+            for key in ("runner_blackboard_url", "runner_model_proxy_url")
+        )
+    ):
+        raise ValueError("Runtime control addresses must match the published in-cluster services")
     board_resources = None
     if settings.board_resource_config_file:
         try:
@@ -1268,6 +1276,7 @@ async def serve_native(settings: NativeRunnerSettings):
                 "context",
                 "kubeconfig",
                 "system_namespace",
+                "kubernetes_platform_namespace",
                 "storage_class",
                 "sandbox_server_url",
                 "runner_image",
