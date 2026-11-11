@@ -6,14 +6,37 @@ from typing import Any, Literal
 
 from bbx_contracts.challenge_board import business_manifest
 from bbx_contracts.model_limits import effective_max_input_tokens
-from bbx_contracts.models import AgentProfile, ExecResources, ModelConfig, Params, WorkerTools
-from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
+from bbx_contracts.models import (
+    REQUIRED_TOOLS,
+    AgentProfile,
+    ExecResources,
+    ModelConfig,
+    Params,
+    WorkerTools,
+)
+from bbx_contracts.progress import PROGRESS_REQUIRED_TOOLS, progress_tool_schemas
+from bbx_contracts.runner_vpn import (
+    NETWORK_USE_DEFAULT,
+    VPN_CONFIGURE,
+    VPN_DISCONNECT,
+    VPN_DYNAMIC_PROFILE,
+)
+from bbx_contracts.sandbox_tools import SANDBOX_TOOLS, sandbox_schemas
 from fastapi import APIRouter, HTTPException, Request
 from jinja2 import TemplateSyntaxError, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, ConfigDict, Field
 
 from bbx_blackboard.auth import require_user_or_service
+from bbx_blackboard.board_runner_dispatch import (
+    BOARD_READ_TOOLS,
+    BOARD_SANDBOX_TOOLS,
+    BOARD_WRITE_TOOLS,
+)
+from bbx_blackboard.board_runner_tools import schemas as board_schemas
+from bbx_blackboard.business_tools import MUTATIONS
+from bbx_blackboard.business_tools import schemas as ctf_schemas
+from bbx_blackboard.native_ctf_publication import NativeCtfPublication
 from bbx_blackboard.profiles import ProfileStore
 
 Role = Literal["explore", "derive", "close"]
@@ -137,6 +160,107 @@ async def update_runtime(request: Request, body: RuntimeUpdate) -> dict[str, Any
     return {"revision": row["version"], "profile": worker_document(profile)}
 
 
+def ctf_manifest(publication: NativeCtfPublication) -> dict:
+    return business_manifest(
+        automatic=True,
+        vpn=publication.vpn_profile is not None,
+        task_network=publication.vpn_profile == VPN_DYNAMIC_PROFILE,
+    )["roles"]
+
+
+def tool_catalog(publication: NativeCtfPublication | None) -> dict:
+    def entry(name, schema, *, group="platform", access="read", required=False, setting=None):
+        return {
+            "name": name,
+            "description": schema.get("description"),
+            "group": group,
+            "access": access,
+            "required": required,
+            "configurable": setting is not None and not required,
+            "setting_key": setting,
+            "input_schema": schema,
+        }
+
+    sandbox = sandbox_schemas()
+    sandbox_access = {
+        "exec_command": "execute",
+        "interrupt_execution": "execute",
+        "write_file": "write",
+    }
+
+    def workspace_tools(names, *, setting=None):
+        return [
+            entry(
+                name,
+                sandbox[name],
+                group="sandbox",
+                access=sandbox_access.get(name, "read"),
+                setting=setting,
+            )
+            for name in names
+        ]
+
+    board = board_schemas()
+    roles = {
+        role: {
+            "tools": [
+                entry(
+                    name,
+                    board[name],
+                    access="write" if name in writes else "read",
+                    required=name in REQUIRED_TOOLS[role],
+                    setting=name,
+                )
+                for name in (*BOARD_READ_TOOLS, *writes)
+            ]
+            + (
+                workspace_tools(BOARD_SANDBOX_TOOLS, setting="execute_command")
+                if role == "explore"
+                else []
+            ),
+            "external_mcp": role == "explore",
+        }
+        for role, writes in BOARD_WRITE_TOOLS.items()
+    }
+    roles["progress"] = {
+        "tools": [
+            entry(
+                name,
+                schema,
+                access="write" if name == "update_progress_tree" else "read",
+                required=name in PROGRESS_REQUIRED_TOOLS,
+                setting=name,
+            )
+            for name, schema in progress_tool_schemas().items()
+        ],
+        "external_mcp": False,
+    }
+    if publication is not None:
+        ctf = ctf_schemas(dynamic_vpn=publication.vpn_profile == VPN_DYNAMIC_PROFILE)
+        writes = MUTATIONS | {VPN_CONFIGURE, VPN_DISCONNECT, NETWORK_USE_DEFAULT}
+        for role, names in ctf_manifest(publication).items():
+            execution = (
+                role == "teammate"
+                or publication.runtime_resource_config.get("runner_profile")
+                == "node-sandbox-host-v1"
+            )
+            roles[role] = {
+                "tools": [
+                    entry(name, ctf[name], access="write" if name in writes else "read")
+                    for name in names
+                ]
+                + (workspace_tools(SANDBOX_TOOLS) if execution else []),
+                "external_mcp": True,
+            }
+    return {"roles": roles}
+
+
+@router.get("/tool-catalog")
+async def tools(request: Request) -> dict[str, Any]:
+    require_user_or_service(request)
+    return tool_catalog(request.app.state.native_ctf_publication.publication)
+
+
 @router.get("/ctf/workers")
 async def ctf_workers(request: Request) -> dict[str, Any]:
     from bbx_blackboard.profiles import ctf_profile
@@ -147,15 +271,10 @@ async def ctf_workers(request: Request) -> dict[str, Any]:
         return {"published": False}
     row = await request.app.state.profile_store.get("ctf", publication.ctf_profile_version)
     profile = ctf_profile(row)
-    manifest = business_manifest(
-        automatic=True,
-        vpn=publication.vpn_profile is not None,
-        task_network=publication.vpn_profile == VPN_DYNAMIC_PROFILE,
-    )
     return {
         "published": True,
         "revision": row["version"],
         "prompt_templates": profile.prompt_templates.model_dump(mode="json"),
-        "business_tools": manifest["roles"],
+        "business_tools": ctf_manifest(publication),
         "task_network": publication.vpn_profile == VPN_DYNAMIC_PROFILE,
     }

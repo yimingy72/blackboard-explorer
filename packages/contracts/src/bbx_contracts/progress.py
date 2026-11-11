@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import ConfigDict, Field, create_model
 
 from .models import ContractModel, Usage
 from .pi_models import PiModelRef
@@ -60,22 +60,47 @@ class ProgressSettings(ContractModel):
     )
 
 
+PROGRESS_REQUIRED_TOOLS = frozenset(
+    {"read_progress_sources", "get_progress_tree", "update_progress_tree"}
+)
+_PROGRESS_TOOL_FIELDS: dict[str, dict[str, Any]] = {
+    "read_progress_sources": {"after_version": (int, 0), "limit": (int, 30)},
+    "get": {"object_id": (str, ...)},
+    "search": {"q": (str, ...), "after_version": (int, 0), "limit": (int, 20)},
+    "read_evidence": {
+        "uri": (str, ...),
+        "version": (int, ...),
+        "sha256": (str, ...),
+        "offset": (int, 0),
+        "limit": (int, 16000),
+    },
+    "get_progress_tree": {},
+    "update_progress_tree": {
+        "upserts": (list[ProgressNode], ...),
+        "removed_ids": (list[str], ...),
+        "overview": (str | None, None),
+    },
+}
+PROGRESS_TOOL_NAMES = tuple(_PROGRESS_TOOL_FIELDS)
+
+
+def progress_tool_schemas() -> dict[str, dict[str, Any]]:
+    return {
+        name: create_model(
+            f"{name}Input", __config__=ConfigDict(extra="forbid"), **fields
+        ).model_json_schema()
+        for name, fields in _PROGRESS_TOOL_FIELDS.items()
+    }
+
+
 class ProgressGlobalSettings(ContractModel):
     pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     revision: int | None = Field(default=None, ge=0)
     expected_revision: int = Field(ge=0)
     prompt: str = Field(default="", max_length=40000)
     model_id: str | None = None
-    enabled_tools: list[str] = Field(
-        default_factory=lambda: [
-            "read_progress_sources",
-            "get",
-            "search",
-            "read_evidence",
-            "get_progress_tree",
-            "update_progress_tree",
-        ]
-    )
+    enabled_tools: list[str] = Field(default_factory=lambda: list(PROGRESS_TOOL_NAMES))
+    default_prompt: str | None = Field(default=None, max_length=40000, exclude=True)
 
 
 class ProgressRefresh(ContractModel):

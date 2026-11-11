@@ -9053,6 +9053,18 @@
       "ProgressGlobalSettings": {
         "additionalProperties": false,
         "properties": {
+          "default_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 40000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Prompt"
+          },
           "enabled_tools": {
             "items": {
               "type": "string"
@@ -15122,6 +15134,29 @@
           }
         },
         "summary": "Update Runtime",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/tool-catalog": {
+      "get": {
+        "operationId": "tools_api_settings_tool_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Tools Api Settings Tool Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tools",
         "tags": [
           "settings"
         ]

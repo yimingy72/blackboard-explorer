@@ -22,9 +22,9 @@ from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, require_boar
 from bbx_blackboard.pi_ledger import task_pi_model
 from bbx_blackboard.store import schema as s
 
-_SANDBOX_TOOLS = ("exec_command", "read_file", "write_file")
-_COMMON = ("get", "search", "read_evidence")
-_ROLE_TOOLS = {
+BOARD_SANDBOX_TOOLS = ("exec_command", "read_file", "write_file")
+BOARD_READ_TOOLS = ("get", "search", "read_evidence")
+BOARD_WRITE_TOOLS = {
     "explore": ("post_fact", "post_intent", "claim", "release"),
     "derive": ("post_intent",),
     "close": ("submit_close",),
@@ -127,7 +127,11 @@ async def _binding(conn, tid, control, owner, proof: BoardDispatchProof):
     if profile is None:
         raise HTTPException(409, "Blackboard Task has no frozen worker profile")
     enabled = profile.get(role, {}).get("builtin")
-    tools = [name for name in (*_COMMON, *_ROLE_TOOLS[role]) if enabled is None or name in enabled]
+    tools = [
+        name
+        for name in (*BOARD_READ_TOOLS, *BOARD_WRITE_TOOLS[role])
+        if enabled is None or name in enabled
+    ]
     if role == "explore":
         grants = await conn.scalar(
             select(s.task_runner_resources.c.data["native_mcp"]["explore"]).where(
@@ -139,11 +143,10 @@ async def _binding(conn, tid, control, owner, proof: BoardDispatchProof):
     refs: dict[McpTarget, str] = {"business": f"native-mcp-{key}-business"}
     instructions = proof.instructions
     if sandbox:
-        tools.extend(_SANDBOX_TOOLS)
+        tools.extend(BOARD_SANDBOX_TOOLS)
         refs["sandbox"] = f"native-mcp-{key}-sandbox"
-        instructions += (
-            "\nThe workspace command tool is named exec_command, formerly execute_command."
-        )
+        if "execute_command" in instructions:
+            instructions += "\nThe workspace command tool is named exec_command."
     binding = RunnerBinding(
         business_contract=EXPLORATION_CONTRACT,
         binding_id=key,
@@ -172,7 +175,7 @@ async def _binding(conn, tid, control, owner, proof: BoardDispatchProof):
         allowed_tools=tools,
         mcp_tool_routes={
             name: RunnerMcpRoute(
-                target="sandbox" if name in _SANDBOX_TOOLS else "business", wire_name=name
+                target="sandbox" if name in BOARD_SANDBOX_TOOLS else "business", wire_name=name
             )
             for name in tools
         },

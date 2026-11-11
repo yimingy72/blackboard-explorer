@@ -15,6 +15,8 @@ from bbx_contracts.model_limits import effective_max_input_tokens, effective_max
 from bbx_contracts.models import ModelConfig, Price
 from bbx_contracts.pi_models import PiModelRef, PiModelVersion
 from bbx_contracts.progress import (
+    PROGRESS_REQUIRED_TOOLS,
+    PROGRESS_TOOL_NAMES,
     ProgressCandidate,
     ProgressCheckpoint,
     ProgressComplete,
@@ -249,20 +251,15 @@ class ProgressService:
         await self.repo.notify(tid, written[-1]["version"], connection=conn)
         return written[-1]
 
-    async def global_settings(self, body=None):
-        allowed = {
-            "read_progress_sources",
-            "get",
-            "search",
-            "read_evidence",
-            "get_progress_tree",
-            "update_progress_tree",
-        }
-        default_prompt = ""
+    def default_prompt(self) -> str:
         if self.profiles_dir is not None:
             prompt_path = self.profiles_dir / "prompts" / "progress.md.j2"
             if prompt_path.is_file():
-                default_prompt = prompt_path.read_text(encoding="utf-8")
+                return prompt_path.read_text(encoding="utf-8")
+        return ""
+
+    async def global_settings(self, body=None):
+        allowed = set(PROGRESS_TOOL_NAMES)
         async with self.repo.engine.begin() as conn:
             await conn.execute(
                 insert(s.app_settings)
@@ -270,7 +267,7 @@ class ProgressService:
                     key="progress",
                     value={
                         "revision": 0,
-                        "prompt": default_prompt,
+                        "prompt": "",
                         "model_id": None,
                         "enabled_tools": sorted(allowed),
                     },
@@ -288,8 +285,7 @@ class ProgressService:
                 check(body.expected_revision == value["revision"], "Settings revision conflict")
                 check(set(body.enabled_tools) <= allowed, "Unsupported progress tools", 422)
                 check(
-                    {"read_progress_sources", "get_progress_tree", "update_progress_tree"}
-                    <= set(body.enabled_tools),
+                    PROGRESS_REQUIRED_TOOLS <= set(body.enabled_tools),
                     "Core progress tools cannot be disabled",
                     422,
                 )
@@ -319,7 +315,7 @@ class ProgressService:
                     .where(s.app_settings.c.key == "progress")
                     .values(value=value)
                 )
-            return value
+            return {**value, "default_prompt": self.default_prompt()}
 
     async def settings(self, tid, body, *, pi_scope=None):
         async with self.repo.engine.begin() as conn:
@@ -1156,20 +1152,13 @@ class ProgressService:
                             select(s.app_settings.c.value).where(s.app_settings.c.key == "progress")
                         )
                     ).scalar_one_or_none() or {}
+                    prompt = global_value.get("prompt") or self.default_prompt()
                     effective_settings = {
                         **state["settings"],
-                        "system_prompt": global_value.get("prompt", ""),
-                        "prompt": global_value.get("prompt", ""),
+                        "system_prompt": prompt,
+                        "prompt": prompt,
                         "enabled_tools": global_value.get(
-                            "enabled_tools",
-                            [
-                                "read_progress_sources",
-                                "get",
-                                "search",
-                                "read_evidence",
-                                "get_progress_tree",
-                                "update_progress_tree",
-                            ],
+                            "enabled_tools", list(PROGRESS_TOOL_NAMES)
                         ),
                     }
                     effective_settings["model_id"] = effective_settings.get(
