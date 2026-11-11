@@ -53,6 +53,7 @@ spec:
       expression: >-
         ['bbx-p4k-shared-inputs:20261108@sha256:cf92f672344d39569af7c206cff10b723f3da334160e7269b7809bfac16f2c7d',
          'bbx-p4j-kali-traffic:eae04778af44-1026cd2c@sha256:c7386ae9055d1a31580bb92224b062aa62ef24f18d6301bd9a1f42dd60344f71',
+         'bbx-p7-sandbox-shared@sha256:cdf8c25d5c5621a40fced42d5b1d5f01a0713ba5b6c472424db22f0fd5a77dc2',
          'bbx-p4m-vpn-sandbox@sha256:05a46bc49dc8e0123063a304b4c531020f651b3b82c5b0a2aeea4f4ee8181ccb']
     - name: allowedCaps
       expression: "['SYS_ADMIN','NET_ADMIN','NET_RAW','SETUID','SETGID','SETPCAP','KILL','CHOWN','DAC_OVERRIDE','FOWNER']"

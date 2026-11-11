@@ -80,6 +80,32 @@ def verify(kubeconfig):
         assert result.returncode == 1 and result.stdout.strip() == "no", result.stderr
         report.append([scope, verb, resource, "denied"])
 
+    def legacy_sandbox_read(scope, verb, expected):
+        # Discovery cannot resolve this absent legacy API; the server still probes it.
+        review = {
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SubjectAccessReview",
+            "spec": {
+                "user": "system:serviceaccount:bbx-local-native:bbx-p9-sandbox-server",
+                "resourceAttributes": {
+                    "namespace": scope,
+                    "verb": verb,
+                    "group": "sandbox.fast.io",
+                    "resource": "sandboxes",
+                },
+            },
+        }
+        result = subprocess.run(
+            kube + ["create", "-f", "-", "-o", "json"],
+            input=json.dumps(review),
+            text=True,
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        assert json.loads(result.stdout)["status"]["allowed"] is expected
+        report.append([scope, verb, "sandboxes.sandbox.fast.io", expected])
+
     try:
         create(doc("Namespace", "bbx-p9-forbidden"), denied="original Blackboard task namespaces")
         create(doc("Namespace", f"bbx-task-{task}"))
@@ -109,6 +135,9 @@ def verify(kubeconfig):
             forbidden(outside, "create", "pods/exec")
             forbidden(outside, "create", "pods/portforward")
             forbidden(outside, "create", "batchsandboxes.sandbox.opensandbox.io", who=server)
+        legacy_sandbox_read(namespace, "list", True)
+        legacy_sandbox_read(namespace, "create", False)
+        legacy_sandbox_read(legacy, "list", False)
         for kind in (
             "pools.sandbox.opensandbox.io",
             "sandboxtemplates.sandbox.fast.io",

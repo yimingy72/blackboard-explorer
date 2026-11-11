@@ -95,6 +95,10 @@ rules:
   - apiGroups: [sandbox.opensandbox.io]
     resources: [batchsandboxes]
     verbs: [create, get, list, watch, patch, update, delete]
+  # The existing SDK list endpoint also enumerates this legacy resource in the Task namespace.
+  - apiGroups: [sandbox.fast.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [pods, services, persistentvolumeclaims]
     verbs: [get, list, watch]

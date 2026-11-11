@@ -10,6 +10,8 @@
 
 `bbx-platform` 需要 `postgres-auth`、`minio-auth`、`blackboard-auth`、`runtime-auth`、`blackboard-control-tls` 和 `runtime-control-tls` Secrets，以及 `platform-control-ca` 和 `platform-publications` ConfigMaps。`bbx-local-native` 内的 P9 Server 使用相同信任锚的 `bbx-p9-platform-control-ca` ConfigMap，以及现有 ingress 签名 Secret 的引用。服务 DNS `blackboard-control.bbx-platform.svc.cluster.local`、`runtime-control.bbx-platform.svc.cluster.local` 应分别出现在证书 SAN。原认证值从受保护的发布来源传入，保留加密配置的密钥；凭据不进清单和输出回执。
 
+签发服务证书时写入 `subjectKeyIdentifier` 和 `authorityKeyIdentifier`，并用 `openssl verify -x509_strict -CAfile <CA> -verify_hostname <服务DNS> <证书>` 检查。VPN 边车使用严格校验，不能以普通客户端握手代替。证书轮换后等 Secret 文件投射完成，再重载对应 TLS 代理并读回新叶证书。
+
 只在所用镜像、配置、身份、证书和数据均通过 P9 验收后开启平台写入。生产 `platform-publications` 必须包含匹配同一 Runtime 配置 digest 的两套已验发布与验收文件。仅预验夹具使用的入口、凭据和模型目录不得挂到正式 Deployment。发生故障时先按任务说明确认数据写入边界再回切。
 
 本机访问使用现有 Service，不修改 Kind 的 API 端口映射：
