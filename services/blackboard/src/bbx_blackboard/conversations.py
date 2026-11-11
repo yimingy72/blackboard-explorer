@@ -19,6 +19,7 @@ from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from bbx_blackboard.board_runner_scope import confirmed_board_journals
 from bbx_blackboard.domain.rules import dispute_fields, event, pending_claims
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
@@ -221,6 +222,24 @@ class Conversations:
                 .mappings()
                 .all()
             )
+            control_rows = {
+                table.name: [
+                    dict(item)
+                    for item in (
+                        await conn.execute(select(table).where(table.c.task_id == tid))
+                    ).mappings()
+                ]
+                for table in (
+                    s.runner_owners,
+                    s.runner_bindings,
+                    s.runner_commands,
+                    s.runner_receipts,
+                    s.runner_calls,
+                )
+            }
+            journals = confirmed_board_journals(
+                control_rows[s.runner_bindings.name], state.task["run_number"]
+            )
             return jsonable_encoder(
                 {
                     "format": "bbx.task-archive.v1",
@@ -247,21 +266,8 @@ class Conversations:
                         ]
                         for table in (s.board_announcements, s.flag_candidates, s.flag_submissions)
                     },
-                    "runner_control": {
-                        table.name: [
-                            dict(item)
-                            for item in (
-                                await conn.execute(select(table).where(table.c.task_id == tid))
-                            ).mappings()
-                        ]
-                        for table in (
-                            s.runner_owners,
-                            s.runner_bindings,
-                            s.runner_commands,
-                            s.runner_receipts,
-                            s.runner_calls,
-                        )
-                    },
+                    "runner_control": control_rows,
+                    "board_journals": journals,
                     "native_costs": [
                         dict(item)
                         for item in (

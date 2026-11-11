@@ -6,10 +6,9 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from urllib.parse import urlsplit
 from uuid import UUID
 
-import httpx
+from bbx_contracts.billing import add_usage
 from bbx_contracts.pi_models import (
     PiCallDispatch,
     PiCallDispatchResult,
@@ -20,17 +19,21 @@ from bbx_contracts.pi_models import (
     PiModelVersion,
 )
 from bbx_contracts.runner import BACKGROUND_HELPER_TOOLS
+from bbx_contracts.runner_control import BoardRunIdentity
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import and_, false, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from bbx_blackboard.auth import require_task_reader, require_user_or_service
+from bbx_blackboard.board_runner_scope import (
+    EXPLORATION_CONTRACT,
+    board_runner_frozen,
+    require_board_run,
+)
+from bbx_blackboard.domain.rules import event
 from bbx_blackboard.gateway_auth import require_gateway_identity, task_direct_mcp
 from bbx_blackboard.pi_registry import (
-    AUTHORITY_HEADER,
     RUNTIME_HEADER,
-    normalized_url,
-    peer_tls,
     registry,
     trusted_header,
 )
@@ -159,8 +162,7 @@ class PiLedger:
         if proof.kind == "playground":
             item = await self.lookup(conn, body.call_id)
             if (
-                not self.registry.primary
-                or proof.authority != self.authority
+                proof.authority != self.authority
                 or item["purpose"] != "playground"
                 or item["task_id"] is not None
                 or item["request_user"] != self.registry.settings.pi_model_operator
@@ -224,6 +226,8 @@ class PiLedger:
         elif frozen is None or frozen[0] != self.authority:
             raise denied("The Task did not freeze a model from this Pi authority")
         elif proof.kind == "ordinary":
+            if await board_runner_frozen(conn, tid):
+                raise denied("The original Blackboard task uses scoped native Pi execution")
             task, agent = await ordinary_scope(conn, tid, proof)
             if task["budget"].get("currency") != "USD":
                 raise denied("The frozen Task budget is not USD")
@@ -245,6 +249,13 @@ class PiLedger:
                 journal=proof.journal.model_dump(mode="json"),
             )
             spec = json.loads(binding["payload_json"])["spec"]
+            turn = proof.sdk_session_id
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                original = BoardRunIdentity.model_validate(binding["business"]["board_run"])
+                await require_board_run(
+                    conn, tid, proof.binding.agent_id, original, action="model_send"
+                )
+                turn = self._board_turn(proof.sdk_session_id, original)
             if (
                 binding["binding"] != proof.binding.model_dump(mode="json")
                 or spec["profile_revision"] != proof.profile_revision
@@ -265,7 +276,7 @@ class PiLedger:
             scope = Scope(
                 "solver",
                 proof.binding.agent_id,
-                proof.sdk_session_id,
+                turn,
                 frozen[1],
                 Decimal(str(task["budget"]["max_cost"])),
                 allowed_tools=sorted(allowed),
@@ -400,6 +411,7 @@ class PiLedger:
             scope = await self.scope(conn, PiCallPrepare.model_validate(current["intent"]))
             if (
                 scope.purpose != current["purpose"]
+                or scope.turn != current["turn_id"]
                 or scope.model.model_dump(mode="json") != current["model_snapshot"]
             ):
                 raise denied("The original Pi scope changed")
@@ -442,6 +454,83 @@ class PiLedger:
                 )
             )
             return PiCallDispatchResult(send_allowed=True, state="dispatched")
+
+    @staticmethod
+    def _board_turn(sdk_session_id, identity):
+        started = identity.started_at.isoformat()
+        return f"{sdk_session_id}:{identity.run_number}:{started}:{identity.derive_round}"
+
+    async def _project_board_usage(self, conn, current, body):
+        intent = current["intent"]
+        proof = intent.get("proof", {})
+        wire = proof.get("binding", {})
+        if (
+            body.outcome != "complete"
+            or proof.get("kind") != "native"
+            or wire.get("business_contract") != EXPLORATION_CONTRACT
+        ):
+            return
+        tid, aid = current["task_id"], current["agent_id"]
+        bindings, agents = s.runner_bindings, s.agent_runs
+        original = await conn.scalar(
+            select(bindings.c.business["board_run"]).where(
+                bindings.c.task_id == tid,
+                bindings.c.id == wire.get("binding_id"),
+                bindings.c.binding == wire,
+            )
+        )
+        task = (await conn.execute(select(s.tasks).where(s.tasks.c.id == tid))).mappings().first()
+        agent = (
+            (await conn.execute(select(agents).where(agents.c.task_id == tid, agents.c.id == aid)))
+            .mappings()
+            .first()
+        )
+        if original is None or task is None or agent is None or task["mode"] != "blackboard":
+            return
+        identity = BoardRunIdentity.model_validate(original)
+        if (
+            current["turn_id"] != self._board_turn(proof.get("sdk_session_id"), identity)
+            or task["run_number"] != identity.run_number
+            or agent["started_at"] != identity.started_at
+            or (agent["derive_round"] if agent["task_type"] == "derive" else None)
+            != identity.derive_round
+        ):
+            return
+        steps = int(current["state"] != "complete" and intent.get("action") == "turn")
+        previous = current["settlement"] or {}
+        observed = (
+            body.usage if current["state"] != "complete" or previous.get("usage") is None else None
+        )
+        progress = {
+            "agent_id": aid,
+            "steps": steps,
+            "accounting_only": agent["status"] not in {"running", "concluding"},
+        }
+        tokens = {}
+        if observed is not None:
+            tokens = {
+                "cache_hit_tokens": observed.cacheRead,
+                "cache_miss_tokens": observed.input + observed.cacheWrite,
+                "output_tokens": observed.output,
+                "reasoning_tokens": observed.reasoning or 0,
+            }
+            progress.update(
+                usage=tokens,
+                context_tokens=observed.input + observed.cacheRead + observed.cacheWrite,
+            )
+        elif not steps:
+            return
+        events = [event("agent.progress", aid, progress, aid)]
+        if observed is not None:
+            usage = add_usage(task["usage"], tokens)
+            exhausted = Decimal(str(usage.get("cost", 0))) >= Decimal(
+                str(task["budget"]["max_cost"])
+            )
+            events.append(
+                event("budget.updated", "system", {"usage": usage, "exhausted": exhausted})
+            )
+        written = await self.repo.append(conn, tid, events)
+        await self.repo.notify(tid, written[-1]["version"], connection=conn)
 
     async def settle(self, call_id: UUID, body: PiCallSettle):
         result = body.model_dump(mode="json")
@@ -533,6 +622,8 @@ class PiLedger:
                         .where(s.tasks.c.id == current["task_id"])
                         .values(usage=usage)
                     )
+            if current["purpose"] == "solver":
+                await self._project_board_usage(conn, current, body)
             return {"call_id": call_id, "attempt_id": body.attempt_id, "state": body.outcome}
 
 
@@ -595,78 +686,32 @@ async def task_fees(request: Request, task_id: UUID) -> dict:
     }
 
 
-async def local_review(request: Request, user: str) -> dict:
-    site = request.app.state.settings.pi_site_id
-    async with request.app.state.engine.connect() as conn:
-        amount, unknown = (
-            await conn.execute(
-                select(
-                    func.coalesce(func.sum(t.c.amount_usd), 0), func.count().filter(uncertain())
-                ).where(t.c.site_id == site, t.c.purpose == "review", t.c.request_user == user)
-            )
-        ).one()
-    return {"site_id": site, "estimated_usd": str(amount), "unknown_calls": int(unknown)}
-
-
-@router.get("/api/runtime/pi-review-fees")
-async def peer_review(request: Request, response: Response, user: str):
-    settings = request.app.state.settings
-    trusted_header(request, AUTHORITY_HEADER, settings.pi_model_authority_token.get_secret_value())
-    if request.headers.get("x-bbx-model-authority") != settings.pi_model_authority:
-        raise HTTPException(403, "Review authority changed")
-    response.headers["Cache-Control"] = "no-store"
-    return await local_review(request, user)
-
-
 @public.get("/api/platform/pi-review-fees")
 async def review_fees(request: Request, response: Response) -> dict:
     identity = require_user_or_service(request)
     if identity.kind != "user":
         raise HTTPException(403, "User identity required")
-    settings = request.app.state.settings
     response.headers["Cache-Control"] = "no-store"
-    local = await local_review(request, identity.name)
-    sites = [local]
-    if settings.pi_review_peer_site and settings.pi_review_peer_site != local["site_id"]:
-        try:
-            target, _ = normalized_url(settings.pi_review_peer_url)
-            parsed = urlsplit(target)
-            if parsed.scheme != "https" and parsed.hostname not in {
-                "127.0.0.1",
-                "localhost",
-                "::1",
-            }:
-                raise ValueError("Review peer requires HTTPS")
-            token = settings.pi_model_authority_token.get_secret_value()
-            if len(token) < 32 or token == settings.service_token.get_secret_value():
-                raise ValueError("A dedicated peer identity is required")
-            async with httpx.AsyncClient(
-                timeout=5, trust_env=False, follow_redirects=False, verify=peer_tls(settings)
-            ) as http:
-                result = await http.get(
-                    target + "/api/runtime/pi-review-fees",
-                    params={"user": identity.name},
-                    headers={
-                        AUTHORITY_HEADER: token,
-                        "x-bbx-model-authority": settings.pi_model_authority,
-                    },
+    async with request.app.state.engine.connect() as conn:
+        totals = (
+            await conn.execute(
+                select(
+                    t.c.site_id,
+                    func.coalesce(func.sum(t.c.amount_usd), 0),
+                    func.count().filter(uncertain()),
                 )
-                result.raise_for_status()
-            peer = result.json()
-            if peer["site_id"] != settings.pi_review_peer_site:
-                raise ValueError("Unexpected review site")
-            if (
-                not Decimal(peer["estimated_usd"]).is_finite()
-                or type(peer["unknown_calls"]) is not int
-            ):
-                raise ValueError("Invalid review projection")
-            sites.append(peer)
-        except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, ArithmeticError):
-            pass
+                .where(t.c.purpose == "review", t.c.request_user == identity.name)
+                .group_by(t.c.site_id)
+            )
+        ).all()
+    sites = [
+        {"site_id": site, "estimated_usd": str(amount), "unknown_calls": int(unknown)}
+        for site, amount, unknown in totals
+    ]
     return {
         "currency": "USD",
-        "estimated_usd": str(sum(Decimal(item["estimated_usd"]) for item in sites)),
+        "estimated_usd": str(sum((Decimal(item["estimated_usd"]) for item in sites), Decimal(0))),
         "unknown_calls": sum(item["unknown_calls"] for item in sites),
         "sites": sites,
-        "partial": len(sites) != 2,
+        "partial": False,
     }

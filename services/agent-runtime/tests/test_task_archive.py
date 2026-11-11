@@ -448,3 +448,43 @@ async def test_ctf_archive_exports_sessions_mailbox_conclusion_and_platform_refe
     saved = json.loads(contents[".bbx/task.json"])
     assert saved == data
     assert response_uri in json.loads(contents[".bbx/manifest.json"])["references"]
+
+
+async def test_confirmed_journal_bytes_are_standalone_and_not_restorable_workspace(tmp_path):
+    task = uuid4()
+    aid, bid, digest = "agent-1", "binding-1", "b" * 64
+    raw = b'{"type":"session","id":"native-1"}\n'
+    uri = f"traces/{task}/{aid}/{bid}/{digest}.jsonl"
+    data = snapshot(task)
+    data["board_journals"] = [
+        {
+            "agent_id": aid,
+            "projection": {
+                "format": "pi-journal-v1",
+                "binding_id": bid,
+                "sdk_session_id": "native-1",
+                "cursor": {
+                    "seq": 1,
+                    "offset": len(raw),
+                    "hash": digest,
+                    "leaf_id": None,
+                    "anchor_offset": 0,
+                    "anchor_size": len(raw),
+                    "anchor_hash": digest,
+                },
+                "run_number": 1,
+                "transcript_uri": uri,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "size": len(raw),
+            },
+        }
+    ]
+    output = tmp_path / "task.tar.zst"
+    await build_archive(cast(ObjectStore, Objects({uri: raw})), task, data, output)
+    _, contents = members(output)
+    manifest = json.loads(contents[".bbx/manifest.json"])
+    journal = manifest["board_journals"][0]
+    assert contents[journal["path"]] == raw and uri in manifest["references"]
+    assert journal["path"].startswith(".bbx/journals/") and manifest["restored_files"] == []
+    with pytest.raises(ValueError, match="confirmed proof"):
+        await build_archive(cast(ObjectStore, Objects({uri: b"x" * len(raw)})), task, data, output)

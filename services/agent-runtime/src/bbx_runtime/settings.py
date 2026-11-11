@@ -57,7 +57,12 @@ class NativeRunnerSettings(ControlSettings):
     postgres_user: str = "blackboard"
     postgres_password: SecretStr
     postgres_db: str = "blackboard"
+    minio_root_user: str = "blackboard"
+    minio_root_password: SecretStr | None = None
+    minio_endpoint: str = "http://minio:9000"
+    minio_bucket: str = "blackboard"
     runner_resource_config_file: Path
+    board_resource_config_file: Path | None = None
     runner_blackboard_url: str
     runner_model_proxy_url: str
     runner_proxy_host: str = "0.0.0.0"

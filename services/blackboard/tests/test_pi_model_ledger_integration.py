@@ -5,7 +5,7 @@ import hashlib
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -52,21 +52,16 @@ async def pi_app(board_service, pi_provider_origin, monkeypatch):
     conf = settings().model_copy(
         update={
             "pi_site_id": "primary",
-            "pi_model_primary_site": "primary",
             "pi_model_authority": "fixture-authority",
             "pi_model_operator": "alice",
             "pi_model_allowed_origins": [pi_provider_origin, "https://other.test"],
             "pi_model_runtime_token": SecretStr("fixture-model-runtime-" + "x" * 32),
-            "pi_model_authority_token": SecretStr("fixture-model-authority-" + "y" * 32),
         }
     )
     await ProfileStore(engine).ensure_default(
         Path(__file__).resolve().parents[3] / "profiles/default"
     )
     app = create_app(conf, engine=engine, objects=board_service.objects)
-    app.state.legacy_network_publication = LegacyNetworkSnapshot(
-        mode="default", policy_digest="a" * 64
-    )
     user = {"Authorization": "Bearer " + issue_user_token(conf, "alice")}
     sender = {"X-BBX-Pi-Runtime": conf.pi_model_runtime_token.get_secret_value()}
     async with httpx.AsyncClient(
@@ -108,21 +103,17 @@ async def pi_app(board_service, pi_provider_origin, monkeypatch):
             headers={"Authorization": "Bearer " + conf.service_token.get_secret_value()},
         )
         assert exposed.status_code == 422
-        opened = await http.post(
-            "/api/tasks",
-            headers=user,
-            json={
+        tid = await app.state.board_service.create_task(
+            {
                 "goal": "Confirm synthetic model accounting",
                 "acceptance": [{"id": "A1", "desc": "Confirm"}],
                 "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 60},
                 "agent_profile": "default",
-                "pi_model": {"model_id": model["id"], "model_revision": 1},
             },
+            legacy_network=LegacyNetworkSnapshot(mode="default", policy_digest="a" * 64),
+            pi_model=(conf.pi_model_authority, PiModelVersion.model_validate(model)),
         )
-        assert opened.status_code in {200, 201}, opened.text
-        tid = UUID(opened.json()["id"])
-        started = await http.post(f"/api/tasks/{tid}/start", headers=user)
-        assert started.status_code == 200, started.text
+        await app.state.board_service.transition(tid, "provisioning")
         async with engine.begin() as conn:
             await conn.execute(
                 insert(s.legacy_execution_receipts).values(
@@ -206,32 +197,16 @@ async def test_pi_registry_and_concurrent_site_ledger(pi_app):
     assert all(result.json()["send_allowed"] for result in results)
     assert (await finish(a, "0.2")).status_code == 200
     assert (await send(await prepare(agents[2]))).status_code == 429
-    missing = await http.post(
-        f"/api/tasks/{tid}/budget", headers=user, json={"additional_cost": "1", "currency": "USD"}
-    )
-    assert missing.status_code == 422
-    request_a, request_b = str(uuid4()), str(uuid4())
+    service = app.state.board_service
+    with pytest.raises(HTTPException) as missing:
+        await service.adjust_budget(tid, Decimal(1), None)
+    assert missing.value.status_code == 422
+    request_a, request_b = uuid4(), uuid4()
     for ident, amount in ((request_a, "1"), (request_b, "1"), (request_a, "1.00")):
-        increased = await http.post(
-            f"/api/tasks/{tid}/budget",
-            headers=user,
-            json={
-                "request_id": ident,
-                "additional_cost": amount,
-                "currency": "USD",
-            },
-        )
-        assert increased.status_code == 200, increased.text
-    conflict = await http.post(
-        f"/api/tasks/{tid}/budget",
-        headers=user,
-        json={
-            "request_id": request_a,
-            "additional_cost": "2",
-            "currency": "USD",
-        },
-    )
-    assert conflict.status_code == 409
+        await service.adjust_budget(tid, Decimal(amount), None, request_id=ident)
+    with pytest.raises(HTTPException) as conflict:
+        await service.adjust_budget(tid, Decimal(2), None, request_id=request_a)
+    assert conflict.value.status_code == 409
     assert (await finish(b, None, "unknown")).status_code == 200
     candidate = await prepare(agents[2])
     held = await send(candidate)

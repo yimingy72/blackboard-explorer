@@ -1,6 +1,7 @@
 """Archived conversations keep real history and expose read-only tools only."""
 
 import asyncio
+import hashlib
 import json
 import struct
 import zlib
@@ -288,3 +289,60 @@ async def test_review_worker_bounds_parallelism_and_serializes_each_agent():
         await worker.stop()
         await work
     assert worker.inflight == {}
+
+
+async def test_original_pi_journal_is_review_data_without_replaying_solver_tools(monkeypatch):
+    class BoardReview(ReviewService):
+        async def state(self, task_id):
+            state = await super().state(task_id)
+            state["task"]["business_contract"] = "exploration-board-v1"
+            return state
+
+        async def get_board_review_journal(self, task_id, agent_id, run_number):
+            assert (task_id, agent_id, run_number) == (self.task_id, self.agent_id, 1)
+            messages = [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "The confirmed historical marker was blue."},
+                        {
+                            "type": "toolCall",
+                            "name": "old_solver_tool",
+                            "arguments": {"opaque": "discard"},
+                        },
+                    ],
+                },
+            ]
+            steer = "Read the original local note (confirmed steering)."
+            records = [
+                {
+                    "type": "custom_message",
+                    "customType": "bbx.input",
+                    "content": steer,
+                    "details": {
+                        "input_id": "input-1",
+                        "request_id": "request-1",
+                        "content_digest": hashlib.sha256(steer.encode()).hexdigest(),
+                    },
+                },
+                {"type": "custom_message", "customType": "unrelated", "content": "omit me"},
+            ]
+            records.extend({"type": "message", "message": item} for item in messages)
+            return b"".join(json.dumps(item).encode() + b"\n" for item in records)
+
+    service = BoardReview(native=False)
+    script = ScriptedChatClient([ScriptStep(text="The original marker was blue.")])
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: script
+    )
+    worker = ChatWorker(Settings.model_construct(), cast(BlackboardClient, service))
+    await worker.process(service.task_id, service.agent_id, service.message_id)
+    assert service.completed is not None and service.completed["origin"] == "native"
+    received = script.received_messages[0]
+    assert any("confirmed historical marker was blue" in message.text for message in received)
+    assert any("confirmed steering" in message.text for message in received)
+    assert all("omit me" not in message.text for message in received)
+    assert all(
+        content.type != "function_call" for message in received for content in message.contents
+    )
+    assert all("old_solver_tool" not in message.text for message in received)

@@ -77,7 +77,7 @@ class SandboxCommandSummary(ContractModel):
     sequence: int
     task_id: UUID
     agent_id: str
-    role: Literal["lead", "worker", "helper"]
+    role: Literal["lead", "worker", "helper", "explore"]
     parent_agent_id: str | None = None
     challenge_id: UUID | None
     assignment_id: str

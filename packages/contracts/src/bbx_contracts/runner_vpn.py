@@ -242,10 +242,19 @@ class NativeVpnTunnel(ContractModel):
     _ipv4 = field_validator("tun_ipv4")(approved_ipv4)
 
 
+class NativeSocksEdge(ContractModel):
+    kind: Literal["socks5"]
+    pid: int = Field(ge=1, strict=True)
+    start_ticks: int = Field(ge=1, strict=True)
+    listener_ipv4: Literal["198.18.255.1"]
+    listener_port: Literal[12345]
+    link: NativeVpnLink
+
+
 class NativeVpnObservation(NativeVpnOperation):
     phase: Literal["link", "tunnel", "held", "closed", "failed", "unknown"]
     link: NativeVpnLink | None = None
-    tunnel: NativeVpnTunnel | None = None
+    tunnel: NativeVpnTunnel | NativeSocksEdge | None = None
     forwarding_closed: bool = False
     lease_revision: int | None = Field(default=None, ge=1, strict=True)
     applied_until_ms: int | None = Field(default=None, ge=1, strict=True)
@@ -280,7 +289,7 @@ class NativeVpnObservation(NativeVpnOperation):
 
 class NativeVpnPreflight(NativeVpnOperation):
     link: NativeVpnLink
-    tunnel: NativeVpnTunnel
+    tunnel: NativeVpnTunnel | NativeSocksEdge
     ipv4: str
     port: int = Field(ge=1, le=65535, strict=True)
     passed: bool

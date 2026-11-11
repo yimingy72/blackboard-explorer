@@ -67,16 +67,17 @@ services:
       ADMIN_USERS: ${ADMIN_USERS}
       PI_SITE_ID: ${PI_SITE_ID:-}
       PI_MODEL_AUTHORITY: ${PI_MODEL_AUTHORITY:-}
-      PI_MODEL_PRIMARY_SITE: ${PI_MODEL_PRIMARY_SITE:-}
-      PI_MODEL_PRIMARY_URL: ${PI_MODEL_PRIMARY_URL:-}
       PI_MODEL_OPERATOR: ${PI_MODEL_OPERATOR:-}
       PI_MODEL_ALLOWED_ORIGINS: ${PI_MODEL_ALLOWED_ORIGINS:-[]}
-      PI_MODEL_AUTHORITY_TOKEN: ${PI_MODEL_AUTHORITY_TOKEN:-}
       PI_MODEL_PEER_CA_FILE: ${PI_MODEL_PEER_CA_FILE:-}
       PI_MODEL_RUNTIME_TOKEN: ${PI_MODEL_RUNTIME_TOKEN:-}
       PI_PLAYGROUND_RUNTIME_URL: ${PI_PLAYGROUND_RUNTIME_URL:-}
-      PI_REVIEW_PEER_URL: ${PI_REVIEW_PEER_URL:-}
-      PI_REVIEW_PEER_SITE: ${PI_REVIEW_PEER_SITE:-}
+      SANDBOX_TENANT_RESOLVER_TOKEN: ${SANDBOX_TENANT_RESOLVER_TOKEN:-}
+      NATIVE_CTF_PUBLICATION_FILE: ${NATIVE_CTF_PUBLICATION_FILE:-/run/bbx-publications/ctf-publication.json}
+      BOARD_RUNNER_PUBLICATION_FILE: ${BOARD_RUNNER_PUBLICATION_FILE:-/run/bbx-publications/board-publication.json}
+      LEGACY_NETWORK_POLICY_FILE:
+    volumes:
+      - ${BBX_PUBLICATION_DIR:-./runtime-publications}:/run/bbx-publications:ro
     ports:
       - "127.0.0.1:58000:8000"
     extra_hosts:
@@ -90,15 +91,10 @@ services:
         condition: service_completed_successfully
     networks: [internal]
 
-  egress-proxy:
-    image: bbx-egress-proxy:latest
-    profiles: [egress-proxy]
-    environment:
-      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-}
-    networks: [exec, default]
-
   agent-runtime:
     image: bbx-agent-runtime:latest
+    profiles: [shared-runtime]
+    command: ["bbx-runtime", "serve"]
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -108,29 +104,22 @@ services:
       BLACKBOARD_URL: http://blackboard:8000
       SERVICE_TOKEN: ${SERVICE_TOKEN}
       PI_RUNTIME_SENDER_TOKEN: ${PI_MODEL_RUNTIME_TOKEN:-}
+      PI_PROVIDER_ALLOWED_ORIGINS: ${PI_MODEL_ALLOWED_ORIGINS:-[]}
+      RUNNER_RESOURCE_CONFIG_FILE: ${RUNNER_RESOURCE_CONFIG_FILE:-/run/bbx-runtime/ctf-runtime.json}
+      BOARD_RESOURCE_CONFIG_FILE: ${BOARD_RESOURCE_CONFIG_FILE:-/run/bbx-runtime/board-runtime.json}
+      RUNNER_BLACKBOARD_URL: ${RUNNER_BLACKBOARD_URL:-}
+      RUNNER_MODEL_PROXY_URL: ${RUNNER_MODEL_PROXY_URL:-}
       RUNNER_PROXY_HOST: ${RUNNER_PROXY_HOST:-0.0.0.0}
       RUNNER_PROXY_PORT: ${RUNNER_PROXY_PORT:-8081}
-      PI_PROVIDER_ALLOWED_ORIGINS: ${PI_MODEL_ALLOWED_ORIGINS:-[]}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_BUCKET: ${MINIO_BUCKET}
-      ENVD_TOKEN_SECRET: ${ENVD_TOKEN_SECRET}
-      EXEC_NETWORK: ${EXEC_NETWORK:-${COMPOSE_PROJECT_NAME:-blackboard-explorer}_exec}
-      EXEC_ACCESS_MODE: network
-      LEGACY_CONTROL_NETWORK: ${LEGACY_CONTROL_NETWORK:-${COMPOSE_PROJECT_NAME:-blackboard-explorer}_internal}
-      EXEC_EGRESS_MODE: ${EXEC_EGRESS_MODE:-direct}
-      EXEC_MIN_PIDS: ${EXEC_MIN_PIDS:-1024}
-      EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8888}
       MAX_RUNNING_TASKS: ${MAX_RUNNING_TASKS:-2}
-      TRAFFIC_ENABLED: ${TRAFFIC_ENABLED:-true}
-      TRAFFIC_POLL_SECONDS: ${TRAFFIC_POLL_SECONDS:-1}
-      TRAFFIC_MAX_BYTES: ${TRAFFIC_MAX_BYTES:-2147483648}
-      HTTP_PROXY: ${RUNTIME_HTTP_PROXY:-}
-      HTTPS_PROXY: ${RUNTIME_HTTPS_PROXY:-}
       NO_PROXY: localhost,127.0.0.1,::1,blackboard,postgres,minio,host.docker.internal
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${BBX_RUNTIME_CONFIG_DIR:-./runtime-config}:/run/bbx-runtime:ro
+      - ${BBX_LINUX_KUBECTL_FILE:-./runtime-config/kubectl}:/usr/local/bin/kubectl:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -142,12 +131,10 @@ services:
         condition: service_started
     restart: unless-stopped
     stop_grace_period: 120s
-    networks: [internal, exec]
+    networks: [internal]
 
 networks:
   internal: {}
-  exec:
-    internal: ${EXEC_NETWORK_INTERNAL:-false}
 
 volumes:
   postgres_data: {}

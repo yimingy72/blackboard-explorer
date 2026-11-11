@@ -69,7 +69,7 @@ class AssignmentBinding:
                 for key, value in asdict(self).items()
                 if isinstance(value, str) and key != "ipv4"
             )
-            or self.role not in {"lead", "worker", "helper"}
+            or self.role not in {"lead", "worker", "helper", "explore"}
             or type(self.generation) is not int
             or self.generation < 0
             or type(self.epoch) is not int

@@ -2,6 +2,7 @@
 
 import base64
 import copy
+import ipaddress
 import json
 from uuid import uuid4
 
@@ -111,6 +112,164 @@ async def test_vpn_source_is_blocked_until_cluster_ipv4_boundaries_are_known(mon
         update={"deny_cidrs": [*adapter.vpn.deny_cidrs, "10.217.0.0/16"]}
     )
     await adapter.verify_vpn_source_boundary({})
+
+
+async def test_board_default_route_requires_the_original_resolver_and_cluster_deny(monkeypatch):
+    adapter = RunnerResources(
+        {
+            **configured().config,
+            "runner_profile": "node-sandbox-host-v1",
+            "sandbox_host_image": "host@sha256:" + "c" * 64,
+            "sandbox_network": {
+                "namespace": "worker-a",
+                "network_identity": "worker-a",
+                "ipv4": "198.19.1.2",
+            },
+            "traffic_targets": [],
+            "traffic_target_namespace": "synthetic-target",
+            "traffic_sandbox_image": "sandbox@sha256:" + "d" * 64,
+            "board_network": {
+                "mode": "default",
+                "dns_ipv4": "172.30.2.2",
+                "allow_cidrs": ["0.0.0.0/0"],
+                "deny_cidrs": ["10.216.0.0/16"],
+            },
+        }
+    )
+    observed, labels = identity(adapter)
+    observed["runner"]["pod_ip"] = "10.216.0.2"
+    observed["sandbox"]["pod_ip"] = "10.216.0.3"
+    ref = observed["sandbox"]
+    pod = {
+        "metadata": {
+            "labels": {"batch-sandbox.sandbox.opensandbox.io/name": ref["id"]},
+            "ownerReferences": [{"uid": ref["cr_uid"]}],
+        },
+        "status": {"podIP": ref["pod_ip"]},
+    }
+    data = {
+        "execution_contract": "exploration-board-v1",
+        "native_network": "default",
+        "traffic_profile": "binding-pcap-v1",
+        "network_digest": "a" * 64,
+        "dns_ipv4": "172.30.2.2",
+        "route_policy": {
+            "allow_cidrs": ["0.0.0.0/0"],
+            "deny_cidrs": ["10.216.0.0/16"],
+        },
+    }
+    operation = {**observed, "observation": observed, "data": data}
+
+    async def runner(_):
+        return observed["namespace"], labels, {}
+
+    async def get(*_):
+        return pod
+
+    async def cluster_routes():
+        return [ipaddress.IPv4Network("10.217.0.0/16")]
+
+    async def installed(document, _, owner, digest):
+        assert owner["uid"] == ref["pod_uid"]
+        return document["spec"]
+
+    monkeypatch.setattr(adapter, "_original_host_runner", runner)
+    monkeypatch.setattr(adapter, "_cluster_routes", cluster_routes)
+    monkeypatch.setattr(adapter, "_get", get)
+    monkeypatch.setattr(adapter, "_pod_projection", lambda *_: ref)
+    monkeypatch.setattr(adapter, "_sandbox_spec", lambda *_: None)
+    monkeypatch.setattr(adapter, "_install_network_policy", installed)
+    with pytest.raises(ResourceUnknown, match="exclude the control boundary"):
+        await adapter.ensure_default_network_policy(operation)
+    data["route_policy"]["deny_cidrs"].append("10.217.0.0/16")
+    data["dns_ipv4"] = "172.30.2.3"
+    with pytest.raises(ResourceUnknown, match="resolver changed"):
+        await adapter.ensure_default_network_policy(operation)
+    data["dns_ipv4"] = "172.30.2.2"
+    spec = await adapter.ensure_default_network_policy(operation)
+    assert spec["endpointSelector"]["matchLabels"] == {
+        "batch-sandbox.sandbox.opensandbox.io/name": ref["id"]
+    }
+    assert spec["egress"][1] == {
+        "toCIDR": ["172.30.2.2/32"],
+        "toPorts": [{"ports": [{"port": "53", "protocol": "UDP"}]}],
+    }
+    assert not adapter.vpn_enabled(operation)
+    with pytest.raises(ResourceUnknown, match="network deployment changed"):
+        adapter.board_direct({"data": {"native_network": "default"}})
+
+
+def test_board_socks_credentials_mount_only_in_protected_sidecar():
+    digest = "c" * 64
+    gateway = {
+        "image": "legacy@sha256:" + digest,
+        "uplink_network": "local-fixture",
+        "upstream": {"ipv4": "172.30.3.2", "port": 1080},
+        "allow_cidrs": ["10.70.0.0/24"],
+        "deny_cidrs": ["10.216.0.0/16"],
+        "probe": {"ipv4": "10.70.0.1", "port": 18888},
+        "credential_file": "/unused/test-credentials.json",
+        "credential_sha256": digest,
+    }
+    adapter = RunnerResources(
+        {
+            **configured().config,
+            "runner_profile": "node-sandbox-host-v1",
+            "sandbox_host_image": "host@sha256:" + digest,
+            "sandbox_network": {
+                "namespace": "worker-a",
+                "network_identity": "worker-a",
+                "ipv4": "198.19.1.2",
+            },
+            "traffic_targets": [],
+            "traffic_target_namespace": "synthetic-target",
+            "traffic_sandbox_image": "sandbox@sha256:" + "d" * 64,
+            "board_network": {
+                "mode": "socks5",
+                "legacy_policy": {"mode": "socks5", "gateway": gateway},
+            },
+            "vpn": {
+                "profile": VPN_DYNAMIC_PROFILE,
+                "id": "synthetic",
+                "label": "Synthetic",
+                "egress_image": "egress@sha256:" + "e" * 64,
+                "sandbox_image": "sandbox@sha256:" + "f" * 64,
+                "tun_resource": "devic.es/tun",
+                "peer_cidrs": ["172.30.3.2/32"],
+                "target_cidrs": ["10.70.0.0/24"],
+                "default_cidrs": ["10.70.0.0/24"],
+                "deny_cidrs": ["10.216.0.0/16"],
+            },
+        }
+    )
+    _, labels = identity(adapter)
+    pod = adapter._runner_document("synthetic-task", labels, with_vpn=True)
+    runner, host, edge = pod["spec"]["containers"]
+    startup = {"name": "BBX_PROTECTED_BOARD_START", "value": "1"}
+    assert startup in runner["env"]
+    assert startup not in host["env"] and startup not in edge.get("env", [])
+    ctf = RunnerResources(
+        {key: value for key, value in adapter.config.items() if key != "board_network"}
+    )
+    ctf_runner = ctf._runner_document("synthetic-task", labels, with_vpn=True)["spec"][
+        "containers"
+    ][0]
+    assert startup not in ctf_runner["env"]
+    assert all(
+        "vpn" not in mount["name"] for value in (runner, host) for mount in value["volumeMounts"]
+    )
+    assert {mount["name"] for mount in edge["volumeMounts"]} == {"vpn-egress", "vpn-state"}
+    assert "devic.es/tun" not in edge["resources"]["requests"]
+    assert edge["securityContext"]["capabilities"] == {"add": ["NET_ADMIN"], "drop": ["ALL"]}
+    raw_mount = {
+        "type": "Opaque",
+        "data": {key: "" for key in ("ca.pem", "config.json", "credentials.json")},
+    }
+    adapter._check_egress_secret(raw_mount)
+    with pytest.raises(ResourceUnknown):
+        configured()._check_egress_secret(raw_mount)
+    with pytest.raises(ResourceUnknown):
+        adapter._host_secret(raw_mount)
 
 
 async def test_retirement_accepts_only_events_about_positively_exited_recovery_resources(
@@ -458,10 +617,26 @@ async def test_stop_uses_uid_precondition_and_keeps_unproven_exit_unknown(monkey
         )
 
     async def kubectl(*args, body=None):
+        if args[:2] == ("get", "--raw"):
+            path, _, query = args[2].partition("?")
+            assert path == "/api/v1/namespaces/synthetic-task/pods"
+            name = query.removeprefix("fieldSelector=metadata.name%3D")
+            return json.dumps(
+                {
+                    "kind": "PodList",
+                    "metadata": {"resourceVersion": "fresh-list-rv"},
+                    "items": [objects[name]],
+                }
+            )
         sent.append((args, body))
         return "{}"
 
-    async def unproven_watch(_pod, _namespace):
+    watched = []
+
+    async def unproven_watch(pod, _namespace):
+        assert pod["watch_revision"] == "fresh-list-rv"
+        assert pod["resource_version"] == "original-rv"
+        watched.append(pod["pod_uid"])
         return False
 
     monkeypatch.setattr(adapter, "_cluster", cluster)
@@ -469,6 +644,7 @@ async def test_stop_uses_uid_precondition_and_keeps_unproven_exit_unknown(monkey
     monkeypatch.setattr(adapter, "_kubectl", kubectl)
     monkeypatch.setattr(adapter, "_terminated_watch", unproven_watch)
     result = await adapter.stop(observation, "synthetic-tenant")
+    assert sorted(watched) == ["runner-uid", "sandbox-uid"]
     assert sent[0][0][:2] == ("delete", "--raw")
     assert sent[0][1]["preconditions"] == {"uid": "runner-uid"}
     assert result == {
@@ -633,7 +809,9 @@ async def test_recover_sid_only_is_read_only_and_stop_reaches_known_sandbox(monk
         assert args[0] == "get" and body is None
         import json
 
-        return json.dumps({"items": [sandbox]})
+        return json.dumps(
+            {"kind": "PodList", "metadata": {"resourceVersion": "fresh-rv"}, "items": [sandbox]}
+        )
 
     async def watch(_pod, _namespace):
         sandbox["status"]["containerStatuses"][0]["state"] = {"terminated": {"exitCode": 0}}
@@ -755,7 +933,13 @@ async def test_original_exit_does_not_confirm_a_replaced_logical_sandbox(monkeyp
         assert args[0] == "get" and body is None
         import json
 
-        return json.dumps({"items": [other]})
+        return json.dumps(
+            {
+                "kind": "PodList",
+                "metadata": {"resourceVersion": "fresh-rv"},
+                "items": [pod if "--raw" in args else other],
+            }
+        )
 
     monkeypatch.setattr(adapter, "_cluster", cluster)
     monkeypatch.setattr(adapter, "_get", get)
@@ -839,6 +1023,7 @@ async def test_runner_egress_excludes_retired_gateway(monkeypatch):
         "namespace": observation["namespace"],
         "hard_deadline": "2099-01-01T00:00:00Z",
         "config": {"mcp_transport": "direct-v2"},
+        "data": {},
     }
     targets = []
 
@@ -952,3 +1137,52 @@ async def test_sandbox_readiness_reconnects_only_to_the_original_host(monkeypatc
         assert len(forwards) == 1
         assert len(validated) == (2 if outcome == "replaced" else 1)
     assert all(p.returncode is not None for p in forwards)
+
+
+def test_explicit_board_resume_initializes_a_new_generation_without_borrowing_old_writer():
+    from bbx_contracts.runner_bootstrap import explicit_board_journal_restart
+
+    adapter = configured()
+    adapter.journal_writer_lock = True
+    adapter.board_network = {"mode": "default"}
+    previous, _ = identity(adapter)
+    previous["resource_generation"] = 1
+    source = {
+        "run_number": 1,
+        "operation_id": previous["operation_id"],
+        "workspace_pvc_uid": previous["workspace_pvc"]["uid"],
+    }
+    new, _ = identity(adapter)
+    new["task_id"] = previous["task_id"]
+    new["namespace"] = f"bbx-task-{previous['task_id']}-r2"
+    new.update(journal_pvc={"uid": "new-journal"}, workspace_pvc={"uid": "new-workspace"})
+    operation = {
+        **new,
+        "observation": new,
+        "data": {
+            "execution_contract": "exploration-board-v1",
+            "resource_generation": 2,
+            "board_workspace_source": source,
+            "board_history": [
+                {
+                    "operation_id": previous["operation_id"],
+                    "namespace": previous["namespace"],
+                    "archive": source,
+                    "observation": previous,
+                }
+            ],
+        },
+    }
+    assert explicit_board_journal_restart(operation)
+    namespace, labels = adapter._scope(operation)
+    fresh = adapter._runner_document(namespace, labels, 2, fresh_journal=True)["spec"]
+    assert fresh["initContainers"][0]["command"][-1] == "epoch-2"
+    assert fresh["containers"][0]["command"][-1] == "run"
+    assert fresh["containers"][0]["volumeMounts"][1]["subPath"] == "epoch-2"
+
+    new["journal_pvc"] = previous["journal_pvc"]
+    assert not explicit_board_journal_restart(operation)
+    original = adapter._runner_document(namespace, labels, 2, "1:99")["spec"]
+    assert "initContainers" not in original and original["containers"][0]["command"][-1] == "1:99"
+    with pytest.raises(ResourceUnknown, match="original lock is absent"):
+        adapter._runner_document(namespace, labels, 2)

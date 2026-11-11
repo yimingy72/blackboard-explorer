@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -22,6 +23,7 @@ from bbx_contracts.runner_bootstrap import (
     BINDING_CAPTURE_CONFIG_FIELDS,
     RUNTIME_FENCE_SEQUENCE,
     RUNTIME_LOCK_KEY,
+    BoardWorkspaceRestore,
     NativeBudgetIncreaseRequest,
     NativeBudgetIncreaseStatus,
     NativePauseRequest,
@@ -33,11 +35,14 @@ from bbx_contracts.runner_bootstrap import (
     NativeRunnerAction,
     NativeRunnerClaim,
     NativeRunnerLaunch,
+    board_network_policy,
+    explicit_board_journal_restart,
     management_document_digest,
     native_pause_state,
     native_recovery_frozen,
     validate_binding_capture_deployment,
 )
+from bbx_contracts.runner_control import BoardAbortProof, BoardDispatchProof, BoardRunIdentity
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.runner_vpn import (
     VPN_DYNAMIC_PROFILE,
@@ -52,6 +57,8 @@ from sqlalchemy import insert, or_, select, text, update
 
 from bbx_blackboard import native_recovery
 from bbx_blackboard.auth import require_service, require_user_or_service
+from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, require_board_run
+from bbx_blackboard.domain import decide
 from bbx_blackboard.gateway_auth import issue_gateway_credentials
 from bbx_blackboard.native_budget_increase import increase_budget
 from bbx_blackboard.native_helpers import NativeHelpers
@@ -64,8 +71,11 @@ from bbx_blackboard.native_pause import NativePause
 from bbx_blackboard.native_traffic import PROFILE, lost_captures, opted_in
 from bbx_blackboard.native_vpn import (
     NativeVpn,
+    default_network,
+    vpn_applied,
     vpn_enabled,
     vpn_exit_data,
+    vpn_selected,
     vpn_solver_deadline,
     vpn_state,
 )
@@ -150,6 +160,19 @@ class NativeRunnerBootstrap:
         )
 
     def _stopping(self, task, record):
+        if task["mode"] == "blackboard":
+            return (
+                record["desired"] == "stopped"
+                or instant() >= record["hard_deadline"]
+                or (
+                    not record["data"].get("activated")
+                    and record["data"].get("board_provision_deadline")
+                    and instant()
+                    >= datetime.fromisoformat(record["data"]["board_provision_deadline"])
+                )
+                or task["deleting"]
+                or task["status"] in {"finished", "failed", "stopped"}
+            )
         return (
             record["desired"] == "stopped"
             or task["ctf_control"].get("native_stop_requested")
@@ -211,9 +234,18 @@ class NativeRunnerBootstrap:
             raise HTTPException(409, "Original execution cannot safely migrate to Pi")
         if live and self._stopping(task, record):
             raise HTTPException(409, "Native Runner bootstrap is stopped")
-        if live and (record["data"].get("recovery") or native_recovery_frozen(task)):
+        if live and (
+            record["data"].get("recovery")
+            or record["data"].get("board_recovery_blocked")
+            or native_recovery_frozen(task)
+        ):
             raise HTTPException(409, "Original native execution is frozen")
         return record, task
+
+    async def _capture_recovery(self, conn, tid, record, task, reason):
+        if task["mode"] == "blackboard":
+            return {**record["data"], "board_recovery_blocked": reason}
+        return await native_recovery.capture(self.repo, conn, tid, record, task, reason, instant())
 
     @staticmethod
     def _public(record):
@@ -264,10 +296,17 @@ class NativeRunnerBootstrap:
             await self.repo.lock(conn, tid)
             return await self.queue_locked(conn, tid, body, digest)
 
-    async def queue_locked(self, conn, tid, body, digest, *, publication=None, native_grants=None):
+    async def queue_locked(
+        self, conn, tid, body, digest, *, publication=None, native_grants=None, board=False
+    ):
         if body.exchange_rate is not None and body.exchange_rate.observed_at.tzinfo is None:
             raise HTTPException(422, "Frozen exchange rate requires a timezone")
-        task = await self.control._task(conn, tid, live=True)
+        if board:
+            task = await row(conn, s.tasks, tid)
+            if task["mode"] != "blackboard" or task["deleting"] or publication is None:
+                raise HTTPException(409, "Frozen Blackboard release required")
+        else:
+            task = await self.control._task(conn, tid, live=True)
         old = await self._get(conn, tid)
         if old:
             if old["request_digest"] != digest:
@@ -327,7 +366,7 @@ class NativeRunnerBootstrap:
             controller_generation=0,
             revision=1,
             namespace="bbx-task-" + str(tid),
-            state="queued",
+            state="awaiting_start" if board else "queued",
             desired="active",
             hard_deadline=deadline,
             sandbox_create_claimed=False,
@@ -336,6 +375,7 @@ class NativeRunnerBootstrap:
             observation={},
             data={
                 "mcp_transport": "direct-v2",
+                **({"execution_contract": EXPLORATION_CONTRACT} if board else {}),
                 **({"native_mcp": native_grants} if native_grants else {}),
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
                 **({"inputs_profile": INPUT_PROFILE} if input_manifest else {}),
@@ -358,6 +398,8 @@ class NativeRunnerBootstrap:
             created_at=started,
         )
         await conn.execute(insert(s.task_runner_resources).values(**value))
+        if board:
+            return self._public(value)
         await conn.execute(
             update(s.tasks)
             .where(s.tasks.c.id == tid)
@@ -368,6 +410,120 @@ class NativeRunnerBootstrap:
             )
         )
         return self._public(value)
+
+    async def start_board(self, tid):
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task = await self.control._task(conn, tid)
+            record = await self._get(conn, tid)
+            if task["mode"] != "blackboard" or task["deleting"] or record is None:
+                raise HTTPException(409, "Original Blackboard launch is unavailable")
+            if task["status"] == "provisioning" and record["state"] == "queued":
+                return
+            if task["status"] != "created" or record["state"] != "awaiting_start":
+                raise HTTPException(409, "Task is not created")
+            now = instant()
+            duration = int(task["budget"]["max_minutes"]) * 60 - int(task["active_seconds"] or 0)
+            grace = min(5, int(task["params"].get("grace_timeout", 5))) * 60
+            provision_deadline = now + timedelta(minutes=10)
+            data = {
+                **record["data"],
+                "board_provision_deadline": provision_deadline.isoformat(),
+                "board_solver_seconds": duration,
+            }
+            await self._set(
+                conn,
+                tid,
+                state="queued",
+                next_check_at=now,
+                hard_deadline=provision_deadline + timedelta(seconds=duration + grace),
+                data=data,
+            )
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
+            written = await self.repo.append(
+                conn,
+                tid,
+                decide(state, "transition", "user", {"status": "provisioning", "reason": None}),
+            )
+            await self.repo.notify(tid, written[-1]["version"], connection=conn)
+
+    async def restart_board_locked(
+        self, conn, tid, source_uri, request_id, publication, *, grants=None
+    ):
+        record = await self._get(conn, tid)
+        task = await row(conn, s.tasks, tid)
+        if (
+            record is None
+            or record["state"] != "stopped"
+            or record["data"].get("exit_confirmed") is not True
+        ):
+            raise HTTPException(409, "Original Blackboard resource exit is not confirmed")
+        previous = record["data"].get("board_archive")
+        if (
+            not previous
+            or previous["uri"] != source_uri
+            or previous["run_number"] + 1 != task["run_number"]
+            or record["request"].get("publication") != publication
+        ):
+            raise HTTPException(409, "Original Blackboard workspace or publication changed")
+        current = record["data"].get("resource_generation", 1)
+        operation = identity_id(str(tid), str(request_id))
+        now = instant()
+        remaining = int(task["budget"]["max_minutes"]) * 60 - int(task["active_seconds"] or 0)
+        if remaining <= 0:
+            raise HTTPException(409, "Blackboard Task deadline has expired")
+        provision_deadline = now + timedelta(minutes=10)
+        grace = min(5, int(task["params"].get("grace_timeout", 5))) * 60
+        tenant = "bbx-sandbox-" + secrets.token_urlsafe(32)
+        data = {
+            "execution_contract": EXPLORATION_CONTRACT,
+            "mcp_transport": "direct-v2",
+            "resource_generation": current + 1,
+            "board_workspace_source": previous,
+            "board_provision_deadline": provision_deadline.isoformat(),
+            "board_solver_seconds": remaining,
+            "board_previous_owner_epoch": record["data"].get("owner_epoch", 0),
+            "board_history": [
+                *record["data"].get("board_history", []),
+                {
+                    "operation_id": record["operation_id"],
+                    "namespace": record["namespace"],
+                    "observation": record["observation"],
+                    "archive": previous,
+                    "owner_epoch": record["data"].get("owner_epoch"),
+                },
+            ],
+            "traffic_profile": PROFILE,
+            "network_scopes": record["data"].get("network_scopes", {}),
+            "native_mcp": record["data"].get("native_mcp", {}) if grants is None else grants,
+            **({"inputs_profile": INPUT_PROFILE} if record["request"].get("shared_inputs") else {}),
+        }
+        request = {**record["request"], "request_id": str(request_id)}
+        await self._set(
+            conn,
+            tid,
+            operation_id=operation,
+            request_id=str(request_id),
+            request_digest=management_document_digest(request),
+            request=request,
+            config=None,
+            controller_id=None,
+            controller_backend_pid=None,
+            controller_backend_start=None,
+            controller_generation=0,
+            namespace=f"bbx-task-{tid}-r{task['run_number']}",
+            state="queued",
+            desired="active",
+            hard_deadline=provision_deadline + timedelta(seconds=remaining + grace),
+            sandbox_create_claimed=False,
+            tenant_key_hash=hashlib.sha256(tenant.encode()).hexdigest(),
+            tenant_key_ciphertext=self.gateway.cipher.encrypt(tenant.encode()).decode(),
+            observation={},
+            sandbox_host={},
+            data=data,
+            last_error=None,
+            next_check_at=now,
+        )
 
     @staticmethod
     def _configuration(value):
@@ -452,11 +608,24 @@ class NativeRunnerBootstrap:
             if not direct and not self._stopping(task, record):
                 raise HTTPException(409, "Original execution cannot safely migrate to Pi")
 
-            if "mcp_transport" in config:
-                raise HTTPException(409, "MCP transport is owned by the frozen Task")
+            if {"mcp_transport", "execution_contract"} & config.keys():
+                raise HTTPException(409, "Execution transport is owned by the frozen Task")
             if direct and config.get("runner_profile") != "node-sandbox-host-v1":
                 raise HTTPException(409, "Direct MCP requires the Sandbox host profile")
-            if vpn_enabled(record) != ("vpn" in config):
+            board_mode = task["mode"] == "blackboard"
+            if board_mode:
+                expected_network = (
+                    record["request"].get("publication", {}).get("board_network_mode")
+                )
+                try:
+                    network = board_network_policy(config)
+                except ValueError as error:
+                    raise HTTPException(
+                        422, "Trusted Blackboard network deployment is invalid"
+                    ) from error
+                if not isinstance(network, dict) or network.get("mode") != expected_network:
+                    raise HTTPException(409, "Original Blackboard network deployment changed")
+            elif "board_network" in config or vpn_enabled(record) != ("vpn" in config):
                 raise HTTPException(409, "Original Task VPN deployment changed")
             if opted_in(record) and "traffic_targets" not in config:
                 raise HTTPException(
@@ -478,6 +647,8 @@ class NativeRunnerBootstrap:
                 raise HTTPException(409, "Runtime does not match the Task's published environment")
             if direct:
                 config["mcp_transport"] = "direct-v2"
+            if task["mode"] == "blackboard":
+                config["execution_contract"] = EXPLORATION_CONTRACT
             if record["config"] is not None and record["config"] != config:
                 raise HTTPException(409, "Frozen native resource deployment changed")
             await self._global_fence(
@@ -491,14 +662,19 @@ class NativeRunnerBootstrap:
             generation = body.controller_fence
             desired = "stopped" if self._stopping(task, record) else "active"
             data = dict(record["data"])
+            if board_mode:
+                if config["board_network"]["mode"] == "default":
+                    data.setdefault("native_network", "default")
+                else:
+                    data.setdefault("native_network", "vpn")
+                    data.setdefault("vpn_profile", VPN_DYNAMIC_PROFILE)
+                    data.setdefault("vpn", {"state": "idle"})
             state, last_error = record["state"], record["last_error"]
             if desired == "active" and not data.get("recovery"):
                 if reason := await native_recovery.original_owner_issue(
                     conn, tid, record, instant()
                 ):
-                    data = await native_recovery.capture(
-                        self.repo, conn, tid, record, task, reason, instant()
-                    )
+                    data = await self._capture_recovery(conn, tid, record, task, reason)
                     state, last_error = "frozen", reason
             if task["deleting"] and record["config"] is not None:
                 if not data.get("retirement"):
@@ -543,9 +719,62 @@ class NativeRunnerBootstrap:
             ).decode(),
         }
 
-    async def view(self, tid):
+    async def view(self, tid, *, journals=False):
         async with self.repo.engine.connect() as conn:
-            return self._public(await self._get(conn, tid))
+            record = await self._get(conn, tid)
+            result: dict[str, Any] = self._public(record)
+            if (
+                not journals
+                or record is None
+                or record["data"].get("execution_contract") != EXPLORATION_CONTRACT
+            ):
+                return result
+            task = await row(conn, s.tasks, tid)
+            bindings, owners = s.runner_bindings, s.runner_owners
+            observed = (
+                await conn.execute(
+                    select(
+                        bindings.c.binding,
+                        bindings.c.business,
+                        bindings.c.sdk_session_id,
+                        bindings.c.cursor,
+                        bindings.c.owner_epoch,
+                        owners.c.pod_uid,
+                        owners.c.runner_id,
+                    )
+                    .select_from(
+                        bindings.join(
+                            owners,
+                            (owners.c.task_id == bindings.c.task_id)
+                            & (owners.c.epoch == bindings.c.owner_epoch),
+                        )
+                    )
+                    .where(
+                        bindings.c.task_id == tid,
+                        bindings.c.sdk_session_id.is_not(None),
+                        bindings.c.cursor.is_not(None),
+                        bindings.c.binding["business_contract"].astext == EXPLORATION_CONTRACT,
+                        bindings.c.business["board_run"]["run_number"].astext
+                        == str(task["run_number"]),
+                    )
+                )
+            ).mappings()
+            result["board_journals"] = [
+                {
+                    "agent_id": item["binding"]["agent_id"],
+                    "binding_id": item["binding"]["binding_id"],
+                    "sdk_session_id": item["sdk_session_id"],
+                    "cursor": item["cursor"],
+                    "run_number": task["run_number"],
+                    "owner_epoch": item["owner_epoch"],
+                    "projected": (item["business"].get("board_journal") or {}).get("cursor")
+                    == item["cursor"],
+                    "pod_uid": item["pod_uid"],
+                    "runner_id": item["runner_id"],
+                }
+                for item in observed
+            ]
+            return result
 
     async def recovery_status(self, tid):
         async with self.repo.engine.connect() as conn:
@@ -559,7 +788,17 @@ class NativeRunnerBootstrap:
                 select(s.task_runner_resources.c.task_id)
                 .join(s.tasks, s.tasks.c.id == s.task_runner_resources.c.task_id)
                 .where(
-                    or_(s.task_runner_resources.c.state != "stopped", s.tasks.c.deleting.is_(True)),
+                    or_(
+                        s.task_runner_resources.c.state.not_in(("stopped", "awaiting_start")),
+                        s.tasks.c.deleting.is_(True),
+                        (s.tasks.c.mode == "blackboard")
+                        & ~s.tasks.c.cleanup_ready
+                        & (s.task_runner_resources.c.state == "stopped")
+                        & s.task_runner_resources.c.data.contains({"exit_confirmed": True})
+                        & s.task_runner_resources.c.observation["workspace_pvc"][
+                            "uid"
+                        ].astext.is_not(None),
+                    ),
                     or_(
                         s.task_runner_resources.c.next_check_at <= instant(),
                         s.tasks.c.deleting.is_(True),
@@ -629,6 +868,7 @@ class NativeRunnerBootstrap:
                 "journal_subdir",
                 "journal_lock_id",
                 "journal_storage",
+                "journal_fresh",
             }
         ):
             raise HTTPException(422, "Unexpected native resource evidence")
@@ -639,6 +879,12 @@ class NativeRunnerBootstrap:
         }.items():
             if key in incoming and incoming[key] != expected:
                 raise HTTPException(409, "Original native journal generation changed")
+        if "journal_fresh" in incoming and (
+            incoming["journal_fresh"] is not True
+            or not config.get("journal_writer_lock")
+            or not explicit_board_journal_restart({**record, "observation": {**old, **incoming}})
+        ):
+            raise HTTPException(409, "Original Blackboard journal is not a fresh explicit run")
         if "journal_lock_id" in incoming and (
             not config.get("journal_writer_lock")
             or not isinstance(incoming["journal_lock_id"], str)
@@ -826,6 +1072,75 @@ class NativeRunnerBootstrap:
 
     async def act(self, tid, raw):
         body, _ = decode(NativeRunnerAction, raw, 262144)
+        if body.action in {"board_dispatch", "board_abort"}:
+            from bbx_blackboard.board_runner_dispatch import board_abort, board_dispatch
+
+            async with self.repo.engine.begin() as conn:
+                record, task = await self._checked(
+                    conn, tid, body, live=body.action == "board_dispatch"
+                )
+                if (
+                    task["mode"] != "blackboard"
+                    or record["data"].get("execution_contract") != EXPLORATION_CONTRACT
+                ):
+                    raise HTTPException(409, "Frozen Blackboard Runner operation required")
+                try:
+                    if body.action == "board_abort":
+                        proof = BoardAbortProof.model_validate(body.proof)
+                        return await board_abort(conn, tid, self.control, proof)
+                    dispatch = BoardDispatchProof.model_validate(body.proof)
+                    if (
+                        record["state"] != "ready"
+                        or not record["data"].get("activated")
+                        or not self._board_network_ready(record)
+                    ):
+                        raise HTTPException(409, "Original Blackboard resources are not ready")
+                except ValueError as error:
+                    raise HTTPException(422, "Invalid Blackboard run identity") from error
+                result = await board_dispatch(conn, tid, self.control, dispatch)
+                binding_ids = record["data"].get("board_binding_ids", {})
+                if binding_ids.get(dispatch.agent_id) != result["binding_id"]:
+                    await self._set(
+                        conn,
+                        tid,
+                        data={
+                            **record["data"],
+                            "board_binding_ids": {
+                                **binding_ids,
+                                dispatch.agent_id: result["binding_id"],
+                            },
+                        },
+                    )
+                return result
+        if body.action == "board_workspace_restored":
+            async with self.repo.engine.begin() as conn:
+                record, task = await self._checked(conn, tid, body, live=True)
+                try:
+                    proof = BoardWorkspaceRestore.model_validate(body.proof).model_dump(mode="json")
+                except ValueError as error:
+                    raise HTTPException(
+                        422, "Invalid Blackboard workspace restore proof"
+                    ) from error
+                source = record["data"].get("board_workspace_source")
+                if (
+                    task["mode"] != "blackboard"
+                    or source is None
+                    or any(
+                        proof[field] != source[field] for field in ("uri", "run_number", "sha256")
+                    )
+                    or proof["sandbox_pod_uid"]
+                    != record["observation"].get("sandbox", {}).get("pod_uid")
+                    or task["run_number"] != proof["run_number"] + 1
+                    or record["data"].get("board_workspace_restored") not in (None, proof)
+                ):
+                    raise HTTPException(
+                        409, "Blackboard workspace restore does not match the original archive"
+                    )
+                if record["data"].get("board_workspace_restored") is None:
+                    await self._set(
+                        conn, tid, data={**record["data"], "board_workspace_restored": proof}
+                    )
+                return self._public(await self._get(conn, tid))
         if body.action == "network_default_ready":
             async with self.repo.engine.begin() as conn:
                 record, _ = await self._checked(conn, tid, body, live=True)
@@ -838,11 +1153,17 @@ class NativeRunnerBootstrap:
                 return await self.vpn.peer_ready(conn, tid, record, task, body.proof)
         if body.action == "vpn_material":
             async with self.repo.engine.begin() as conn:
-                record, _ = await self._checked(conn, tid, body, live=True)
+                record, task = await self._checked(conn, tid, body, live=True)
                 if not self._resources_ready(record["observation"]) or not record[
                     "observation"
                 ].get("vpn_egress_secret", {}).get("uid"):
                     raise HTTPException(409, "Original VPN resources are not ready")
+                if task["mode"] == "blackboard":
+                    if not record["sandbox_host"].get("ready") or not vpn_selected(record):
+                        raise HTTPException(409, "Original Blackboard network host is not ready")
+                    _, data = await self._board_owner_locked(conn, tid, record)
+                    await self._set(conn, tid, data=data)
+                    record = {**record, "data": data}
                 return await self.vpn.material(conn, tid, record)
         if body.action in {"sandbox_host_material", "sandbox_host_ready"}:
             async with self.repo.engine.begin() as conn:
@@ -901,6 +1222,11 @@ class NativeRunnerBootstrap:
                     return self._public(record)
                 observed = self._merge_observation(record, body.observation)
                 ready = self._resources_ready(observed)
+                if task["mode"] == "blackboard":
+                    ready = ready and bool(
+                        observed.get("sandbox", {}).get("pod_ip")
+                        and observed.get("runner", {}).get("pod_ip")
+                    )
                 if vpn_enabled(record):
                     ready = ready and bool(
                         observed.get("runner", {}).get("egress_container_id")
@@ -916,9 +1242,7 @@ class NativeRunnerBootstrap:
                         else "native_resource_unknown"
                     )
                     if reason:
-                        data = await native_recovery.capture(
-                            self.repo, conn, tid, record, task, reason, instant()
-                        )
+                        data = await self._capture_recovery(conn, tid, record, task, reason)
                 if (
                     ready
                     and not stopping
@@ -927,13 +1251,13 @@ class NativeRunnerBootstrap:
                     and not data.get("route_policy")
                 ):
                     data.update(self.vpn.default_route_fields({**record, "observation": observed}))
-                if ready and not stopping and not data.get("recovery"):
+                if task["mode"] == "ctf" and ready and not stopping and not data.get("recovery"):
                     await self._lead(conn, tid, record)
                     data.setdefault(
                         "lead_turn_id", identity_id(record["operation_id"], "lead-turn")
                     )
                 state = "stopping" if stopping else record["state"]
-                if not stopping and data.get("recovery"):
+                if not stopping and (data.get("recovery") or data.get("board_recovery_blocked")):
                     state = "frozen"
                 elif not ready and data.get("credentials_issued"):
                     state = "unknown"
@@ -960,7 +1284,7 @@ class NativeRunnerBootstrap:
                     state=state,
                     desired="stopped" if stopping else "active",
                     last_error=(
-                        data["recovery"]["reason"]
+                        (data.get("board_recovery_blocked") or data["recovery"]["reason"])
                         if state == "frozen"
                         else "native_resource_unknown"
                         if state == "unknown"
@@ -996,18 +1320,16 @@ class NativeRunnerBootstrap:
                         )
                     )
                     if reason:
-                        data = await native_recovery.capture(
-                            self.repo, conn, tid, record, task, reason, instant()
-                        )
+                        data = await self._capture_recovery(conn, tid, record, task, reason)
                 state = "exited" if data.get("exit_confirmed") else "unknown"
-                if not stopping and data.get("recovery"):
+                if not stopping and (data.get("recovery") or data.get("board_recovery_blocked")):
                     state = "frozen"
                 await self._set(
                     conn,
                     tid,
                     state=state,
                     data=data,
-                    last_error=data["recovery"]["reason"]
+                    last_error=(data.get("board_recovery_blocked") or data["recovery"]["reason"])
                     if state == "frozen"
                     else body.error_code or "native_bootstrap_unavailable",
                     next_check_at=instant() + timedelta(seconds=20),
@@ -1031,6 +1353,13 @@ class NativeRunnerBootstrap:
             if record["state"] in {"exited", "stopped"}:
                 return self._public(record)
             data = record["data"]
+            drain_until = data.get("board_close_drain_until")
+            if (
+                task["mode"] == "blackboard"
+                and drain_until
+                and instant() < min(datetime.fromisoformat(drain_until), record["hard_deadline"])
+            ):
+                return self._public(record)
             if opted_in(record) and not data.get("traffic_preseal_until"):
                 requested_at = (task.get("ctf_conclusion") or {}).get("requested_at")
                 first_stop = datetime.fromisoformat(requested_at) if requested_at else instant()
@@ -1041,14 +1370,17 @@ class NativeRunnerBootstrap:
                     ).isoformat(),
                 }
             await self._set(conn, tid, desired="stopped", state="stopping", data=data)
-            await conn.execute(
-                update(s.tasks)
-                .where(s.tasks.c.id == tid)
-                .values(ctf_control={**task["ctf_control"], "native_stop_requested": True})
-            )
-        if task["status"] not in {"stopped", "failed", "finished"} and task["ctf_control"].get(
-            "phase"
-        ) not in {"closing", "closed"}:
+            if task["mode"] == "ctf":
+                await conn.execute(
+                    update(s.tasks)
+                    .where(s.tasks.c.id == tid)
+                    .values(ctf_control={**task["ctf_control"], "native_stop_requested": True})
+                )
+        if (
+            task["mode"] == "ctf"
+            and task["status"] not in {"stopped", "failed", "finished"}
+            and task["ctf_control"].get("phase") not in {"closing", "closed"}
+        ):
             expired = instant() >= record["hard_deadline"]
             await self.ctf.request_finish(
                 tid,
@@ -1169,21 +1501,65 @@ class NativeRunnerBootstrap:
                         )
                         .values(state="unknown")
                     )
-                member = await row(conn, s.ctf_members, tid, "lead")
-                if data.get("lead_turn_id") and member["current_turn_id"] == data["lead_turn_id"]:
-                    turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
-                    if turn["status"] == "running":
-                        await self.ctf._settle(conn, tid, member, turn, "stopped", "")
-                await self.helpers.finish_after_task_exit(conn, tid)
-                await self.workers.finish_after_task_exit(conn, tid)
-        if task["ctf_control"].get("phase") == "closing":
+                if task["mode"] == "ctf":
+                    member = await row(conn, s.ctf_members, tid, "lead")
+                    if (
+                        data.get("lead_turn_id")
+                        and member["current_turn_id"] == data["lead_turn_id"]
+                    ):
+                        turn = await row(conn, s.ctf_turns, tid, member["current_turn_id"])
+                        if turn["status"] == "running":
+                            await self.ctf._settle(conn, tid, member, turn, "stopped", "")
+                    await self.helpers.finish_after_task_exit(conn, tid)
+                    await self.workers.finish_after_task_exit(conn, tid)
+        if task["mode"] == "ctf" and task["ctf_control"].get("phase") == "closing":
             await self.ctf.finalize_close(tid, True)
         async with self.repo.engine.begin() as conn:
             current, task = await self._checked(conn, tid, body)
+            if task["mode"] == "blackboard":
+                await self._finalize_board_exit(conn, tid, current, task)
+                task = await row(conn, s.tasks, tid)
             if task["status"] not in {"stopped", "failed", "finished"}:
                 raise HTTPException(409, "Native Task finalization is pending")
             await self._set(conn, tid, state="stopped", last_error=None)
             return self._public(await self._get(conn, tid))
+
+    async def _finalize_board_exit(self, conn, tid, record, task):
+        if record["state"] != "exited" or record["data"].get("exit_confirmed") is not True:
+            raise HTTPException(409, "Original Blackboard exit is not confirmed")
+        state = await self.repo.load(conn, tid, include_tool_calls=False)
+        written = []
+        for aid in list(state.agents):
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
+            agent = state.agents[aid]
+            if agent["status"] not in {"running", "concluding"}:
+                continue
+            changes = decide(
+                state,
+                "finish_agent",
+                agent["id"],
+                {
+                    "agent_id": agent["id"],
+                    "end_reason": "runtime_restart",
+                    "receipt": {"accepted": False, "reason": "Original Runner exited"},
+                },
+            )
+            written.extend(await self.repo.append(conn, tid, changes))
+        state = await self.repo.load(conn, tid, include_tool_calls=False)
+        task = state.task
+        if task["status"] not in {"stopped", "failed", "finished"}:
+            changes = decide(
+                state,
+                "transition",
+                "scheduler",
+                {
+                    "status": "failed" if task["status"] != "created" else "stopped",
+                    "reason": "Original Runner exited before task completion",
+                },
+            )
+            written.extend(await self.repo.append(conn, tid, changes))
+        if written:
+            await self.repo.notify(tid, written[-1]["version"], connection=conn)
 
     @staticmethod
     def _resources_identified(observation):
@@ -1194,9 +1570,10 @@ class NativeRunnerBootstrap:
 
     @staticmethod
     def _held(task):
+        control = task.get("ctf_control") or {}
         return bool(
-            task["ctf_control"].get("native_budget_hold")
-            or task["ctf_control"].get("failure_hold")
+            control.get("native_budget_hold")
+            or control.get("failure_hold")
             or native_recovery_frozen(task)
         )
 
@@ -1286,6 +1663,8 @@ class NativeRunnerBootstrap:
                 != record["config"]["environment_revision"]
             ):
                 raise HTTPException(409, "Native environment revision changed")
+            if task["mode"] == "blackboard":
+                return await self._board_material_locked(conn, tid, record)
             data = dict(record["data"])
             if data.get("credentials_issued") and not data.get("owner_epoch"):
                 raise HTTPException(409, "Original native owner identity is unconfirmed")
@@ -1558,6 +1937,162 @@ class NativeRunnerBootstrap:
                 "status": self._public(await self._get(conn, tid)),
             }
 
+    @staticmethod
+    def _board_network_ready(record):
+        mode = record["config"].get("board_network", {}).get("mode")
+        if mode == "default":
+            return default_network(record) is not None
+        return (
+            mode in {"vpn", "socks5"}
+            and vpn_selected(record)
+            and vpn_state(record).get("state") == "ready"
+            and vpn_applied(record, "solver") is not None
+        )
+
+    async def _board_owner_locked(self, conn, tid, record):
+        data = dict(record["data"])
+        pod_uid = record["observation"]["runner"]["pod_uid"]
+        if data.get("owner_epoch") is None:
+            owner = await self.control._register_owner(
+                conn,
+                tid,
+                runner_json_text(
+                    {
+                        "request_id": identity_id(record["operation_id"], "owner"),
+                        "runner_id": identity_id(record["operation_id"], "runner"),
+                        "pod_uid": pod_uid,
+                        "expected_epoch": data.get("board_previous_owner_epoch", 0),
+                        "hard_deadline": record["hard_deadline"].isoformat(),
+                    }
+                ).encode(),
+            )
+            data["owner_epoch"] = owner["epoch"]
+        else:
+            owner = await self.control._current_owner(conn, tid)
+        if owner["epoch"] != data["owner_epoch"] or owner["pod_uid"] != pod_uid:
+            raise HTTPException(409, "Original Blackboard Runner owner changed")
+        owner = await self.control._update_owner(conn, tid, owner["epoch"])
+        return owner, data
+
+    async def _board_material_locked(self, conn, tid, record):
+        data = record["data"]
+        if data.get("board_workspace_source") and not data.get("board_workspace_restored"):
+            raise HTTPException(409, "Original Blackboard workspace has not been restored")
+        if not self._board_network_ready(record):
+            raise HTTPException(409, "Original Blackboard network is not confirmed")
+        owner, data = await self._board_owner_locked(conn, tid, record)
+        config = record["config"]
+        blackboard = config["runner_blackboard_url"].rstrip("/")
+        bootstrap = {
+            "protocol": PROTOCOL,
+            "fence": fence(owner),
+            "control_url": blackboard + f"/api/tasks/{tid}/runner-control",
+            "model_proxy_url": config["runner_model_proxy_url"].rstrip("/"),
+            "mcp_targets": {
+                "business": blackboard + f"/api/tasks/{tid}/business-mcp-v2/",
+                "sandbox": "http://127.0.0.1:8766/mcp/",
+            },
+            "control_credential_ref": "control",
+            "credential_file": "/var/run/bbx/credentials.json",
+            "journal_root": "/journal",
+            "mcp_metadata_timeout_ms": 15000,
+        }
+        if data.get("bootstrap") not in (None, bootstrap):
+            raise HTTPException(409, "Frozen Blackboard bootstrap changed")
+        expires = runner_credential_expiry(owner)
+        credentials = {
+            "control": {
+                "audience": "runner-control",
+                "task_id": str(tid),
+                "expires_at": expires,
+                "token": issue_runner_control_token(self.settings, owner, expires_at=expires),
+            }
+        }
+        retained = []
+        for bid in data.get("board_binding_ids", {}).values():
+            try:
+                value = await self.control._binding(conn, tid, bid, owner, live=True)
+            except HTTPException as error:
+                if error.status_code not in {403, 404, 409}:
+                    raise
+                retained.append(bid)
+                continue
+            proof = BoardRunIdentity.model_validate(value["business"]["board_run"])
+            _, agent = await require_board_run(
+                conn, tid, value["binding"]["agent_id"], proof, action="control_binding"
+            )
+            spec = json.loads(value["payload_json"])["spec"]
+            target_refs = spec["mcp_target_credential_refs"]
+            scoped = issue_gateway_credentials(
+                self.settings, owner, bid, agent["task_type"], targets=target_refs
+            )
+            credentials[spec["model_credential_ref"]] = scoped["model"]
+            credentials.update({ref: scoped[target] for target, ref in target_refs.items()})
+        data.update(
+            bootstrap=bootstrap, credentials_issued=True, last_rotation_at=instant().isoformat()
+        )
+        await self._set(
+            conn,
+            tid,
+            data=data,
+            state="ready" if data.get("activated") else "runner_starting",
+            last_error=None,
+            next_check_at=instant() + timedelta(seconds=20),
+        )
+        return {
+            "bootstrap": bootstrap,
+            "credentials": credentials,
+            "retain_binding_ids": retained,
+            "status": self._public(await self._get(conn, tid)),
+        }
+
+    async def _activate_board_locked(self, conn, tid, record, task):
+        data = record["data"]
+        owner = await self.control._current_owner(conn, tid)
+        if not self._board_network_ready(record):
+            raise HTTPException(409, "Original Blackboard network is not confirmed")
+        if data.get("board_workspace_source") and not data.get("board_workspace_restored"):
+            raise HTTPException(409, "Original Blackboard workspace has not been restored")
+        if (
+            not data.get("credentials_issued")
+            or owner["epoch"] != data.get("owner_epoch")
+            or owner["pod_uid"] != record["observation"]["runner"]["pod_uid"]
+        ):
+            raise HTTPException(409, "Original Blackboard Runner owner changed")
+        if not data.get("activated"):
+            if (
+                task["status"] != "provisioning"
+                or not self._resources_ready(record["observation"])
+                or not record["sandbox_host"].get("ready")
+            ):
+                raise HTTPException(409, "Blackboard environment is not ready")
+            started = instant()
+            remaining = int(
+                data.get(
+                    "board_solver_seconds",
+                    int(task["budget"]["max_minutes"]) * 60 - int(task["active_seconds"] or 0),
+                )
+            )
+            grace = min(5, int(task["params"].get("grace_timeout", 5))) * 60
+            solver_deadline = started + timedelta(seconds=remaining)
+            deadline = solver_deadline + timedelta(seconds=grace)
+            await conn.execute(
+                update(s.runner_owners)
+                .where(s.runner_owners.c.task_id == tid, s.runner_owners.c.epoch == owner["epoch"])
+                .values(hard_deadline=deadline, expires_at=min(owner["expires_at"], deadline))
+            )
+            data = {**data, "solver_deadline": solver_deadline.isoformat()}
+            await self._set(conn, tid, hard_deadline=deadline)
+            state = await self.repo.load(conn, tid, include_tool_calls=False)
+            written = await self.repo.append(
+                conn,
+                tid,
+                decide(state, "transition", "scheduler", {"status": "running", "reason": None}),
+            )
+            await self._set(conn, tid, data={**data, "activated": True}, state="ready")
+            await self.repo.notify(tid, written[-1]["version"], connection=conn)
+        return self._public(await self._get(conn, tid))
+
     async def _activate(self, tid, body):
         budget_proof = None
         if body.resource_generation > 1:
@@ -1565,7 +2100,11 @@ class NativeRunnerBootstrap:
                 record, task = await self._checked(conn, tid, body, live=True)
                 require_inputs_confirmed(record)
                 binding_id = record["data"].get("binding_id")
-                if task["ctf_control"].get("native_recovery_rebuilding") and binding_id:
+                if (
+                    task["mode"] == "ctf"
+                    and task["ctf_control"].get("native_recovery_rebuilding")
+                    and binding_id
+                ):
                     prepared = await row(conn, s.runner_bindings, tid, binding_id)
                     if prepared["status"] == "prepared" and prepared["cursor"]:
                         budget = await self.recovery.budget_snapshot(conn, tid)
@@ -1582,6 +2121,8 @@ class NativeRunnerBootstrap:
         async with self.repo.engine.begin() as conn:
             record, task = await self._checked(conn, tid, body, live=True)
             require_inputs_confirmed(record)
+            if task["mode"] == "blackboard":
+                return await self._activate_board_locked(conn, tid, record, task)
             if native_pause_state(task) in {"draining", "paused"}:
                 if record["data"].get("worker_spec"):
                     owner = await self.control._current_owner(conn, tid)
@@ -1751,6 +2292,7 @@ def service(request):
 
 
 PREFIX = "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap"
+SHARED_PREFIX = "/api/tasks/{task_id}/runtime/runner-bootstrap"
 
 
 @router.post(PREFIX)
@@ -1820,7 +2362,17 @@ async def user_recovery(
     return await service(request).recovery.request(task_id, body)
 
 
+@router.get(SHARED_PREFIX)
+async def view_shared_bootstrap(
+    request: Request, response: Response, task_id: UUID, journals: bool = False
+):
+    require_service(request)
+    response.headers["Cache-Control"] = "no-store"
+    return await service(request).view(task_id, journals=journals)
+
+
 @router.post(PREFIX + "/claim")
+@router.post(SHARED_PREFIX + "/claim")
 async def claim_bootstrap(
     request: Request, response: Response, task_id: UUID, body: NativeRunnerClaim
 ):
@@ -1830,6 +2382,7 @@ async def claim_bootstrap(
 
 
 @router.post(PREFIX + "/actions")
+@router.post(SHARED_PREFIX + "/actions")
 async def bootstrap_action(
     request: Request, response: Response, task_id: UUID, body: NativeRunnerAction
 ):

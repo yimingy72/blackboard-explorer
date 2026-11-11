@@ -21,7 +21,7 @@ function cancellable(pending, signal) {
   });
 }
 
-async function verifyConfirmedPrefix(path, cursor) {
+export async function verifyConfirmedPrefix(path, cursor, inspect, copy) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     let position = 0;
@@ -34,12 +34,15 @@ async function verifyConfirmedPrefix(path, cursor) {
       const { bytesRead } = await file.read(bytes, 0, bytes.length, position);
       if (!bytesRead) throw new Error("The confirmed journal prefix was truncated");
       position += bytesRead;
-      pending = Buffer.concat([pending, bytes.subarray(0, bytesRead)]);
+      const block = bytes.subarray(0, bytesRead);
+      if (copy) await copy(block);
+      pending = Buffer.concat([pending, block]);
       let end;
       while ((end = pending.indexOf(10)) !== -1) {
         const line = pending.subarray(0, end + 1);
         if (line.length > 2 * 1024 * 1024) throw new Error("A confirmed journal record exceeded its bound");
         const entry = JSON.parse(line.toString("utf8"));
+        inspect?.(entry, seq + 1);
         if (entry.id === cursor.leaf_id) leafFound = true;
         hash = chain(hash, line);
         seq++;
@@ -136,6 +139,9 @@ export class IncrementalJournal {
     if (this.cursor.anchor_size > 2 * 1024 * 1024) throw new Error("The journal anchor exceeds the entry bound");
     this.expectedSdkId = lease.sdk_session_id;
     this.inputs = new Map();
+    this.boardAssistants = new Map();
+    this.boardRunInputs = new Set();
+    this.boardTerminals = new Map();
     this.commands = new Map();
     this.entrySeq = new Map();
     this.queue = Promise.resolve();
@@ -158,6 +164,10 @@ export class IncrementalJournal {
   }
   index(entry, seq) {
     if (entry.id && entry.type !== "session") this.entrySeq.set(entry.id, seq);
+    if (this.binding.business_contract === "exploration-board-v1"
+        && entry.type === "message" && entry.message.role === "assistant") {
+      this.boardAssistants.set(entry.id, { seq, reason: entry.message.stopReason });
+    }
     if (entry.type === "custom_message" && entry.customType === "bbx.input") {
       const id = entry.details?.input_id;
       if (typeof id !== "string") throw new Error("A native input has no stable platform identity");
@@ -169,6 +179,25 @@ export class IncrementalJournal {
       const previous = this.commands.get(entry.data.request_id);
       if (previous && previous.payload_digest !== entry.data.payload_digest) throw new Error("A persisted command identity conflicts");
       this.commands.set(entry.data.request_id, entry.data);
+      if (entry.data.board_run_input === true) {
+        if (this.binding.business_contract !== "exploration-board-v1" || entry.data.kind !== "input"
+            || typeof entry.data.input_id !== "string") throw new Error("An original blackboard input is required");
+        this.boardRunInputs.add(entry.data.input_id);
+      }
+    }
+    if (entry.type === "custom" && entry.customType === "bbx.board-terminal") {
+      const { input_id, ...proof } = entry.data;
+      const input = this.inputs.get(input_id);
+      const assistant = this.boardAssistants.get(proof.assistant_entry_id);
+      const previous = this.boardTerminals.get(input_id);
+      if (!this.boardRunInputs.has(input_id) || !input || input.seq >= seq
+          || (proof.assistant_entry_id && (!assistant || assistant.seq <= input.seq || assistant.seq >= seq))
+          || !["completed", "aborted", "failed"].includes(proof.outcome)
+          || (proof.outcome === "completed" && assistant?.reason !== "stop")
+          || (previous && previous.entry_id !== entry.id)) {
+        throw new Error("A blackboard terminal does not match its original journal input");
+      }
+      this.boardTerminals.set(input_id, { entry_id: entry.id, seq, proof });
     }
   }
   async assertFile(minimum = this.cursor.offset) {

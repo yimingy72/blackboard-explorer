@@ -19,7 +19,7 @@ from bbx_blackboard.store import schema as s
 from bbx_contracts.challenge_board import BOARD_CONTRACT
 from bbx_contracts.ctf import CtfTaskCreate, load_ctf_profile
 from bbx_contracts.pi_models import PiModelVersion
-from bbx_contracts.runner_bootstrap import management_document_digest
+from bbx_contracts.runner_bootstrap import BlackboardCreationCapability, management_document_digest
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_runtime.scheduler.lock import RuntimeLock
 from fastapi import HTTPException
@@ -49,7 +49,6 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             "native_ctf_publication_file": path,
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
             "pi_site_id": "primary",
-            "pi_model_primary_site": "primary",
             "pi_model_authority": "fixture-authority",
         }
     )
@@ -158,8 +157,12 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     )
     assert load_publication(options).publication is None
     path.write_text(json.dumps(publication))
-    assert load_publication(options).capabilities().model_dump() == {
+    unavailable_ctf = load_publication(options)
+    assert unavailable_ctf.capabilities(
+        blackboard=BlackboardCreationCapability(available=True)
+    ).model_dump() == {
         "mode": "native-ctf",
+        "blackboard": {"available": True},
         "native_ctf": None,
     }
     configured = load_publication(options, allow_test_only=True)
@@ -224,6 +227,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         app.state.native_ctf_publication = configured
         caps = await http.get("/api/task-creation-capabilities", headers=user)
         assert caps.status_code == 200, caps.text
+        assert not caps.json()["blackboard"]["available"]
         environment = caps.json()["native_ctf"]
         assert set(environment) == {
             "id",
@@ -724,6 +728,10 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         created = await http.post("/api/tasks", headers=user, json=private_create)
         assert created.status_code == 200, created.text
         tid = UUID(created.json()["id"])
+        shared = f"/api/tasks/{tid}/runtime/runner-bootstrap"
+        assert (await http.get(shared, headers=user)).status_code == 409
+        controller = await http.get(shared, headers=SERVICE)
+        assert controller.status_code == 200 and controller.json()["state"] == "queued"
         state = (await http.get(f"/api/tasks/{tid}/ctf/state", headers=user)).json()
         assert state["task"]["native_network"] == {"mode": "unselected", "state": "unselected"}
         assert state["task"]["initial_attachments"] == [] and source_id not in json.dumps(state)

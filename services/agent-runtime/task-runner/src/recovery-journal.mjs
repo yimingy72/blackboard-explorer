@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
-import { emptyCursor } from "./journal.mjs";
+import { emptyCursor, verifyConfirmedPrefix } from "./journal.mjs";
 import { digest, sameValue, validate } from "./protocol.mjs";
 
 const limit = 128 * 1024 * 1024;
@@ -13,6 +14,65 @@ const lockName = ".bbx-writer.lock";
 const safe = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const epoch = /^epoch-[1-9][0-9]{0,8}$/;
 const decoder = new TextDecoder("utf-8", { fatal: true });
+
+async function boardPrefix(root, agentId, source, inspect, copy) {
+  const cursor = validate("JournalCursor", source.cursor);
+  if (cursor.offset <= 0 || cursor.offset > (copy ? 64 * 1024 * 1024 : limit)
+      || typeof source.binding_id !== "string" || !safe.test(source.binding_id)
+      || typeof source.sdk_session_id !== "string" || !safe.test(source.sdk_session_id)) {
+    throw new Error("An original confirmed blackboard journal is required");
+  }
+  const directory = join(root, source.binding_id);
+  await stat(directory, true);
+  let bound = false;
+  await verifyConfirmedPrefix(join(directory, "session.jsonl"), cursor, (entry, seq) => {
+    if (seq === 1 && (entry.type !== "session" || entry.version !== CURRENT_SESSION_VERSION
+        || entry.id !== source.sdk_session_id)) throw new Error("Original SDK journal changed");
+    if (entry.type === "custom" && entry.customType === "bbx.binding") {
+      const binding = entry.data.binding;
+      if (bound || binding.binding_id !== source.binding_id || binding.agent_id !== agentId
+          || binding.business_contract !== "exploration-board-v1" || binding.assignment_ref !== null)
+        throw new Error("Original blackboard binding changed");
+      bound = true;
+    }
+    inspect?.(entry, bound);
+  }, copy);
+  if (!bound) throw new Error("Original blackboard binding is missing");
+}
+
+export async function readBoardTerminal(root, agentId, raw, copy) {
+  const receipt = validate("CommandReceipt", raw);
+  const proof = receipt.board_terminal;
+  if (receipt.status !== "completed" || !receipt.sdk_idle || !receipt.journal_confirmed || !proof)
+    throw new Error("A confirmed blackboard terminal is required");
+  let input = false;
+  let terminal = false;
+  let assistant;
+  await boardPrefix(root, agentId, receipt, (entry, bound) => {
+    if (entry.type === "custom_message" && entry.customType === "bbx.input"
+        && entry.details.input_id === receipt.input_id) {
+      if (!bound || input) throw new Error("Original blackboard input changed");
+      input = true;
+    }
+    if (proof.assistant_entry_id && entry.id === proof.assistant_entry_id) {
+      if (!input || terminal || assistant || entry.type !== "message" || entry.message.role !== "assistant")
+        throw new Error("Original blackboard final message changed");
+      assistant = entry.message;
+    }
+    if (entry.type === "custom" && entry.customType === "bbx.board-terminal"
+        && entry.data.input_id === receipt.input_id) {
+      if (!input || terminal || !sameValue(entry.data, { input_id: receipt.input_id, ...proof }))
+        throw new Error("Original blackboard terminal changed");
+      terminal = true;
+    }
+  }, copy);
+  if (!input || !terminal || (proof.assistant_entry_id && !assistant)
+      || (proof.outcome === "completed" && assistant?.stopReason !== "stop"))
+    throw new Error("Original blackboard terminal proof is incomplete");
+  const text = (assistant?.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("");
+  if (Buffer.byteLength(text, "utf8") > 131072) throw new Error("Blackboard final message exceeds its bound");
+  return text;
+}
 
 export async function withWriterLock(path, expected, run) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -194,6 +254,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     } else if (mode === "prepare") {
       await withWriterLock(join("/journal-root", lockName), process.argv[4], () =>
         prepareJournalDirectory("/journal-root", input));
+    }
+    else if (mode === "board-terminal") {
+      const { agent_id, receipt } = JSON.parse(input);
+      const text = await readBoardTerminal("/journal", agent_id, receipt);
+      process.stdout.write(JSON.stringify({ text }) + "\n");
+    }
+    else if (mode === "board-journal") {
+      const { agent_id, receipt } = JSON.parse(input);
+      await boardPrefix("/journal", agent_id, receipt, undefined, async (block) => {
+        if (!process.stdout.write(block)) await once(process.stdout, "drain");
+      });
     }
     else if (mode === "verify") {
       const manifest = JSON.parse(input);

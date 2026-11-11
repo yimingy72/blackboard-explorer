@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from .legacy_network import LegacyNetworkPolicy
 from .models import ContractModel
 from .native_gateway import (
     NativeBudgetCurrency,
@@ -19,7 +20,12 @@ from .native_gateway import (
 )
 from .runner import Digest, JournalCursor, RunnerCommand, RunnerId
 from .runner_inputs import NativeSharedInputLimits
-from .runner_vpn import VPN_DYNAMIC_PROFILE, NativeVpnCapability
+from .runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    NativeTaskRoutePolicy,
+    NativeVpnCapability,
+    approved_ipv4,
+)
 
 RUNTIME_LOCK_KEY = 0x42425852554E
 RUNTIME_FENCE_SEQUENCE = "native_runtime_controller_fence"
@@ -30,6 +36,74 @@ BINDING_CAPTURE_CONFIG_FIELDS = frozenset(
         "traffic_sandbox_image",
     }
 )
+
+
+def explicit_board_journal_restart(operation: dict) -> bool:
+    """A new explicit Board run owns new PVCs; recovery within a run keeps its inode."""
+    data = operation["data"]
+    history = data.get("board_history") or []
+    source = data.get("board_workspace_source") or {}
+    if (
+        data.get("execution_contract") != "exploration-board-v1"
+        or data.get("recovery")
+        or not history
+        or not source
+        or type(data.get("resource_generation")) is not int
+        or data["resource_generation"] <= 1
+        or type(source.get("run_number")) is not int
+    ):
+        return False
+    prior = history[-1]
+    old = prior["observation"]
+    new = operation.get("observation") or {}
+    return (
+        prior["archive"] == source
+        and prior["operation_id"] == source.get("operation_id")
+        and prior["operation_id"] != operation["operation_id"]
+        and prior["namespace"] == old.get("namespace") != operation["namespace"]
+        and old.get("resource_generation") == data["resource_generation"] - 1
+        and operation["namespace"] == f"bbx-task-{operation['task_id']}-r{source['run_number'] + 1}"
+        and source.get("workspace_pvc_uid") == old.get("workspace_pvc", {}).get("uid")
+        and all(
+            old.get(key, {}).get("uid")
+            and new.get(key, {}).get("uid")
+            and old[key]["uid"] != new[key]["uid"]
+            for key in ("journal_pvc", "workspace_pvc")
+        )
+    )
+
+
+def board_network_policy(config: dict) -> dict | None:
+    value = config.get("board_network")
+    if value is None:
+        return None
+    if isinstance(value, dict) and value.get("mode") in {"vpn", "socks5"}:
+        vpn = config.get("vpn")
+        if (
+            set(value) != {"mode", "legacy_policy"}
+            or LegacyNetworkPolicy.model_validate(value["legacy_policy"]).mode != value["mode"]
+            or not isinstance(vpn, dict)
+            or vpn.get("profile") != VPN_DYNAMIC_PROFILE
+        ):
+            raise ValueError("Invalid trusted Blackboard protected network deployment")
+        return value
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"mode", "dns_ipv4", "allow_cidrs", "deny_cidrs"}
+        or value["mode"] != "default"
+        or "vpn" in config
+        or not isinstance(value["dns_ipv4"], str)
+    ):
+        raise ValueError("Invalid trusted Blackboard network deployment")
+    route = NativeTaskRoutePolicy.model_validate(
+        {key: value[key] for key in ("allow_cidrs", "deny_cidrs")}
+    )
+    dns = ipaddress.IPv4Address(approved_ipv4(value["dns_ipv4"]))
+    if not any(dns in ipaddress.IPv4Network(cidr) for cidr in route.allow_cidrs) or any(
+        dns in ipaddress.IPv4Network(cidr) for cidr in route.deny_cidrs
+    ):
+        raise ValueError("Blackboard resolver is outside the published boundary")
+    return value
 
 
 def validate_binding_capture_deployment(config: dict) -> None:
@@ -88,7 +162,9 @@ def validate_binding_capture_deployment(config: dict) -> None:
     if type(config.get("journal_writer_lock", False)) is not bool:
         raise ValueError("Journal writer locking requires an explicit boolean")
     vpn = config.get("vpn")
-    dynamic_vpn = isinstance(vpn, dict) and vpn.get("profile") == VPN_DYNAMIC_PROFILE
+    routes = (
+        isinstance(vpn, dict) and vpn.get("profile") == VPN_DYNAMIC_PROFILE
+    ) or board_network_policy(config) is not None
     targets = config.get("traffic_targets")
     namespace = config.get("traffic_target_namespace")
     image = config.get("traffic_sandbox_image")
@@ -96,7 +172,7 @@ def validate_binding_capture_deployment(config: dict) -> None:
     if (
         config.get("runner_profile") != "node-sandbox-host-v1"
         or not isinstance(targets, list)
-        or not (targets == [] if dynamic_vpn else 1 <= len(targets) <= 8)
+        or not (targets == [] if routes else 1 <= len(targets) <= 8)
         or not isinstance(namespace, str)
         or not labels.fullmatch(namespace)
         or namespace
@@ -148,8 +224,15 @@ class NativeCtfEnvironment(NativeCtfEnvironmentRef):
     vpn: NativeVpnCapability | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+class BlackboardCreationCapability(ContractModel):
+    available: bool
+    reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class TaskCreationCapabilities(ContractModel):
+    # Old clients use the site mode; new clients use each independent capability.
     mode: Literal["legacy", "native-ctf"]
+    blackboard: BlackboardCreationCapability
     native_ctf: NativeCtfEnvironment | None = None
 
 
@@ -350,6 +433,22 @@ class NativeRunnerClaim(ContractModel):
     retirement_single_apiserver: dict[str, str] = Field(default_factory=dict, max_length=2)
 
 
+class BoardArchiveProof(ContractModel):
+    operation_id: UUID
+    resource_generation: int = Field(ge=1)
+    workspace_pvc_uid: UUID
+    run_number: int = Field(ge=1)
+    sha256: Digest
+    journals_sha256: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class BoardWorkspaceRestore(ContractModel):
+    uri: str = Field(min_length=1, max_length=512)
+    run_number: int = Field(ge=1)
+    sha256: Digest
+    sandbox_pod_uid: UUID
+
+
 class NativeRunnerAction(ContractModel):
     operation_id: UUID
     controller_id: RunnerId
@@ -357,6 +456,9 @@ class NativeRunnerAction(ContractModel):
     resource_generation: int = Field(default=1, ge=1)
     action: Literal[
         "sandbox_create",
+        "board_dispatch",
+        "board_abort",
+        "board_workspace_restored",
         "observation",
         "material",
         "activate",

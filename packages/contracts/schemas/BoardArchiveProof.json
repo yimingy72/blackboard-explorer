@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "operation_id": {
+      "format": "uuid",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "resource_generation": {
+      "minimum": 1,
+      "title": "Resource Generation",
+      "type": "integer"
+    },
+    "workspace_pvc_uid": {
+      "format": "uuid",
+      "title": "Workspace Pvc Uid",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "journals_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Journals Sha256"
+    }
+  },
+  "required": [
+    "operation_id",
+    "resource_generation",
+    "workspace_pvc_uid",
+    "run_number",
+    "sha256"
+  ],
+  "title": "BoardArchiveProof",
+  "type": "object"
+}

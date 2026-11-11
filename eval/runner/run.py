@@ -434,4 +434,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit("旧独立评估入口已退役；请使用已发布的共同平台。")

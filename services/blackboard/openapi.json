@@ -280,6 +280,16 @@
             "title": "Kind",
             "type": "string"
           },
+          "runner_trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardTraceProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "step": {
             "minimum": 0.0,
             "title": "Step",
@@ -415,6 +425,16 @@
             "title": "Fallback",
             "type": "string"
           },
+          "runner_archive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardArchiveProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "size": {
             "minimum": 0.0,
             "title": "Size",
@@ -432,6 +452,82 @@
           "fallback"
         ],
         "title": "ArchiveBody",
+        "type": "object"
+      },
+      "BlackboardCreationCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "BlackboardCreationCapability",
+        "type": "object"
+      },
+      "BoardArchiveProof": {
+        "additionalProperties": false,
+        "properties": {
+          "journals_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journals Sha256"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "resource_generation": {
+            "minimum": 1.0,
+            "title": "Resource Generation",
+            "type": "integer"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "workspace_pvc_uid": {
+            "format": "uuid",
+            "title": "Workspace Pvc Uid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "resource_generation",
+          "workspace_pvc_uid",
+          "run_number",
+          "sha256"
+        ],
+        "title": "BoardArchiveProof",
         "type": "object"
       },
       "BoardChallengeRequest": {
@@ -492,6 +588,192 @@
           "title"
         ],
         "title": "BoardChallengeRequest",
+        "type": "object"
+      },
+      "BoardContext": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 131072,
+            "title": "Content",
+            "type": "string"
+          },
+          "source_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Source Digest",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "content",
+          "source_digest"
+        ],
+        "title": "BoardContext",
+        "type": "object"
+      },
+      "BoardJournalProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "format": {
+            "const": "pi-journal-v1",
+            "title": "Format",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 67108864.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "transcript_uri": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Transcript Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "binding_id",
+          "sdk_session_id",
+          "cursor",
+          "run_number",
+          "transcript_uri",
+          "sha256",
+          "size"
+        ],
+        "title": "BoardJournalProjection",
+        "type": "object"
+      },
+      "BoardRunIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "derive_round": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derive Round"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_number",
+          "started_at"
+        ],
+        "title": "BoardRunIdentity",
+        "type": "object"
+      },
+      "BoardTraceProof": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/JournalCursor"
+          },
+          "entry_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "run_number": {
+            "minimum": 1.0,
+            "title": "Run Number",
+            "type": "integer"
+          },
+          "sdk_session_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Sdk Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "sdk_session_id",
+          "cursor",
+          "entry_id",
+          "run_number"
+        ],
+        "title": "BoardTraceProof",
+        "type": "object"
+      },
+      "BoardTurnTerminal": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant_entry_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Entry Id"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "aborted",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "BoardTurnTerminal",
         "type": "object"
       },
       "Budget": {
@@ -974,6 +1256,16 @@
             ],
             "title": "Binding Id"
           },
+          "board_terminal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardTurnTerminal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cursor": {
             "anyOf": [
               {
@@ -1093,6 +1385,7 @@
               "prepared",
               "accepted",
               "applied",
+              "completed",
               "aborted",
               "closed",
               "rejected"
@@ -1102,7 +1395,10 @@
           },
           "supported_business_contracts": {
             "items": {
-              "const": "challenge-board-v1",
+              "enum": [
+                "challenge-board-v1",
+                "exploration-board-v1"
+              ],
               "type": "string"
             },
             "title": "Supported Business Contracts",
@@ -3097,6 +3393,18 @@
             "additionalProperties": true,
             "title": "Receipt",
             "type": "object"
+          },
+          "terminal_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Request Id"
           }
         },
         "required": [
@@ -5219,172 +5527,6 @@
         "title": "KnowledgeAssignment",
         "type": "object"
       },
-      "LegacyNetworkAbsentReceipt": {
-        "additionalProperties": false,
-        "properties": {
-          "phase": {
-            "const": "absent",
-            "title": "Phase",
-            "type": "string"
-          },
-          "policy_digest": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Policy Digest",
-            "type": "string"
-          },
-          "run_number": {
-            "minimum": 1.0,
-            "title": "Run Number",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "run_number",
-          "policy_digest",
-          "phase"
-        ],
-        "title": "LegacyNetworkAbsentReceipt",
-        "type": "object"
-      },
-      "LegacyNetworkReceipt": {
-        "additionalProperties": false,
-        "properties": {
-          "capture_closed": {
-            "default": false,
-            "title": "Capture Closed",
-            "type": "boolean"
-          },
-          "capture_ready": {
-            "default": false,
-            "title": "Capture Ready",
-            "type": "boolean"
-          },
-          "envd_id": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Envd Id",
-            "type": "string"
-          },
-          "envd_started_at": {
-            "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
-            "title": "Envd Started At",
-            "type": "string"
-          },
-          "gateway_id": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gateway Id"
-          },
-          "gateway_network_id": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gateway Network Id"
-          },
-          "gateway_started_at": {
-            "anyOf": [
-              {
-                "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gateway Started At"
-          },
-          "network_id": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Network Id",
-            "type": "string"
-          },
-          "phase": {
-            "enum": [
-              "prepared",
-              "starting",
-              "ready",
-              "fenced",
-              "exited",
-              "unknown"
-            ],
-            "title": "Phase",
-            "type": "string"
-          },
-          "policy_digest": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Policy Digest",
-            "type": "string"
-          },
-          "probe_ready": {
-            "default": false,
-            "title": "Probe Ready",
-            "type": "boolean"
-          },
-          "relay_id": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Relay Id"
-          },
-          "relay_network_id": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Relay Network Id"
-          },
-          "relay_started_at": {
-            "anyOf": [
-              {
-                "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Relay Started At"
-          },
-          "run_number": {
-            "minimum": 1.0,
-            "title": "Run Number",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "run_number",
-          "policy_digest",
-          "phase",
-          "envd_id",
-          "envd_started_at",
-          "network_id"
-        ],
-        "title": "LegacyNetworkReceipt",
-        "type": "object"
-      },
       "LegacyNetworkView": {
         "additionalProperties": false,
         "properties": {
@@ -6831,6 +6973,9 @@
           "action": {
             "enum": [
               "sandbox_create",
+              "board_dispatch",
+              "board_abort",
+              "board_workspace_restored",
               "observation",
               "material",
               "activate",
@@ -9486,6 +9631,16 @@
             "title": "Binding Id",
             "type": "string"
           },
+          "board_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "fence": {
             "$ref": "#/components/schemas/RunnerFence"
           },
@@ -9632,7 +9787,10 @@
             "type": "string"
           },
           "business_contract": {
-            "const": "challenge-board-v1",
+            "enum": [
+              "challenge-board-v1",
+              "exploration-board-v1"
+            ],
             "title": "Business Contract",
             "type": "string"
           },
@@ -9681,6 +9839,16 @@
             "maxItems": 128,
             "title": "Allowed Tools",
             "type": "array"
+          },
+          "board_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardRunIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "challenge_id": {
             "anyOf": [
@@ -10107,7 +10275,8 @@
             "enum": [
               "lead",
               "worker",
-              "helper"
+              "helper",
+              "explore"
             ],
             "title": "Role",
             "type": "string"
@@ -10325,7 +10494,8 @@
             "enum": [
               "lead",
               "worker",
-              "helper"
+              "helper",
+              "explore"
             ],
             "title": "Role",
             "type": "string"
@@ -10728,6 +10898,12 @@
             ],
             "title": "Input Group Id"
           },
+          "mode": {
+            "const": "blackboard",
+            "default": "blackboard",
+            "title": "Mode",
+            "type": "string"
+          },
           "model_id": {
             "anyOf": [
               {
@@ -10860,6 +11036,9 @@
       "TaskCreationCapabilities": {
         "additionalProperties": false,
         "properties": {
+          "blackboard": {
+            "$ref": "#/components/schemas/BlackboardCreationCapability"
+          },
           "mode": {
             "enum": [
               "legacy",
@@ -10880,7 +11059,8 @@
           }
         },
         "required": [
-          "mode"
+          "mode",
+          "blackboard"
         ],
         "title": "TaskCreationCapabilities",
         "type": "object"
@@ -11610,7 +11790,8 @@
             "enum": [
               "lead",
               "worker",
-              "helper"
+              "helper",
+              "explore"
             ],
             "title": "Role",
             "type": "string"
@@ -16404,6 +16585,33 @@
               "title": "Agent Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "journal",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Journal",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_number",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Number"
+            }
           }
         ],
         "responses": {
@@ -16462,7 +16670,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionBody"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionBody"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BoardJournalProjection"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -16493,6 +16709,73 @@
           }
         },
         "summary": "Put Agent Session",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/agents/{agent_id}/session/journal": {
+      "get": {
+        "operationId": "download_agent_journal_api_tasks__task_id__agents__agent_id__session_journal_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_number",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Agent Journal",
         "tags": [
           "conversations"
         ]
@@ -20321,65 +20604,6 @@
         ]
       }
     },
-    "/api/tasks/{task_id}/execution-network": {
-      "post": {
-        "operationId": "acknowledge_execution_network_api_tasks__task_id__execution_network_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Task Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/LegacyNetworkReceipt"
-                  },
-                  {
-                    "$ref": "#/components/schemas/LegacyNetworkAbsentReceipt"
-                  }
-                ],
-                "title": "Body"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Acknowledge Execution Network",
-        "tags": [
-          "system"
-        ]
-      }
-    },
     "/api/tasks/{task_id}/facts": {
       "post": {
         "operationId": "post_fact_api_tasks__task_id__facts_post",
@@ -21824,6 +22048,23 @@
               "title": "Known Revision",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "known_board_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Known Board Version"
+            }
           }
         ],
         "responses": {
@@ -22380,6 +22621,159 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/runtime/runner-bootstrap": {
+      "get": {
+        "operationId": "view_shared_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "journals",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Journals",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View Shared Bootstrap",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runtime/runner-bootstrap/actions": {
+      "post": {
+        "operationId": "bootstrap_action_api_tasks__task_id__runtime_runner_bootstrap_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRunnerAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bootstrap Action",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/runtime/runner-bootstrap/claim": {
+      "post": {
+        "operationId": "claim_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeRunnerClaim"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Bootstrap",
+        "tags": [
+          "native-runner-bootstrap"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/sandbox-host/admit": {
       "post": {
         "operationId": "host_admit_api_tasks__task_id__sandbox_host_admit_post",
@@ -22466,6 +22860,104 @@
           }
         },
         "summary": "Host Event",
+        "tags": [
+          "sandbox-commands"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/evidence": {
+      "get": {
+        "operationId": "host_evidence_receipt_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Host Evidence Receipt",
+        "tags": [
+          "sandbox-commands"
+        ]
+      },
+      "put": {
+        "operationId": "host_evidence_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Host Evidence",
         "tags": [
           "sandbox-commands"
         ]

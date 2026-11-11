@@ -177,8 +177,13 @@ def route_policy(value):
 
 def destinations(record):
     if "route_policy" in record:
-        return [(cidr, None) for cidr in record["route_policy"]["allow_cidrs"]]
-    return [(item["ipv4"] + "/32", item["port"]) for item in record["targets"]]
+        paths: list[tuple[str, str, int | None]] = [
+            ("tcp", cidr, None) for cidr in record["route_policy"]["allow_cidrs"]
+        ]
+        if "dns_ipv4" in record and not record.get("vpn"):
+            paths.append(("udp", record["dns_ipv4"] + "/32", 53))
+        return paths
+    return [("tcp", item["ipv4"] + "/32", item["port"]) for item in record["targets"]]
 
 
 def plan(value):
@@ -195,6 +200,12 @@ def plan(value):
         CHOICE_MARKER.is_file() and "route_policy" in value and "vpn" not in value
     ):
         fields.add("vpn")
+    if "dns_ipv4" in value:
+        fields.add("dns_ipv4")
+        require("route_policy" in value)
+    if "disable_dns" in value:
+        fields.add("disable_dns")
+        require(value["disable_dns"] is True and "vpn" in value and "dns_ipv4" not in value)
     require(set(value) == fields)
     ordinal = value["ordinal"]
     require(type(ordinal) is int and 1 <= ordinal <= 256 and ordinal != 64)
@@ -209,7 +220,15 @@ def plan(value):
     host = POOL.network_address + ordinal * 4 + 1
     require(value["ipv4"] == str(host + 1) and value["namespace"] == f"bbx{ordinal:03x}")
     if "route_policy" in value:
-        route_policy(value["route_policy"])
+        policy = route_policy(value["route_policy"])
+        if "dns_ipv4" in value:
+            dns = ipaddress.IPv4Address(value["dns_ipv4"])
+            require(
+                str(dns) == value["dns_ipv4"]
+                and dns not in POOL
+                and any(dns in ipaddress.IPv4Network(cidr) for cidr in policy["allow_cidrs"])
+                and not any(dns in ipaddress.IPv4Network(cidr) for cidr in policy["deny_cidrs"])
+            )
     else:
         require(isinstance(value["targets"], list) and 1 <= len(value["targets"]) <= 8)
     for item in value.get("targets", ()):
@@ -281,6 +300,14 @@ def prepare(directory, requested):
     directory.mkdir(mode=0o700)
     save(directory / "state.json", record)  # Commit once before the first kernel side effect.
     ns, veth, address = (record[k] for k in ("namespace", "veth", "ipv4"))
+    if "dns_ipv4" in record or record.get("disable_dns"):
+        resolver = ROOT / f"{ns}.resolv.conf"
+        options = " use-vc" if record.get("vpn") else ""
+        text = ""
+        if not record.get("disable_dns"):
+            text = f"nameserver {record['dns_ipv4']}\noptions timeout:2 attempts:2{options}\n"
+        atomic(resolver, text.encode())
+        resolver.chmod(0o644)  # Solver can read it only through the launcher's private bind mount.
     command(IP, "netns", "add", ns)
     command(IP, "link", "add", veth, "type", "veth", "peer", "name", veth + "p")
     command(IP, "link", "set", veth + "p", "netns", ns)
@@ -320,7 +347,7 @@ def prepare(directory, requested):
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-i", veth, "-j", chain)
     command(IP4, "-w", "2", "-I", "FORWARD", "1", "-o", veth, "-j", chain)
     if not record.get("vpn"):
-        for destination, port in destinations(record):
+        for protocol, destination, port in destinations(record):
             command(
                 IP4,
                 "-w",
@@ -334,8 +361,9 @@ def prepare(directory, requested):
                 "-d",
                 destination,
                 "-p",
-                "tcp",
-                *(["--dport", str(port)] if port is not None else ["-o", "eth0"]),
+                protocol,
+                *(["--dport", str(port)] if port is not None else []),
+                *(["-o", "eth0"] if "route_policy" in record else []),
                 "-j",
                 "MASQUERADE",
             )
@@ -407,14 +435,14 @@ def renew(directory, record, value):
                 f"-A {chain} -i {veth} -d {cidr} -j DROP",
                 f"-A {chain} -o {veth} -s {cidr} -j DROP",
             ]
-    for cidr, port in destinations(record):
+    for protocol, cidr, port in destinations(record):
         out_port = f" --dport {port}" if port is not None else ""
         in_port = f" --sport {port}" if port is not None else ""
         rules += [
-            f"-A {chain} -i {veth} {outbound} -s {address}/32 -d {cidr} -p tcp{out_port} "
+            f"-A {chain} -i {veth} {outbound} -s {address}/32 -d {cidr} -p {protocol}{out_port} "
             f"{common} --rsource {timing} "
             "-m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT",
-            f"-A {chain} {inbound} -o {veth} -s {cidr} -d {address}/32 -p tcp{in_port} "
+            f"-A {chain} {inbound} -o {veth} -s {cidr} -d {address}/32 -p {protocol}{in_port} "
             f"{common} --rdest {timing} "
             "-m conntrack --ctstate ESTABLISHED -j ACCEPT",
         ]

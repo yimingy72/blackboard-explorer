@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Protocol
 
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import CloseMode, TaskType, execution_timestamp
-from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
-from bbx_runtime.runner import AgentRunner, RunResult
 
 from .actions import (
     Action,
@@ -30,21 +28,28 @@ class _StopBeforeLaunch(Exception):
     pass
 
 
+class BoardRunner(Protocol):
+    async def run_agent(
+        self, task_id: str, agent_id: str, *, started_at: str, derive_round: int | None
+    ) -> None: ...
+
+    async def stop_agent(
+        self, task_id: str, agent_id: str, reason: str, *, started_at: str, derive_round: int | None
+    ) -> None: ...
+
+
 class ActionExecutor:
     def __init__(
         self,
         task_id: str,
         service: BlackboardClient,
-        manager: ExecEnvManager,
-        runner: AgentRunner,
-        handle: ExecEnvHandle | None,
+        *,
+        board_runner: BoardRunner,
     ) -> None:
         self.task_id = task_id
         self.service = service
-        self.manager = manager
-        self.runner = runner
-        self.handle = handle
-        self.tasks: dict[str, asyncio.Task[RunResult]] = {}
+        self.board_runner = board_runner
+        self.tasks: dict[str, asyncio.Task[None]] = {}
         self.task_rounds: dict[str, int | None] = {}
         self.task_starts: dict[str, asyncio.Event] = {}
         self.task_executions: dict[str, str | None] = {}
@@ -105,10 +110,6 @@ class ActionExecutor:
         derive_parallel: bool | None = None,
         derive_review: bool | None = None,
     ) -> None:
-        paused = getattr(self.runner, "dispatch_paused", None)
-        final = task_type == "close" and mode == "final"
-        if paused is not None and paused(self.task_id, final=final):
-            return
         try:
             registration = await self.service.register_agent(
                 self.task_id,
@@ -125,10 +126,7 @@ class ActionExecutor:
             if task_type == "derive" and error.status == 422 and error.code == "stale_derive":
                 return
             raise
-        aid, token = registration["agent_id"], registration["token"]
-        mark_final = getattr(self.runner, "mark_final_dispatch", None)
-        if final and mark_final is not None:
-            mark_final(self.task_id)
+        aid = registration["agent_id"]
         raw_round = registration.get("derive_round") if task_type == "derive" else None
         derive_round = int(raw_round) if raw_round is not None else None
         round_kwargs: dict[str, Any] = (
@@ -136,6 +134,9 @@ class ActionExecutor:
         )
         if registration.get("started_at") is not None:
             round_kwargs["expected_started_at"] = registration["started_at"]
+        started_at = execution_timestamp(registration.get("started_at"))
+        if started_at is None:
+            raise RuntimeError("The original blackboard AgentRun identity is unavailable")
         try:
             self._check_stopped()
             if intent_id is not None:
@@ -152,11 +153,6 @@ class ActionExecutor:
                         **round_kwargs,
                     )
                     return
-                self._check_stopped()
-            if task_type == "explore":
-                if self.handle is None:
-                    raise RuntimeError("Explore requires a provisioned execution environment")
-                await self.manager.create_user(self.handle, aid)
                 self._check_stopped()
         except _StopBeforeLaunch:
             await self.service.finish_agent(
@@ -177,34 +173,56 @@ class ActionExecutor:
             )
             raise
 
-        started = asyncio.Event()
-
-        async def run() -> RunResult:
-            started.set()
-            return await self.runner.run_agent(
-                self.task_id,
-                aid,
-                task_type,
-                intent_id,
-                mode,
-                agent_token=token,
-                expected_derive_round=derive_round,
-                **(
-                    {"expected_started_at": registration["started_at"]}
-                    if registration.get("started_at") is not None
-                    else {}
-                ),
-                handle=self.handle,
+        async def run() -> None:
+            await self.board_runner.run_agent(
+                self.task_id, aid, started_at=started_at, derive_round=derive_round
             )
 
-        running = asyncio.create_task(run(), name=f"{self.task_id}/{aid}")
+        self._track(aid, started_at, derive_round, run)
+
+    def recover_board(self, state: dict[str, Any]) -> None:
+        """Reconnect existing ordinary AgentRuns without registering or claiming again."""
+        driver = self.board_runner
+        for aid, agent in state["agents"].items():
+            started_at = execution_timestamp(agent.get("started_at"))
+            if (
+                aid in self.tasks
+                or not started_at
+                or agent["status"] not in {"running", "concluding"}
+            ):
+                continue
+            derive_round = int(agent["derive_round"]) if agent["task_type"] == "derive" else None
+
+            async def run(
+                agent_id=aid, expected_start=started_at, round_number=derive_round
+            ) -> None:
+                await driver.run_agent(
+                    self.task_id, agent_id, started_at=expected_start, derive_round=round_number
+                )
+
+            self._track(aid, started_at, derive_round, run)
+
+    def _track(
+        self,
+        aid: str,
+        started_at: str | None,
+        derive_round: int | None,
+        run: Callable[[], Awaitable[None]],
+    ) -> None:
+        started = asyncio.Event()
+
+        async def run_tracked() -> None:
+            started.set()
+            return await run()
+
+        running = asyncio.create_task(run_tracked(), name=f"{self.task_id}/{aid}")
         self.tasks[aid] = running
         self.task_rounds[aid] = derive_round
         self.task_starts[aid] = started
-        self.task_executions[aid] = execution_timestamp(registration.get("started_at"))
+        self.task_executions[aid] = started_at
         running.add_done_callback(lambda done, agent_id=aid: self._forget(agent_id, done))
 
-    def _forget(self, aid: str, task: asyncio.Task[RunResult]) -> None:
+    def _forget(self, aid: str, task: asyncio.Task[None]) -> None:
         if self.tasks.get(aid) is task:
             self.tasks.pop(aid, None)
             self.task_rounds.pop(aid, None)
@@ -255,19 +273,38 @@ class ActionExecutor:
         *,
         expected_started_at: str | None = None,
     ) -> bool:
+        task = self.tasks.get(aid)
+        if task is None:
+            if reason != "runtime_restart" and expected_started_at is not None:
+                await self.board_runner.stop_agent(
+                    self.task_id,
+                    aid,
+                    reason,
+                    started_at=expected_started_at,
+                    derive_round=expected_derive_round,
+                )
+            # A vanished local waiter does not prove that the durable Runner has exited.
+            return True
         if expected_derive_round is not None and self.task_rounds.get(aid) != expected_derive_round:
             return False
         if expected_started_at is not None and self.task_executions.get(aid) != execution_timestamp(
             expected_started_at
         ):
             return False
-        task = self.tasks.get(aid)
-        if task is None:
-            return False
         started = self.task_starts.get(aid)
         if started is not None and not task.done():
             # Cancellation before the first coroutine step skips the runner's durable finish.
             await started.wait()
+        if reason != "runtime_restart":
+            started_at = self.task_executions.get(aid)
+            assert started_at is not None
+            await self.board_runner.stop_agent(
+                self.task_id,
+                aid,
+                reason,
+                started_at=started_at,
+                derive_round=self.task_rounds.get(aid),
+            )
         if not task.done():
             task.cancel(reason)
         try:
@@ -281,6 +318,3 @@ class ActionExecutor:
     async def shutdown(self, reason: str = "runtime_restart") -> None:
         self.request_stop(reason)
         await asyncio.gather(*(self.cancel(aid, self._stop_reason) for aid in tuple(self.tasks)))
-        forget = getattr(self.runner, "forget_recovery", None)
-        if forget is not None:
-            forget(self.task_id)

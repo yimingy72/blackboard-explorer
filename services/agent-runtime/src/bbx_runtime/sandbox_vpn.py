@@ -5,8 +5,10 @@ import base64
 import json
 from datetime import UTC, datetime, timedelta
 
+from bbx_contracts.legacy_network import LegacyGatewayProbe
 from bbx_contracts.runner_vpn import (
     VPN_DYNAMIC_PROFILE,
+    NativeSocksEdge,
     NativeTaskVpnNetwork,
     NativeVpnLink,
     NativeVpnOperation,
@@ -98,6 +100,11 @@ async def supervise_sandbox_vpn(host, sandbox):
             if dynamic and host.default_network is not None:
                 raise ValueError("Original Task default network cannot become a VPN")
             preflight = network["preflight"] if dynamic else host.config["traffic_targets"][0]
+            legacy_probe = None
+            if host.config.get("board_network", {}).get("mode") in {"vpn", "socks5"}:
+                legacy_probe = LegacyGatewayProbe.model_validate(view["legacy_probe"])
+                if (legacy_probe.ipv4, legacy_probe.port) != (preflight["ipv4"], preflight["port"]):
+                    raise ValueError("Original Blackboard protected probe changed")
             operation = NativeVpnOperation.model_validate(
                 {
                     "scope": view["scope"],
@@ -154,15 +161,29 @@ async def supervise_sandbox_vpn(host, sandbox):
                         **({"network_digest": network["network_digest"]} if dynamic else {}),
                     }
                     if view.get("can_probe"):
-                        tunnel = NativeVpnTunnel.model_validate(view["tunnel"]).model_dump(
-                            mode="json"
+                        edge = (
+                            NativeSocksEdge
+                            if host.config.get("board_network", {}).get("mode") == "socks5"
+                            else NativeVpnTunnel
                         )
+                        tunnel = edge.model_validate(view["tunnel"]).model_dump(mode="json")
                         proof = await root_vpn(sandbox, "probe-status", body)
                         if proof.get("state") == "absent":
                             if probe_attempted:
                                 raise ValueError("Original Task link canary is unconfirmed")
                             probe_attempted = True
-                            proof = await root_vpn(sandbox, "probe", with_peer)
+                            proof = await root_vpn(
+                                sandbox,
+                                "probe",
+                                {
+                                    **with_peer,
+                                    **(
+                                        {"legacy_probe": legacy_probe.model_dump(mode="json")}
+                                        if legacy_probe
+                                        else {}
+                                    ),
+                                },
+                            )
                         if proof.get("link") != link or type(proof.get("passed")) is not bool:
                             raise ValueError("Original Task link canary receipt changed")
                         await host.control(

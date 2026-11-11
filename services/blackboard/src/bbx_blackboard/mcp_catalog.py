@@ -36,14 +36,13 @@ from sqlalchemy import case, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from bbx_blackboard.auth import principal, require_user_or_service
-from bbx_blackboard.pi_registry import RUNTIME_HEADER, authority, normalized_url, trusted_header
+from bbx_blackboard.pi_registry import RUNTIME_HEADER, normalized_url, trusted_header
 from bbx_blackboard.platform import config_lock, store
 from bbx_blackboard.store.schema import app_settings
 from bbx_blackboard.store.schema import platform_configs as table
 
 MCP = "/api/platform/mcp-servers"
 MATERIAL = "/api/runtime/mcp-servers"
-PEER = "/api/runtime/mcp-catalog"
 KIND = "mcp-servers"
 AUTH_HEADERS = {"authorization", "x-api-key", "api-key"}
 MAX_RESPONSE = 2 * 1024 * 1024
@@ -220,20 +219,8 @@ async def local_catalog(request: Request, *, include_drafts: bool = False) -> li
     ]
 
 
-async def peer(request: Request, suffix: str) -> Any | None:
-    registry = getattr(request.app.state, "pi_registry", None)
-    if registry is not None and registry.enabled and not registry.primary:
-        return await registry.peer(suffix, endpoint=PEER)
-    return None
-
-
 async def catalog(request: Request) -> list[dict]:
-    remote = await peer(request, "")
-    return (
-        remote
-        if remote is not None
-        else await local_catalog(request, include_drafts=operator(request))
-    )
+    return await local_catalog(request, include_drafts=operator(request))
 
 
 async def local_evidence(
@@ -269,12 +256,7 @@ async def local_evidence(
 
 
 async def evidence(request: Request, name: ServerName, version: ServerVersion) -> McpDiscovery:
-    remote = await peer(request, f"/{name}/{version}/tools")
-    return (
-        McpDiscovery.model_validate(remote)
-        if remote is not None
-        else await local_evidence(request, name, version)
-    )
+    return await local_evidence(request, name, version)
 
 
 @asynccontextmanager
@@ -493,32 +475,6 @@ async def material(request: Request, response: Response, name: ServerName, versi
     settings = request.app.state.settings
     trusted_header(request, RUNTIME_HEADER, settings.pi_model_runtime_token.get_secret_value())
     response.headers["Cache-Control"] = "no-store"
-    remote = await peer(request, f"/{name}/{version}/material")
-    return remote if remote is not None else await local_material(store(request), name, version)
-
-
-@router.get(PEER, include_in_schema=False)
-async def peer_catalog(request: Request, response: Response):
-    authority(request, response)
-    return await local_catalog(request)
-
-
-@router.get(PEER + "/{name}/{version}/tools", include_in_schema=False)
-async def peer_evidence(
-    request: Request, response: Response, name: ServerName, version: ServerVersion
-):
-    authority(request, response)
-    result = await local_evidence(request, name, version)
-    if not result.published:
-        raise HTTPException(404, "MCP Server version is not published")
-    return result
-
-
-@router.get(PEER + "/{name}/{version}/material", include_in_schema=False)
-async def peer_material(
-    request: Request, response: Response, name: ServerName, version: ServerVersion
-):
-    authority(request, response)
     return await local_material(store(request), name, version)
 
 
@@ -568,29 +524,35 @@ def native_tool_alias(server: str, wire_name: str) -> str:
     return f"mcp_{display}_{canonical_digest([server, wire_name])[:12]}"
 
 
-async def freeze_native_grants(request: Request, grants: NativeMcpGrants) -> dict:
+async def _freeze_role_grants(request: Request, grants, *, latest_only: bool) -> dict:
     registry = request.app.state.pi_registry
     settings = request.app.state.settings
     if not registry.enabled or not settings.pi_model_authority:
         raise HTTPException(422, "当前原生 CTF 环境没有启用外部 MCP")
     available = {entry["name"]: entry for entry in await catalog(request)}
     output = {}
-    for role in ("lead", "teammate"):
+    for role, bindings in grants.items():
         selected: dict[str, dict] = {}
-        for grant in getattr(grants, role):
+        for grant in bindings:
             current = available.get(grant.name)
             if (
                 not current
                 or not current["enabled"]
-                or current.get("published_version") != grant.version
-                or role not in current.get("published_roles", [])
+                or not current.get("published_version")
+                or (
+                    latest_only
+                    and (
+                        current["published_version"] != grant.version
+                        or role not in current.get("published_roles", [])
+                    )
+                )
             ):
                 raise HTTPException(422, "所选 MCP Server 版本未对该原生角色发布或已停用")
             published = await evidence(request, grant.name, grant.version)
             if not published.published or role not in published.roles:
                 raise HTTPException(422, "所选 MCP Server 版本未对该原生角色发布")
             tools = {tool.name: tool for tool in published.tools}
-            for name in grant.allowed_tools:
+            for name in grant.allowed_tools or ():
                 alias = native_tool_alias(grant.name, name)
                 if alias in selected or name not in tools:
                     raise HTTPException(422, "请选择该版本已发布的明确 MCP 工具")
@@ -607,12 +569,24 @@ async def freeze_native_grants(request: Request, grants: NativeMcpGrants) -> dic
     return output
 
 
+async def freeze_native_grants(request: Request, grants: NativeMcpGrants) -> dict:
+    return await _freeze_role_grants(
+        request, {role: getattr(grants, role) for role in ("lead", "teammate")}, latest_only=True
+    )
+
+
+async def freeze_board_grants(request: Request, profile) -> dict:
+    await validate_profile_tools(request, profile)
+    explore = profile.worker_tools.get("explore")
+    if explore is None or not explore.mcp_servers:
+        return {}
+    return await _freeze_role_grants(request, {"explore": explore.mcp_servers}, latest_only=False)
+
+
 async def frozen_native_material(application, grant: FrozenNativeMcpTool) -> dict:
     registry = application.state.pi_registry
     if not registry.enabled or grant.authority != registry.settings.pi_model_authority:
         raise ValueError("The frozen MCP authority changed")
-    if not registry.primary:
-        return await registry.peer(f"/{grant.name}/{grant.version}/material", endpoint=PEER)
     return await local_material(application.state.platform_store, grant.name, grant.version)
 
 

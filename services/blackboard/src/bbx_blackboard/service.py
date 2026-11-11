@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import posixpath
 import re
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from bbx_contracts.billing import effective_price
@@ -27,15 +29,26 @@ from bbx_contracts.models import (
     PostFactRequest,
     PostIntentRequest,
     Price,
+    SearchHit,
     SubmitCloseRequest,
     TaskSpec,
     Usage,
 )
+from bbx_contracts.runner_bootstrap import BoardArchiveProof, management_document_digest
+from bbx_contracts.runner_control import BoardJournalProjection, BoardRunIdentity, BoardTraceProof
 from fastapi import HTTPException
 from sqlalchemy import case, func, insert, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from bbx_blackboard.board_runner_scope import (
+    BOARD_CLOSE_DRAIN_SECONDS,
+    board_runner_frozen,
+    confirmed_board_journals,
+    require_board_resource_ready,
+    require_board_resources_stopped,
+    require_board_terminal,
+)
 from bbx_blackboard.challenge_board import knowledge_event_scope, knowledge_scope_revision
 from bbx_blackboard.domain import (
     RuleViolation,
@@ -75,6 +88,7 @@ class BoardService:
         create_request_hash: str | None = None,
         legacy_network: LegacyNetworkSnapshot | None = None,
         pi_model=None,
+        runner_queue: Callable[[AsyncConnection, UUID], Awaitable[Any]] | None = None,
     ) -> UUID:
         spec = TaskSpec.model_validate(spec)
         if len({x.id for x in spec.acceptance}) != len(spec.acceptance):
@@ -177,8 +191,31 @@ class BoardService:
                         create_request_hash=create_request_hash,
                     )
                 )
+            if runner_queue is not None:
+                await self.repo.lock(conn, tid)
+                await runner_queue(conn, tid)
         await self.repo.notify(tid, written[-1]["version"])
         return tid
+
+    async def _runner_mutation(self, conn, tid, actor, command, context):
+        if not await board_runner_frozen(conn, tid):
+            return False
+        if context is None or not context.invocation_id:
+            raise HTTPException(403, "Original Blackboard tool invocation required")
+        from bbx_blackboard.gateway_auth import validate_runtime_context
+
+        binding = await validate_runtime_context(conn, tid, context)
+        original = await conn.scalar(
+            select(s.runner_calls.c.state).where(
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.id == "tool:" + context.invocation_id,
+                s.runner_calls.c.binding_id == binding["id"],
+                s.runner_calls.c.data["tool_name"].astext == command,
+            )
+        )
+        if binding["binding"]["agent_id"] != actor or original != "dispatched":
+            raise HTTPException(403, "Original Blackboard tool dispatch changed")
+        return True
 
     async def _write(
         self,
@@ -191,10 +228,18 @@ class BoardService:
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
         expected_started_at: datetime | None = None,
+        terminal_request_id: UUID | None = None,
+        runtime_context=None,
+        runner_archive: BoardArchiveProof | None = None,
     ) -> list[dict[str, Any]]:
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             target = str(data["agent_id"]) if command in {"conclude", "take_grace"} else actor
+            runner_write = False
+            if command in {"claim", "release", "submit_close"}:
+                runner_write = await self._runner_mutation(
+                    conn, tid, actor, command, runtime_context
+                )
             if command in {
                 "heartbeat",
                 "conclude",
@@ -214,10 +259,113 @@ class BoardService:
             if (command == "register_agent" and data["task_type"] == "explore") or (
                 command == "transition" and data["status"] == "running"
             ):
-                await require_run_ready(conn, state.task)
-            elif command == "record_cleanup":
-                await require_run_retired(conn, state.task)
+                if await board_runner_frozen(conn, tid):
+                    if command == "transition":
+                        raise HTTPException(
+                            409, "Only the shared controller may activate the environment"
+                        )
+                    await require_board_resource_ready(conn, tid)
+                else:
+                    await require_run_ready(conn, state.task)
+            elif command in {"record_archive", "record_cleanup"}:
+                if await board_runner_frozen(conn, tid):
+                    await require_board_resources_stopped(conn, tid)
+                    table = s.task_runner_resources
+                    record = (
+                        (await conn.execute(select(table).where(table.c.task_id == tid)))
+                        .mappings()
+                        .one()
+                    )
+                    original = record["data"].get("board_archive")
+                    bindings = s.runner_bindings
+                    current = (
+                        await conn.execute(
+                            select(
+                                bindings.c.binding,
+                                bindings.c.business,
+                                bindings.c.cursor,
+                                bindings.c.sdk_session_id,
+                            ).where(
+                                bindings.c.task_id == tid,
+                                bindings.c.business["board_run"]["run_number"].astext
+                                == str(state.task["run_number"]),
+                            )
+                        )
+                    ).mappings()
+                    journals = confirmed_board_journals(current, state.task["run_number"])
+                    inventory = management_document_digest({"journals": journals})
+                    if command == "record_archive":
+                        expected_uid = record["observation"].get("workspace_pvc", {}).get("uid")
+                        if (
+                            runner_archive is None
+                            or str(runner_archive.operation_id) != record["operation_id"]
+                            or runner_archive.resource_generation
+                            != record["data"].get("resource_generation", 1)
+                            or runner_archive.run_number != state.task["run_number"]
+                            or str(runner_archive.workspace_pvc_uid) != expected_uid
+                            or data["fallback"] != "none"
+                        ):
+                            raise HTTPException(
+                                409, "Archive must name the original stopped Blackboard workspace"
+                            )
+                        if (
+                            journals or runner_archive.journals_sha256 is not None
+                        ) and runner_archive.journals_sha256 != inventory:
+                            raise HTTPException(
+                                409,
+                                "Archive does not match the original Blackboard journal inventory",
+                            )
+                        verified = {
+                            **runner_archive.model_dump(mode="json"),
+                            "uri": data["uri"],
+                            "size": data["size"],
+                        }
+                        if original not in (None, verified):
+                            raise HTTPException(409, "Original Blackboard archive proof changed")
+                        await conn.execute(
+                            update(table)
+                            .where(table.c.task_id == tid)
+                            .values(data={**record["data"], "board_archive": verified})
+                        )
+                    elif (
+                        original is None
+                        or original["uri"] != state.task.get("workspace_uri")
+                        or (journals and original.get("journals_sha256") != inventory)
+                    ):
+                        raise HTTPException(
+                            409, "Original Blackboard workspace archive is not confirmed"
+                        )
+                elif runner_archive is not None:
+                    raise HTTPException(409, "Shared Runner archive proof does not match this Task")
+                elif command == "record_cleanup":
+                    await require_run_retired(conn, state.task)
             self._check_derive_round(state.agents.get(target), expected_derive_round)
+            if command == "finish_agent" and await board_runner_frozen(conn, tid):
+                held = await require_board_terminal(
+                    conn,
+                    tid,
+                    state.task,
+                    state.agents.get(target),
+                    terminal_request_id,
+                    data["receipt"],
+                    data["end_reason"],
+                )
+                if held:
+                    table = s.task_runner_resources
+                    current = await conn.scalar(select(table.c.data).where(table.c.task_id == tid))
+                    if current is None:
+                        raise HTTPException(409, "Original Blackboard resource is unavailable")
+                    await conn.execute(
+                        update(table)
+                        .where(table.c.task_id == tid)
+                        .values(
+                            state="frozen",
+                            data={
+                                **current,
+                                "board_recovery_blocked": "Original stopped calls are unconfirmed",
+                            },
+                        )
+                    )
             if command in {"finish_agent", "heartbeat"} and (agent := state.agents.get(target)):
                 if not await agent_execution_matches(conn, tid, agent, expected_started_at):
                     raise RuleViolation(
@@ -254,6 +402,21 @@ class BoardService:
                 self, conn, tid, actor if command == "finish_agent" else None
             ):
                 state = await self.repo.load(conn, tid, include_tool_calls=False)
+            if (
+                command == "submit_close"
+                and runner_write
+                and state.agents[actor]["close_mode"] == "final"
+            ):
+                report = data.get("report")
+                if not isinstance(report, str) or not report.strip():
+                    raise HTTPException(422, "Final Close requires its report")
+                run = state.task["run_number"]
+                uri = f"reports/{tid}.md" if run == 1 else f"reports/{tid}/run-{run}.md"
+                put = getattr(self.objects, "put", None)
+                if put is None:
+                    raise HTTPException(503, "Final Close report storage is unavailable")
+                await put(uri, report.encode(), content_type="text/markdown")
+                data = {**data, "report_uri": uri}
             events = decide(state, command, actor, data)
             if command == "register_agent" and events[0]["type"] == "agent.reactivated":
                 processing = await conn.execute(
@@ -273,12 +436,73 @@ class BoardService:
                         {"code": "agent_review_active", "message": "Agent 复盘中，请稍后重试。"},
                     )
             written = await self.repo.append(conn, tid, events)
-            if command == "finish_agent":
+            if any(
+                item["type"] in {"task.finished", "task.stopped", "task.failed"} for item in written
+            ):
+                resource = s.task_runner_resources
+                stop_values: dict[str, Any] = {
+                    "desired": "stopped",
+                    "state": "stopping",
+                    "next_check_at": func.now(),
+                }
+                if command == "submit_close" and runner_write:
+                    deadline = datetime.now(UTC) + timedelta(seconds=BOARD_CLOSE_DRAIN_SECONDS)
+                    stop_values["data"] = resource.c.data.op("||")(
+                        literal({"board_close_drain_until": deadline.isoformat()}, type_=JSONB)
+                    )
+                await conn.execute(
+                    update(resource)
+                    .where(
+                        resource.c.task_id == tid,
+                        resource.c.data.contains(
+                            {
+                                "execution_contract": "exploration-board-v1",
+                                "mcp_transport": "direct-v2",
+                            }
+                        ),
+                    )
+                    .values(**stop_values)
+                )
+            if command == "submit_close" and runner_write:
+                assert runtime_context is not None and runtime_context.invocation_id is not None
+                binding_table = s.runner_bindings
+                await conn.execute(
+                    update(binding_table)
+                    .where(
+                        binding_table.c.task_id == tid,
+                        binding_table.c.id == runtime_context.identity.binding_id,
+                    )
+                    .values(
+                        business=binding_table.c.business.op("||")(
+                            literal(
+                                {"committed_close_invocation": runtime_context.invocation_id},
+                                type_=JSONB,
+                            )
+                        )
+                    )
+                )
+                committed = await self.repo.load(conn, tid, include_tool_calls=False)
+                finish = decide(
+                    committed,
+                    "finish_agent",
+                    actor,
+                    {
+                        "agent_id": actor,
+                        "end_reason": "normal",
+                        "receipt": {
+                            "accepted": True,
+                            "data": {"note": "Close submission committed"},
+                        },
+                    },
+                )
+                written.extend(await self.repo.append(conn, tid, finish))
+            if command == "finish_agent" or (command == "submit_close" and runner_write):
+                finished_agent = data["agent_id"] if command == "finish_agent" else actor
                 await conn.execute(
                     update(s.agent_messages)
                     .where(
                         s.agent_messages.c.task_id == tid,
-                        s.agent_messages.c.agent_id == data["agent_id"],
+                        s.agent_messages.c.agent_id == finished_agent,
                         s.agent_messages.c.role == "user",
                         s.agent_messages.c.status == "processing",
                     )
@@ -316,8 +540,27 @@ class BoardService:
             {"status": status, "reason": reason},
         )
 
+    async def _verify_object_digest(self, uri: str, size: int, expected: str):
+        stream = getattr(self.objects, "stream", None)
+        if stream is None:
+            raise HTTPException(503, "Original object readback is unavailable")
+        digest, count = hashlib.sha256(), 0
+        async for part in stream(uri):
+            count += len(part)
+            if count > size:
+                raise HTTPException(409, "Original object size differs from readback")
+            digest.update(part)
+        if count != size or digest.hexdigest() != expected:
+            raise HTTPException(409, "Original object differs from readback")
+
     async def record_archive(
-        self, tid: UUID, uri: str, size: int, fallback: str
+        self,
+        tid: UUID,
+        uri: str,
+        size: int,
+        fallback: str,
+        *,
+        runner_archive: BoardArchiveProof | None = None,
     ) -> list[dict[str, Any]]:
         if uri != f"workspace/{tid}.tar.zst" and not re.fullmatch(
             rf"workspace/{tid}/run-(?:[2-9]|[1-9][0-9]+)\.tar\.zst", uri
@@ -325,11 +568,14 @@ class BoardService:
             raise RuleViolation("archive_invalid_uri", "工作区归档 key 与任务不匹配。")
         if not await self.objects.exists(uri):
             raise RuleViolation("archive_missing", "工作区归档对象不存在，请先上传。")
+        if runner_archive is not None:
+            await self._verify_object_digest(uri, size, runner_archive.sha256)
         return await self._write(
             tid,
             "record_archive",
             "scheduler",
             {"uri": uri, "size": size, "fallback": fallback},
+            runner_archive=runner_archive,
         )
 
     async def record_cleanup(self, tid: UUID) -> list[dict[str, Any]]:
@@ -343,6 +589,8 @@ class BoardService:
         additional_minutes: int,
         refresh_tools: bool = False,
         actor: str = "user",
+        *,
+        runner_restart: Callable[[AsyncConnection, UUID, str], Awaitable[Any]] | None = None,
     ) -> None:
         # Known historical charges commit even if the requested new budget is insufficient.
         async with self.repo.engine.begin() as conn:
@@ -394,7 +642,25 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             if task["status"] not in {"finished", "failed", "stopped"}:
                 raise RuleViolation("resume_not_terminal", "任务尚未结束。")
-            await require_run_retired(conn, task)
+            board_runner = await board_runner_frozen(conn, tid)
+            if board_runner:
+                await require_board_resources_stopped(conn, tid)
+                if runner_restart is None:
+                    raise HTTPException(409, "Original Blackboard resume material is unavailable")
+                if (
+                    await conn.scalar(
+                        select(s.runner_calls.c.id)
+                        .where(
+                            s.runner_calls.c.task_id == tid,
+                            s.runner_calls.c.state.in_(("admitted", "dispatched", "unknown")),
+                        )
+                        .limit(1)
+                    )
+                    is not None
+                ):
+                    raise HTTPException(409, "Original Blackboard tool calls are unconfirmed")
+            else:
+                await require_run_retired(conn, task)
             source_uri = task.get("workspace_uri") or task.get("resume_workspace_uri")
             if not task.get("cleanup_ready") or not source_uri:
                 raise RuleViolation(
@@ -501,6 +767,8 @@ class BoardService:
                     )
                 ],
             )
+            if board_runner and runner_restart is not None:
+                await runner_restart(conn, tid, source_uri)
         await self.repo.notify(tid, written[-1]["version"])
 
     async def adjust_budget(
@@ -593,10 +861,12 @@ class BoardService:
         *,
         dry_run: bool = False,
         expected_derive_round: int | None = None,
+        runtime_context=None,
     ) -> dict[str, Any]:
         data = PostFactRequest.model_validate(request).model_dump(mode="json")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
+            await self._runner_mutation(conn, tid, agent_id, "post_fact", runtime_context)
             state = await self.repo.load(conn, tid, include_tool_calls=False)
             state.tool_calls = await self.repo.tool_call_refs(
                 conn, tid, [item["call_id"] for item in data["evidence"] if item.get("call_id")]
@@ -655,10 +925,12 @@ class BoardService:
         *,
         dry_run: bool = False,
         expected_derive_round: int | None = None,
+        runtime_context=None,
     ) -> dict[str, Any]:
         data = PostIntentRequest.model_validate(request).model_dump(mode="json")
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
+            await self._runner_mutation(conn, tid, agent_id, "post_intent", runtime_context)
             state = await self.repo.load(conn, tid, include_tool_calls=False)
             if state.task.get("mode", "blackboard") != "blackboard":
                 raise HTTPException(409, "mode_mismatch")
@@ -679,6 +951,7 @@ class BoardService:
         intent_id: str,
         *,
         expected_derive_round: int | None = None,
+        runtime_context=None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -686,6 +959,7 @@ class BoardService:
             agent_id,
             {"intent_id": intent_id},
             expected_derive_round=expected_derive_round,
+            runtime_context=runtime_context,
         )
 
     async def claim_for(self, tid: UUID, intent_id: str, agent_id: str) -> list[dict[str, Any]]:
@@ -701,6 +975,7 @@ class BoardService:
         note: str,
         *,
         expected_derive_round: int | None = None,
+        runtime_context=None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -708,6 +983,7 @@ class BoardService:
             agent_id,
             {"intent_id": intent_id, "note": note},
             expected_derive_round=expected_derive_round,
+            runtime_context=runtime_context,
         )
 
     async def system_close(self, tid: UUID, intent_id: str) -> list[dict[str, Any]]:
@@ -853,6 +1129,7 @@ class BoardService:
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
         expected_started_at: datetime | None = None,
+        terminal_request_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         return await self._write(
             tid,
@@ -863,6 +1140,7 @@ class BoardService:
             expected_run_number=expected_run_number,
             expected_agent_run_id=expected_agent_run_id,
             expected_started_at=expected_started_at,
+            terminal_request_id=terminal_request_id,
         )
 
     async def submit_close(
@@ -873,6 +1151,7 @@ class BoardService:
         *,
         report_uri: str | None = None,
         expected_derive_round: int | None = None,
+        runtime_context=None,
     ) -> list[dict[str, Any]]:
         data = SubmitCloseRequest.model_validate(request).model_dump(mode="json")
         data["report_uri"] = report_uri
@@ -884,6 +1163,7 @@ class BoardService:
             agent_id,
             data,
             expected_derive_round=expected_derive_round,
+            runtime_context=runtime_context,
         )
 
     async def record_tool_call(
@@ -905,6 +1185,81 @@ class BoardService:
             expected_derive_round=expected_derive_round,
         )
 
+    async def record_agent_journal(self, tid: UUID, aid: str, proof: BoardJournalProjection):
+        from bbx_blackboard.runner_control import RunnerControl, row
+
+        target = f"traces/{tid}/{aid}/{proof.binding_id}/{proof.cursor.hash}.jsonl"
+        if (
+            proof.transcript_uri != target
+            or proof.size != proof.cursor.offset
+            or not await self.objects.exists(target)
+        ):
+            raise HTTPException(409, "Original Blackboard journal object is unavailable")
+        await self._verify_object_digest(target, proof.size, proof.sha256)
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task = await row(conn, s.tasks, tid)
+            await row(conn, s.agent_runs, tid, aid)
+            binding = await row(conn, s.runner_bindings, tid, proof.binding_id)
+            if (
+                task["mode"] != "blackboard"
+                or task["deleting"]
+                or not await board_runner_frozen(conn, tid)
+                or binding["binding"]["business_contract"] != "exploration-board-v1"
+                or binding["binding"]["agent_id"] != aid
+                or binding["sdk_session_id"] != proof.sdk_session_id
+                or proof.run_number != task["run_number"]
+                or not await RunnerControl(self.repo.engine)._confirmed_cursor(
+                    conn, tid, binding, proof.cursor.model_dump(mode="json")
+                )
+            ):
+                raise HTTPException(
+                    409, "Blackboard journal does not match the confirmed original scope"
+                )
+            scope = BoardRunIdentity.model_validate(binding["business"].get("board_run"))
+            if scope.run_number != proof.run_number:
+                raise HTTPException(409, "Original Blackboard AgentRun changed")
+            original = binding["business"].get("board_journal")
+            saved = proof.model_dump(mode="json")
+            if original is not None:
+                if original == saved:
+                    return original
+                if (
+                    proof.cursor.seq <= original["cursor"]["seq"]
+                    or proof.cursor.offset <= original["cursor"]["offset"]
+                ):
+                    raise HTTPException(
+                        409, "Original Blackboard journal cursor regressed or conflicted"
+                    )
+            await conn.execute(
+                update(s.runner_bindings)
+                .where(
+                    s.runner_bindings.c.task_id == tid,
+                    s.runner_bindings.c.id == proof.binding_id,
+                )
+                .values(business={**binding["business"], "board_journal": saved})
+            )
+            return saved
+
+    async def agent_journal(self, tid: UUID, aid: str, run_number: int):
+        bindings = s.runner_bindings
+        proof = bindings.c.business["board_journal"]
+        async with self.repo.engine.connect() as conn:
+            saved = await conn.scalar(
+                select(proof)
+                .where(
+                    bindings.c.task_id == tid,
+                    bindings.c.binding["agent_id"].astext == aid,
+                    bindings.c.binding["business_contract"].astext == "exploration-board-v1",
+                    proof["run_number"].astext == str(run_number),
+                )
+                .order_by(bindings.c.business["board_run"]["started_at"].astext.desc())
+                .limit(1)
+            )
+        if saved is None:
+            raise HTTPException(404, "Original confirmed Blackboard journal is not available")
+        return BoardJournalProjection.model_validate(saved)
+
     async def record_agent_trace(
         self,
         tid: UUID,
@@ -912,6 +1267,7 @@ class BoardService:
         trace: dict[str, Any],
         *,
         expected_derive_round: int | None = None,
+        runner_trace: BoardTraceProof | None = None,
     ) -> list[dict[str, Any]]:
         kind = trace.get("kind")
         step = trace.get("step")
@@ -943,7 +1299,41 @@ class BoardService:
                 raise RuleViolation("task_deleting", "任务正在删除。")
             agent = state.agents.get(agent_id)
             self._check_derive_round(agent, expected_derive_round)
-            if agent is None or agent["status"] not in {"running", "concluding"}:
+            if await board_runner_frozen(conn, tid):
+                if (
+                    runner_trace is None
+                    or agent is None
+                    or runner_trace.run_number != state.task["run_number"]
+                ):
+                    raise HTTPException(409, "Original Blackboard journal trace required")
+                from bbx_blackboard.runner_control import RunnerControl, row
+
+                binding = await row(conn, s.runner_bindings, tid, runner_trace.binding_id)
+                if binding["binding"]["business_contract"] != "exploration-board-v1":
+                    raise HTTPException(409, "Original Blackboard journal binding required")
+                scope = BoardRunIdentity.model_validate(binding["business"].get("board_run"))
+                name = f"{runner_trace.binding_id}-{runner_trace.entry_id}.json"
+                exact_uri = f"traces/{tid}/{agent_id}/{name}"
+                if (
+                    binding["binding"]["agent_id"] != agent_id
+                    or binding["sdk_session_id"] != runner_trace.sdk_session_id
+                    or scope.run_number != runner_trace.run_number
+                    or scope.started_at != agent["started_at"]
+                    or scope.derive_round
+                    != (agent["derive_round"] if agent["task_type"] == "derive" else None)
+                    or uri != exact_uri
+                    or not await RunnerControl(self.repo.engine)._confirmed_cursor(
+                        conn, tid, binding, runner_trace.cursor.model_dump(mode="json")
+                    )
+                ):
+                    raise HTTPException(
+                        409, "Blackboard trace does not match the confirmed original journal"
+                    )
+            elif (
+                runner_trace is not None
+                or agent is None
+                or agent["status"] not in {"running", "concluding"}
+            ):
                 raise RuleViolation("agent_inactive", "Trace 必须属于当前任务的活动 Agent。")
             duplicates = [s.events.c.payload["uri"].astext == uri]
             if kind == "initial_context":
@@ -966,6 +1356,8 @@ class BoardService:
                 .limit(1)
             )
             if previous.first() is not None:
+                if runner_trace is not None:
+                    return []
                 raise RuleViolation("duplicate_trace", "Trace 或初始上下文已登记。")
             payload = {
                 "agent_id": agent_id,
@@ -1092,6 +1484,39 @@ class BoardService:
                     for item in result
                 ]
             return result
+
+    async def search(
+        self, tid: UUID, q: str | None, k: int, kind_filter: Literal["fact", "intent", "all"]
+    ):
+        needle = q.casefold() if q else ""
+        hits: list[tuple[int, SearchHit]] = []
+        async with self.repo.engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            for kind, table in (("fact", s.facts), ("intent", s.intents)):
+                if kind_filter not in {"all", kind}:
+                    continue
+                fields = ("statement",) if kind == "fact" else ("statement", "expected", "method")
+                rows = (
+                    await conn.execute(
+                        select(table.c.id, table.c.version, *(table.c[field] for field in fields))
+                        .where(table.c.task_id == tid, table.c.challenge_id.is_(None))
+                        .order_by(table.c.version)
+                    )
+                ).mappings()
+                for item in rows:
+                    haystack = " ".join(str(item.get(field) or "") for field in fields).casefold()
+                    if needle in haystack:
+                        hits.append(
+                            (
+                                int(item["version"]),
+                                SearchHit(
+                                    id=item["id"],
+                                    type=cast(Literal["fact", "intent"], kind),
+                                    statement=item["statement"],
+                                ),
+                            )
+                        )
+        return [hit for _, hit in sorted(hits, key=lambda row: row[0], reverse=True)[:k]]
 
     async def get_object(self, tid: UUID, oid: str, depth: int = 1) -> dict[str, Any]:
         board = await self.state(tid)

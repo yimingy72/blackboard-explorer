@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -10,7 +11,7 @@ import os
 import re
 import ssl
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,9 +25,10 @@ from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_PROFILE, NativeTaskRoutePolicy
 from bbx_contracts.sandbox_tools import sandbox_schemas
 from bbx_sandbox_execution.connect import connect_bound_execd, read_execution_context
-from bbx_sandbox_execution.execution import AssignmentBinding
+from bbx_sandbox_execution.execution import SOLVER_GID, SOLVER_UID, AssignmentBinding
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from opensandbox.exceptions import SandboxApiException
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -68,6 +70,26 @@ def load_configuration(path):
         )
     ):
         raise ValueError("Original Task Sandbox host mount is invalid")
+    if "board_network" in config:
+        board = config["board_network"]
+        mode = board.get("mode")
+        if (
+            config.get("traffic_targets") != []
+            or mode not in {"default", "vpn", "socks5"}
+            or (
+                mode == "default"
+                and (
+                    set(board) != {"mode", "dns_ipv4"}
+                    or str(ipaddress.IPv4Address(board["dns_ipv4"])) != board["dns_ipv4"]
+                    or config.get("vpn_profile")
+                )
+            )
+            or (
+                mode != "default"
+                and (set(board) != {"mode"} or config.get("vpn_profile") != VPN_DYNAMIC_PROFILE)
+            )
+        ):
+            raise ValueError("Original Blackboard Sandbox network mount is invalid")
     headers = config["execd_headers"]
     if (
         set(headers) != {"OpenSandbox-Ingress-To", "OpenSandbox-Secure-Access"}
@@ -139,7 +161,10 @@ class SandboxMCP:
                     raise ValueError("An original per-Assignment network is required")
                 if (
                     network
-                    and self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
+                    and (
+                        self.config.get("board_network")
+                        or self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
+                    )
                     and not network["scope"].get("vpn_operation_id")
                 ):
                     self.observe_default_network(network["scope"])
@@ -176,6 +201,9 @@ class SandboxMCP:
                         {"event": event, "payload": payload},
                     )
 
+                async def capture_file(path, limit):
+                    return await self.capture_board_file(sandbox, invocation, path, limit)
+
                 value = await dispatch(
                     sandbox,
                     binding,
@@ -184,6 +212,11 @@ class SandboxMCP:
                     admit=admit,
                     persist=persist,
                     hard_deadline=datetime.fromisoformat(self.config["hard_deadline"]),
+                    read_capture=capture_file
+                    if self.config.get("board_network")
+                    and binding.role == "explore"
+                    and name == "read_file"
+                    else None,
                 )
                 payload = {
                     "content": [{"type": "text", "text": runner_json_text(value)}],
@@ -219,24 +252,116 @@ class SandboxMCP:
                     isError=True,
                 )
 
+    async def capture_board_file(self, sandbox, invocation, path, limit):
+        files = sandbox.files_with_identity(SOLVER_UID, SOLVER_GID)
+        try:
+            before = (await files.get_file_info([path])).get(path)
+        except SandboxApiException as error:
+            if error.status_code not in {403, 404}:
+                raise
+            before = None
+        if before is None or before.path != path or before.entry_type != "file" or before.size < 0:
+            return {
+                "path": path,
+                "output_unavailable": True,
+                "reason": "The requested path is not an available regular file",
+            }
+        if before.size > 50 * 1024 * 1024:
+            preview = bytearray()
+            stream = await files.read_bytes_stream(path, chunk_size=65536)
+            async with aclosing(stream):
+                async for block in stream:
+                    preview.extend(block[: max(0, limit - len(preview))])
+                    if len(preview) >= limit:
+                        break
+            prefix = bytes(preview)
+            return {
+                "path": path,
+                "content": prefix.decode("utf-8", errors="replace"),
+                "data_base64": base64.b64encode(prefix).decode(),
+                "retained_bytes": len(prefix),
+                "truncated": True,
+                "offset": 0,
+                "artifact_unavailable": "File exceeds the 50 MiB evidence limit",
+                "text_integrity": "loss_possible"
+                if "\ufffd" in prefix.decode("utf-8", errors="replace")
+                else "text_only",
+            }
+        digest, preview = hashlib.sha256(), bytearray()
+        size = 0
+        stream = await files.read_bytes_stream(path, chunk_size=65536)
+
+        async def chunks():
+            nonlocal size
+            async with aclosing(stream):
+                async for block in stream:
+                    size += len(block)
+                    if size > before.size or size > 50 * 1024 * 1024:
+                        raise ValueError("Original Blackboard file length changed")
+                    digest.update(block)
+                    preview.extend(block[: max(0, limit + 1 - len(preview))])
+                    yield block
+            if size != before.size:
+                raise ValueError("Original Blackboard file was truncated")
+
+        remaining = (
+            datetime.fromisoformat(self.config["hard_deadline"]) - datetime.now(UTC)
+        ).total_seconds()
+        if remaining <= 0:
+            raise ValueError("Original Blackboard file deadline expired")
+        try:
+            async with asyncio.timeout(min(remaining, 120)):
+                artifact = await self.control(
+                    "PUT", f"calls/{invocation.invocation_id}/evidence", raw=chunks()
+                )
+        finally:
+            await stream.aclose()
+        after = (await files.get_file_info([path])).get(path)
+        if (
+            before != after
+            or artifact.get("size") != size
+            or artifact.get("sha256") != digest.hexdigest()
+            or not isinstance(artifact.get("uri"), str)
+        ):
+            raise ValueError("Original Blackboard file observation is not confirmed")
+        prefix = bytes(preview[:limit])
+        return {
+            "path": path,
+            "content": prefix.decode("utf-8", errors="replace"),
+            "data_base64": base64.b64encode(prefix).decode(),
+            "retained_bytes": len(prefix),
+            "truncated": size > limit,
+            "text_integrity": "loss_possible"
+            if "\ufffd" in prefix.decode("utf-8", errors="replace")
+            else "text_only",
+            "offset": 0,
+            "artifact": artifact,
+        }
+
     @property
     def binding_network(self):
         return bool(
             self.config.get("traffic_targets")
+            or self.config.get("board_network")
             or self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
         )
 
     def observe_default_network(self, original):
+        board = self.config.get("board_network")
+        if board and board["mode"] != "default":
+            raise ValueError("Original Blackboard protected network cannot become direct")
         value = {
             "network_digest": original["network_digest"],
             "route_policy": NativeTaskRoutePolicy.model_validate(
                 original["route_policy"]
             ).model_dump(mode="json"),
+            **({"dns_ipv4": board["dns_ipv4"]} if board else {}),
         }
         if (
             not re.fullmatch(r"[a-f0-9]{64}", value["network_digest"])
             or self.vpn_network is not None
             or self.default_network not in (None, value)
+            or original.get("dns_ipv4") != value.get("dns_ipv4")
         ):
             raise ValueError("Original Task default network identity changed")
         self.default_network = value
@@ -257,7 +382,10 @@ class SandboxMCP:
         scope = item["scope"]
         source = scope["source_id"]
         ordinal = int(scope["host_interface"][2:], 16)
-        if self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE:
+        if (
+            self.config.get("board_network")
+            or self.config.get("vpn_profile") == VPN_DYNAMIC_PROFILE
+        ):
             vpn = bool(scope.get("vpn_operation_id"))
             network = self.vpn_network if vpn else self.default_network
             if (
@@ -265,6 +393,7 @@ class SandboxMCP:
                 or network["network_digest"]
                 != scope.get("vpn_network_digest" if vpn else "network_digest")
                 or network["route_policy"] != scope.get("route_policy")
+                or network.get("dns_ipv4") != scope.get("dns_ipv4")
             ):
                 raise ValueError("Original Sandbox network digest or policy changed")
         else:
@@ -319,6 +448,8 @@ class SandboxMCP:
                         else {"targets": scope["targets"]}
                     ),
                     "scope_id": binding.scope_request()[0],
+                    **({"dns_ipv4": scope["dns_ipv4"]} if "dns_ipv4" in scope else {}),
+                    **({"disable_dns": True} if vpn and self.config.get("board_network") else {}),
                     **({"vpn": self.vpn_link} if vpn else {}),
                 },
             )

@@ -39,7 +39,7 @@ from bbx_runtime.progress.session import (
 )
 from bbx_runtime.progress.tools import data_block, progress_tools
 from bbx_runtime.session import ToolResultCheckpointMiddleware, repair_unpaired_tool_calls
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 
 LOGGER = logging.getLogger(__name__)
 MAX_CONCURRENT_JOBS = 2
@@ -72,7 +72,9 @@ def _instructions(job: dict[str, Any], first_page: dict[str, Any]) -> str:
 
 
 class ProgressWorker:
-    def __init__(self, settings: Settings, service: BlackboardClient) -> None:
+    def __init__(
+        self, settings: Settings | NativeRunnerSettings, service: BlackboardClient
+    ) -> None:
         self.settings, self.service = settings, service
         self.control = ProgressClient(service)
         self.stopping = asyncio.Event()

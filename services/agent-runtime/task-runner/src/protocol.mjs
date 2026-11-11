@@ -4,7 +4,6 @@ import { Check } from "typebox/value";
 import { isDeepStrictEqual } from "node:util";
 
 export const PROTOCOL = "bbx.task-runner.v1";
-export const SUPPORTED_BUSINESS_CONTRACTS = Object.freeze(["challenge-board-v1"]);
 const schema = JSON.parse(await readFile(new URL("../protocol.schema.json", import.meta.url), "utf8"));
 export function jsonText(value) {
   const text = JSON.stringify(value, (_key, value) => {

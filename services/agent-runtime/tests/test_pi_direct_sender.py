@@ -358,6 +358,17 @@ async def test_actual_pi_15_receives_runtime_events_after_settlement(approve_fix
             )
             runtime = RunnerModelProxy(settings, service)
             async with listen(runtime.app) as runtime_origin:
+                async with httpx.AsyncClient(base_url=runtime_origin, trust_env=False) as listener:
+                    for route in ("/messages", "/playground"):
+                        assert (await listener.post(route, json={})).status_code == 401
+                    assert (
+                        await listener.post(
+                            "/playground",
+                            headers={"Authorization": "Bearer runner-short-only"},
+                            json={},
+                        )
+                    ).status_code == 401
+                    assert not provider.posts
                 node = Path(__file__).resolve().parents[1] / "task-runner"
                 proc = await asyncio.create_subprocess_exec(
                     "node",

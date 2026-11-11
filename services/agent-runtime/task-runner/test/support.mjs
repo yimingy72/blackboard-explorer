@@ -92,6 +92,7 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
           validate("CommandReceipt", body);
           state.receipts.push(body);
           if (state.dropPrepare && !state.dropped && body.status === "prepared") { state.dropped = true; response.destroy(); return; }
+          if (state.dropBoardTerminal && body.status === "completed") { response.destroy(); return; }
           send(response, { protocol: PROTOCOL, confirmed: true, request_id: body.request_id, status: body.status, receipt_digest: wireDigest });
           return;
         }
@@ -110,6 +111,19 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
         }
         if (url.pathname.endsWith("/prompt")) {
           const prompt = state.prompts.get(bindingId);
+          const board = state.boardContexts?.get(bindingId)
+            ?? (state.leaseStates.get(bindingId)?.binding.business_contract === "exploration-board-v1"
+              ? { version: 0, content: "" } : undefined);
+          if (board) {
+            state.boardVersions ??= [];
+            state.boardVersions.push(Number(url.searchParams.get("known_board_version")));
+            if (Number(url.searchParams.get("known_revision")) === prompt.prompt_revision
+                && Number(url.searchParams.get("known_board_version")) === board.version) {
+              response.writeHead(304); response.end(); return;
+            }
+            send(response, { protocol: PROTOCOL, fence, binding_id: bindingId, ...prompt,
+              board_context: { ...board, source_digest: digest(board.content) } }); return;
+          }
           if (Number(url.searchParams.get("known_revision")) === prompt.prompt_revision) { response.writeHead(304); response.end(); return; }
           send(response, { protocol: PROTOCOL, fence, binding_id: bindingId, ...prompt }); return;
         }
@@ -230,7 +244,10 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
             }
             await state.toolBarrier.promise;
           }
-          const saved = { content: [{ type: "text", text: `${bindingId} remote result` }] };
+          const saved = { content: [{ type: "text", text: `${bindingId} remote result` }],
+            ...(state.finalBoardReceipt && invocation.tool_name === "submit_close"
+              && { structuredContent: { bbx_board_stop: true } }),
+          };
           state.toolResults.set(invocation.invocation_id, jsonText(saved).replace(/}$/, ',"saved_number":1.0}'));
           if (state.dropToolReplyFor === bindingId && !state.droppedToolReply) {
             state.droppedToolReply = true; response.destroy(); return;

@@ -704,7 +704,18 @@ class Repository:
                 s.tool_calls.c.task_id == tid, s.tool_calls.c.id.in_(identifiers)
             )
         )
-        return {record["id"]: dict(record) for record in records.mappings()}
+        found = {record["id"]: dict(record) for record in records.mappings()}
+        missing = set(identifiers) - found.keys()
+        if missing:
+            # New Runner commands are already durable; project ownership without a second log.
+            native = await conn.execute(
+                select(s.sandbox_command_records.c.id, s.sandbox_command_records.c.agent_id).where(
+                    s.sandbox_command_records.c.task_id == tid,
+                    s.sandbox_command_records.c.id.in_(missing),
+                )
+            )
+            found.update({record["id"]: dict(record) for record in native.mappings()})
+        return found
 
     async def historical_challenges(self, conn: AsyncConnection, tid: UUID, aid: str) -> set[str]:
         identifiers = await conn.execute(

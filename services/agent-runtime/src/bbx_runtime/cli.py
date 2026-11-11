@@ -1,4 +1,4 @@
-"""Explicit commands for running and inspecting a single registered agent."""
+"""Run the common controller or inspect a registered Blackboard task."""
 
 from __future__ import annotations
 
@@ -9,25 +9,14 @@ import logging
 import sys
 from uuid import UUID
 
-from bbx_runtime.clients import BlackboardClient, object_store
-from bbx_runtime.execenv import ExecEnvManager
-from bbx_runtime.models import load_runtime_profile
-from bbx_runtime.runner import AgentRunner
-from bbx_runtime.settings import ControlSettings, SchedulerSettings, Settings
+from bbx_runtime.clients import BlackboardClient
+from bbx_runtime.settings import ControlSettings
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="bbx-runtime")
     commands = root.add_subparsers(dest="command", required=True)
-    commands.add_parser("serve", help="运行任务调度与监管服务")
-    commands.add_parser("serve-runner-control", help="运行受信的原生 Task Runner 控制模式")
-    run = commands.add_parser("run-agent", help="运行一个 Agent（调用真实模型）")
-    run.add_argument("--task", type=UUID, required=True)
-    run.add_argument("--type", choices=["explore", "derive", "close"], required=True)
-    start = run.add_mutually_exclusive_group()
-    start.add_argument("--intent")
-    start.add_argument("--seed", action="store_true")
-    run.add_argument("--mode", choices=["judge", "final"])
+    commands.add_parser("serve", aliases=["serve-runner-control"], help="运行共同任务控制服务")
     conclude = commands.add_parser("conclude", help="请求 Agent 结束并交接")
     conclude.add_argument("--task", type=UUID, required=True)
     conclude.add_argument("--agent", required=True)
@@ -43,81 +32,13 @@ async def run_command(args: argparse.Namespace, settings: ControlSettings) -> in
     ) as service:
         if args.command == "state":
             print(json.dumps(await service.state(task_id), ensure_ascii=False))
-            return 0
-        if args.command == "conclude":
+        else:
             await service.conclude(task_id, args.agent, "manual")
             print("已请求结束，请等待交接回执。")
-            return 0
-        if args.type != "explore" and (args.seed or args.intent):
-            raise ValueError("Only explore accepts seed or intent")
-        if args.type != "close" and args.mode:
-            raise ValueError("Only close accepts mode")
-        if args.type == "explore" and not (args.seed or args.intent):
-            raise ValueError("Explore requires seed or intent")
-        if not isinstance(settings, Settings):
-            raise ValueError("Running an agent requires full runtime settings")
-        mode = (args.mode or "judge") if args.type == "close" else None
-        state = await service.state(task_id)
-        task = state["task"]
-        if task["status"] in {"finished", "failed", "stopped"}:
-            raise ValueError("Task has already ended")
-        if args.seed and not state["board_empty"]:
-            raise ValueError("A seed requires an empty board")
-        if mode == "final" and task["status"] != "closing":
-            raise ValueError("Final close requires a closing task")
-        if task["status"] == "closing" and mode != "final":
-            raise ValueError("Only a final close agent may start during closing")
-        objects = object_store(settings)
-        manager = ExecEnvManager(settings, objects=objects)
-        try:
-            handle = None
-            if args.type == "explore":
-                profile = load_runtime_profile(
-                    await service.get_profile(task["agent_profile"], task["agent_profile_version"])
-                )
-                if task["status"] == "created":
-                    await service.start_task(task_id)
-                handle = await manager.provision(task_id, profile)
-                await manager.start_traffic(handle, task)
-                if task["status"] in {"created", "provisioning"}:
-                    await service.transition(task_id, "running")
-            registered = await service.register_agent(
-                task_id, args.type, is_seed=args.seed, close_mode=mode
-            )
-            agent_id = registered["agent_id"]
-            print(json.dumps({"task_id": task_id, "agent_id": agent_id}), flush=True)
-            try:
-                if args.intent:
-                    await service.claim_for(task_id, args.intent, agent_id)
-                if handle is not None:
-                    await manager.create_user(handle, agent_id)
-            except Exception:
-                await service.finish_agent(
-                    task_id,
-                    agent_id,
-                    {"accepted": False, "reason": "Agent 启动准备失败"},
-                    "runtime_error",
-                )
-                raise
-            result = await AgentRunner(settings, service, objects, manager).run_agent(
-                task_id,
-                agent_id,
-                args.type,
-                args.intent,
-                mode,
-                agent_token=registered["token"],
-                handle=handle,
-            )
-            print(json.dumps({"agent_id": agent_id, **result.__dict__}, ensure_ascii=False))
-            return 1 if result.end_reason == "runtime_error" else 0
-        finally:
-            await manager.suspend_traffic()
-            manager.docker.close()
+    return 0
 
 
 def main() -> None:
-    # The service previously emitted only Uvicorn-style logs, leaving scheduler,
-    # model-error, and recovery warnings invisible in container logs.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -128,20 +49,14 @@ def main() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     args = parser().parse_args()
     try:
-        if args.command == "serve":
-            from bbx_runtime.server import serve
-
-            asyncio.run(serve(SchedulerSettings()))  # type: ignore[call-arg]
-            code = 0
-        elif args.command == "serve-runner-control":
+        if args.command in {"serve", "serve-runner-control"}:
             from bbx_runtime.native_runner import serve_native
             from bbx_runtime.settings import NativeRunnerSettings
 
             asyncio.run(serve_native(NativeRunnerSettings()))  # type: ignore[call-arg]
             code = 0
         else:
-            settings = Settings() if args.command == "run-agent" else ControlSettings()  # type: ignore[call-arg]
-            code = asyncio.run(run_command(args, settings))
+            code = asyncio.run(run_command(args, ControlSettings()))  # type: ignore[call-arg]
     except KeyboardInterrupt:
         code = 130
     except Exception as error:

@@ -32,6 +32,8 @@ export class RunnerSession {
     this.promptRevision = spec.prompt_revision;
     this.promptText = spec.instructions;
     this.roleInstalled = false;
+    this.boardVersion = 0;
+    this.boardDigest = undefined;
     this.stopController = new AbortController();
     this.scheduleLeaseTimer();
   }
@@ -82,6 +84,12 @@ export class RunnerSession {
   }
   async prepareSession() {
     this.assertLease();
+    if (this.binding.business_contract === "exploration-board-v1"
+        && (this.spec.helper_foreground || this.spec.helper_background || this.spec.helper_child
+          || this.spec.allowed_tools.some((name) => ["delegate_helper", "delegate_helper_background",
+            "background_helper_status", "cancel_helper"].includes(name)))) {
+      throw new Error("Blackboard sessions do not have hosted helpers");
+    }
     const routes = this.spec.mcp_tool_routes;
     const aliases = Object.fromEntries(Object.entries(routes).map(([name, route]) => [name, route.wire_name]));
     const keys = Object.values(routes).map((route) => `${route.target}/${route.wire_name}`);
@@ -222,10 +230,32 @@ export class RunnerSession {
       this.promptRevision = promptEntry.data.prompt_revision;
       this.roleInstalled = true;
     }
+    if (this.binding.business_contract === "exploration-board-v1") {
+      const board = manager.getEntries().findLast((entry) => entry.type === "custom" && entry.customType === "bbx.board-context");
+      if (board) {
+        const saved = board.data;
+        const message = saved.message_entry_id && manager.getEntry(saved.message_entry_id)?.message;
+        if (!Number.isSafeInteger(saved.version) || saved.version < 0
+            || (message ? message.role !== "user" || digest(jsonText(message)) !== saved.message_digest
+              : saved.source_digest !== digest(""))) throw new Error("The persisted board context changed");
+        this.boardVersion = saved.version;
+        this.boardDigest = saved.source_digest;
+      }
+    }
     this.session.agent.toolExecution = "sequential";
     this.journal = new IncrementalJournal(this.session, { fence: this.config.fence, binding: this.binding,
       lease: this.lease, platform: this.platform });
     await this.journal.initialize();
+    if (this.binding.business_contract === "exploration-board-v1") {
+      this.blockedBoardInputs = new Set([...this.journal.boardRunInputs]
+        .filter((id) => this.journal.inputs.has(id) && !this.journal.boardTerminals.has(id)));
+      session.subscribe((event) => {
+        if (event.type !== "agent_settled") return;
+        const work = this.recordBoardTerminal(event.aborted).catch(() => freezeSession(session));
+        this.jobs.add(work);
+        void work.finally(() => this.jobs.delete(work));
+      });
+    }
     installModelBoundary(this.session, { runtimeUrl: this.config.model_proxy_url,
       nativeModelRevision: this.spec.model.model_revision,
       nativeProof: (journal) => ({ kind: "native", fence: this.config.fence, binding: this.binding,
@@ -239,8 +269,14 @@ export class RunnerSession {
       confirm: (signal) => this.confirm(signal), assertActive: () => this.assertActive(),
     });
     const after = this.session.agent.afterToolCall;
-    this.session.agent.afterToolCall = async (context) => ({ ...await after?.(context),
-      ...(context.result.details?.bbx_is_error ? { isError: true } : {}) });
+    this.session.agent.afterToolCall = async (context) => {
+      const finalized = context.toolCall.name === "submit_close"
+        && context.result.details?.bbx_board_stop === true;
+      if (finalized) this.boardFinalized = true;
+      return { ...await after?.(context),
+        ...(context.result.details?.bbx_is_error ? { isError: true } : {}),
+        ...(finalized && { terminate: true }) };
+    };
     await this.confirm(this.stopController.signal);
     this.assertActive();
   }
@@ -249,6 +285,10 @@ export class RunnerSession {
     const published = await this.platform.publishedPrompt(this, options.signal);
     this.assertActive();
     if (!published && !this.roleInstalled) throw new Error("The initial published prompt is unavailable");
+    if (this.binding.business_contract === "exploration-board-v1" && options.sessionId === this.session.sessionId
+        && this.boardDigest === undefined && !published?.board_context)
+      throw new Error("The original blackboard context is unavailable");
+    let boardMessage;
     if (published) {
       if (this.roleInstalled && published.prompt_revision === this.promptRevision && published.instructions !== this.promptText) throw new Error("A published prompt revision changed content");
       if (!this.roleInstalled || published.prompt_revision > this.promptRevision) {
@@ -261,12 +301,34 @@ export class RunnerSession {
         this.promptText = published.instructions;
         this.roleInstalled = true;
       }
+      if (this.binding.business_contract === "exploration-board-v1" && published.board_context
+          && options.sessionId === this.session.sessionId) {
+        const board = published.board_context;
+        if (board.version < this.boardVersion || digest(board.content) !== board.source_digest
+            || (board.version === this.boardVersion && this.boardDigest !== undefined
+              && board.source_digest !== this.boardDigest)) throw new Error("Committed board context changed");
+        if (board.version > this.boardVersion || this.boardDigest === undefined) {
+          let entryId;
+          if (board.content) {
+            boardMessage = { role: "user", content: [{ type: "text",
+              text: `[黑板更新]\n${board.content}\n[黑板更新结束]` }], timestamp: Date.now() };
+            entryId = this.session.sessionManager.appendMessage(boardMessage);
+            this.session.agent.state.messages = [...this.session.agent.state.messages, boardMessage];
+          }
+          this.session.sessionManager.appendCustomEntry("bbx.board-context", {
+            version: board.version, source_digest: board.source_digest,
+            ...(entryId && { message_entry_id: entryId, message_digest: digest(jsonText(boardMessage)) }),
+          });
+          this.boardVersion = board.version;
+          this.boardDigest = board.source_digest;
+        }
+      }
     }
     if (options.sessionId !== this.session.sessionId) return context;
     const system = getCurrentSystemMessage(context.messages);
     return normalizeContext({ messages: [{ ...system, role: "system", content: system?.content ?? BASE_PROMPT,
       sections: { ...system?.sections, bbx_role: this.promptText }, timestamp: system?.timestamp ?? Date.now() },
-    ...context.messages.filter((message) => message.role !== "system")] });
+    ...context.messages.filter((message) => message.role !== "system"), ...(boardMessage ? [boardMessage] : [])] });
   }
   async confirm(signal) {
     try {
@@ -280,7 +342,10 @@ export class RunnerSession {
     if (previous && previous.payload_digest !== command.payload_digest) throw new Error("request_conflict");
     if (!previous) this.session.sessionManager.appendCustomEntry("bbx.control", {
       request_id: command.request_id, payload_digest: command.payload_digest, kind: command.payload.kind,
-      ...(command.payload.kind === "input" ? { input_id: command.payload.input_id, content_digest: digest(command.payload.content) } : {}),
+      ...(command.payload.kind === "input" ? { input_id: command.payload.input_id, content_digest: digest(command.payload.content),
+        ...(this.binding.business_contract === "exploration-board-v1" && command.payload.mode === "follow_up"
+          && { board_run_input: true }),
+      } : {}),
     });
   }
   input(command) {
@@ -289,6 +354,7 @@ export class RunnerSession {
     const intent = [...this.journal.commands.values()].find((item) => item.kind === "input" && item.input_id === command.payload.input_id);
     if (intent && intent.content_digest !== digest(command.payload.content)) throw new Error("request_conflict");
     if (known || this.pendingInputs.has(command.payload.input_id)) return;
+    if (this.blockedBoardInputs?.size) throw new Error("The original blackboard input has no confirmed terminal");
     this.pendingInputs.add(command.payload.input_id);
     const work = this.session.sendCustomMessage({ customType: "bbx.input", content: command.payload.content, display: true,
       details: { input_id: command.payload.input_id, content_digest: digest(command.payload.content), request_id: command.request_id } }, {
@@ -299,6 +365,30 @@ export class RunnerSession {
     });
     this.jobs.add(settled);
     void settled.finally(() => this.jobs.delete(settled));
+  }
+  async recordBoardTerminal(aborted) {
+    if (this.boardFinalized || !this.session.isIdle || this.stopController.signal.aborted
+        || this.unresolvedAttempts.size || this.unresolvedInvocations.size) return;
+    this.assertActive();
+    const manager = this.session.sessionManager;
+    const entries = manager.getBranch();
+    const last = entries.findLastIndex((entry) => entry.type === "message" && entry.message.role === "assistant");
+    const recorded = new Set(entries.filter((entry) => entry.type === "custom" && entry.customType === "bbx.board-terminal")
+      .map((entry) => entry.data.input_id));
+    let changed = false;
+    for (const [index, entry] of entries.entries()) {
+      if (entry.type !== "custom_message" || entry.customType !== "bbx.input") continue;
+      const id = entry.details.input_id;
+      if (!this.pendingInputs.has(id) || !this.journal.boardRunInputs.has(id) || recorded.has(id)) continue;
+      const final = last > index ? entries[last] : undefined;
+      const reason = final?.message.stopReason;
+      manager.appendCustomEntry("bbx.board-terminal", { input_id: id,
+        outcome: aborted || reason === "aborted" ? "aborted" : reason === "stop" ? "completed" : "failed",
+        ...(final && { assistant_entry_id: final.id }),
+      });
+      changed = true;
+    }
+    if (changed) await this.confirm(this.stopController.signal);
   }
   async toolInvocation(name, callId, args, signal) {
     this.assertActive();
@@ -350,7 +440,10 @@ export class RunnerSession {
       }
       if (!result || !Array.isArray(result.content)
           || result.content.some((part) => !part || typeof part.type !== "string")) throw new Error("The saved remote tool result is invalid");
-      return { content: toLlmContent(result), details: { invocation_id: invocationId, bbx_is_error: result.isError === true } };
+      return { content: toLlmContent(result), details: { invocation_id: invocationId, bbx_is_error: result.isError === true,
+        ...(this.binding.business_contract === "exploration-board-v1" && name === "submit_close"
+          && result.isError !== true && result.structuredContent?.bbx_board_stop === true && { bbx_board_stop: true }),
+      } };
     } catch (error) {
       freezeSession(this.session);
       if (this.unresolvedInvocations.has(invocationId)) await this.platform.unknownTool(this, invocation).catch(() => {});

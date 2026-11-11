@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import bbx_blackboard.api as api
 import bbx_blackboard.auth as auth
@@ -58,7 +58,10 @@ class FakeService:
     async def post_fact(self, _tid, _aid, _body, *, dry_run=False, expected_derive_round=None):
         return {"valid": True} if dry_run else {"id": "F1"}
 
-    async def record_agent_trace(self, tid, aid, body, *, expected_derive_round=None):
+    async def record_agent_trace(
+        self, tid, aid, body, *, expected_derive_round=None, runner_trace=None
+    ):
+        assert runner_trace is None
         self.trace_calls.append((tid, aid, body, expected_derive_round))
         return []
 
@@ -288,6 +291,7 @@ def test_unicode_credentials() -> None:
 
 @pytest.mark.asyncio
 async def test_task_freezes_pi_model_and_preserves_nonmodel_profile_parameters():
+    from bbx_blackboard.board_runner_publication import BlackboardRunnerPublication
     from bbx_contracts.pi_models import PiModelVersion
 
     model = PiModelVersion.model_validate(
@@ -316,18 +320,41 @@ async def test_task_freezes_pi_model_and_preserves_nonmodel_profile_parameters()
         assert snapshot.params.context_threshold == 24800
         assert snapshot.models.explore.model == model.id
         assert snapshot.models.explore.price.currency == "USD"
+        assert snapshot.exec_image == deployed_image
         return {"name": name, "version": 5, **snapshot.model_dump(mode="json")}
 
-    async def create_task(spec, *, profile_version, legacy_network, pi_model):
-        assert legacy_network.mode == "default"
+    deployed_image = "fixture-sandbox@sha256:" + "a" * 64
+    publication = BlackboardRunnerPublication.model_validate(
+        {
+            "revision": 1,
+            "runtime_resource_config": {
+                "board_network": {"mode": "default"},
+                "traffic_sandbox_image": deployed_image,
+            },
+            "acceptance": {"file": "fixture.json", "sha256": "b" * 64},
+        }
+    )
+    queue_locked = AsyncMock()
+
+    async def create_task(
+        spec, *, profile_version, pi_model, runner_queue: Callable[[None, UUID], Awaitable[None]]
+    ):
         assert spec["params"]["context_threshold"] == 24800
         assert spec["params"]["explore_max_steps"] == 7
         assert spec["params"]["seed_max_steps"] == 5
         assert "pi_model" not in spec and profile_version == 5
         assert pi_model == ("fixture-authority", model)
-        return uuid4()
+        tid = uuid4()
+        await runner_queue(None, tid)
+        assert queue_locked.await_args is not None
+        args, kwargs = queue_locked.await_args
+        assert args[1] == tid and args[2].model_alias == model.id
+        assert kwargs["board"] is True and kwargs["publication"] == publication.frozen()
+        return tid
 
     app = api.create_app(config)
+    app.state.board_runner_publication = publication
+    app.state.native_runner_bootstrap = SimpleNamespace(queue_locked=queue_locked)
     app.state.profile_store = SimpleNamespace(
         get=AsyncMock(return_value=old), create=create_snapshot
     )
@@ -418,11 +445,14 @@ async def test_search_matches_text_and_orders_by_version(monkeypatch: pytest.Mon
         async def connect(self):
             async def execute(query):
                 kind = query.get_final_froms()[0].name
+                if kind == "task_runner_resources":
+                    return SimpleNamespace(mappings=lambda: SimpleNamespace(first=lambda: None))
                 return SimpleNamespace(mappings=lambda: list(rows[kind].values()))
 
             yield SimpleNamespace(execution_options=AsyncMock(), execute=execute)
 
     app.state.engine = SearchEngine()
+    app.state.board_service = api.BoardService(app.state.engine, FakeObjects())  # type: ignore[arg-type]
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,

@@ -192,10 +192,16 @@ async def journal(request: Request, task_id: UUID, binding_id: str):
 
 @router.get("/bindings/{binding_id}/prompt", response_model=PublishedPrompt)
 async def prompt(
-    request: Request, task_id: UUID, binding_id: str, known_revision: int = Query(default=0, ge=0)
+    request: Request,
+    task_id: UUID,
+    binding_id: str,
+    known_revision: int = Query(default=0, ge=0),
+    known_board_version: int | None = Query(default=None, ge=0),
 ):
     identity = require_runner_control(request, task_id)
-    value = await service(request).prompt(task_id, binding_id, identity, known_revision)
+    value = await service(request).prompt(
+        task_id, binding_id, identity, known_revision, known_board_version
+    )
     return Response(status_code=304) if value is None else value
 
 

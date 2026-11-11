@@ -8,6 +8,7 @@ import re
 import secrets
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from tempfile import SpooledTemporaryFile
 from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -30,6 +31,7 @@ from sqlalchemy import insert, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from bbx_blackboard.auth import require_task_reader
+from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT
 from bbx_blackboard.gateway_auth import mcp_identity, require_gateway_identity
 from bbx_blackboard.native_traffic import (
     PART_LIMIT,
@@ -38,9 +40,14 @@ from bbx_blackboard.native_traffic import (
     NativeTraffic,
     opted_in,
 )
-from bbx_blackboard.native_vpn import vpn_enabled, vpn_solver_deadline
+from bbx_blackboard.native_vpn import (
+    board_direct_policy,
+    board_protected_policy,
+    vpn_enabled,
+    vpn_solver_deadline,
+)
 from bbx_blackboard.runner_control import native_stopping, row
-from bbx_blackboard.runner_gateway import decode
+from bbx_blackboard.runner_gateway import decode, exact_json
 from bbx_blackboard.store import schema as s
 
 
@@ -141,6 +148,16 @@ class SandboxTools:
             "runner_pod_uid": observed.get("runner", {}).get("pod_uid"),
             "network": resource["config"]["sandbox_network"],
             **(
+                {"board_network": {key: board[key] for key in ("mode", "dns_ipv4")}}
+                if (board := board_direct_policy(resource))
+                else {}
+            ),
+            **(
+                {"board_network": {"mode": protected.mode}}
+                if (protected := board_protected_policy(resource))
+                else {}
+            ),
+            **(
                 {"traffic_targets": resource["config"]["traffic_targets"]}
                 if opted_in(resource)
                 else {}
@@ -228,6 +245,28 @@ class SandboxTools:
             raise HTTPException(403, "Runner owner does not match the original Sandbox host")
         if entry := self.traffic.binding(resource, runner_binding["id"]):
             return entry["binding"]
+        if runner_binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+            agent_id = runner_binding["binding"]["agent_id"]
+            agent = await row(conn, s.agent_runs, tid, agent_id)
+            if agent["task_type"] != "explore" or agent["status"] != "running":
+                raise HTTPException(403, "Only the original active Explore owns this workspace")
+            return {
+                "task_id": str(tid),
+                "agent_id": agent_id,
+                "role": "explore",
+                "assignment_id": runner_binding["id"],
+                "generation": runner_binding["binding"]["generation"],
+                "epoch": owner["epoch"],
+                "sandbox_id": context["sandbox_id"],
+                "pod_uid": context["sandbox_pod_uid"],
+                "environment_revision": context["environment_revision"],
+                **context["network"],
+                "challenge_id": None,
+                "parent_agent_id": None,
+                "execution_profile": "basic",
+                "process_accounting": "cgroup-v2",
+                "execution_context_id": context["execution_context_id"],
+            }
         member = await row(conn, s.ctf_members, tid, runner_binding["binding"]["agent_id"])
         business = runner_binding["business"]
         assignment = runner_binding["binding"].get("assignment_ref") or str(
@@ -590,6 +629,86 @@ class SandboxTools:
             or payload.get("truncated") is True
             or payload.get("text_integrity") == "loss_possible"
         )
+
+    async def _board_evidence_target(self, conn, tid, invocation_id, key):
+        resource, _ = await self.host(conn, tid, key)
+        call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
+        if (
+            resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
+            or not call
+            or call["provider_key"] != "sandbox"
+            or call["state"] != "dispatched"
+            or call["data"].get("tool_name") != "read_file"
+            or call["data"].get("sdk_admitted") is not True
+            or call["data"].get("sandbox_binding", {}).get("role") != "explore"
+            or call["owner_epoch"] != resource["data"].get("owner_epoch")
+            or not await self._scope_live(conn, tid, call["binding_id"])
+        ):
+            raise HTTPException(
+                403, "Evidence upload requires the original scoped Blackboard file read"
+            )
+        args = exact_json(
+            self.gateway.cipher.decrypt(call["data"]["arguments_ciphertext"].encode()).decode()
+        )
+        return call, args["path"]
+
+    async def board_evidence_receipt(self, tid, invocation_id, key):
+        async with self.repo.engine.connect() as conn:
+            resource, _ = await self.host(conn, tid, key)
+            call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
+            if (
+                resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
+                or call is None
+                or call["provider_key"] != "sandbox"
+                or call["data"].get("tool_name") != "read_file"
+                or call["owner_epoch"] != resource["data"].get("owner_epoch")
+                or call["data"].get("sandbox_binding", {}).get("role") != "explore"
+            ):
+                raise HTTPException(403, "Original Blackboard evidence receipt required")
+            proof = call["data"].get("file_artifact")
+            if proof is None:
+                raise HTTPException(404, "Original Blackboard file evidence is not recorded")
+            return {name: proof[name] for name in ("uri", "sha256", "size")}
+
+    async def upload_board_evidence(self, request, tid, invocation_id, key):
+        if request.headers.get(
+            "content-type"
+        ) != "application/octet-stream" or request.headers.getlist("origin"):
+            raise HTTPException(403, "Original private binary Sandbox evidence required")
+        async with self.repo.engine.connect() as conn:
+            await self._board_evidence_target(conn, tid, invocation_id, key)
+        digest, size = hashlib.sha256(), 0
+        with SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as body:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 50 * 1024 * 1024:
+                    raise HTTPException(413, "Sandbox evidence exceeds the original file limit")
+                digest.update(chunk)
+                body.write(chunk)
+            checksum = digest.hexdigest()
+            async with self.repo.engine.begin() as conn:
+                await self.repo.lock(conn, tid)
+                call, path = await self._board_evidence_target(conn, tid, invocation_id, key)
+                aid = call["data"]["sandbox_binding"]["agent_id"]
+                uri = f"evidence/{tid}/{aid}/{checksum}.bin"
+                proof = {"path": path, "uri": uri, "sha256": checksum, "size": size}
+                existing = call["data"].get("file_artifact")
+                if existing not in (None, proof):
+                    raise HTTPException(409, "Original Sandbox file evidence changed")
+                if existing is None:
+                    body.seek(0)
+                    await request.app.state.objects.put(
+                        uri, body, length=size, content_type="application/octet-stream"
+                    )
+                    await conn.execute(
+                        update(s.runner_calls)
+                        .where(
+                            s.runner_calls.c.task_id == tid,
+                            s.runner_calls.c.id == call["id"],
+                        )
+                        .values(data={**call["data"], "file_artifact": proof})
+                    )
+                return {key: proof[key] for key in ("uri", "sha256", "size")}
 
     async def complete(self, tid, invocation_id, key, result):
         async with self.repo.engine.begin() as conn:
@@ -967,6 +1086,25 @@ async def host_event(request: Request, task_id: UUID, invocation_id: str):
 async def host_result(request: Request, task_id: UUID, invocation_id: str):
     body, key = await _host_body(request, SandboxHostResult, 2 * 1024 * 1024)
     return await _tools(request).complete(task_id, invocation_id, key, body.result)
+
+
+@router.put("/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/evidence")
+async def host_evidence(request: Request, task_id: UUID, invocation_id: str):
+    return await _tools(request).upload_board_evidence(
+        request, task_id, invocation_id, _report_key(request)
+    )
+
+
+@router.get("/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/evidence")
+async def host_evidence_receipt(
+    request: Request, response: Response, task_id: UUID, invocation_id: str
+):
+    if request.headers.getlist("origin"):
+        raise HTTPException(403, "Original private Sandbox evidence required")
+    response.headers["Cache-Control"] = "no-store"
+    return await _tools(request).board_evidence_receipt(
+        task_id, invocation_id, _report_key(request)
+    )
 
 
 async def _read_scope(request, tid):

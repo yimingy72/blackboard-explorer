@@ -52,11 +52,9 @@ def options():
     return settings().model_copy(
         update={
             "pi_site_id": "primary",
-            "pi_model_primary_site": "primary",
             "pi_model_authority": "fixture-authority",
             "pi_model_operator": "alice",
             "pi_model_runtime_token": SecretStr("fixture-runtime-" + "x" * 32),
-            "pi_model_authority_token": SecretStr("fixture-authority-" + "y" * 32),
             "runner_mcp_direct_v2": True,
             "sandbox_tenant_resolver_token": SecretStr("fixture-resolver"),
         }

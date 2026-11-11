@@ -12,8 +12,10 @@ from uuid import UUID
 import jwt
 from bbx_contracts.runner import RunnerFence
 from bbx_contracts.runner_bootstrap import native_resume_pending
+from bbx_contracts.runner_control import BoardRunIdentity
 from fastapi import HTTPException, Request
 
+from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, require_board_run
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import RunnerControl
 
@@ -23,6 +25,8 @@ DIRECT_MCP = {
 }
 DIRECT_ISSUERS = {audience: issuer for audience, issuer in DIRECT_MCP.values()}
 MCP_AUDIENCES = frozenset(DIRECT_ISSUERS)
+EXPLORATION_ROLES = {"explore", "derive", "close"}
+MCP_ROLES = {"lead", "teammate", "helper"} | EXPLORATION_ROLES
 
 
 @dataclass(frozen=True)
@@ -32,7 +36,7 @@ class GatewayIdentity:
     token_version: str
     audience: Literal["model", "business-mcp", "sandbox-mcp"]
     expires_at: int
-    role: Literal["lead", "teammate", "helper"] | None = None
+    role: Literal["lead", "teammate", "helper", "explore", "derive", "close"] | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class RuntimeBusinessContext:
     identity: GatewayIdentity
     sdk_session_id: str
     journal: dict
+    invocation_id: str | None = None
 
 
 def _key(settings):
@@ -51,7 +56,7 @@ def _key(settings):
 
 
 def issue_gateway_credentials(settings, owner, binding_id, role, *, targets, deadline_ms=None):
-    if role not in {"lead", "teammate", "helper"}:
+    if role not in MCP_ROLES:
         raise HTTPException(403, "Runner role is not ready")
     expiry = int(min(owner["hard_deadline"], datetime.now(UTC) + timedelta(minutes=5)).timestamp())
     if deadline_ms is not None:
@@ -60,6 +65,8 @@ def issue_gateway_credentials(settings, owner, binding_id, role, *, targets, dea
     issued = {"model": ("model", "bbx-runner-gateway-v1")}
     if not targets or not set(targets) <= DIRECT_MCP.keys():
         raise HTTPException(403, "Runner needs a frozen MCP target")
+    if role in {"derive", "close"} and set(targets) != {"business"}:
+        raise HTTPException(403, "Blackboard binding has only its published business tools")
     if role == "helper" and set(targets) != {"sandbox"}:
         raise HTTPException(403, "Helper is limited to its Sandbox target")
     issued.update({target: DIRECT_MCP[target] for target in targets})
@@ -162,10 +169,7 @@ def require_gateway_identity(request: Request, task_id: UUID, audience, *, autho
             claims["aud"] != audience
             or not isinstance(claims["bid"], str)
             or not isinstance(claims["token_version"], str)
-            or (
-                audience in MCP_AUDIENCES
-                and claims.get("role") not in {"lead", "teammate", "helper"}
-            )
+            or (audience in MCP_AUDIENCES and claims.get("role") not in MCP_ROLES)
         ):
             raise ValueError("Invalid capability scope")
         fence = RunnerFence(
@@ -205,7 +209,7 @@ async def validate_runtime_context(conn, tid, context):
     ):
         raise HTTPException(403, "Runtime business context is no longer authorized")
     task = await control._task(conn, tid, live=True)
-    if task["ctf_control"].get("failure_hold") or native_resume_pending(task):
+    if (task.get("ctf_control") or {}).get("failure_hold") or native_resume_pending(task):
         raise HTTPException(409, "Task admission is paused")
     return binding
 
@@ -213,6 +217,16 @@ async def validate_runtime_context(conn, tid, context):
 async def validate_gateway_role(conn, tid, identity, binding):
     if identity.audience in MCP_AUDIENCES:
         await require_mcp_transport(conn, tid, identity)
+        if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+            proof = BoardRunIdentity.model_validate(binding["business"]["board_run"])
+            _, agent = await require_board_run(
+                conn, tid, binding["binding"]["agent_id"], proof, action="active_binding"
+            )
+            if identity.role != agent["task_type"] or (
+                identity.audience == "sandbox-mcp" and identity.role != "explore"
+            ):
+                raise HTTPException(403, "Blackboard business role scope changed")
+            return
         from bbx_blackboard.runner_control import row
         from bbx_blackboard.store import schema as s
 

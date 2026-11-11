@@ -178,7 +178,7 @@ class TrafficBindingScope(ContractModel):
     assignment_id: TrafficId
     generation: int = Field(ge=1)
     epoch: int = Field(ge=1)
-    role: Literal["lead", "worker", "helper"]
+    role: Literal["lead", "worker", "helper", "explore"]
     parent_agent_id: str | None = Field(default=None, max_length=160)
     sandbox_pod_uid: TrafficId
     ipv4: str = Field(max_length=15)

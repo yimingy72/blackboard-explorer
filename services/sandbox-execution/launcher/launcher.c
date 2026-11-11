@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -102,6 +103,30 @@ static void close_extra_fds(void) {
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit)) fail("descriptor limit");
     for (rlim_t fd = 3; fd < limit.rlim_cur; fd++) close((int)fd);
+}
+
+static void assignment_resolver(const char *namespace) {
+    int dir = control_directory("/var/lib/bbx/control/networks");
+    char name[96];
+    if (snprintf(name, sizeof(name), "%s.resolv.conf", namespace) >= (int)sizeof(name))
+        fail("invalid Assignment resolver");
+    int fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 && errno == ENOENT) { close(dir); return; }
+    struct stat source, target;
+    char path[144];
+    if (fd < 0 || fstat(fd, &source) || !S_ISREG(source.st_mode) ||
+        source.st_uid || source.st_nlink != 1 || (source.st_mode & 0022) ||
+        lstat("/etc/resolv.conf", &target) || !S_ISREG(target.st_mode) ||
+        snprintf(path, sizeof(path), "/var/lib/bbx/control/networks/%s", name) >= (int)sizeof(path)) {
+        errno = EPERM;
+        fail("verify private Assignment resolver");
+    }
+    if (unshare(CLONE_NEWNS) || mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL))
+        fail("isolate Assignment resolver mount");
+    if (mount(path, "/etc/resolv.conf", NULL, MS_BIND, NULL))
+        fail("install private Assignment resolver");
+    close(fd);
+    close(dir);
 }
 
 static unsigned long long process_ticks(pid_t pid) {
@@ -259,6 +284,8 @@ int main(int argc, char **argv) {
     close(namespace_fd);
     close(directory);
     if (argc == 15 && bbx_scope_join(argv[10], argv[11], argv[12], argv[13], argv[14])) fail("join original assignment cgroup");
+    /* Scope verification still needs the original mount namespace. */
+    if (marker) assignment_resolver(argv[1]);
     if (network_lock >= 0) close(network_lock);
     close_extra_fds();
 

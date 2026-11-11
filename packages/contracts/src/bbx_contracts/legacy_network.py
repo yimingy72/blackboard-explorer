@@ -3,7 +3,9 @@
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +23,7 @@ LegacyNetworkPhase = Literal["prepared", "starting", "ready", "fenced", "exited"
 DOCKER_ID = r"^[0-9a-f]{64}$"
 DOCKER_STARTED_AT = r"^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$"
 POLICY_LIMIT = 32768
+GATEWAY_CREDENTIAL_LIMIT = 256 * 1024
 
 
 class LegacyGatewayProbe(NativeVpnTarget):
@@ -172,6 +175,29 @@ def load_legacy_network_policy(path: Path | None) -> LegacyNetworkPolicy:
     if len(raw) > POLICY_LIMIT:
         raise ValueError("Legacy network publication exceeds its byte limit")
     return LegacyNetworkPolicy.model_validate_json(raw)
+
+
+def read_gateway_credentials(policy: LegacyGatewayPolicy) -> dict[str, str]:
+    if policy.credential_file is None:
+        return {}
+    fd = os.open(policy.credential_file, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as file:
+        info = os.fstat(file.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise ValueError("Protected gateway credentials require a private regular file")
+        raw = file.read(GATEWAY_CREDENTIAL_LIMIT + 1)
+    if (
+        len(raw) > GATEWAY_CREDENTIAL_LIMIT
+        or hashlib.sha256(raw).hexdigest() != policy.credential_sha256
+    ):
+        raise ValueError("Original protected gateway credentials changed")
+    try:
+        value = json.loads(raw)
+        if not isinstance(value, dict) or not all(isinstance(item, str) for item in value.values()):
+            raise ValueError
+    except (ValueError, UnicodeError):
+        raise ValueError("Protected gateway credentials are invalid") from None
+    return value
 
 
 def snapshot(policy: LegacyNetworkPolicy) -> LegacyNetworkSnapshot:

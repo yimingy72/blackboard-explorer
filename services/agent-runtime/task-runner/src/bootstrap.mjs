@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { setTimeout } from "node:timers/promises";
+import { readBootstrapMount } from "./bootstrap-mount.mjs";
 import { validate } from "./protocol.mjs";
 
 const stop = new AbortController();
@@ -9,16 +9,11 @@ process.once("SIGINT", cancel);
 try {
   const podUid = process.env.BBX_POD_UID;
   if (!podUid) throw new Error("A trusted Pod UID is required");
-  const deadline = Date.now() + 180000;
-  let text;
-  while (text === undefined) {
-    stop.signal.throwIfAborted();
-    try { text = await readFile("/var/run/bbx/runner-bootstrap.json", "utf8"); }
-    catch (error) {
-      if (error.code !== "ENOENT" || Date.now() >= deadline) throw error;
-      await setTimeout(200, undefined, { signal: stop.signal });
-    }
-  }
+  const text = await readBootstrapMount(
+    () => readFile("/var/run/bbx/runner-bootstrap.json", "utf8"),
+    stop.signal,
+    process.env.BBX_PROTECTED_BOARD_START === "1",
+  );
   const config = validate("RunnerBootstrap", JSON.parse(text));
   if (config.fence.pod_uid !== podUid
       || config.credential_file !== "/var/run/bbx/credentials.json"

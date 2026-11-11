@@ -15,6 +15,7 @@ from uuid import UUID
 
 import zstandard
 from bbx_contracts.models import InitialAttachment
+from bbx_contracts.runner_control import BoardJournalProjection
 from bbx_objects import ObjectStore
 
 ARCHIVE_MAX_BYTES = 2 * 1024 * 1024 * 1024
@@ -28,6 +29,7 @@ REFERENCE_FIELDS = {
     "workspace_uri",
     "resume_workspace_uri",
     "trace_uri",
+    "transcript_uri",
     "image_uri",
 }
 
@@ -335,6 +337,34 @@ async def build_archive(
             if row.get("sha256") is not None and hashes[row["uri"]] != row["sha256"]:
                 raise ValueError("Attachment SHA-256 differs from declaration")
 
+        journals = []
+        for index, item in enumerate(data.get("board_journals", [])):
+            aid = item["agent_id"]
+            proof = BoardJournalProjection.model_validate(item["projection"])
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", aid):
+                raise ValueError("Invalid original journal Agent identity")
+            expected = f"traces/{task_id}/{aid}/{proof.binding_id}/{proof.cursor.hash}.jsonl"
+            if proof.transcript_uri != expected or proof.size != proof.cursor.offset:
+                raise ValueError("Original journal archive scope changed")
+            name = f"{proof.binding_id}-{proof.cursor.hash}.jsonl"
+            member = f".bbx/journals/{aid}/run-{proof.run_number}/{name}"
+            if member in staged:
+                raise ValueError("Duplicate original journal archive member")
+            source = Path(temporary) / f"journal-{index}"
+            size, digest = 0, hashlib.sha256()
+            with source.open("wb") as file:
+                async for chunk in objects.stream(proof.transcript_uri):
+                    size += len(chunk)
+                    expanded_size += len(chunk)
+                    if size > proof.size or expanded_size > EXPANDED_MAX_BYTES:
+                        raise ArchiveCapacityError("Original journal exceeds its archive bound")
+                    digest.update(chunk)
+                    file.write(chunk)
+            if size != proof.size or digest.hexdigest() != proof.sha256:
+                raise ValueError("Original journal archive bytes differ from the confirmed proof")
+            staged[member] = source
+            journals.append({"path": member, "agent_id": aid, **proof.model_dump(mode="json")})
+
         manifest = {
             "format": "bbx.task-archive.v1",
             "task_id": str(task_id),
@@ -355,6 +385,7 @@ async def build_archive(
                 for path, row in sorted(selected.items())
             ],
             "references": _references(data, task_id),
+            **({"board_journals": journals} if journals else {}),
         }
         task_json = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str).encode()
         manifest_json = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode()

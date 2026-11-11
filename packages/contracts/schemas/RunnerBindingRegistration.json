@@ -1,5 +1,39 @@
 {
   "$defs": {
+    "BoardRunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "run_number": {
+          "minimum": 1,
+          "title": "Run Number",
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "derive_round": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derive Round"
+        }
+      },
+      "required": [
+        "run_number",
+        "started_at"
+      ],
+      "title": "BoardRunIdentity",
+      "type": "object"
+    },
     "EffectiveRunnerModel": {
       "additionalProperties": false,
       "properties": {
@@ -8,6 +42,19 @@
           "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Revision"
         },
         "api": {
           "const": "openai-completions",
@@ -145,6 +192,17 @@
       ],
       "default": null,
       "title": "Challenge Id"
+    },
+    "board_run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BoardRunIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "model": {
       "$ref": "#/$defs/EffectiveRunnerModel"

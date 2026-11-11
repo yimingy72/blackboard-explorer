@@ -50,7 +50,6 @@ async def test_native_recovery_replaces_one_generation_after_explicit_user_inten
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver"),
             "pi_site_id": "fixture-primary",
             "pi_model_authority": "fixture-authority",
-            "pi_model_primary_site": "fixture-primary",
         }
     )
     ctf.objects = Objects()

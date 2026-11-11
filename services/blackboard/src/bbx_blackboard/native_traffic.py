@@ -25,6 +25,7 @@ from sqlalchemy import select, text, update
 
 from bbx_blackboard.native import NativeUnavailable, object_bytes
 from bbx_blackboard.native_vpn import (
+    board_direct_policy,
     default_network,
     dynamic_vpn,
     vpn_network,
@@ -249,7 +250,11 @@ class NativeTraffic:
         entry = self.binding(record, runner_binding["id"])
         allowed = False
         if entry is None:
-            active = network_scopes(record)
+            active = {
+                source: item
+                for source, item in network_scopes(record).items()
+                if _same_host(record, item)
+            }
             if len(active) >= SCOPE_LIMIT:
                 raise HTTPException(409, "Native capture scope capacity reached")
             context = record["sandbox_host"]["context"]
@@ -277,7 +282,7 @@ class NativeTraffic:
                 "namespace": f"bbx{ordinal:03x}",
                 "ipv4": str(gateway + 1),
             }
-            if dynamic_vpn(record):
+            if dynamic_vpn(record) or board_direct_policy(record):
                 vpn_solver_deadline(record)
                 if vpn_selected(record):
                     network = vpn_network(record)
@@ -361,7 +366,7 @@ class NativeTraffic:
             conn, tid, scope["binding_id"], owner, live=True, permit=True
         )
         task = await row(conn, s.tasks, tid)
-        if task["ctf_control"].get("failure_hold") or record["desired"] != "active":
+        if (task.get("ctf_control") or {}).get("failure_hold") or record["desired"] != "active":
             raise HTTPException(409, "Native network admission is held")
         return owner, binding
 
@@ -422,10 +427,11 @@ class NativeTraffic:
                 entry["scope"].get("vpn_operation_id") != vpn_state(record).get("operation_id")
             ):
                 raise HTTPException(409, "Original capture source VPN identity changed")
-            if dynamic_vpn(record):
+            if dynamic_vpn(record) or board_direct_policy(record):
                 path = vpn_network(record) if vpn_selected(record) else default_network(record)
                 if path is None or (
                     entry["scope"].get("route_policy") != path.get("route_policy")
+                    or entry["scope"].get("dns_ipv4") != path.get("dns_ipv4")
                     or entry["scope"].get(
                         "vpn_network_digest" if vpn_selected(record) else "network_digest"
                     )

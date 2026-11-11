@@ -25,6 +25,9 @@
     "action": {
       "enum": [
         "sandbox_create",
+        "board_dispatch",
+        "board_abort",
+        "board_workspace_restored",
         "observation",
         "material",
         "activate",

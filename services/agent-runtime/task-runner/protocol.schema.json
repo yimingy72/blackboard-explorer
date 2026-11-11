@@ -21,6 +21,66 @@
       "title": "AbortPayload",
       "type": "object"
     },
+    "BoardContext": {
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Version",
+          "type": "integer"
+        },
+        "content": {
+          "maxLength": 131072,
+          "title": "Content",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "content",
+        "source_digest"
+      ],
+      "title": "BoardContext",
+      "type": "object"
+    },
+    "BoardTurnTerminal": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "enum": [
+            "completed",
+            "aborted",
+            "failed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "assistant_entry_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assistant Entry Id"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "title": "BoardTurnTerminal",
+      "type": "object"
+    },
     "ClosePayload": {
       "additionalProperties": false,
       "properties": {
@@ -68,6 +128,7 @@
             "prepared",
             "accepted",
             "applied",
+            "completed",
             "aborted",
             "closed",
             "rejected"
@@ -189,11 +250,25 @@
         },
         "supported_business_contracts": {
           "items": {
-            "const": "challenge-board-v1",
+            "enum": [
+              "challenge-board-v1",
+              "exploration-board-v1"
+            ],
             "type": "string"
           },
           "title": "Supported Business Contracts",
           "type": "array"
+        },
+        "board_terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoardTurnTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "error_code": {
           "anyOf": [
@@ -731,6 +806,17 @@
           "maxLength": 131072,
           "title": "Instructions",
           "type": "string"
+        },
+        "board_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoardContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -747,7 +833,10 @@
       "additionalProperties": false,
       "properties": {
         "business_contract": {
-          "const": "challenge-board-v1",
+          "enum": [
+            "challenge-board-v1",
+            "exploration-board-v1"
+          ],
           "title": "Business Contract",
           "type": "string"
         },

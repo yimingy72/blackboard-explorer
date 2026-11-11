@@ -235,6 +235,7 @@ async def dispatch(
     admit: Callable[[], Awaitable[bool]],
     persist: Persist,
     hard_deadline: datetime | None = None,
+    read_capture: Callable[[str, int], Awaitable[dict]] | None = None,
 ) -> dict:
     """Host supplies IDs/binding; model arguments cannot select execution authority."""
     _binding(sandbox, binding)
@@ -352,6 +353,8 @@ async def dispatch(
             }
             await persist("cancel", {**result, "phase": "acknowledged"})
             return result
+        if tool == "read_file" and read_capture is not None:
+            return await read_capture(args["path"], limit)
         files = sandbox.files_with_identity(SOLVER_UID, SOLVER_GID)
         if tool == "write_file":
             await SolverFiles(files).write_file(

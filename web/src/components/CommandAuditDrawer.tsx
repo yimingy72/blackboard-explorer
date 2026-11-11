@@ -14,6 +14,8 @@ type Props = {
   onClose: () => void;
 };
 
+const roles = { lead: 'Lead', worker: 'Worker', helper: 'Helper', explore: '探索' };
+
 const statuses = {
   dispatched: { label: '已发起', color: 'default' },
   running: { label: '运行中', color: 'processing' },
@@ -75,7 +77,7 @@ function CommandAudit({ taskId, agents, challenges }: Omit<Props, 'open' | 'onCl
           {!list.isLoading && !list.error && !list.data?.items.length && <Empty description="此范围内暂无命令记录" />}
           {!list.error && <ol className={styles.entries}>{list.data?.items.map(item => <li key={item.id} data-selected={item.id === selectedId}>
             <button className={styles.entry} aria-label={`查看命令 #${item.sequence}`} aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}>
-              <span className={styles.entryHeader}><strong>#{item.sequence}</strong><Status state={item.state} /><span>{item.role === 'lead' ? 'Lead' : 'Worker'} · {agentName(item.agent_id)}</span></span>
+              <span className={styles.entryHeader}><strong>#{item.sequence}</strong><Status state={item.state} /><span>{roles[item.role]} · {agentName(item.agent_id)}</span></span>
               <code className={styles.commandPreview}>{item.command}</code>
               <time>{timestamp(item.created_at)}</time>
             </button>
@@ -98,7 +100,7 @@ function CommandAudit({ taskId, agents, challenges }: Omit<Props, 'open' | 'onCl
           <dl className={styles.metadata}>
             <dt>cwd</dt><dd><code>{command.cwd}</code></dd>
             <dt>Agent</dt><dd>{agentName(command.agent_id)}<br /><code>{command.agent_id}</code></dd>
-            <dt>角色</dt><dd>{command.role === 'lead' ? 'Lead' : command.role === 'helper' ? 'Helper' : 'Worker'}{command.parent_agent_id && <> · 父 Agent：{agentName(command.parent_agent_id)}</>}</dd>
+            <dt>角色</dt><dd>{roles[command.role]}{command.parent_agent_id && <> · 父 Agent：{agentName(command.parent_agent_id)}</>}</dd>
             <dt>题目</dt><dd>{command.challenge_id ? <>{challenges.find(item => item.id === command.challenge_id)?.title ?? '题目'}<br /><code>{command.challenge_id}</code></> : '未关联题目'}</dd>
             <dt>Assignment</dt><dd><code>{command.assignment_id || '未关联'}</code></dd>
             <dt>Generation / Epoch</dt><dd>{command.generation} / {command.epoch}</dd>

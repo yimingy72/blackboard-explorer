@@ -98,8 +98,10 @@ export class HttpPlatform {
   }
   async publishedPrompt(slot, signal) {
     const known = slot.roleInstalled ? slot.promptRevision : 0;
+    const board = slot.binding.business_contract === "exploration-board-v1"
+      ? `&known_board_version=${slot.boardVersion}` : "";
     const raw = await this.request(this.control,
-      `/bindings/${slot.binding.binding_id}/prompt?known_revision=${known}`, { method: "GET", signal, notModified: true });
+      `/bindings/${slot.binding.binding_id}/prompt?known_revision=${known}${board}`, { method: "GET", signal, notModified: true });
     if (raw === undefined) return undefined;
     const prompt = validate("PublishedPrompt", raw);
     if (prompt.binding_id !== slot.binding.binding_id || !sameValue(prompt.fence, this.config.fence)

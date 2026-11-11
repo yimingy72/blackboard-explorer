@@ -10,8 +10,13 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from anyio import BrokenWorkerProcess, CapacityLimiter
+from bbx_contracts.legacy_network import LegacyNetworkPolicy, snapshot
 from bbx_contracts.runner import runner_json_text
-from bbx_contracts.runner_bootstrap import management_document_digest, native_resume_pending
+from bbx_contracts.runner_bootstrap import (
+    board_network_policy,
+    management_document_digest,
+    native_resume_pending,
+)
 from bbx_contracts.runner_vpn import (
     NETWORK_USE_DEFAULT,
     VPN_CONFIGURE,
@@ -19,6 +24,7 @@ from bbx_contracts.runner_vpn import (
     VPN_DYNAMIC_PROFILE,
     VPN_PROFILES,
     VPN_STATUS,
+    NativeSocksEdge,
     NativeTaskNetworkStatus,
     NativeTaskRoutePolicy,
     NativeTaskVpnConfigure,
@@ -66,11 +72,17 @@ def millis():
 
 
 def vpn_enabled(record):
-    return record["request"].get("publication", {}).get("vpn_profile") in VPN_PROFILES
+    return vpn_profile(record) in VPN_PROFILES
 
 
 def dynamic_vpn(record):
-    return record["request"].get("publication", {}).get("vpn_profile") == VPN_DYNAMIC_PROFILE
+    return vpn_profile(record) == VPN_DYNAMIC_PROFILE
+
+
+def vpn_profile(record):
+    if record["data"].get("execution_contract") == "exploration-board-v1":
+        return record["data"].get("vpn_profile")
+    return record["request"].get("publication", {}).get("vpn_profile")
 
 
 def vpn_selected(record):
@@ -79,16 +91,41 @@ def vpn_selected(record):
     )
 
 
+def _board_network(record):
+    if record["data"].get("execution_contract") != "exploration-board-v1":
+        return None
+    return board_network_policy(record.get("config") or {})
+
+
+def board_direct_policy(record):
+    board = _board_network(record)
+    return board if board and board["mode"] == "default" else None
+
+
+def board_protected_policy(record):
+    board = _board_network(record)
+    return (
+        LegacyNetworkPolicy.model_validate(board["legacy_policy"])
+        if (board and board["mode"] in {"vpn", "socks5"})
+        else None
+    )
+
+
 def default_network(record):
     data = record["data"]
+    board = board_direct_policy(record)
     if (
-        dynamic_vpn(record)
+        (dynamic_vpn(record) or board)
         and data.get("native_network") == "default"
-        and data.get("network_policy", {}).get("network_digest") == data.get("network_digest")
+        and (data.get("network_policy") or {}).get("network_digest") == data.get("network_digest")
         and data.get("network_digest")
         and data.get("route_policy")
+        and (not board or data.get("dns_ipv4") == board["dns_ipv4"])
     ):
-        return {key: data[key] for key in ("network_digest", "route_policy")}
+        return {
+            **{key: data[key] for key in ("network_digest", "route_policy")},
+            **({"dns_ipv4": board["dns_ipv4"]} if board else {}),
+        }
     return None
 
 
@@ -139,7 +176,7 @@ def vpn_applied(record, mode):
 
 
 def vpn_solver_deadline(record):
-    if dynamic_vpn(record) and not vpn_selected(record):
+    if (dynamic_vpn(record) and not vpn_selected(record)) or board_direct_policy(record):
         if default_network(record) is None:
             raise HTTPException(409, "The original Task network is not ready")
         return None
@@ -206,7 +243,7 @@ async def vpn_exit_data(conn, record, proof, *, never_started=False):
 
 
 def _pause(task):
-    return task["ctf_control"].get("native_pause", {})
+    return (task.get("ctf_control") or {}).get("native_pause", {})
 
 
 def require_vpn_resume(record, pause_id):
@@ -291,6 +328,39 @@ class NativeVpn:
         await self.bootstrap._set(conn, tid, data={**record["data"], **data, VPN_RECORD: state})
 
     def default_route_fields(self, record):
+        if board := board_direct_policy(record):
+            config, observed = record["config"], record["observation"]
+            denied = {
+                *BUILTIN_DENY,
+                *board["deny_cidrs"],
+                config["sandbox_network"]["ipv4"] + "/32",
+                observed["runner"]["pod_ip"] + "/32",
+                observed["sandbox"]["pod_ip"] + "/32",
+                *(
+                    cidr
+                    for entry in config.get("runner_control_egress", ())
+                    for cidr in entry["cidrs"]
+                    if ipaddress.ip_network(cidr).version == 4
+                ),
+            }
+            policy = NativeTaskRoutePolicy(
+                allow_cidrs=board["allow_cidrs"],
+                deny_cidrs=[str(cidr) for cidr in sorted(map(ipaddress.IPv4Network, denied))],
+            ).model_dump(mode="json")
+            dns = checked_address(board["dns_ipv4"], policy["allow_cidrs"], policy["deny_cidrs"])
+            fields = {"route_policy": policy, "dns_ipv4": dns}
+            return {
+                **fields,
+                "network_digest": management_document_digest(
+                    {
+                        "board_network": board,
+                        "operation_id": record["operation_id"],
+                        "resource_generation": record["data"].get("resource_generation", 1),
+                        "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
+                        **fields,
+                    }
+                ),
+            }
         profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
         policy = _route_policy(record, profile, profile.default_cidrs).model_dump(mode="json")
         scope = self._scope(record).model_dump(mode="json")
@@ -300,7 +370,10 @@ class NativeVpn:
         }
 
     async def default_ready(self, conn, tid, record, proof):
-        if not dynamic_vpn(record) or record["data"].get("native_network") != "default":
+        if (
+            not (dynamic_vpn(record) or board_direct_policy(record))
+            or record["data"].get("native_network") != "default"
+        ):
             raise HTTPException(409, "The original Task did not select the default network")
         expected = self.default_route_fields(record)
         try:
@@ -332,20 +405,86 @@ class NativeVpn:
             key = self.gateway.cipher.decrypt(existing["key_ciphertext"].encode()).decode()
         else:
             key = secrets.token_urlsafe(48)
-            await self._write(
-                conn,
-                tid,
-                record,
-                {
-                    **state,
-                    "material": {
-                        "scope": scope,
-                        "key_hash": _fingerprint(key),
-                        "key_ciphertext": self.gateway.cipher.encrypt(key.encode()).decode(),
-                    },
+            state = {
+                **state,
+                "material": {
+                    "scope": scope,
+                    "key_hash": _fingerprint(key),
+                    "key_ciphertext": self.gateway.cipher.encrypt(key.encode()).decode(),
                 },
-            )
+            }
+            if (board := board_protected_policy(record)) is not None:
+                state = await self._prepare_board_edge(conn, tid, record, board, state)
+            await self._write(conn, tid, record, state)
         return {"scope": scope, "report_key": key}
+
+    @staticmethod
+    def _board_edge_network(record, board):
+        assert board.gateway is not None
+        gateway = board.gateway
+        profile = NativeTaskVpnProfile.model_validate(record["config"]["vpn"])
+        peer = gateway.upstream.model_dump(mode="json", exclude_none=True)
+        checked_address(peer["ipv4"], profile.peer_cidrs, _dynamic_denied(record, profile))
+        routes = _route_policy(
+            record,
+            profile,
+            gateway.allow_cidrs,
+            [*gateway.deny_cidrs, peer["ipv4"] + "/32"],
+        ).model_dump(mode="json")
+        preflight = {"ipv4": gateway.probe.ipv4, "port": gateway.probe.port}
+        checked_address(preflight["ipv4"], routes["allow_cidrs"], routes["deny_cidrs"])
+        safe = {"peer": peer, "route_policy": routes, "preflight": preflight}
+        return {
+            **safe,
+            "network_digest": management_document_digest(
+                {
+                    **safe,
+                    "policy_digest": snapshot(board).policy_digest,
+                    "scope": record["operation_id"],
+                    "resource_generation": record["data"].get("resource_generation", 1),
+                }
+            ),
+        }
+
+    async def _prepare_board_edge(self, conn, tid, record, board, state):
+        owner = await self.control._current_owner(conn, tid)
+        if (
+            state.get("state", "idle") != "idle"
+            or owner["pod_uid"] != state["material"]["scope"]["runner_pod_uid"]
+            or not vpn_selected(record)
+        ):
+            raise HTTPException(409, "Original Blackboard protected network cannot reopen")
+        await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": VPN_SLOT_LOCK})
+        occupied = (
+            await conn.execute(
+                select(s.task_runner_resources.c.task_id)
+                .where(
+                    s.task_runner_resources.c.task_id != tid,
+                    s.task_runner_resources.c.data[VPN_RECORD]["credential_reserved"].astext
+                    == "true",
+                )
+                .limit(1)
+            )
+        ).first()
+        if occupied:
+            raise HTTPException(409, "The published VPN slot is still occupied")
+        try:
+            network = self._board_edge_network(record, board)
+        except ValueError as error:
+            raise HTTPException(409, "Original Blackboard protected policy is invalid") from error
+        return {
+            **state,
+            "state": "awaiting_policy",
+            "credential_reserved": True,
+            "operation_id": str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"bbx-task-vpn:{record['operation_id']}:{state['material']['scope']['resource_generation']}",
+                )
+            ),
+            "owner_epoch": owner["epoch"],
+            "network": network,
+        }
 
     @staticmethod
     def _status(record, state):
@@ -412,6 +551,7 @@ class NativeVpn:
         if (
             not record
             or not vpn_enabled(record)
+            or record["data"].get("execution_contract") == "exploration-board-v1"
             or (
                 binding["binding"].get("agent_id") != "lead"
                 or binding["business"].get("native_child_id")
@@ -830,6 +970,7 @@ class NativeVpn:
             }:
                 phase = "disconnecting"
             peer = state.get("egress_link" if host else "sandbox_link")
+            board = board_protected_policy(record) if host else None
             return {
                 "state": phase,
                 "scope": state["material"]["scope"],
@@ -838,6 +979,11 @@ class NativeVpn:
                 "can_probe": phase == "starting" and vpn_applied(record, "probe") is not None,
                 "tunnel": state.get("tunnel"),
                 **({"network": state["network"]} if state.get("network") else {}),
+                **(
+                    {"legacy_probe": board.gateway.probe.model_dump(mode="json")}
+                    if board and board.gateway
+                    else {}
+                ),
                 **({"native_network": "vpn"} if host and dynamic_vpn(record) else {}),
                 **({"pause_id": pause_id} if pause_id else {}),
                 **({"resume_pause_id": resume_pause_id} if resume_pause_id else {}),
@@ -855,15 +1001,19 @@ class NativeVpn:
                 network = vpn_network(record)
                 if not state.get("policy") or not network:
                     raise HTTPException(409, "Original VPN policy is not confirmed")
-                digest, material = await self._asset(conn, tid, state["operation_id"])
-                safe = {key: value for key, value in network.items() if key != "network_digest"}
-                if (
-                    hashlib.sha256(material).hexdigest() != digest
-                    or management_document_digest({**safe, "material_sha256": digest})
-                    != body.network_digest
-                ):
-                    raise HTTPException(409, "Original VPN material changed")
-                result["material"] = json.loads(material)
+                if board := board_protected_policy(record):
+                    if network != self._board_edge_network(record, board):
+                        raise HTTPException(409, "Original Blackboard protected policy changed")
+                else:
+                    digest, material = await self._asset(conn, tid, state["operation_id"])
+                    safe = {key: value for key, value in network.items() if key != "network_digest"}
+                    if (
+                        hashlib.sha256(material).hexdigest() != digest
+                        or management_document_digest({**safe, "material_sha256": digest})
+                        != body.network_digest
+                    ):
+                        raise HTTPException(409, "Original VPN material changed")
+                    result["material"] = json.loads(material)
             await self._write(conn, tid, record, {**state, "state": "starting"})
             return result
 
@@ -915,7 +1065,7 @@ class NativeVpn:
                     tunnel = body.tunnel.model_dump(mode="json")
                     if (
                         state.get("egress_link") != tunnel["link"]
-                        or not self._valid_tunnel_address(record, body.tunnel.tun_ipv4)
+                        or not self._valid_edge(record, body.tunnel)
                         or state.get("tunnel") not in (None, tunnel)
                     ):
                         state = {**state, "state": "unknown", "applied": {}}
@@ -945,6 +1095,15 @@ class NativeVpn:
                             state["applied"] = {**issued, "applied_until_ms": applied_until}
             await self._write(conn, tid, record, state)
             return {"state": state["state"]}
+
+    @staticmethod
+    def _valid_edge(record, edge):
+        board = board_protected_policy(record)
+        if isinstance(edge, NativeSocksEdge):
+            return board is not None and board.mode == "socks5"
+        if board and board.mode == "socks5":
+            return False
+        return NativeVpn._valid_tunnel_address(record, edge.tun_ipv4)
 
     @staticmethod
     def _valid_tunnel_address(record, value):

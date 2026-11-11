@@ -65,7 +65,10 @@
       "additionalProperties": false,
       "properties": {
         "business_contract": {
-          "const": "challenge-board-v1",
+          "enum": [
+            "challenge-board-v1",
+            "exploration-board-v1"
+          ],
           "title": "Business Contract",
           "type": "string"
         },

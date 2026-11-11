@@ -14,10 +14,14 @@ from fastapi import HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
+from bbx_blackboard.board_runner_tools import invoke as invoke_board_tool
+from bbx_blackboard.board_runner_tools import schemas as board_schemas
 from bbx_blackboard.business_tools import MUTATIONS, BusinessTools, schemas
-from bbx_blackboard.gateway_auth import require_gateway_identity
+from bbx_blackboard.domain import RuleViolation
+from bbx_blackboard.gateway_auth import EXPLORATION_ROLES, require_gateway_identity
 from bbx_blackboard.mcp_catalog import invoke_native_tool
 
 request_scope = ContextVar("bbx_business_mcp_scope")
@@ -34,7 +38,11 @@ class BusinessMCP:
             tid, identity, _, dynamic = request_scope.get()
             gateway = self.application.state.runner_gateway
             allowed = await gateway.catalog(tid, identity)
-            catalog = schemas(dynamic_vpn=dynamic)
+            catalog = (
+                board_schemas()
+                if identity.role in EXPLORATION_ROLES
+                else schemas(dynamic_vpn=dynamic)
+            )
             builtins = [
                 types.Tool(
                     name=name,
@@ -123,24 +131,45 @@ class BusinessMCP:
             if name in MUTATIONS:
                 args["request_id"] = data["mutation_request_id"]
             try:
-                result = await BusinessTools(
-                    self.application.state.ctf_service,
-                    self.application.state.settings.agent_token_secret.get_secret_value(),
-                ).invoke(tid, principal, name, args)
+                if principal.mode == "blackboard":
+                    result = await invoke_board_tool(
+                        self.application, tid, principal, name, original
+                    )
+                else:
+                    result = await BusinessTools(
+                        self.application.state.ctf_service,
+                        self.application.state.settings.agent_token_secret.get_secret_value(),
+                    ).invoke(tid, principal, name, args)
                 value = jsonable_encoder(result, custom_encoder={Decimal: str})
                 payload = {
                     "content": [{"type": "text", "text": runner_json_text(value)}],
-                    "structuredContent": {"result": value},
+                    "structuredContent": {
+                        "result": value,
+                        **(
+                            {"bbx_board_stop": True}
+                            if principal.mode == "blackboard" and name == "submit_close"
+                            else {}
+                        ),
+                    },
                     "isError": False,
                 }
-            except HTTPException as error:
+            except (HTTPException, RuleViolation, ValidationError) as error:
+                if principal.mode != "blackboard" and not isinstance(error, HTTPException):
+                    await asyncio.shield(
+                        gateway.unknown_business_result(tid, invocation.invocation_id)
+                    )
+                    raise
+                status = error.status_code if isinstance(error, HTTPException) else 422
+                detail = (
+                    error.detail
+                    if isinstance(error, HTTPException)
+                    else "Blackboard tool input rejected"
+                )
                 payload = {
                     "content": [
                         {
                             "type": "text",
-                            "text": runner_json_text(
-                                {"status": error.status_code, "detail": error.detail}
-                            ),
+                            "text": runner_json_text({"status": status, "detail": detail}),
                         }
                     ],
                     "isError": True,
@@ -180,7 +209,7 @@ class BusinessMCP:
                     binding["sdk_session_id"] is not None and sdk != binding["sdk_session_id"]
                 ):
                     raise HTTPException(403, "MCP SDK identity changed")
-            dynamic = task["ctf_control"].get("vpn_profile") == VPN_DYNAMIC_PROFILE
+            dynamic = (task.get("ctf_control") or {}).get("vpn_profile") == VPN_DYNAMIC_PROFILE
             token = request_scope.set((tid, identity, sdk, dynamic))
             try:
                 await self.manager.handle_request(scope, receive, send)

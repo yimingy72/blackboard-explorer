@@ -21,6 +21,7 @@ from bbx_contracts.runner import (
     runner_payload_digest,
 )
 from bbx_contracts.runner_bootstrap import native_resume_pending
+from bbx_contracts.runner_control import BoardRunIdentity
 from bbx_contracts.runner_vpn import NETWORK_USE_DEFAULT, VPN_TOOLS
 from bbx_contracts.sandbox_tools import HELPER_SANDBOX_TOOLS, SANDBOX_CONTROLS, SANDBOX_TOOLS
 from cryptography.fernet import Fernet
@@ -29,7 +30,9 @@ from pydantic import ValidationError
 from sqlalchemy import func, insert, select, update
 
 from bbx_blackboard.auth import Principal
+from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, require_board_run
 from bbx_blackboard.ctf import CtfService
+from bbx_blackboard.domain import RuleViolation, decide
 from bbx_blackboard.gateway_auth import (
     DIRECT_MCP,
     RuntimeBusinessContext,
@@ -114,7 +117,7 @@ class RunnerGateway:
         task = await self.control._task(conn, tid, live=True)
         if not metadata and native_resume_pending(task):
             raise HTTPException(409, "Replacement Runner session is not ready")
-        if task["ctf_control"].get("failure_hold"):
+        if (task.get("ctf_control") or {}).get("failure_hold"):
             raise HTTPException(409, "Task admission is paused")
         if not metadata and (
             (binding["business"].get("native_child_id") and binding["status"] != "prepared")
@@ -143,7 +146,15 @@ class RunnerGateway:
             targets = spec.get("mcp_target_credential_refs")
             if not targets:
                 raise HTTPException(409, "Direct MCP binding is missing its target identities")
-            member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                proof = BoardRunIdentity.model_validate(binding["business"]["board_run"])
+                _, member = await require_board_run(
+                    conn, tid, binding["binding"]["agent_id"], proof, action="active_binding"
+                )
+                role = member["task_type"]
+            else:
+                member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+                role = member["role"]
             config = await conn.scalar(
                 select(s.task_runner_resources.c.config).where(
                     s.task_runner_resources.c.task_id == tid
@@ -152,9 +163,7 @@ class RunnerGateway:
             if not config or config.get("mcp_transport") != "direct-v2":
                 raise HTTPException(409, "Direct MCP deployment is not frozen")
             return {
-                **issue_gateway_credentials(
-                    self.settings, owner, bid, member["role"], targets=targets
-                ),
+                **issue_gateway_credentials(self.settings, owner, bid, role, targets=targets),
                 "mcp_targets": {
                     "business": config["runner_blackboard_url"].rstrip("/")
                     + f"/api/tasks/{tid}/business-mcp-v2/",
@@ -186,7 +195,17 @@ class RunnerGateway:
         )
 
     async def _external_tools(self, conn, tid, identity, binding) -> dict:
-        if identity.audience != "business-mcp" or identity.role not in {"lead", "teammate"}:
+        if identity.audience != "business-mcp":
+            return {}
+        ordinary = binding["binding"]["business_contract"] == EXPLORATION_CONTRACT
+        if ordinary:
+            if identity.role != "explore":
+                return {}
+            task = await row(conn, s.tasks, tid)
+            agent = await row(conn, s.agent_runs, tid, binding["binding"]["agent_id"])
+            if task["status"] != "running" or agent["status"] != "running":
+                return {}
+        elif identity.role not in {"lead", "teammate"}:
             return {}
         frozen = await conn.scalar(
             select(s.task_runner_resources.c.data["native_mcp"][identity.role]).where(
@@ -206,6 +225,13 @@ class RunnerGateway:
     async def catalog(self, tid, identity):
         async with self.repo.engine.connect() as conn:
             task, _, binding = await self._scope(conn, tid, identity, metadata=True)
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                spec = json.loads(binding["payload_json"])["spec"]
+                return sorted(
+                    name
+                    for name, route in spec["mcp_tool_routes"].items()
+                    if DIRECT_MCP[route["target"]][0] == identity.audience
+                )
             member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
             roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
             allowed = (
@@ -323,19 +349,39 @@ class RunnerGateway:
                         "result_digest": None,
                     }
                 return self._permit(call)
-            member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
             task = await self.control._task(conn, tid, live=True)
-            roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
             spec = json.loads(binding["payload_json"])["spec"]
             child = bool(binding["business"].get("native_child_id"))
-            external = (await self._external_tools(conn, tid, identity, binding)).get(
-                invocation.tool_name
-            )
-            role_tools = (
-                set(HELPER_SANDBOX_TOOLS)
-                if child
-                else {*roles.get(member["role"], []), *SANDBOX_TOOLS}
-            )
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                role = identity.role
+                external = (await self._external_tools(conn, tid, identity, binding)).get(
+                    invocation.tool_name
+                )
+                role_tools = {
+                    name
+                    for name, route in spec["mcp_tool_routes"].items()
+                    if DIRECT_MCP[route["target"]][0] == identity.audience
+                    and not name.startswith("mcp_")
+                }
+                if task["status"] == "closing" and role != "close":
+                    role_tools &= {
+                        "post_fact",
+                        "post_intent",
+                        "release",
+                        "get",
+                        "search",
+                        "read_evidence",
+                    }
+            else:
+                member = await row(conn, s.ctf_members, tid, binding["binding"]["agent_id"])
+                role = member["role"]
+                roles = task["ctf_control"].get("business_tools", {}).get("roles", {})
+                external = (await self._external_tools(conn, tid, identity, binding)).get(
+                    invocation.tool_name
+                )
+                role_tools = (
+                    set(HELPER_SANDBOX_TOOLS) if child else {*roles.get(role, []), *SANDBOX_TOOLS}
+                )
             if invocation.tool_name not in spec["allowed_tools"] or (
                 invocation.tool_name not in role_tools and external is None
             ):
@@ -348,7 +394,7 @@ class RunnerGateway:
                 raise HTTPException(422, "Platform mutation identity is supplied by the host")
             if (
                 external is None
-                and member["role"] == "teammate"
+                and role == "teammate"
                 and invocation.tool_name
                 not in {*SANDBOX_TOOLS, "board_announcements", "board_challenges"}
                 and str(original_args.get("challenge_id")) != binding["business"]["challenge_id"]
@@ -357,7 +403,7 @@ class RunnerGateway:
             if invocation.tool_name in SANDBOX_TOOLS:
                 self.sandbox.validate_arguments(invocation.tool_name, original_args)
                 if (
-                    child
+                    (child or binding["binding"]["business_contract"] == EXPLORATION_CONTRACT)
                     and invocation.tool_name == "exec_command"
                     and original_args.get("background")
                 ):
@@ -471,6 +517,17 @@ class RunnerGateway:
                 raise HTTPException(409, "Tool outcome is unknown; redispatch is forbidden")
             if data["authorized_wait_until_ms"] <= int(datetime.now(UTC).timestamp() * 1000):
                 raise HTTPException(409, "Tool permit expired")
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                aid = binding["binding"]["agent_id"]
+                agent = await row(conn, s.agent_runs, tid, aid)
+                if agent["status"] == "concluding":
+                    state = await self.repo.load_agent(conn, tid, aid)
+                    try:
+                        grace = decide(state, "take_grace", aid, {"agent_id": aid})
+                    except RuleViolation as error:
+                        raise HTTPException(409, str(error)) from error
+                    written = await self.repo.append(conn, tid, grace)
+                    await self.repo.notify(tid, written[-1]["version"], connection=conn)
             # Enqueue VPN management and complete the original MCP call in one Task transaction.
             if name in VPN_TOOLS or name == NETWORK_USE_DEFAULT:
                 if target != "business" or self.vpn is None:
@@ -492,20 +549,53 @@ class RunnerGateway:
                 .values(state="dispatched")
             )
             if target == "sandbox":
-                return await self.sandbox.dispatch_claim(
-                    conn, tid, call, owner, binding, original
-                ), None
-            context = RuntimeBusinessContext(identity, invocation.sdk_session_id, data["journal"])
-            principal = Principal(
-                "agent",
-                binding["binding"]["agent_id"],
-                task_id=tid,
-                agent_id=binding["binding"]["agent_id"],
-                mode="ctf",
-                generation=binding["business"]["generation"],
-                turn_id=UUID(binding["business"]["turn_id"]),
-                runtime_context=context,
+                try:
+                    dispatched = await self.sandbox.dispatch_claim(
+                        conn, tid, call, owner, binding, original
+                    )
+                except HTTPException as error:
+                    if binding["binding"]["business_contract"] != EXPLORATION_CONTRACT:
+                        raise
+                    result = {
+                        "isError": True,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": runner_json_text(
+                                    {"status": error.status_code, "detail": error.detail}
+                                ),
+                            }
+                        ],
+                    }
+                    await self._save_tool_result(conn, tid, call, result)
+                    return None, self._permit(await self._call(conn, tid, call["id"]))
+                return dispatched, None
+            context = RuntimeBusinessContext(
+                identity, invocation.sdk_session_id, data["journal"], invocation.invocation_id
             )
+            aid = binding["binding"]["agent_id"]
+            if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                proof = BoardRunIdentity.model_validate(binding["business"]["board_run"])
+                principal = Principal(
+                    "agent",
+                    aid,
+                    task_id=tid,
+                    agent_id=aid,
+                    mode="blackboard",
+                    derive_round=proof.derive_round,
+                    runtime_context=context,
+                )
+            else:
+                principal = Principal(
+                    "agent",
+                    binding["binding"]["agent_id"],
+                    task_id=tid,
+                    agent_id=binding["binding"]["agent_id"],
+                    mode="ctf",
+                    generation=binding["business"]["generation"],
+                    turn_id=UUID(binding["business"]["turn_id"]),
+                    runtime_context=context,
+                )
             if external is not None:
                 data = {**data, "external_grant": external}
             return (principal, data, original), None

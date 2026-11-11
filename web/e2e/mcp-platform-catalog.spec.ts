@@ -94,6 +94,7 @@ test('原生新任务明确冻结 Lead 和 Worker 各自授权的外部工具', 
   await page.route('**/api/platform/pi-models', route => route.fulfill({
     json: { enabled: true, can_manage: true, models: [{
       id: 'fixture-model', model_revision: 1, label: '合成模型', enabled: true, has_secret: true, tool_call: true,
+      context_window: 8192, max_output_tokens: 1024, input_modalities: ['text'],
       usd_rates: { input: '1', output: '2', cache_read: '1', cache_write: '1' },
     }] },
   }));

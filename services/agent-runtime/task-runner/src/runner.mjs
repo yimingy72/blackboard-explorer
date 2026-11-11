@@ -1,4 +1,4 @@
-import { PROTOCOL, SUPPORTED_BUSINESS_CONTRACTS, decodeCommand, sameFence, sameValue, validate } from "./protocol.mjs";
+import { PROTOCOL, decodeCommand, sameFence, sameValue, validate } from "./protocol.mjs";
 import { RunnerSession } from "./session.mjs";
 import { ForegroundHelpers } from "./helper-host.mjs";
 
@@ -28,7 +28,11 @@ export class TaskRunner {
   }
   enqueue(receipt) {
     validate("CommandReceipt", receipt);
-    if (receipt.status === "accepted" && this.operations.get(receipt.request_id)?.receipt?.status === "applied") return;
+    const previous = this.operations.get(receipt.request_id)?.receipt;
+    if (previous?.status === "completed" && receipt.status !== "completed") return;
+    if (previous?.status === "rejected" && previous.input_id && previous.error_code === "boundary_frozen"
+        && ["applied", "accepted"].includes(receipt.status)) return;
+    if (receipt.status === "accepted" && previous?.status === "applied") return;
     this.pendingReceipts.set(receipt.request_id, receipt);
     const operation = this.operations.get(receipt.request_id);
     if (operation) operation.receipt = receipt;
@@ -38,11 +42,20 @@ export class TaskRunner {
       if (applied.seq > cursor.seq) continue;
       for (const intent of slot.journal.commands.values()) if (intent.kind === "input" && intent.input_id === applied.input_id) {
         const known = this.operations.get(intent.request_id);
-        if (known?.receipt?.status === "applied") continue;
+        const terminal = slot.journal.boardTerminals.get(applied.input_id);
+        const complete = terminal && terminal.seq <= cursor.seq && slot.session.isIdle;
+        const blocked = slot.blockedBoardInputs?.has(applied.input_id);
+        if (known?.receipt?.status === "completed" || (blocked && known?.receipt?.status === "rejected")
+            || (!complete && !blocked && known?.receipt?.status === "applied")) continue;
         if (!known) this.operations.set(intent.request_id, { digest: intent.payload_digest });
         this.enqueue({ protocol: PROTOCOL, request_id: intent.request_id, payload_digest: intent.payload_digest,
-          fence: this.config.fence, status: "applied", binding_id: slot.binding.binding_id,
-          sdk_session_id: slot.session.sessionId, input_id: applied.input_id, cursor });
+          fence: this.config.fence, status: complete ? "completed" : blocked ? "rejected" : "applied", binding_id: slot.binding.binding_id,
+          sdk_session_id: slot.session.sessionId, input_id: applied.input_id, cursor,
+          ...(complete && { board_terminal: terminal.proof, sdk_idle: true, journal_confirmed: true }),
+          ...(blocked && { error_code: "boundary_frozen" }) });
+        if (slot.blockedBoardInputs && (complete || !slot.journal.boardRunInputs.has(applied.input_id))) {
+          slot.pendingInputs.delete(applied.input_id);
+        }
       }
     }
   }
@@ -126,7 +139,7 @@ export class TaskRunner {
       const cursor = await slot.confirm();
       slot.assertActive();
       this.enqueue(this.receipt(command, "prepared", { binding_id: id, sdk_session_id: slot.session.sessionId, cursor,
-        journal_confirmed: true, sdk_idle: !slot.session.isStreaming, supported_business_contracts: [...SUPPORTED_BUSINESS_CONTRACTS] }));
+        journal_confirmed: true, sdk_idle: !slot.session.isStreaming, supported_business_contracts: [slot.binding.business_contract] }));
       return;
     }
     if (payload.kind === "shutdown") {

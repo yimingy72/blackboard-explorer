@@ -54,12 +54,10 @@ class RunnerModelProxy:
         self.slots = asyncio.Semaphore(settings.runner_proxy_max_inflight)
         self.streams: set[asyncio.Task] = set()
         self.closing = False
-        endpoint = (
-            Route("/messages", self.pi_messages, methods=["POST"])
-            if isinstance(settings, NativeRunnerSettings)
-            else Route("/playground", self.playground, methods=["POST"])
-        )
-        self.app = Starlette(routes=[endpoint])
+        routes = [Route("/playground", self.playground, methods=["POST"])]
+        if isinstance(settings, NativeRunnerSettings):
+            routes.append(Route("/messages", self.pi_messages, methods=["POST"]))
+        self.app = Starlette(routes=routes)
 
     @staticmethod
     def token(request: Request) -> str:
@@ -252,7 +250,7 @@ class RunnerModelProxy:
 
 
 @asynccontextmanager
-async def model_proxy_server(settings: Settings, service: BlackboardClient):
+async def model_proxy_server(settings: Settings | NativeRunnerSettings, service: BlackboardClient):
     if settings.runner_proxy_port is None or not settings.pi_runtime_sender_token:
         yield None
         return

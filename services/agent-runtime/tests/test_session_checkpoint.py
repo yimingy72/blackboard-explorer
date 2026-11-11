@@ -2,16 +2,11 @@
 
 import asyncio
 import json
-from pathlib import Path
 from typing import cast
 
 import httpx
 import pytest
-from bbx_objects import ObjectStore
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
-from bbx_runtime.context import RunContext
-from bbx_runtime.middleware import ToolLogMiddleware
-from bbx_runtime.models import load_runtime_profile
 from bbx_runtime.pi import Agent, AgentSession, Content, Message, tool
 from bbx_runtime.session import (
     CheckpointHistoryProvider,
@@ -385,100 +380,3 @@ def test_saved_real_tool_result_is_preferred_over_interruption_marker():
     result = session.state["in_memory"]["messages"][-1].contents[0]
     assert result.result == "actual output"
     assert result.additional_properties["bbx_recovery_repair"] == "saved_tool_result"
-
-
-async def test_parallel_tools_keep_completed_real_result_when_other_tool_is_cancelled():
-    class ToolService(MemorySessionService):
-        async def record_tool_call(self, *_args):
-            return []
-
-    class Objects:
-        async def put(self, *_args, **_kwargs):
-            return None
-
-    service = ToolService()
-    checkpoint = SessionCheckpoint(cast(BlackboardClient, service), "task", "agent", AgentSession())
-    ctx = RunContext(
-        task_id="task",
-        agent_id="agent",
-        task_type="derive",
-        state={"task": {"params": {}}},
-        profile=load_runtime_profile(Path(__file__).resolve().parents[3] / "profiles/default"),
-        service=cast(BlackboardClient, service),
-        board=cast(BlackboardClient, service),
-        objects=cast(ObjectStore, Objects()),
-        checkpoint=checkpoint,
-    )
-    started = asyncio.Event()
-    never = asyncio.Event()
-
-    @tool
-    async def fast() -> str:
-        return "actual fast output"
-
-    @tool
-    async def slow() -> str:
-        started.set()
-        await never.wait()
-        return "unreachable"
-
-    client = ScriptedChatClient(
-        [ScriptStep(calls=(ScriptToolCall("fast"), ScriptToolCall("slow")))]
-    )
-    async with Agent(
-        client=client,
-        tools=[fast, slow],
-        middleware=[ToolLogMiddleware(ctx)],
-        context_providers=[CheckpointHistoryProvider(checkpoint)],
-        require_per_service_call_history_persistence=True,
-    ) as agent:
-
-        async def invoke():
-            return await agent.run("start", session=checkpoint.session)
-
-        running = asyncio.create_task(invoke())
-        await asyncio.wait_for(started.wait(), 2)
-
-        async def fast_saved() -> bool:
-            return bool(
-                service.saved
-                and "script-1-1" in service.saved["session"]["state"].get("bbx_tool_results", {})
-            )
-
-        async with asyncio.timeout(2):
-            while not await fast_saved():
-                await asyncio.sleep(0.01)
-        running.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await running
-
-    restored = await SessionCheckpoint.load(cast(BlackboardClient, service), "task", "agent")
-    assert restored is not None
-    assert len(_unpaired_calls(restored.session.state["in_memory"]["messages"])) == 2
-    assert repair_unpaired_tool_calls(restored.session, include_interrupted=False) == 1
-    assert len(_unpaired_calls(restored.session.state["in_memory"]["messages"])) == 1
-    assert repair_unpaired_tool_calls(restored.session, include_interrupted=True) == 1
-    assert _unpaired_calls(restored.session.state["in_memory"]["messages"]) == []
-    repairs = restored.session.state["bbx_recovery_repairs"]
-    assert repairs == [
-        {"call_id": "script-1-1", "kind": "saved_tool_result"},
-        {"call_id": "script-1-2", "kind": "interrupted"},
-    ]
-    await restored.save()
-    review = ScriptedChatClient([ScriptStep(text="The second result was unavailable.")])
-    async with Agent(
-        client=review,
-        context_providers=[CheckpointHistoryProvider(restored)],
-        require_per_service_call_history_persistence=True,
-    ) as agent:
-        await agent.run("What happened?", session=restored.session)
-    outgoing = review.received_messages[0]
-    assert _unpaired_calls(outgoing) == []
-    results = [
-        str(content.result)
-        for message in outgoing
-        for content in message.contents
-        if content.type == "function_result"
-    ]
-    assert any("actual fast output" in result for result in results)
-    assert any("结果未保存" in result for result in results)

@@ -11,7 +11,6 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-import httpx
 from bbx_contracts.models import ModelConfig, Price
 from bbx_contracts.pi_models import (
     ModelId,
@@ -30,8 +29,6 @@ from bbx_blackboard.store.schema import platform_configs
 
 KIND = "pi-models"
 RUNTIME_HEADER = "x-bbx-pi-runtime"
-AUTHORITY_HEADER = "x-bbx-pi-authority"
-INTERNAL = "/api/runtime/pi-model-registry"
 router = APIRouter(tags=["platform-pi-models"])
 
 
@@ -124,18 +121,13 @@ def display_pi_model(model: PiModelVersion) -> ModelConfig:
 class PiRegistry:
     def __init__(self, platform: PlatformStore, settings: Settings):
         self.platform, self.settings = platform, settings
-        self.primary = bool(
-            settings.pi_site_id and settings.pi_site_id == settings.pi_model_primary_site
-        )
         self.enabled = bool(settings.pi_site_id)
 
     def operator(self, request: Request) -> bool:
         identity = principal(request)
         return (
             self.enabled
-            and self.primary
             and bool(self.settings.pi_model_authority)
-            and not self.settings.pi_model_primary_url
             and identity.kind == "user"
             and bool(self.settings.pi_model_operator)
             and identity.name == self.settings.pi_model_operator
@@ -184,47 +176,12 @@ class PiRegistry:
             ).mappings()
             return [self.version(dict(row)) for row in rows if not row["deleted"]]
 
-    async def peer(self, path: str, *, endpoint: str = INTERNAL) -> Any:
-        try:
-            base, origin = normalized_url(self.settings.pi_model_primary_url)
-            target = urlsplit(base)
-            if base != origin or (
-                target.scheme != "https"
-                and target.hostname not in {"localhost", "127.0.0.1", "::1"}
-            ):
-                raise ValueError("Authority peer traffic requires HTTPS")
-            secret = self.settings.pi_model_authority_token.get_secret_value()
-            if len(secret) < 32 or secret == self.settings.service_token.get_secret_value():
-                raise ValueError("Missing dedicated authority identity")
-            async with httpx.AsyncClient(
-                timeout=8, trust_env=False, follow_redirects=False, verify=peer_tls(self.settings)
-            ) as http:
-                response = await http.get(
-                    base + endpoint + path,
-                    headers={
-                        AUTHORITY_HEADER: secret,
-                        "x-bbx-model-authority": self.settings.pi_model_authority,
-                    },
-                )
-            if response.status_code == 404:
-                raise HTTPException(404, "原模型版本不可用")
-            response.raise_for_status()
-            return response.json()
-        except (ValueError, OSError, httpx.HTTPError) as error:
-            raise HTTPException(503, "主站模型目录暂不可用") from error
-
     async def list(self) -> list[PiModelVersion]:
         if not self.enabled:
             return []
-        if (
-            not self.settings.pi_model_primary_site
-            or not self.settings.pi_model_authority
-            or self.primary == bool(self.settings.pi_model_primary_url)
-        ):
-            raise HTTPException(503, "主站模型目录权威未配置")
-        if self.primary:
-            return await self.local_list()
-        return [PiModelVersion.model_validate(x) for x in await self.peer("")]
+        if not self.settings.pi_model_authority:
+            raise HTTPException(503, "平台模型目录权威未配置")
+        return await self.local_list()
 
     async def selected(self, ref: PiModelRef) -> PiModelVersion:
         chosen = next((model for model in await self.list() if model.id == ref.model_id), None)
@@ -243,16 +200,8 @@ class PiRegistry:
     async def frozen(self, ref: PiModelRef) -> tuple[PiModelVersion, str]:
         if not self.enabled or not self.settings.pi_model_authority:
             raise HTTPException(503, "Pi 模型配置未启用")
-        if not self.primary:
-            data = await self.peer(f"/{ref.model_id}/{ref.model_revision}/material")
-            selected = PiModelVersion.model_validate(data["model"])
-            key = data["api_key"]
-        else:
-            # The existing versioned vault stores the encrypted material only on primary.
-            selected = self.version(await self.platform.get(KIND, ref.model_id, ref.model_revision))
-            key = (await self.platform.credentials(KIND, ref.model_id, ref.model_revision))[
-                "secret"
-            ]
+        selected = self.version(await self.platform.get(KIND, ref.model_id, ref.model_revision))
+        key = (await self.platform.credentials(KIND, ref.model_id, ref.model_revision))["secret"]
         if (
             selected.id != ref.model_id
             or selected.model_revision != ref.model_revision
@@ -389,31 +338,3 @@ async def save_model(request: Request, name: ModelId, body: PiModelInput) -> PiM
     if body.expected_revision is None:
         raise HTTPException(422, "必须提交原模型版本")
     return await r.save(name, body, principal(request).name)
-
-
-def authority(request: Request, response: Response) -> PiRegistry:
-    r = registry(request)
-    trusted_header(
-        request, AUTHORITY_HEADER, r.settings.pi_model_authority_token.get_secret_value()
-    )
-    if (
-        not r.primary
-        or not r.enabled
-        or request.headers.get("x-bbx-model-authority") != r.settings.pi_model_authority
-    ):
-        raise HTTPException(403, "Model authority does not match")
-    response.headers["Cache-Control"] = "no-store"
-    return r
-
-
-@router.get(INTERNAL, include_in_schema=False)
-async def internal_registry(request: Request, response: Response):
-    return await authority(request, response).local_list()
-
-
-@router.get(INTERNAL + "/{name}/{version}/material", include_in_schema=False)
-async def internal_material(request: Request, response: Response, name: ModelId, version: int):
-    model, key = await authority(request, response).frozen(
-        PiModelRef(model_id=name, model_revision=version)
-    )
-    return {"model": model, "api_key": key}

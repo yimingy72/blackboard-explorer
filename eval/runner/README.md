@@ -6,33 +6,9 @@ M5 比较同一目标上的 `default` 与 `single`。两份 Profile 只有 `deri
 
 这里的已知问题匹配与P/D评分是mini-shop-review的专用评测适配，不是通用求解引擎的验收规则。其他领域任务按自身验收条件和参考产物验证，可用`make e2e E2E_ARGS='--task <任务名>'`进行闭环检查。
 
-## 准备与运行
+## 读取历史评估
 
-普通测试 `make check` 使用 HTTP 替身，不读 `.env`、不访问真实模型。以下 `eval-run` 是显式付费操作：默认两组各 5 次，每次任务预算最多 10 个配置币种单位、60 分钟。当前默认价格币种为 USD，实际费用按服务商计费。
-
-```sh
-uv sync --locked
-pnpm --dir web install --frozen-lockfile --store-dir /private/tmp/bbx-pnpm-store
-make image-blackboard image-agent-runtime image-eval-env
-make eval-run EVAL_OUT=eval/results/experiment-01 EVAL_N=5
-make eval-score EVAL_OUT=eval/results/experiment-01
-```
-
-构建代理参数沿用 envd README。`bbx-eval-env:latest` 基于已有执行环境，仅预装 mini-shop 依赖；两组使用同一镜像。评估的目标部署需要已发布的 AgentGateway 模型及可信汇率。用 `EVAL_GATEWAY_MODEL_ALIAS`、`EVAL_GATEWAY_MODEL_REVISION` 指定同一个活动模型引用；模型费用由目标网关记录。可信进程配置从环境传入。已在本地 `.env` 配置时，可以显式传 `EVAL_ENV_FILE=/Users/yym/blackboard-explorer/.env`，由 uv 子进程加载；不要将密钥贴入命令或报告。`eval-run` 使用独立 Compose 项目、随机 localhost 端口、隔离卷，结束或失败时停止运行器并清理本次执行容器、服务及卷。
-
-不传 `EVAL_OUT` 时，两条 Make 命令都使用 `eval/results/latest`；目录已经存在会拒绝覆盖，下一批请换名称。`eval/results/` 已忽略。不会自动推送结果。
-
-连接已有黑板时可运行一组：
-
-```sh
-# SERVICE_TOKEN 必须来自已有服务对应的进程环境。
-uv run --no-sync python -m eval.runner.run \
-  --task mini-shop-review --profile default --n 5 \
-  --base-url http://127.0.0.1:58000 --exec-image bbx-eval-env:latest \
-  --out eval/results/experiment-02/default
-```
-
-`--profile single` 创建单 Agent 组；`--timeout` 控制每次运行等待上限，超时会请求停止并留出交接/归档时间。失败、超时、导出不全均不会返回成功。已有服务必须提供 eval-targets，并允许执行环境访问它；建议优先使用隔离入口。
+旧 `eval-run` 和独立评估命令依赖已退役的 Docker 求解器，当前版本不再启动它们。新任务从已发布的共同平台创建；已有评估资料仍可用 `make eval-score` 评分。普通测试使用替身，不访问真实模型。
 
 ## 结果文件
 

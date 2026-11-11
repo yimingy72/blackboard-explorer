@@ -29,7 +29,6 @@ async def test_explicit_delete_retirement_manifest_and_purge(ctf, ctf_url):
     options = settings().model_copy(
         update={
             "pi_site_id": "fixture-primary",
-            "pi_model_primary_site": "fixture-primary",
             "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("fixture-resolver"),
         }

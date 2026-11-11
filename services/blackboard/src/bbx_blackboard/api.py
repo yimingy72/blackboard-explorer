@@ -44,7 +44,13 @@ from bbx_contracts.models import (
 )
 from bbx_contracts.pi_models import PiModelRef, PiModelVersion, PiReviewSelection
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
-from bbx_contracts.runner_bootstrap import NativeRunnerLaunch, TaskCreationCapabilities
+from bbx_contracts.runner_bootstrap import (
+    BlackboardCreationCapability,
+    BoardArchiveProof,
+    NativeRunnerLaunch,
+    TaskCreationCapabilities,
+)
+from bbx_contracts.runner_control import BoardJournalProjection, BoardTraceProof
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.runner_vpn import NativeTaskNetworkStatus
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -71,6 +77,8 @@ from bbx_blackboard.auth import (
     require_user_or_service,
 )
 from bbx_blackboard.billing import router as billing_router
+from bbx_blackboard.board_runner_publication import load_board_publication
+from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, board_runner_frozen
 from bbx_blackboard.business_mcp import BusinessMCP
 from bbx_blackboard.challenge_board_api import router as challenge_board_router
 from bbx_blackboard.conversations import Conversations
@@ -89,14 +97,7 @@ from bbx_blackboard.historical_fees import router as historical_fees_router
 from bbx_blackboard.input_groups import InputGroups, download_headers, owner_key, request_hash
 from bbx_blackboard.input_groups import router as inputs_router
 from bbx_blackboard.legacy_network import (
-    deployment_snapshot,
-    protected_task,
     public_network,
-    require_runtime_version,
-    runtime_compatible,
-)
-from bbx_blackboard.legacy_network import (
-    router as legacy_network_router,
 )
 from bbx_blackboard.legacy_network import (
     run_receipt as legacy_run_receipt,
@@ -156,6 +157,7 @@ class LoginBody(BaseModel):
 
 
 class TaskCreateBody(TaskSpec):
+    mode: Literal["blackboard"] = Field(default="blackboard", exclude=True)
     pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
@@ -276,6 +278,7 @@ class ArchiveBody(BaseModel):
     uri: str = Field(min_length=1)
     size: int = Field(ge=0)
     fallback: Literal["none", "agents-only"]
+    runner_archive: BoardArchiveProof | None = None
 
 
 class AgentRegisterBody(BaseModel):
@@ -354,6 +357,7 @@ class GraceBody(BaseModel):
 class FinishBody(BaseModel):
     receipt: dict[str, Any]
     end_reason: str = Field(min_length=1)
+    terminal_request_id: UUID | None = None
     expected_derive_round: int | None = Field(default=None, ge=1)
     expected_started_at: AwareDatetime | None = None
     expected_run_number: int | None = Field(default=None, ge=1)
@@ -384,6 +388,7 @@ class ToolCallBody(BaseModel):
 
 
 class AgentTraceBody(BaseModel):
+    runner_trace: BoardTraceProof | None = None
     expected_derive_round: int | None = Field(default=None, ge=1)
     kind: Literal["initial_context", "board_update", "model_output", "model_error"]
     step: int = Field(ge=0)
@@ -685,17 +690,16 @@ def create_app(
     app.include_router(inputs_router)
     app.include_router(traffic_router)
     app.include_router(native_router)
-    app.include_router(legacy_network_router)
     app.include_router(pi_playground_router)
     app.include_router(pi_ledger_router)
     app.include_router(pi_fees_router)
     app.include_router(historical_fees_router)
     app.include_router(pi_registry_router)
     app.state.settings = settings
-    app.state.legacy_network_publication = deployment_snapshot(settings)
     app.state.native_ctf_publication = PublicationState(
         exclusive=settings.native_ctf_publication_file is not None
     )
+    app.state.board_runner_publication = load_board_publication(settings)
     app.state.engine = engine
     app.state.objects = objects
     app.state.dispatcher = dispatcher
@@ -729,29 +733,17 @@ def create_app(
     app.state.workspace_cache = WorkspaceArchiveCache()
     app.state.native_cache = NativeAnalysisCache()
 
-    async def protected_snapshot(request, tid):
-        engine = request.app.state.engine
-        if engine is None:
-            return None
-        async with engine.connect() as conn:
-            return await legacy_task_snapshot(conn, tid)
-
     async def require_task_model(request, tid, task):
         async with request.app.state.engine.connect() as conn:
             frozen = await task_pi_model(conn, tid)
             if task.get("mode") == "ctf":
                 from bbx_blackboard.gateway_auth import task_direct_mcp
 
-                if not await task_direct_mcp(conn, tid):
-                    frozen = None
-        if frozen is None or frozen[0] != settings.pi_model_authority:
+                executable = await task_direct_mcp(conn, tid)
+            else:
+                executable = await board_runner_frozen(conn, tid)
+        if not executable or frozen is None or frozen[0] != settings.pi_model_authority:
             raise HTTPException(409, "旧执行无法安全迁移；原记录仍可查看和导出")
-        if task.get("mode", "blackboard") == "blackboard":
-            prior = await protected_snapshot(request, tid)
-            if prior is None:
-                raise HTTPException(409, "此历史任务没有原黑板网络配置")
-            if prior != request.app.state.legacy_network_publication:
-                raise HTTPException(409, "原黑板网络配置不可用，不能改用其他出口")
 
     async def ctf_boundary(request: Request) -> Response | None:
         # Presentation capabilities never enter a solver endpoint, including future routes.
@@ -812,19 +804,22 @@ def create_app(
                 request.state.native_worker_dispatch = mode == "ctf" and native_dispatch_enabled(
                     task
                 )
-                request.state.business_contract = business_contract(task)
+                contract = business_contract(task)
+                engine = request.app.state.engine
+                if mode == "blackboard" and engine is not None:
+                    async with engine.connect() as conn:
+                        if await board_runner_frozen(conn, tid):
+                            contract = EXPLORATION_CONTRACT
+                request.state.business_contract = contract
                 suffix = (match[2] or "") if match else "/evidence"
                 if (
-                    mode == "blackboard"
-                    and identity.kind == "service"
-                    and not runtime_compatible(request)
-                    and (
-                        suffix in {"/state", "/archive-data", "/execution-network"}
-                        or request.method != "GET"
-                    )
-                    and await protected_snapshot(request, tid) is not None
+                    contract == EXPLORATION_CONTRACT
+                    and identity.kind == "agent"
+                    and request.method not in {"GET", "HEAD"}
                 ):
-                    require_runtime_version(request)
+                    raise HTTPException(
+                        403, "Versioned Agent must use its published business tools"
+                    )
                 if identity.kind == "agent" and identity.mode != mode:
                     raise HTTPException(409, "mode_mismatch")
                 if mode != "ctf" and suffix.startswith("/ctf/"):
@@ -939,12 +934,21 @@ def create_app(
                         and request.method == "GET"
                         and suffix == "/gateway-model/review-costs"
                     )
+                    shared_runner_control = identity.kind == "service" and (
+                        (request.method, suffix)
+                        in {
+                            ("GET", "/runtime/runner-bootstrap"),
+                            ("POST", "/runtime/runner-bootstrap/claim"),
+                            ("POST", "/runtime/runner-bootstrap/actions"),
+                        }
+                    )
                     if (
                         not suffix.startswith("/ctf/")
                         and suffix not in common
                         and not conversation
                         and not traffic
                         and not review_gateway
+                        and not shared_runner_control
                     ):
                         raise HTTPException(409, "mode_mismatch")
                     if identity.kind == "agent" and suffix in {
@@ -1029,6 +1033,16 @@ def create_app(
             raise HTTPException(422, "请选择平台已启用的 Pi 模型")
         return await registry.selected(body.pi_model)
 
+    def blackboard_creation(request: Request) -> BlackboardCreationCapability:
+        if (
+            request.app.state.board_runner_publication is None
+            or request.app.state.native_runner_bootstrap is None
+        ):
+            return BlackboardCreationCapability(
+                available=False, reason="黑板的共同执行环境尚未验证"
+            )
+        return BlackboardCreationCapability(available=True)
+
     @app.get(
         "/api/task-creation-capabilities",
         response_model=TaskCreationCapabilities,
@@ -1041,13 +1055,14 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         state: PublicationState = request.app.state.native_ctf_publication
         publication = state.publication
+        blackboard = blackboard_creation(request)
         if publication is None:
-            return state.capabilities()
+            return state.capabilities(blackboard=blackboard)
         try:
             await resolve_ctf_creation(request, publication)
         except (HTTPException, ValueError):
-            return state.capabilities(available=False)
-        capabilities = state.capabilities()
+            return state.capabilities(blackboard=blackboard, native_available=False)
+        capabilities = state.capabilities(blackboard=blackboard)
         if (
             capabilities.native_ctf is not None
             and getattr(request.app.state.pi_registry, "enabled", False)
@@ -1075,8 +1090,8 @@ def create_app(
                 )
         native_queue = None
         selected = None
-        publication = state.publication if state.exclusive else None
-        if isinstance(body, CtfTaskCreate) and not state.exclusive:
+        publication = state.publication
+        if isinstance(body, CtfTaskCreate) and publication is None and not state.exclusive:
             raise HTTPException(409, "请使用已发布原生 CTF 环境创建任务")
         if body.budget.currency != "USD":
             raise HTTPException(422, "新任务预算必须明确使用 USD")
@@ -1087,11 +1102,11 @@ def create_app(
         ):
             raise HTTPException(422, "新任务只能引用平台 Pi 模型")
 
-        if state.exclusive:
+        if isinstance(body, CtfTaskCreate):
             if publication is None:
                 raise HTTPException(503, "当前部署没有可用的原生 CTF 环境")
-            if not isinstance(body, CtfTaskCreate) or body.native_environment is None:
-                raise HTTPException(409, "当前部署只支持使用已发布环境创建原生 CTF 任务")
+            if body.native_environment is None:
+                raise HTTPException(409, "请使用已发布原生 CTF 环境创建任务")
             if (
                 body.native_environment.id,
                 body.native_environment.revision,
@@ -1147,8 +1162,6 @@ def create_app(
                 )
 
             native_queue = queue_native
-        elif isinstance(body, CtfTaskCreate) and body.native_environment is not None:
-            raise HTTPException(409, "当前部署未发布原生 CTF 环境")
 
         if isinstance(body, CtfTaskCreate) and body.native_vpn_source_id is not None:
             from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
@@ -1240,9 +1253,10 @@ def create_app(
                 agent_profile=original["agent_profile"],
                 agent_profile_version=original["agent_profile_version"],
             )
-        legacy_network = request.app.state.legacy_network_publication
-        if legacy_network is None:
-            raise HTTPException(503, "黑板执行网络配置不可用")
+        board_pub = request.app.state.board_runner_publication
+        bootstrap = request.app.state.native_runner_bootstrap
+        if board_pub is None or bootstrap is None:
+            raise HTTPException(503, "黑板的共同执行环境尚未验证")
         profiles = _profiles(request)
         selected = await selected_task_model(request, body)
         validate_task_threshold(body.budget.max_cost)
@@ -1252,13 +1266,19 @@ def create_app(
         content = {key: row[key] for key in AgentProfile.model_fields}
         model = display_pi_model(selected)
         content["models"] = {role: model for role in ("explore", "derive", "close")}
+        deployed = board_pub.runtime_resource_config
+        content["exec_image"] = (
+            deployed["vpn"]["sandbox_image"]
+            if deployed["board_network"]["mode"] != "default"
+            else deployed["traffic_sandbox_image"]
+        )
         threshold = model_context_threshold(content["models"])
         if threshold is not None:
             content["params"] = {**content["params"], "context_threshold": threshold}
         frozen_profile = AgentProfile.model_validate(content)
-        from bbx_blackboard.mcp_catalog import validate_profile_tools
+        from bbx_blackboard.mcp_catalog import freeze_board_grants
 
-        await validate_profile_tools(request, frozen_profile)
+        board_grants = await freeze_board_grants(request, frozen_profile)
         row = await profiles.create("task-settings", frozen_profile, "task")
         spec = body.model_dump(
             exclude={
@@ -1275,11 +1295,31 @@ def create_app(
         spec["params"] = {**row["params"], **body.params}
         if threshold is not None:
             spec["params"]["context_threshold"] = threshold
+        frozen_board = board_pub.frozen()
+
+        async def queue_board(conn, tid):
+            launch = NativeRunnerLaunch(
+                request_id=tid,
+                model_alias=selected.id,
+                budget_currency="USD",
+                traffic_profile="binding-pcap-v1",
+            )
+            encoded = runner_json_text(launch.model_dump(mode="json"))
+            await bootstrap.queue_locked(
+                conn,
+                tid,
+                launch,
+                runner_payload_digest(encoded),
+                publication=frozen_board,
+                native_grants=board_grants,
+                board=True,
+            )
+
         task_id = await _service(request).create_task(
             spec,
             profile_version=row["version"],
-            legacy_network=legacy_network,
             pi_model=(settings.pi_model_authority, selected),
+            runner_queue=queue_board,
             **(
                 {
                     "input_group_id": body.input_group_id,
@@ -1309,9 +1349,7 @@ def create_app(
     @app.get("/api/tasks/deletions", tags=["tasks"])
     async def pending_deletions(request: Request) -> list[UUID]:
         require_service(request)
-        return await _conversations(request).deletions(
-            include_protected=runtime_compatible(request)
-        )
+        return await _conversations(request).deletions(include_protected=True)
 
     async def task_views(conn: AsyncConnection, tasks: list[dict[str, Any]]) -> list[TaskView]:
         if not tasks:
@@ -1327,35 +1365,43 @@ def create_app(
                 )
             )
         }
+        models_table, resources = s.pi_task_models, s.task_runner_resources
+        model_rows = (
+            await conn.execute(
+                select(
+                    models_table.c.task_id,
+                    models_table.c.snapshot,
+                    resources.c.data["mcp_transport"].astext.label("transport"),
+                    resources.c.data["execution_contract"].astext.label("contract"),
+                    resources.c.data["inputs_receipt"]["result"].astext.label("input_result"),
+                )
+                .outerjoin(resources, resources.c.task_id == models_table.c.task_id)
+                .where(
+                    models_table.c.authority == settings.pi_model_authority,
+                    models_table.c.task_id.in_(ids),
+                )
+            )
+        ).all()
         pi_models = {
             item.task_id: PiModelRef(
                 model_id=item.snapshot["id"], model_revision=item.snapshot["model_revision"]
             )
-            for item in (
-                await conn.execute(
-                    select(s.pi_task_models.c.task_id, s.pi_task_models.c.snapshot).where(
-                        s.pi_task_models.c.authority == settings.pi_model_authority,
-                        s.pi_task_models.c.task_id.in_(ids),
-                    )
-                )
-            )
+            for item in model_rows
         }
         ordinary_ids = [task["id"] for task in tasks if task.get("mode") != "ctf"]
         ctf_ids = [task["id"] for task in tasks if task.get("mode") == "ctf"]
-        direct_ctf = (
-            set(
-                (
-                    await conn.execute(
-                        select(s.task_runner_resources.c.task_id).where(
-                            s.task_runner_resources.c.task_id.in_(ctf_ids),
-                            s.task_runner_resources.c.data["mcp_transport"].astext == "direct-v2",
-                        )
-                    )
-                ).scalars()
-            )
-            if ctf_ids
-            else set()
+        direct_ctf = {item.task_id for item in model_rows if item.transport == "direct-v2"} & set(
+            ctf_ids
         )
+        direct_board = {
+            item.task_id
+            for item in model_rows
+            if item.transport == "direct-v2" and item.contract == EXPLORATION_CONTRACT
+        }
+
+        board_inputs = {
+            item.task_id: item.input_result for item in model_rows if item.task_id in direct_board
+        }
 
         agents: dict[UUID, list[dict[str, Any]]] = {}
         members: dict[UUID, list[dict[str, Any]]] = {}
@@ -1513,8 +1559,16 @@ def create_app(
                     mode=task.get("mode", "blackboard"),
                     name=task.get("name"),
                     initial_attachments=task.get("initial_attachments") or [],
-                    initial_attachment_state=(task.get("ctf_control") or {}).get(
-                        "initial_attachment_state"
+                    initial_attachment_state=(
+                        (
+                            "ready"
+                            if board_inputs[task["id"]] == "materialized"
+                            else "blocked"
+                            if board_inputs[task["id"]] == "unconfirmed"
+                            else "pending"
+                        )
+                        if task["id"] in board_inputs and task.get("initial_attachments")
+                        else (task.get("ctf_control") or {}).get("initial_attachment_state")
                     ),
                     cost_currency=currency,
                     id=task["id"],
@@ -1542,9 +1596,13 @@ def create_app(
                     runs=runs.get(task["id"], []),
                     members=members.get(task["id"], []),
                     ctf_options=task.get("ctf_options"),
-                    business_contract=business_contract(task)
-                    if task.get("mode") == "ctf"
-                    else None,
+                    business_contract=(
+                        business_contract(task)
+                        if task.get("mode") == "ctf"
+                        else EXPLORATION_CONTRACT
+                        if task["id"] in direct_board
+                        else None
+                    ),
                     ctf_phase=(task.get("ctf_control") or {}).get("phase"),
                     ctf_conclusion=task.get("ctf_conclusion"),
                 )
@@ -1557,7 +1615,7 @@ def create_app(
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> list[TaskView]:
-        identity = require_user_or_service(request)
+        require_user_or_service(request)
         async with request.app.state.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
             rows = (
@@ -1568,13 +1626,6 @@ def create_app(
                         .where(s.task_progress.c.task_id == s.tasks.c.id)
                         .scalar_subquery()
                         .label("progress_cost"),
-                    )
-                    .where(
-                        *(
-                            [~protected_task()]
-                            if identity.kind == "service" and not runtime_compatible(request)
-                            else []
-                        )
                     )
                     .order_by(s.tasks.c.created_at.desc(), s.tasks.c.id)
                     .limit(limit)
@@ -1691,6 +1742,47 @@ def create_app(
                 identity.name,
             )
             return await task_detail(request, task_id)
+        runner_restart = None
+        if getattr(request.state, "business_contract", None) == EXPLORATION_CONTRACT:
+            bootstrap = request.app.state.native_runner_bootstrap
+            publication = request.app.state.board_runner_publication
+            if bootstrap is None or publication is None:
+                raise HTTPException(409, "原黑板发布环境不可用，工作区仍可读取")
+
+            async def restart(conn, tid, source_uri):
+                grants = None
+                if body.refresh_tools:
+                    from bbx_blackboard.mcp_catalog import freeze_board_grants
+
+                    current = await conn.execute(
+                        select(s.tasks.c.agent_profile, s.tasks.c.agent_profile_version).where(
+                            s.tasks.c.id == tid
+                        )
+                    )
+                    name, version = current.one()
+                    persisted = (
+                        (
+                            await conn.execute(
+                                select(s.agent_profiles).where(
+                                    s.agent_profiles.c.name == name,
+                                    s.agent_profiles.c.version == version,
+                                )
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    profile = AgentProfile.model_validate(
+                        {key: persisted[key] for key in AgentProfile.model_fields}
+                    )
+                    grants = await freeze_board_grants(request, profile)
+                await bootstrap.restart_board_locked(
+                    conn, tid, source_uri, body.request_id, publication.frozen(), grants=grants
+                )
+
+            runner_restart = restart
+        else:
+            raise HTTPException(409, "原黑板任务不能安全换用新的执行环境")
         await require_task_model(request, task_id, task)
         await _service(request).resume(
             task_id,
@@ -1699,6 +1791,7 @@ def create_app(
             body.additional_minutes,
             body.refresh_tools,
             identity.name,
+            runner_restart=runner_restart,
         )
         return await task_detail(request, task_id)
 
@@ -1728,22 +1821,20 @@ def create_app(
     async def start_task(request: Request, task_id: UUID) -> StatusResult:
         require_user_or_service(request)
         task = await _task(request, task_id)
-        if request.app.state.native_ctf_publication.exclusive:
-            if business_contract(task) == BOARD_LEGACY:
-                raise HTTPException(409, "专用原生 CTF 部署不能启动旧版任务")
-            if task["status"] == "provisioning":
-                return StatusResult(status="provisioning")
+        if (
+            task.get("mode") == "blackboard"
+            and getattr(request.state, "business_contract", None) == EXPLORATION_CONTRACT
+        ):
+            await require_task_model(request, task_id, task)
+            await request.app.state.native_runner_bootstrap.start_board(task_id)
+            return StatusResult(status="provisioning")
         if task.get("mode") == "ctf":
             if business_contract(task) == BOARD_LEGACY:
                 raise HTTPException(409, "历史 CTF 任务没有原生执行引用")
-            if task["status"] == "running":
-                return StatusResult(status="running")
+            if task["status"] in {"provisioning", "running"}:
+                return StatusResult(status=task["status"])
             raise HTTPException(409, f"CTF task cannot start from {task['status']}")
-        await require_task_model(request, task_id, task)
-        if task["status"] != "created":
-            raise HTTPException(409, "Task is not created")
-        events = await _service(request).transition(task_id, "provisioning", actor="user")
-        return StatusResult(status="provisioning", events=events)
+        raise HTTPException(409, "旧执行无法安全迁移；原记录仍可查看和导出")
 
     @app.post("/api/tasks/{task_id}/stop", response_model=StatusResult, tags=["tasks"])
     async def stop_task(request: Request, task_id: UUID) -> StatusResult:
@@ -1949,7 +2040,24 @@ def create_app(
         )
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
-    async def get_agent_session(request: Request, task_id: UUID, agent_id: str) -> dict[str, Any]:
+    async def get_agent_session(
+        request: Request,
+        task_id: UUID,
+        agent_id: str,
+        journal: bool = False,
+        run_number: int | None = Query(default=None, ge=1),
+    ) -> dict[str, Any]:
+        if journal:
+            require_user_or_service(request)
+            task = await _task(request, task_id)
+            number = run_number or task["run_number"]
+            proof = await _service(request).agent_journal(task_id, agent_id, number)
+            journal_path = f"/api/tasks/{task_id}/agents/{agent_id}/session/journal"
+            return {
+                "format": proof.format,
+                "runner_session": proof.model_dump(mode="json"),
+                "download": f"{journal_path}?run_number={number}",
+            }
         if getattr(request.state, "task_mode", "blackboard") == "ctf":
             identity = require_task_reader(request, task_id)
             if identity.kind == "agent" and identity.agent_id != agent_id:
@@ -1958,11 +2066,39 @@ def create_app(
             require_service(request)
         return await _conversations(request).get_session(task_id, agent_id)
 
+    @app.get("/api/tasks/{task_id}/agents/{agent_id}/session/journal", tags=["conversations"])
+    async def download_agent_journal(
+        request: Request,
+        task_id: UUID,
+        agent_id: str,
+        run_number: int | None = Query(default=None, ge=1),
+    ) -> StreamingResponse:
+        require_user_or_service(request)
+        task = await _task(request, task_id)
+        number = run_number or task["run_number"]
+        proof = await _service(request).agent_journal(task_id, agent_id, number)
+        if not await request.app.state.objects.exists(proof.transcript_uri):
+            raise HTTPException(404, "Original Blackboard journal object not found")
+        return StreamingResponse(
+            request.app.state.objects.stream(proof.transcript_uri),
+            media_type="application/x-ndjson",
+            headers=download_headers(f"{agent_id}-run-{number}.jsonl"),
+        )
+
     @app.put("/api/tasks/{task_id}/agents/{agent_id}/session", tags=["conversations"])
     async def put_agent_session(
-        request: Request, task_id: UUID, agent_id: str, body: SessionBody
+        request: Request, task_id: UUID, agent_id: str, body: SessionBody | BoardJournalProjection
     ) -> dict[str, Any]:
         require_service(request)
+        if isinstance(body, BoardJournalProjection):
+            return await _service(request).record_agent_journal(task_id, agent_id, body)
+        if (
+            getattr(request.state, "business_contract", None) == EXPLORATION_CONTRACT
+            and body.review_claim is None
+        ):
+            raise HTTPException(
+                409, "Native Blackboard execution requires its confirmed original journal"
+            )
         return await _conversations(request).put_session(
             task_id,
             agent_id,
@@ -2103,6 +2239,8 @@ def create_app(
 
             return await ctf_state(request, task_id)
         board = await _service(request).state(task_id)
+        if getattr(request.state, "business_contract", None) == EXPLORATION_CONTRACT:
+            board["task"]["business_contract"] = EXPLORATION_CONTRACT
         engine = request.app.state.engine
         if engine is None:
             return board
@@ -2119,10 +2257,9 @@ def create_app(
                 board["task"]["gateway_model"] = (
                     frozen[0] if identity.kind == "service" else frozen[0].public()
                 ).model_dump(mode="json")
-            if policy is not None:
+            if policy is not None and request.state.business_contract != EXPLORATION_CONTRACT:
                 receipt = await legacy_run_receipt(conn, task_id, board["task"]["run_number"])
                 if identity.kind == "service":
-                    require_runtime_version(request)
                     board["task"]["legacy_network"] = policy.model_dump(mode="json")
                     board["task"]["legacy_network_receipt"] = receipt
                 else:
@@ -2205,35 +2342,7 @@ def create_app(
     ) -> list[SearchHit]:
         require_task_reader(request, task_id)
         await _task(request, task_id)
-        needle = q.casefold() if q else ""
-        hits: list[tuple[int, SearchHit]] = []
-        async with request.app.state.engine.connect() as conn:
-            await conn.execution_options(isolation_level="REPEATABLE READ")
-            for kind, table in (("fact", s.facts), ("intent", s.intents)):
-                if type not in {"all", kind}:
-                    continue
-                fields = ("statement",) if kind == "fact" else ("statement", "expected", "method")
-                rows = (
-                    await conn.execute(
-                        select(table.c.id, table.c.version, *(table.c[field] for field in fields))
-                        .where(table.c.task_id == task_id, table.c.challenge_id.is_(None))
-                        .order_by(table.c.version)
-                    )
-                ).mappings()
-                for item in rows:
-                    haystack = " ".join(str(item.get(field) or "") for field in fields).casefold()
-                    if needle in haystack:
-                        hits.append(
-                            (
-                                int(item["version"]),
-                                SearchHit(
-                                    id=item["id"],
-                                    type=cast(Literal["fact", "intent"], kind),
-                                    statement=item["statement"],
-                                ),
-                            )
-                        )
-        return [hit for _, hit in sorted(hits, key=lambda row: row[0], reverse=True)[:k]]
+        return await _service(request).search(task_id, q, k, type)
 
     @app.get("/api/evidence", tags=["board"])
     async def evidence(request: Request, uri: str = Query(min_length=1)) -> StreamingResponse:
@@ -2341,6 +2450,8 @@ def create_app(
     async def transition(request: Request, task_id: UUID, body: StatusBody) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
+        if body.status in {"provisioning", "running"}:
+            raise HTTPException(409, "Only the shared Runner controller may start execution")
         return await _service(request).transition(task_id, body.status, reason=body.reason)
 
     @app.post("/api/tasks/{task_id}/archive", response_model=list[Event], tags=["system"])
@@ -2349,12 +2460,13 @@ def create_app(
     ) -> list[dict[str, Any]]:
         require_service(request)
         await _task(request, task_id)
-        backend = (
-            request.app.state.ctf_service
-            if (await _task(request, task_id)).get("mode") == "ctf"
-            else _service(request)
+        if (await _task(request, task_id)).get("mode") == "ctf":
+            return await request.app.state.ctf_service.record_archive(
+                task_id, body.uri, body.size, body.fallback
+            )
+        return await _service(request).record_archive(
+            task_id, body.uri, body.size, body.fallback, runner_archive=body.runner_archive
         )
-        return await backend.record_archive(task_id, body.uri, body.size, body.fallback)
 
     @app.post("/api/tasks/{task_id}/cleanup-ready", response_model=list[Event], tags=["system"])
     async def record_cleanup(request: Request, task_id: UUID) -> list[dict[str, Any]]:
@@ -2373,6 +2485,10 @@ def create_app(
     ) -> AgentRegistered:
         require_service(request)
         await _task(request, task_id)
+        if getattr(request.state, "business_contract", None) != EXPLORATION_CONTRACT:
+            raise HTTPException(
+                409, "Only the original shared Blackboard Runner may register Agents"
+            )
         agent_id = await _service(request).register_agent(
             task_id,
             body.task_type,
@@ -2520,7 +2636,8 @@ def create_app(
         return await _service(request).record_agent_trace(
             task_id,
             agent_id,
-            body.model_dump(exclude={"expected_derive_round"}),
+            body.model_dump(exclude={"expected_derive_round", "runner_trace"}),
+            runner_trace=body.runner_trace,
             **(
                 {"expected_derive_round": body.expected_derive_round}
                 if body.expected_derive_round is not None

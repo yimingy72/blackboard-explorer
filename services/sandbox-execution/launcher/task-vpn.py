@@ -21,8 +21,10 @@ from uuid import UUID
 IP, IPT, WG = "/usr/sbin/ip", "/usr/sbin/iptables", "/usr/bin/wg"
 RESTORE = "/usr/sbin/iptables-restore"
 OPENVPN = "/usr/sbin/openvpn"
+REDSOCKS = "/usr/sbin/redsocks"
 WG_LINK, TUN, PORT = "bbxwg", "bbxvpn", 51820
 SOURCE = "198.19.0.0/16"
+SOCKS_IP, SOCKS_PORT, SOCKS_CHAIN = "198.18.255.1", 12345, "BBX_SOCKS"
 PROBE_IP, PROBE_NET, PROBE_VETH = "198.19.255.2", "bbxvpnprobe", "bp-vpn"
 EDGE_CHAIN = "BBX_VPN"
 RENEW, SET_MARK, ANCHOR = "BBX_VPN_RENEW", "BBX_VPN_SET", "BBX_VPN_ANCHOR"
@@ -202,7 +204,7 @@ def live_link(link, key, underlay):
     )
 
 
-def install_drop_hooks(links, *, edge=False):
+def install_drop_hooks(links, *, edge=False, socks=False):
     # Order matters even when the namespace starts with IP forwarding enabled.
     for tool in (IPT, "/usr/sbin/ip6tables"):
         for link in links:
@@ -219,6 +221,11 @@ def install_drop_hooks(links, *, edge=False):
             command(IPT, "-w", "2", "-I", "FORWARD", "1", "-o", link, "-j", EDGE_CHAIN)
         for chain in (RENEW, SET_MARK, ANCHOR):
             command(IPT, "-w", "2", "-N", chain)
+        if socks:
+            command(IPT, "-w", "2", "-N", SOCKS_CHAIN)
+            command(IPT, "-w", "2", "-A", SOCKS_CHAIN, "-j", "DROP")
+            for hook, direction in (("INPUT", "-i"), ("OUTPUT", "-o")):
+                command(IPT, "-w", "2", "-I", hook, "1", direction, WG_LINK, "-j", SOCKS_CHAIN)
         command(IPT, "-w", "2", "-A", RENEW, "-j", "DROP")
         command(IPT, "-w", "2", "-A", SET_MARK, "-j", "DROP")
         for mark in MARKS:
@@ -328,7 +335,7 @@ def recent_path(mark):
     return Path("/proc/net/xt_recent") / mark
 
 
-def edge_fence():
+def edge_fence(*, socks=False):
     for mark in MARKS:
         recent_path(mark).write_text("-0.0.0.0\n")
     command(
@@ -341,7 +348,7 @@ def edge_fence():
                 "*filter",
                 *[
                     line
-                    for chain in (EDGE_CHAIN, RENEW, SET_MARK)
+                    for chain in (EDGE_CHAIN, RENEW, SET_MARK, *([SOCKS_CHAIN] if socks else []))
                     for line in (f"-F {chain}", f"-A {chain} -j DROP")
                 ],
                 "COMMIT",
@@ -380,6 +387,31 @@ def forwarding_rules(grant, targets, routes=None):
     return rules
 
 
+def socks_rules(grant, targets, routes):
+    mask = f"-m recent --name {grant['mark']} --rcheck --seconds 10 --mask 0.0.0.0"
+    timing = f"-m time --datestop {grant['end']}"
+    source = PROBE_IP + "/32" if grant["mode"] == "probe" else SOURCE
+    selected = (
+        [(targets[0][0] + "/32", targets[0][1])]
+        if grant["mode"] == "probe"
+        else [(cidr, None) for cidr in routes["allow_cidrs"]]
+    )
+    deny = [
+        f"-A {SOCKS_CHAIN} -m conntrack --ctorigdst {cidr} -j DROP" for cidr in routes["deny_cidrs"]
+    ]
+    for cidr, port in selected:
+        original = f"--ctorigdst {cidr}" + (f" --ctorigdstport {port}" if port else "")
+        deny += [
+            f"-A {SOCKS_CHAIN} -i {WG_LINK} -s {source} -d {SOCKS_IP} -p tcp "
+            f"--dport {SOCKS_PORT} -m conntrack --ctstate DNAT --ctdir ORIGINAL {original} "
+            f"{mask} --rsource {timing} -j ACCEPT",
+            f"-A {SOCKS_CHAIN} -o {WG_LINK} -s {SOCKS_IP} -d {source} -p tcp "
+            f"--sport {SOCKS_PORT} -m conntrack --ctstate ESTABLISHED --ctdir REPLY {original} "
+            f"{mask} --rdest {timing} -j ACCEPT",
+        ]
+    return deny
+
+
 def confirm_local_renewal():
     # Only the fixed root-owned OUTPUT hook may set a live gate. sendto is not evidence.
     nonce = os.urandom(24)
@@ -392,7 +424,7 @@ def confirm_local_renewal():
     require(source == endpoint and observed == nonce)
 
 
-def edge_grant(lease, sampled, targets, prior, *, routes=None):
+def edge_grant(lease, sampled, targets, prior, *, routes=None, socks=False):
     require(lease["mode"] in {"probe", "solver"})
     issued, until = lease["issued_at_ms"], lease["authority_until_ms"]
     require(type(issued) is int and type(until) is int)
@@ -407,8 +439,12 @@ def edge_grant(lease, sampled, targets, prior, *, routes=None):
     recent_path(mark).write_text("-0.0.0.0\n")
     grant = {"mark": mark, "end": end, "mode": lease["mode"]}
     rules = ["*filter", f"-F {EDGE_CHAIN}", f"-F {RENEW}", f"-F {SET_MARK}"]
+    admit = forwarding_rules
+    if socks:
+        rules.append(f"-F {SOCKS_CHAIN}")
+        admit = socks_rules
     if prior:
-        rules += forwarding_rules(prior, targets, routes)
+        rules += admit(prior, targets, routes)
         # A delayed root process cannot arm the inactive marker once the old one expired.
         rules.append(
             f"-A {RENEW} -m time --datestop {prior['end']} "
@@ -418,7 +454,8 @@ def edge_grant(lease, sampled, targets, prior, *, routes=None):
     else:
         rules.append(f"-A {RENEW} -j {SET_MARK}")
     rules += [
-        *forwarding_rules(grant, targets, routes),
+        *admit(grant, targets, routes),
+        *([f"-A {SOCKS_CHAIN} -j DROP"] if socks else []),
         f"-A {EDGE_CHAIN} -j DROP",
         f"-A {RENEW} -j DROP",
         f"-A {SET_MARK} -m time --datestop {end} -m recent --name {mark} "
@@ -577,6 +614,68 @@ def store_material(material):
             output.write(value)
 
 
+def read_board_credentials():
+    with (CONFIG / "credentials.json").open("rb") as source:
+        raw = source.read(MATERIAL_LIMIT + 1)
+    require(len(raw) <= MATERIAL_LIMIT)
+    credentials = json.loads(raw)
+    require(isinstance(credentials, dict))
+    return credentials
+
+
+def start_socks(peer_config, routes, credentials):
+    upstream = ipv4(peer_config["ipv4"])
+    port = peer_config["port"]
+    require(type(port) is int and 1 <= port <= 65535 and not peer_config.get("server_name"))
+    require(set(credentials) in (set(), {"login", "password"}))
+    auth = ""
+    for field, value in credentials.items():
+        require(re.fullmatch(r"[A-Za-z0-9!$%&()*+,./:;<=>?@^_~\[\]{}|-]{1,255}", value))
+        auth += f'{field} = "{value}"; '
+    # Same P4m2 transparent redsocks path, inside the original authenticated Task WG edge.
+    command(IP, "addr", "add", SOCKS_IP + "/32", "dev", WG_LINK, "noprefixroute")
+    nat = (IPT, "-w", "2", "-t", "nat", "-A", "PREROUTING", "-i", WG_LINK, "-s", SOURCE)
+    command(*nat, "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
+    for cidr in routes["deny_cidrs"]:
+        command(*nat, "-d", cidr, "-j", "RETURN")
+    for cidr in routes["allow_cidrs"]:
+        command(*nat, "-p", "tcp", "-d", cidr, "-j", "REDIRECT", "--to-ports", str(SOCKS_PORT))
+    path = EGRESS_ROOT / "redsocks.conf"
+    with path.open("x", encoding="ascii") as file:
+        file.write(
+            'base { log_debug = off; log_info = off; log = "stderr"; '
+            "daemon = off; redirector = iptables; }\n"
+            f"redsocks {{ local_ip = {SOCKS_IP}; local_port = {SOCKS_PORT}; "
+            f"ip = {upstream}; port = {port}; type = socks5; {auth}}}\n"
+        )
+    command(REDSOCKS, "-t", "-c", str(path))
+    return subprocess.Popen(
+        [REDSOCKS, "-c", str(path)],
+        env={},
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def socks_listener(child):
+    port = f"{SOCKS_PORT:04X}"
+    address = socket.inet_aton(SOCKS_IP)[::-1].hex().upper()
+    connections = Path("/proc/net/tcp").read_text().splitlines()[1:]
+    listening = {
+        fields[9]
+        for line in connections
+        if (fields := line.split())[1] == f"{address}:{port}" and fields[3] == "0A"
+    }
+    for fd in Path(f"/proc/{child.pid}/fd").iterdir():
+        try:
+            if os.readlink(fd) in {f"socket:[{inode}]" for inode in listening}:
+                return True
+        except FileNotFoundError:
+            pass
+    return False
+
+
 def assigned_address(child, peer_config):
     # OpenVPN 2.7.8 reports the negotiated address even with --ifconfig-noexec.
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
@@ -642,13 +741,15 @@ def terminal(child):
         child.wait(timeout=2)
 
 
-def edge_close(child):
+def edge_close(child, *, socks=False):
     try:
-        edge_fence()
+        edge_fence(socks=socks)
     finally:
         terminal(child)
         for name in MATERIAL_FILES.values():
             (EGRESS_ROOT / name).unlink(missing_ok=True)
+        if socks:
+            (EGRESS_ROOT / "redsocks.conf").unlink(missing_ok=True)
 
 
 def edge_run(config, stop):
@@ -656,13 +757,16 @@ def edge_run(config, stop):
     scope = config["scope"]
     require(local_address(ipv4(scope["runner_pod_ipv4"])))
     dynamic = config.get("profile") == DYNAMIC_PROFILE
+    board_mode = config.get("board_mode")
+    require(board_mode is None or (dynamic and board_mode in {"vpn", "socks5"}))
+    socks = board_mode == "socks5"
     targets, approved = [], None
     if not dynamic:
         targets = target_pairs(config["targets"])
         approved = ipv4(config["tun_ipv4"])
         check_tun(config, approved, targets)
     require(Path("/proc/sys/net/ipv4/ip_forward").read_text().strip() == "1")
-    install_drop_hooks((WG_LINK, TUN), edge=True)
+    install_drop_hooks((WG_LINK,) if socks else (WG_LINK, TUN), edge=True, socks=socks)
     child = op = link = key = tunnel = None
     last_revision, applied_boot = 0, None
     active_grant = None
@@ -680,12 +784,12 @@ def edge_run(config, stop):
                 remote = view.get("remote_public_key")
                 if state in {"disconnecting", "disconnected", "stopped", "closed"}:
                     if op and closed != "closed":
-                        edge_close(child)
+                        edge_close(child, socks=socks)
                         applied_boot = active_grant = None
                         closed = "closed"
                         pending = {**op, "phase": "closed", "forwarding_closed": True}
                 if state in {"failed", "unknown"} and op and not closed:
-                    edge_close(child)
+                    edge_close(child, socks=socks)
                     applied_boot = active_grant = None
                     closed = "failed"
                     pending = {**op, "phase": "failed", "forwarding_closed": True}
@@ -727,7 +831,9 @@ def edge_run(config, stop):
                         pending = {**candidate, "phase": "unknown", "forwarding_closed": True}
                         continue
                     if claim.get("launch_allowed") is True:
-                        if dynamic:
+                        if board_mode == "vpn":
+                            store_material(read_board_credentials())
+                        elif dynamic and not socks:
                             store_material(claim["material"])
                         else:
                             op = candidate
@@ -748,7 +854,11 @@ def edge_run(config, stop):
                         peer(remote, scope["sandbox_pod_ipv4"], [SOURCE])
                         command(IP, "route", "add", SOURCE, "dev", WG_LINK)
                         key = remote
-                        child = openvpn(config)
+                        child = (
+                            start_socks(config["peer"], routes, read_board_credentials())
+                            if socks
+                            else openvpn(config)
+                        )
                         last_work = time.monotonic()
                     if child and (
                         child.poll() is not None
@@ -756,10 +866,32 @@ def edge_run(config, stop):
                         or not live_link(link, key, scope["sandbox_pod_ipv4"])
                     ):
                         raise ValueError("Original VPN process or link stopped")
-                    idx = ifindex(TUN) if child else None
-                    if child and (
-                        (idx is None and tunnel)
-                        or (not tunnel and time.monotonic() - last_work > 25)
+                    idx = ifindex(TUN) if child and not socks else None
+                    if socks and child:
+                        if socks_listener(child):
+                            ticks = process_ticks(child.pid)
+                            require(ticks is not None and local_address(SOCKS_IP, WG_LINK))
+                            expected = {
+                                "kind": "socks5",
+                                "pid": child.pid,
+                                "start_ticks": ticks,
+                                "listener_ipv4": SOCKS_IP,
+                                "listener_port": SOCKS_PORT,
+                                "link": link,
+                            }
+                            require(tunnel in (None, expected))
+                            tunnel = expected
+                        else:
+                            require(tunnel is None and time.monotonic() - last_work <= 25)
+                            time.sleep(0.8)
+                            continue
+                    if (
+                        child
+                        and not socks
+                        and (
+                            (idx is None and tunnel)
+                            or (not tunnel and time.monotonic() - last_work > 25)
+                        )
                     ):
                         raise ValueError("Original VPN TUN route is unavailable")
                     if child and idx and tunnel is None:
@@ -813,17 +945,23 @@ def edge_run(config, stop):
                         }
                     if tunnel:
                         require(
-                            idx == tunnel["tun_ifindex"]
-                            and local_address(approved, TUN)
-                            and process_ticks(tunnel["pid"]) == tunnel["start_ticks"]
-                            and (not dynamic or assigned_address(child, config["peer"]) == approved)
-                            and route_unchanged(119, targets, TUN, routes=routes)
+                            socks
+                            or (
+                                idx == tunnel["tun_ifindex"]
+                                and local_address(approved, TUN)
+                                and process_ticks(tunnel["pid"]) == tunnel["start_ticks"]
+                                and (
+                                    not dynamic
+                                    or assigned_address(child, config["peer"]) == approved
+                                )
+                                and route_unchanged(119, targets, TUN, routes=routes)
+                            )
                         )
                         if state == "held":
                             pause_id = str(UUID(view["pause_id"]))
                             require(held in {None, pause_id})
                             if held is None:
-                                edge_fence()
+                                edge_fence(socks=socks)
                                 held, applied_boot = pause_id, None
                                 active_grant = None
                             control.call(
@@ -852,6 +990,7 @@ def edge_run(config, stop):
                             sampled,
                             targets,
                             active_grant,
+                            socks=socks,
                             **({"routes": routes} if routes else {}),
                         )
                         held = None
@@ -870,13 +1009,13 @@ def edge_run(config, stop):
                 pass
             except (OSError, ValueError, KeyError, TypeError):
                 if op and not closed:
-                    edge_close(child)
+                    edge_close(child, socks=socks)
                     applied_boot = active_grant = None
                     closed = "failed"
                     pending = {**op, "phase": "failed", "forwarding_closed": True}
             time.sleep(0.8)
     finally:
-        edge_close(child)
+        edge_close(child, socks=socks)
 
 
 def sandbox_context(scope):
@@ -928,7 +1067,7 @@ def sandbox_peer(request, key, targets, routes=None):
     return link
 
 
-def sandbox_probe(request, key, targets, routes=None):
+def sandbox_probe(request, key, targets, routes=None, legacy_probe=None):
     link = sandbox_peer(request, key, targets, routes)
     # A distinct system-only low-UID veth exercises the actual nested Sandbox FORWARD path.
     marker = SANDBOX_ROOT / "probe.claim"
@@ -991,6 +1130,43 @@ def sandbox_probe(request, key, targets, routes=None):
             "import socket,sys;"
             "s=socket.create_connection((sys.argv[1],int(sys.argv[2])),2);s.close()"
         )
+        probe_args = [addr, str(port)]
+        if legacy_probe is not None:
+            require(
+                set(legacy_probe) == {"ipv4", "port", "scheme", "path", "status", "server_name"}
+                and (legacy_probe["ipv4"], legacy_probe["port"]) == (addr, port)
+                and legacy_probe["scheme"] in {"http", "https"}
+                and re.fullmatch(r"/(?!/)[A-Za-z0-9._~/-]{0,255}", legacy_probe["path"])
+                and all(part not in {".", ".."} for part in legacy_probe["path"].split("/"))
+                and type(legacy_probe["status"]) is int
+                and 200 <= legacy_probe["status"] <= 599
+            )
+            host = legacy_probe["server_name"] or addr
+            require(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host))
+            code = r"""
+import http.client, signal, socket, ssl, sys
+signal.alarm(4)
+addr, port, scheme, path, status, host = sys.argv[1:]
+port = int(port)
+with socket.create_connection((addr, port), 2) as plain:
+    conn = (
+        ssl.create_default_context().wrap_socket(plain, server_hostname=host)
+        if scheme == 'https' else plain
+    )
+    with conn:
+        authority = host if port == (443 if scheme == 'https' else 80) else f'{host}:{port}'
+        request = f'GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n'
+        conn.sendall(request.encode('ascii'))
+        response = http.client.HTTPResponse(conn)
+        response.begin()
+        sys.exit(response.status != int(status))
+"""
+            probe_args += [
+                legacy_probe["scheme"],
+                legacy_probe["path"],
+                str(legacy_probe["status"]),
+                host,
+            ]
         result = command(
             IP,
             "netns",
@@ -1009,8 +1185,7 @@ def sandbox_probe(request, key, targets, routes=None):
             "-S",
             "-c",
             code,
-            addr,
-            str(port),
+            *probe_args,
             check=False,
         )
         evidence = {"link": link, "passed": result.returncode == 0}
@@ -1052,7 +1227,9 @@ def sandbox(args):
     if mode == "peer":
         return sandbox_peer(request, body["remote_public_key"], targets, routes)
     require(mode == "probe")
-    return sandbox_probe(request, body["remote_public_key"], targets, routes)
+    return sandbox_probe(
+        request, body["remote_public_key"], targets, routes, body.get("legacy_probe")
+    )
 
 
 def main():

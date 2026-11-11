@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "uri": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Uri",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "sandbox_pod_uid": {
+      "format": "uuid",
+      "title": "Sandbox Pod Uid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "uri",
+    "run_number",
+    "sha256",
+    "sandbox_pod_uid"
+  ],
+  "title": "BoardWorkspaceRestore",
+  "type": "object"
+}

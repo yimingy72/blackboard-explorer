@@ -24,20 +24,16 @@ class Settings(BaseSettings):
     admin_users: SecretStr
     pi_site_id: str = Field(default="", pattern=r"^[a-z0-9][a-z0-9_.-]{0,63}$|^$")
     pi_model_authority: str = ""
-    pi_model_primary_site: str = ""
-    pi_model_primary_url: str = ""
     pi_model_operator: str = ""
     pi_model_allowed_origins: list[str] = Field(default_factory=list)
-    pi_model_authority_token: SecretStr = SecretStr("")
     pi_model_peer_ca_file: str = ""
     pi_model_runtime_token: SecretStr = SecretStr("")
     pi_playground_runtime_url: str = ""
-    pi_review_peer_url: str = ""
-    pi_review_peer_site: str = ""
     otel_enabled: bool = False
     profiles_dir: Path = Path("profiles/default")
     sandbox_tenant_resolver_token: SecretStr = SecretStr("")
     native_ctf_publication_file: Path | None = None
+    board_runner_publication_file: Path | None = None
     legacy_network_policy_file: Path | None = None
 
     @property

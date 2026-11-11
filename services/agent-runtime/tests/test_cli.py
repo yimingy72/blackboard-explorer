@@ -6,9 +6,7 @@ import sys
 from uuid import uuid4
 
 import pytest
-from bbx_runtime import cli
-from bbx_runtime.settings import Settings
-from pydantic import SecretStr
+from bbx_runtime import cli, native_runner, settings
 
 
 class FakeBlackboard:
@@ -57,22 +55,21 @@ def test_state_and_conclude_use_only_control_settings(
     assert "已请求结束" in capsys.readouterr().out
 
 
-@pytest.mark.asyncio
-async def test_final_close_requires_closing_before_registration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    task_id = str(uuid4())
-    FakeBlackboard.calls = []
-    monkeypatch.setattr(cli, "BlackboardClient", FakeBlackboard)
+def test_both_serve_names_use_only_the_common_controller(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = object()
+    called = []
 
-    def no_resources(_settings):
-        raise AssertionError("A rejected final close must not allocate resources")
+    async def serve(value):
+        called.append(value)
 
-    monkeypatch.setattr(cli, "object_store", no_resources)
-    args = cli.parser().parse_args(
-        ["run-agent", "--task", task_id, "--type", "close", "--mode", "final"]
-    )
-    settings = Settings.model_construct(service_token=SecretStr("test-service-token"))
-    with pytest.raises(ValueError, match="requires a closing task"):
-        await cli.run_command(args, settings)
-    assert FakeBlackboard.calls == [("state", task_id, "")]
+    monkeypatch.setattr(native_runner, "serve_native", serve)
+    monkeypatch.setattr(settings, "NativeRunnerSettings", lambda: config)
+    for alias in ("serve", "serve-runner-control"):
+        monkeypatch.setattr(sys, "argv", ["bbx-runtime", alias])
+        with pytest.raises(SystemExit) as finished:
+            cli.main()
+        assert finished.value.code == 0
+    assert called == [config, config]
+    with pytest.raises(SystemExit) as invalid:
+        cli.parser().parse_args(["run-agent"])
+    assert invalid.value.code == 2

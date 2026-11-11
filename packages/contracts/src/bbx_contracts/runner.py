@@ -36,8 +36,11 @@ class JournalCursor(ContractModel):
     anchor_hash: Digest
 
 
+RunnerBusinessContract = Literal["challenge-board-v1", "exploration-board-v1"]
+
+
 class RunnerBinding(ContractModel):
-    business_contract: Literal["challenge-board-v1"]
+    business_contract: RunnerBusinessContract
     binding_id: RunnerId
     platform_session_id: RunnerId
     agent_id: RunnerId
@@ -50,6 +53,12 @@ class RunnerBinding(ContractModel):
     )
     journal_generation: RunnerId
     assignment_ref: str | None
+
+    @model_validator(mode="after")
+    def no_exploration_assignment(self):
+        if self.business_contract == "exploration-board-v1" and self.assignment_ref is not None:
+            raise ValueError("Exploration bindings cannot carry a CTF assignment")
+        return self
 
 
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -117,6 +126,13 @@ class SessionSpec(ContractModel):
 
     @model_validator(mode="after")
     def exact_tool_aliases(self):
+        if self.binding.business_contract == "exploration-board-v1" and (
+            self.helper_foreground
+            or self.helper_background
+            or self.helper_child
+            or set(self.allowed_tools) & {"delegate_helper", *BACKGROUND_HELPER_TOOLS}
+        ):
+            raise ValueError("Ordinary Blackboard bindings cannot delegate CTF helpers")
         if self.helper_child and (self.helper_foreground or self.helper_background):
             raise ValueError("Helpers cannot delegate")
         if len(set(self.allowed_tools)) != len(self.allowed_tools):
@@ -327,12 +343,19 @@ class ToolUnknownSubmission(ContractModel):
     invocation: ToolInvocation
 
 
+class BoardContext(ContractModel):
+    version: int = Field(ge=0, le=9007199254740991)
+    content: str = Field(max_length=131072)
+    source_digest: Digest
+
+
 class PublishedPrompt(ContractModel):
     protocol: Literal["bbx.task-runner.v1"]
     fence: RunnerFence
     binding_id: RunnerId
     prompt_revision: int = Field(ge=1)
     instructions: str = Field(max_length=131072)
+    board_context: BoardContext | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class OperationAck(ContractModel):
@@ -343,12 +366,19 @@ class OperationAck(ContractModel):
     receipt_digest: Digest
 
 
+class BoardTurnTerminal(ContractModel):
+    outcome: Literal["completed", "aborted", "failed"]
+    assistant_entry_id: RunnerId | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
 class CommandReceipt(ContractModel):
     protocol: Literal["bbx.task-runner.v1"]
     request_id: RunnerId
     payload_digest: Digest
     fence: RunnerFence
-    status: Literal["prepared", "accepted", "applied", "aborted", "closed", "rejected"]
+    status: Literal["prepared", "accepted", "applied", "completed", "aborted", "closed", "rejected"]
     binding_id: RunnerId | None = None
     sdk_session_id: RunnerId | None = None
     cursor: JournalCursor | None = None
@@ -359,7 +389,10 @@ class CommandReceipt(ContractModel):
     helper_run_id: RunnerId | None = None
     journal_confirmed: bool | None = None
     pending_confirmation: JournalConfirmation | None = None
-    supported_business_contracts: list[Literal["challenge-board-v1"]] = Field(default_factory=list)
+    supported_business_contracts: list[RunnerBusinessContract] = Field(default_factory=list)
+    board_terminal: BoardTurnTerminal | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     error_code: (
         Literal[
             "stale_fence",
@@ -370,6 +403,27 @@ class CommandReceipt(ContractModel):
         ]
         | None
     ) = None
+
+    @model_validator(mode="after")
+    def board_terminal_requires_confirmed_idle_input(self):
+        if self.status != "completed":
+            if self.board_terminal is not None:
+                raise ValueError("Only a completed input has terminal board evidence")
+            return self
+        if (
+            self.board_terminal is None
+            or not self.input_id
+            or not self.binding_id
+            or not self.sdk_session_id
+            or self.cursor is None
+            or self.sdk_idle is not True
+            or self.journal_confirmed is not True
+            or self.pending_confirmation is not None
+            or self.unresolved_attempts
+            or self.unresolved_invocations
+        ):
+            raise ValueError("A completed board input requires confirmed idle journal evidence")
+        return self
 
 
 class RunnerBootstrap(ContractModel):

@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "derive_round": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Derive Round"
+    },
+    "agent_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "instructions": {
+      "maxLength": 131072,
+      "minLength": 1,
+      "title": "Instructions",
+      "type": "string"
+    },
+    "input": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Input",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_number",
+    "started_at",
+    "agent_id",
+    "instructions",
+    "input"
+  ],
+  "title": "BoardDispatchProof",
+  "type": "object"
+}

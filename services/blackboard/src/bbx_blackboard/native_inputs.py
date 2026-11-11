@@ -129,6 +129,19 @@ def _retained_input_lineage(record, scope, generation):
     return True
 
 
+def _new_board_workspace(record):
+    data = record["data"]
+    source = data.get("board_workspace_source") or {}
+    current = record["observation"].get("workspace_pvc", {}).get("uid")
+    return bool(
+        data.get("execution_contract") == "exploration-board-v1"
+        and data.get("resource_generation", 1) > 1
+        and source.get("workspace_pvc_uid")
+        and current
+        and source["workspace_pvc_uid"] != current
+    )
+
+
 def require_inputs_confirmed(record):
     manifest = input_manifest(record)
     if manifest is None:
@@ -141,7 +154,8 @@ def require_inputs_confirmed(record):
         raise HTTPException(409, "Original shared attachments are not confirmed") from error
     if (
         saved.get("result") != "materialized"
-        or original.resource_generation != 1
+        or original.resource_generation
+        != (record["data"].get("resource_generation", 1) if _new_board_workspace(record) else 1)
         or original.manifest_sha256
         != hashlib.sha256(canonical_input_document(scope, manifest["files"])).hexdigest()
         or saved.get("files_sha256") != manifest["files_sha256"]
@@ -152,7 +166,7 @@ def require_inputs_confirmed(record):
     ):
         raise HTTPException(409, "Original shared attachments are not confirmed")
     generation = record["data"].get("resource_generation", 1)
-    if generation == 1:
+    if generation == 1 or _new_board_workspace(record):
         exact = scope == current_scope(record, manifest).model_dump(mode="json")
     else:
         exact = _retained_input_lineage(record, scope, generation)
@@ -195,9 +209,9 @@ class NativeInputs:
         if saved.get("result") == "materialized":
             require_inputs_confirmed(record)
             return NativeInputPlan(state="confirmed")
-        if record["data"].get("resource_generation", 1) != 1 or record["data"].get(
-            "credentials_issued"
-        ):
+        if (
+            record["data"].get("resource_generation", 1) != 1 and not _new_board_workspace(record)
+        ) or record["data"].get("credentials_issued"):
             raise HTTPException(409, "Initial attachment import cannot reopen")
         scope = current_scope(record, manifest)
         existing = record["data"].get("inputs_claim")
@@ -287,16 +301,17 @@ class NativeInputs:
                 tid,
                 data={**record["data"], "inputs_receipt": proof},
             )
-            await conn.execute(
-                update(s.tasks)
-                .where(s.tasks.c.id == tid)
-                .values(
-                    ctf_control={
-                        **task["ctf_control"],
-                        "initial_attachment_state": "ready" if confirmed else "blocked",
-                    }
+            if task["mode"] == "ctf":
+                await conn.execute(
+                    update(s.tasks)
+                    .where(s.tasks.c.id == tid)
+                    .values(
+                        ctf_control={
+                            **task["ctf_control"],
+                            "initial_attachment_state": "ready" if confirmed else "blocked",
+                        }
+                    )
                 )
-            )
             return NativeInputPlan(state="confirmed" if confirmed else "blocked")
 
 

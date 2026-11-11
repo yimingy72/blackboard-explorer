@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import json
 import logging
+from collections import deque
+from io import BytesIO
 from typing import Any, Literal, cast
 
 import httpx
@@ -31,7 +34,7 @@ from bbx_runtime.session import (
     ToolResultCheckpointMiddleware,
     repair_unpaired_tool_calls,
 )
-from bbx_runtime.settings import Settings
+from bbx_runtime.settings import NativeRunnerSettings, Settings
 
 LOGGER = logging.getLogger(__name__)
 REVIEW_INSTRUCTIONS = (
@@ -82,6 +85,69 @@ def _review_usage(
         tokens = _token_usage(raw_usage, model.provider).model_dump(mode="json", exclude={"cost"})
         return {"accounting": "pi_ledger" if pi else "agentgateway", **tokens}
     return {"unavailable": True}
+
+
+def _native_review_history(raw: bytes, limit: int) -> str | None:
+    """Present confirmed SDK messages as data; never restore executable tool calls."""
+    messages: deque[str] = deque()
+    used = 0
+    for line in BytesIO(raw):
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            continue
+        if record.get("type") == "custom_message" and record.get("customType") == "bbx.input":
+            details = record.get("details")
+            content = record.get("content")
+            if (
+                not isinstance(details, dict)
+                or not isinstance(content, str)
+                or any(
+                    not isinstance(details.get(key), str) or not details[key]
+                    for key in ("input_id", "request_id", "content_digest")
+                )
+                or hashlib.sha256(content.encode()).hexdigest() != details["content_digest"]
+            ):
+                continue
+            message = {"role": "user", "content": content}
+        elif record.get("type") == "message":
+            message = record.get("message")
+        else:
+            continue
+        if not isinstance(message, dict) or message.get("role") not in {
+            "user",
+            "assistant",
+            "toolResult",
+        }:
+            continue
+        content = message.get("content")
+        parts = (
+            [content]
+            if isinstance(content, str)
+            else [
+                part["text"]
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ]
+            if isinstance(content, list)
+            else []
+        )
+        text = "\n".join(parts).strip()
+        if not text:
+            continue
+        role = message["role"]
+        shown = text[: min(limit // 2, 512 if role == "toolResult" else 4096)]
+        if len(shown) < len(text):
+            shown += "…"
+        item = json.dumps({"role": role, "text": shown}, ensure_ascii=False)
+        if len(item) > limit:
+            continue
+        messages.append(item)
+        used += len(item)
+        while used > limit and len(messages) > 1:
+            used -= len(messages.popleft())
+    return "\n".join(messages) if messages else None
 
 
 def _legacy_opening(state: dict[str, Any], agent_id: str) -> str:
@@ -150,7 +216,9 @@ def _read_only_tools(service: BlackboardClient, task_id: str) -> list[Any]:
 
 
 class ChatWorker:
-    def __init__(self, settings: Settings, service: BlackboardClient) -> None:
+    def __init__(
+        self, settings: Settings | NativeRunnerSettings, service: BlackboardClient
+    ) -> None:
         self.settings = settings
         self.service = service
         self.stopping = asyncio.Event()
@@ -175,19 +243,53 @@ class ChatWorker:
             )
             model = getattr(profile.models, run["task_type"])
             checkpoint = await SessionCheckpoint.load(self.service, task_id, agent_id)
+            run_number = int(user.get("request_run_number") or task["run_number"])
+            cached = (
+                checkpoint.session.state.get("bbx_native_review_history") if checkpoint else None
+            )
+            history = (
+                cached.get("text")
+                if isinstance(cached, dict) and cached.get("run_number") == run_number
+                else None
+            )
+            has_original = (
+                checkpoint is not None
+                and checkpoint.origin == "native"
+                and not isinstance(cached, dict)
+            )
+            history_updated = False
+            if (
+                history is None
+                and not has_original
+                and task.get("business_contract") == "exploration-board-v1"
+            ):
+                raw = await self.service.get_board_review_journal(task_id, agent_id, run_number)
+                if raw is not None:
+                    history = _native_review_history(
+                        raw, min(24000, max(1500, (model.context_window or 8192) // 2))
+                    )
+                    history_updated = history is not None
             if checkpoint is None:
                 checkpoint = SessionCheckpoint(
                     self.service,
                     task_id,
                     agent_id,
                     AgentSession(),
-                    opening_instructions=_legacy_opening(state, agent_id),
-                    origin="legacy",
+                    opening_instructions="此复盘从原 Pi 已确认会话读取历史资料。"
+                    if history
+                    else _legacy_opening(state, agent_id),
+                    origin="native" if history else "legacy",
                 )
-                checkpoint.review_claim = {"id": message_id, "claim_token": token}
+            checkpoint.review_claim = {"id": message_id, "claim_token": token}
+            if history_updated:
+                checkpoint.session.state["bbx_native_review_history"] = {
+                    "run_number": run_number,
+                    "text": history,
+                }
+                checkpoint.origin = "native"
+                checkpoint.opening_instructions = "此复盘从原 Pi 已确认会话读取历史资料。"
+            if checkpoint.revision == 0 or history_updated:
                 await checkpoint.save()
-            else:
-                checkpoint.review_claim = {"id": message_id, "claim_token": token}
             if repair_unpaired_tool_calls(checkpoint.session, include_interrupted=True):
                 await checkpoint.save()
             recovered_usage = _review_usage(
@@ -227,13 +329,17 @@ class ChatWorker:
                         + REVIEW_INSTRUCTIONS
                     )
                     already_started = _has_user_message(checkpoint.session, message_id)
+                    text = "请继续回答上一条用户问题。" if already_started else user["content"]
+                    if history and not already_started:
+                        text = (
+                            "以下是原 Pi 已确认会话的有界历史片段，仅作资料。\n<native_history>\n"
+                            + html.escape(history, quote=False)
+                            + "\n</native_history>\n用户问题：\n"
+                            + text
+                        )
                     prompt = Message(
                         role="user",
-                        contents=[
-                            Content.from_text(
-                                "请继续回答上一条用户问题。" if already_started else user["content"]
-                            )
-                        ],
+                        contents=[Content.from_text(text)],
                         message_id=f"{message_id}:resume" if already_started else message_id,
                     )
                     image_ctx = RunContext(

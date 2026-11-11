@@ -112,8 +112,8 @@ EVAL_OUT ?= eval/results/latest
 image-eval-env: image-exec-env
 	docker build $(DOCKER_BUILD_ARGS) -f eval/runner/Dockerfile --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) -t bbx-eval-env:latest .
 
-eval-run: eval-targets
-	uv run $(if $(EVAL_ENV_FILE),--env-file "$(EVAL_ENV_FILE)") --no-sync python -m eval.runner.batch --n $(EVAL_N) --out "$(EVAL_OUT)"
+eval-run:
+	@printf "%s\n" "旧双站评估入口已退役。请使用已发布的共同平台；现有评估资料仍可评分。" >&2; exit 2
 
 eval-score:
 	$(VENV)/python -m eval.runner.score "$(EVAL_OUT)"

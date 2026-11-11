@@ -37,7 +37,6 @@ async def test_offline_old_fee_and_resume_block_keep_original_cny_and_unknown(ct
             "postgres_password": SecretStr(db.password or ""),
             "postgres_db": db.database,
             "pi_site_id": "primary",
-            "pi_model_primary_site": "primary",
             "pi_model_authority": "fixture-authority",
             "pi_model_operator": "alice",
         }

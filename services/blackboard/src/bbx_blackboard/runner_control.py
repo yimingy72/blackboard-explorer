@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from bbx_contracts.board_context import DIGEST_TYPES, VERDICT_TYPES, render_events
 from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract, native_dispatch_enabled
 from bbx_contracts.runner import (
     PROTOCOL,
@@ -29,6 +30,7 @@ from bbx_contracts.runner_bootstrap import (
     native_resume_pending,
 )
 from bbx_contracts.runner_control import (
+    BoardRunIdentity,
     RunnerBindingRegistration,
     RunnerCommandSubmission,
     RunnerOwnerRegistration,
@@ -38,9 +40,16 @@ from bbx_contracts.runner_control import (
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import and_, insert, literal, or_, select, update
+from sqlalchemy import and_, func, insert, literal, or_, select, update
 from sqlalchemy.exc import NoResultFound
 
+from bbx_blackboard.board_runner_scope import (
+    BOARD_CLOSE_DRAIN_SECONDS,
+    EXPLORATION_CONTRACT,
+    board_message,
+    board_runner_frozen,
+    require_board_run,
+)
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import row as stored_row
@@ -52,6 +61,8 @@ POLL_RECHECK_SECONDS = 5
 
 
 def native_stopping(task):
+    if task.get("mode") == "blackboard":
+        return task["deleting"] or task["status"] in TERMINAL
     return (
         task["deleting"]
         or task["ctf_control"].get("native_stop_requested")
@@ -97,8 +108,22 @@ class RunnerControl:
 
     async def _task(self, conn, tid, *, live=False, allow_held=False):
         task = await row(conn, s.tasks, tid)
+        if task["mode"] == "blackboard":
+            if not await board_runner_frozen(conn, tid):
+                raise HTTPException(409, "Frozen exploration-board-v1 task required")
+            if live:
+                if task["deleting"] or task["status"] in TERMINAL:
+                    raise HTTPException(409, "Runner control is stopped")
+                blocked = await conn.scalar(
+                    select(s.task_runner_resources.c.data["board_recovery_blocked"].astext).where(
+                        s.task_runner_resources.c.task_id == tid
+                    )
+                )
+                if blocked is not None:
+                    raise HTTPException(409, "Original Blackboard execution is held for recovery")
+            return task
         if task["mode"] != "ctf" or business_contract(task) != BOARD_CONTRACT:
-            raise HTTPException(409, "Frozen challenge-board-v1 task required")
+            raise HTTPException(409, "Frozen Runner task required")
         if live and (
             task["deleting"]
             or task["ctf_control"].get("native_stop_requested")
@@ -165,6 +190,13 @@ class RunnerControl:
 
     async def _mapping(self, conn, tid, value, *, allow_pending=False):
         binding, business = value["binding"], value["business"]
+        if binding["business_contract"] == EXPLORATION_CONTRACT:
+            try:
+                proof = BoardRunIdentity.model_validate(business.get("board_run"))
+            except ValidationError as error:
+                raise HTTPException(403, "Blackboard binding has no original AgentRun") from error
+            await require_board_run(conn, tid, binding["agent_id"], proof, action="control_binding")
+            return None
         member = await row(conn, s.ctf_members, tid, binding["agent_id"])
         if (
             member["lifecycle"] != "active"
@@ -290,6 +322,8 @@ class RunnerControl:
 
     async def native_worker_cleanup_changed(self, conn, tid, bid):
         task = await row(conn, s.tasks, tid)
+        if task["mode"] != "ctf":
+            return
         control = task["ctf_control"]
         active = (
             *control.get("native_worker_active", {}).values(),
@@ -389,9 +423,33 @@ class RunnerControl:
             remaining -= max(0, (instant - task["active_since"]).total_seconds())
         deadline = instant + timedelta(seconds=max(0, remaining))
         if body.hard_deadline is not None:
-            deadline = min(deadline, body.hard_deadline)
+            if task["mode"] == "blackboard":
+                resource_deadline = await conn.scalar(
+                    select(s.task_runner_resources.c.hard_deadline).where(
+                        s.task_runner_resources.c.task_id == tid
+                    )
+                )
+                if resource_deadline != body.hard_deadline:
+                    raise HTTPException(409, "Original Blackboard deadline changed")
+                deadline = body.hard_deadline
+            else:
+                deadline = min(deadline, body.hard_deadline)
         if previous:
-            deadline = min(deadline, previous["hard_deadline"])
+            new_board_run = False
+            if task["mode"] == "blackboard" and previous["revoked"] and not previous["current"]:
+                data = await conn.scalar(
+                    select(s.task_runner_resources.c.data).where(
+                        s.task_runner_resources.c.task_id == tid
+                    )
+                )
+                new_board_run = bool(
+                    data
+                    and data.get("board_workspace_source")
+                    and data.get("resource_generation", 1) > 1
+                    and data.get("board_previous_owner_epoch") == previous["epoch"]
+                )
+            if not new_board_run:
+                deadline = min(deadline, previous["hard_deadline"])
         if deadline <= instant:
             raise HTTPException(409, "Task deadline has expired")
         await conn.execute(
@@ -486,6 +544,8 @@ class RunnerControl:
         body, _, sha = decode(RunnerBindingRegistration, raw)
         task = await self._task(conn, tid, live=True)
         owner = await self._current_owner(conn, tid)
+        if task["mode"] == "blackboard" or body.board_run is not None:
+            raise HTTPException(409, "Ordinary Runner binding requires the Blackboard coordinator")
         if not helper and body.agent_id != "lead" and native_dispatch_enabled(task):
             current = task["ctf_control"].get("native_worker_active", {}).get(body.agent_id)
             if not assignment or current != assignment:
@@ -785,7 +845,16 @@ class RunnerControl:
             return {**value, **patch}
 
     async def _enqueue(
-        self, conn, tid, owner, request_id, payload_json, payload_digest, restored=None
+        self,
+        conn,
+        tid,
+        owner,
+        request_id,
+        payload_json,
+        payload_digest,
+        restored=None,
+        *,
+        board_start=False,
     ):
         try:
             payload = RunnerPayload.model_validate_json(payload_json).root
@@ -851,6 +920,18 @@ class RunnerControl:
                 return dict(duplicate)
             if restored:
                 proof = restored["message_proof"]
+            elif binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                if board_start and payload.mode == "follow_up":
+                    proof = {"board_run_start": True}
+                elif not board_start and payload.mode == "steer":
+                    original = await board_message(conn, tid, binding, payload.input_id)
+                    if payload.content != original["content"]:
+                        raise HTTPException(403, "Original Blackboard message content changed")
+                    proof = {"board_user_input": True}
+                else:
+                    raise HTTPException(
+                        403, "Blackboard input requires its original domain operation"
+                    )
             else:
                 message = await row(conn, s.ctf_messages, tid, payload.input_id)
                 business = binding["business"]
@@ -1046,18 +1127,19 @@ class RunnerControl:
             async with self.repo.engine.begin() as conn:
                 await self.repo.lock(conn, tid)
                 task = await self._task(conn, tid)
+                ctf_control = task.get("ctf_control") or {}
                 closing = (
                     task["deleting"]
-                    or task["ctf_control"].get("native_stop_requested")
+                    or ctf_control.get("native_stop_requested")
                     or task["status"] in TERMINAL
-                    or task["ctf_control"]["phase"] in {"closing", "closed"}
+                    or ctf_control.get("phase") in {"closing", "closed"}
                 )
                 if not closing:
                     task = await self._task(conn, tid, live=True, allow_held=True)
                 pause = native_pause_state(task)
                 held = (
                     closing
-                    or bool(task["ctf_control"].get("native_budget_hold"))
+                    or bool(ctf_control.get("native_budget_hold"))
                     or pause in {"draining", "paused"}
                 )
                 owner = await self._identity(conn, tid, identity)
@@ -1106,6 +1188,11 @@ class RunnerControl:
                     except HTTPException as error:
                         if error.status_code not in {403, 404, 409}:
                             raise
+                        drain_until = await self._board_close_drain_until(conn, tid, owner, value)
+                        if drain_until is not None:
+                            recheck_at = min(recheck_at, drain_until)
+                            # No active binding or input: only the existing Close result can settle.
+                            continue
                         payload = runner_json_text({"kind": "close", "binding_id": value["id"]})
                         await self._enqueue(
                             conn,
@@ -1329,6 +1416,10 @@ class RunnerControl:
                 not live
                 and not await self._paused_journal_tail(conn, tid, owner, value)
                 and not await self._helper_journal_tail(conn, tid, owner, value)
+                and not (
+                    not body.applied_inputs
+                    and await self._board_close_journal_tail(conn, tid, owner, value)
+                )
             ):
                 known = (
                     await conn.execute(
@@ -1419,6 +1510,35 @@ class RunnerControl:
                     )
                     .values(status="applied", native_proof=proof)
                 )
+                if _message is None:
+                    continue
+                if command["message_proof"].get("board_user_input") is True:
+                    if _message["status"] == "queued":
+                        await conn.execute(
+                            update(s.agent_messages)
+                            .where(
+                                s.agent_messages.c.task_id == tid,
+                                s.agent_messages.c.id == _message["id"],
+                            )
+                            .values(status="delivered", updated_at=self.clock())
+                        )
+                        written = await self.repo.append(
+                            conn,
+                            tid,
+                            [
+                                {
+                                    "type": "agent.message.delivered",
+                                    "actor": "system",
+                                    "addressed_to": [_message["agent_id"]],
+                                    "payload": {
+                                        "id": str(_message["id"]),
+                                        "agent_id": _message["agent_id"],
+                                    },
+                                }
+                            ],
+                        )
+                        await self.repo.notify(tid, written[-1]["version"], connection=conn)
+                    continue
                 await conn.execute(
                     update(s.ctf_messages)
                     .where(
@@ -1430,6 +1550,12 @@ class RunnerControl:
                         session_revision=None,
                     )
                 )
+            applications = [
+                application
+                for application in applications
+                if application[2] is not None
+                and not application[0]["message_proof"].get("board_user_input")
+            ]
             if applications:
                 instructions = [
                     command["input_id"]
@@ -1497,10 +1623,86 @@ class RunnerControl:
         command = await row(conn, s.runner_commands, tid, command_key(owner["epoch"], close))
         return command["status"] == "queued"
 
+    async def _board_close_submission(self, conn, tid, owner, binding, *, allow_pending=False):
+        if binding["binding"]["business_contract"] != EXPLORATION_CONTRACT:
+            return None
+        try:
+            self._owner_live(owner)
+        except HTTPException:
+            return None
+        task = await self._task(conn, tid)
+        if task["deleting"] or binding["owner_epoch"] != owner["epoch"]:
+            return None
+        aid = binding["binding"]["agent_id"]
+        agent = await row(conn, s.agent_runs, tid, aid)
+        scope = BoardRunIdentity.model_validate(binding["business"]["board_run"])
+        if (
+            agent["task_type"] != "close"
+            or agent["close_mode"] not in {"final", "judge"}
+            or (agent["close_mode"] == "final" and task["status"] != "finished")
+            or (agent["close_mode"] == "judge" and task["status"] not in {"running", "closing"})
+            or agent["status"] != "finished"
+            or agent["end_reason"] != "normal"
+            or agent["started_at"] != scope.started_at
+            or scope.run_number != task["run_number"]
+        ):
+            return None
+        invocation = binding["business"].get("committed_close_invocation")
+        if not isinstance(invocation, str) or not invocation:
+            return None
+        original = await conn.scalar(
+            select(s.runner_calls.c.id)
+            .where(
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.id == "tool:" + invocation,
+                s.runner_calls.c.binding_id == binding["id"],
+                s.runner_calls.c.owner_epoch == owner["epoch"],
+                s.runner_calls.c.provider_key == "business",
+                s.runner_calls.c.state.in_(
+                    ("dispatched", "completed") if allow_pending else ("completed",)
+                ),
+                s.runner_calls.c.data["sdk_session_id"].astext == binding["sdk_session_id"],
+                s.runner_calls.c.data["tool_name"].astext == "submit_close",
+            )
+            .limit(1)
+        )
+        return agent["finished_at"] if original is not None else None
+
+    async def _board_close_journal_tail(self, conn, tid, owner, binding):
+        return await self._board_close_submission(conn, tid, owner, binding) is not None
+
+    async def _board_close_drain_until(self, conn, tid, owner, binding):
+        finished = await self._board_close_submission(conn, tid, owner, binding, allow_pending=True)
+        if finished is None:
+            return None
+        expires = min(
+            finished + timedelta(seconds=BOARD_CLOSE_DRAIN_SECONDS),
+            owner["expires_at"],
+            owner["hard_deadline"],
+        )
+        if expires <= self.clock():
+            return None
+        commands = s.runner_commands
+        pending = await conn.scalar(
+            select(commands.c.id)
+            .where(
+                commands.c.task_id == tid,
+                commands.c.owner_epoch == owner["epoch"],
+                commands.c.binding_id == binding["id"],
+                commands.c.kind == "input",
+                commands.c.status == "applied",
+                commands.c.message_proof.contains({"board_run_start": True}),
+            )
+            .limit(1)
+        )
+        return expires if pending is not None else None
+
     async def _paused_journal_tail(self, conn, tid, owner, binding):
         from bbx_blackboard.native_pause import threshold_hold_id
 
         task = await self._task(conn, tid)
+        if task["mode"] != "ctf":
+            return False
         control = task["ctf_control"]
         held = bool(control.get("native_budget_hold") or control.get("failure_hold"))
         hold_id = threshold_hold_id(task)
@@ -1556,6 +1758,18 @@ class RunnerControl:
 
     async def _check_message(self, conn, tid, command):
         proof = command["message_proof"]
+        if (proof or {}).get("board_run_start") is True or (proof or {}).get(
+            "board_user_input"
+        ) is True:
+            binding = await row(conn, s.runner_bindings, tid, command["binding_id"])
+            if binding["binding"]["business_contract"] != EXPLORATION_CONTRACT:
+                raise HTTPException(403, "Board input belongs to a different contract")
+            if proof.get("board_user_input") is True:
+                return await board_message(
+                    conn, tid, binding, command["input_id"], already_delivered=True
+                )
+            await self._mapping(conn, tid, binding)
+            return None
         message = await row(conn, s.ctf_messages, tid, command["input_id"])
         if (
             proof is None
@@ -1574,6 +1788,45 @@ class RunnerControl:
         ):
             raise HTTPException(403, "Original mailbox claim changed")
         return message
+
+    async def _board_terminal(self, conn, tid, owner, binding, command, body, sha, live):
+        if binding["binding"]["business_contract"] != EXPLORATION_CONTRACT or not (
+            command["message_proof"] or {}
+        ).get("board_run_start"):
+            raise HTTPException(403, "Only the original Blackboard run input may complete")
+        key = f"{owner['epoch']}:command:{body.request_id}:{sha}"
+        original = await conn.scalar(
+            select(s.runner_receipts.c.response).where(
+                s.runner_receipts.c.task_id == tid, s.runner_receipts.c.id == key
+            )
+        )
+        if original is not None:
+            return original
+        if command["status"] != "applied" or (
+            not live and not await self._board_close_journal_tail(conn, tid, owner, binding)
+        ):
+            raise HTTPException(409, "Blackboard terminal evidence conflicts or is no longer live")
+        pending_tools = await conn.scalar(
+            select(s.runner_calls.c.id)
+            .where(
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.binding_id == binding["id"],
+                s.runner_calls.c.state.in_(("admitted", "dispatched", "unknown")),
+            )
+            .limit(1)
+        )
+        pending_models = await conn.scalar(
+            select(s.pi_model_calls.c.call_id)
+            .where(
+                s.pi_model_calls.c.task_id == tid,
+                s.pi_model_calls.c.intent["proof"]["binding"]["binding_id"].astext == binding["id"],
+                s.pi_model_calls.c.state.in_(("prepared", "dispatched", "unknown")),
+            )
+            .limit(1)
+        )
+        if pending_tools is not None or pending_models is not None:
+            raise HTTPException(409, "Original Blackboard call evidence is unresolved")
+        return None
 
     async def acknowledge(self, tid, request_id, identity, raw):
         body, text, sha = decode(CommandReceipt, raw)
@@ -1596,7 +1849,7 @@ class RunnerControl:
                 raise HTTPException(403, "Command receipt identity changed")
             allowed = {
                 "prepare": {"prepared", "rejected"},
-                "input": {"accepted", "applied", "rejected"},
+                "input": {"accepted", "applied", "completed", "rejected"},
                 "abort": {"aborted", "rejected"},
                 "close": {"closed", "rejected"},
                 "shutdown": {"closed", "rejected"},
@@ -1630,7 +1883,7 @@ class RunnerControl:
                         conn, tid, value, cursor
                     ):
                         raise HTTPException(409, "Prepared receipt has no confirmed SDK journal")
-                if body.status == "applied":
+                if body.status in {"applied", "completed"}:
                     proof = command["native_proof"]
                     if (
                         body.input_id != command["input_id"]
@@ -1640,6 +1893,12 @@ class RunnerControl:
                         or not await self._confirmed_cursor(conn, tid, value, cursor)
                     ):
                         raise HTTPException(409, "Applied receipt has no confirmed native input")
+                if body.status == "completed":
+                    original = await self._board_terminal(
+                        conn, tid, owner, value, command, body, sha, live
+                    )
+                    if original is not None:
+                        return original
                 if body.pending_confirmation:
                     pending = body.pending_confirmation
                     if (
@@ -1668,11 +1927,50 @@ class RunnerControl:
                 except HTTPException as error:
                     if error.status_code not in {403, 409}:
                         raise
+            if (
+                live
+                and value
+                and value["binding"]["business_contract"] == EXPLORATION_CONTRACT
+                and command["status"] == "applied"
+                and (command["message_proof"] or {}).get("board_run_start") is True
+                and body.status == "rejected"
+                and body.error_code == "boundary_frozen"
+            ):
+                resource = s.task_runner_resources
+                data = await conn.scalar(select(resource.c.data).where(resource.c.task_id == tid))
+                if data is None:
+                    raise HTTPException(409, "Original Blackboard resource is unavailable")
+                await conn.execute(
+                    update(resource)
+                    .where(resource.c.task_id == tid)
+                    .values(
+                        state="frozen",
+                        data={
+                            **data,
+                            "board_recovery_blocked": "Original input outcome unconfirmed",
+                        },
+                    )
+                )
+                await conn.execute(
+                    update(s.runner_commands)
+                    .where(
+                        s.runner_commands.c.task_id == tid, s.runner_commands.c.id == command["id"]
+                    )
+                    .values(status="unknown")
+                )
             # Local close evidence is retained even after its permit was revoked.
             closing = body.status in {"closed", "aborted"}
-            if live or closing:
+            if live or closing or body.status == "completed":
                 status = command["status"]
-                if status not in {"applied", "prepared", "closed", "aborted", "rejected"}:
+                if body.status == "completed" or status not in {
+                    "applied",
+                    "completed",
+                    "unknown",
+                    "prepared",
+                    "closed",
+                    "aborted",
+                    "rejected",
+                }:
                     await conn.execute(
                         update(s.runner_commands)
                         .where(
@@ -1787,18 +2085,100 @@ class RunnerControl:
             )
             return {"revision": body.expected_revision + 1}
 
-    async def prompt(self, tid, bid, identity, known_revision):
-        async with self.repo.engine.connect() as conn:
+    async def prompt(self, tid, bid, identity, known_revision, known_board_version=None):
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
             owner = await self._identity(conn, tid, identity, live=True)
             value = await self._binding(conn, tid, bid, owner, live=True, permit=True)
             if known_revision > value["prompt_revision"]:
                 raise HTTPException(409, "Published prompt revision moved backwards")
-            if known_revision == value["prompt_revision"]:
+            context = None
+            if value["binding"]["business_contract"] == EXPLORATION_CONTRACT:
+                aid = value["binding"]["agent_id"]
+                agent = await row(conn, s.agent_runs, tid, aid)
+                if agent["task_type"] == "explore" and agent.get("conclude_requested_at"):
+                    stamp = agent["conclude_requested_at"].isoformat()
+                    if value["business"].get("board_conclude_stamp") != stamp:
+                        task = await row(conn, s.tasks, tid)
+                        remaining = int(task["params"].get("conclude_grace_calls", 3))
+                        text = (
+                            f"[结束指令] 原因：{agent.get('conclude_reason') or 'closing'}。"
+                            "立即停止探索；最多再调用 "
+                            f"{remaining} 次 release / post_fact / post_intent "
+                            "完成交接，然后返回回执 JSON。"
+                        )
+                        instructions = value["instructions"] + "\n" + text
+                        if len(instructions) > 131072:
+                            raise HTTPException(409, "Blackboard instructions exceed their bound")
+                        patch = {
+                            "prompt_revision": value["prompt_revision"] + 1,
+                            "instructions": instructions,
+                            "business": {**value["business"], "board_conclude_stamp": stamp},
+                        }
+                        await conn.execute(
+                            update(s.runner_bindings)
+                            .where(
+                                s.runner_bindings.c.task_id == tid, s.runner_bindings.c.id == bid
+                            )
+                            .values(**patch)
+                        )
+                        value = {**value, **patch}
+                version = int(
+                    await conn.scalar(
+                        select(func.max(s.events.c.version)).where(s.events.c.task_id == tid)
+                    )
+                    or 0
+                )
+                known = known_board_version or 0
+                if known > version:
+                    raise HTTPException(409, "Confirmed board context moved backwards")
+                if known < version:
+                    events = (
+                        (
+                            await conn.execute(
+                                select(s.events)
+                                .where(
+                                    s.events.c.task_id == tid,
+                                    s.events.c.version > known,
+                                    s.events.c.version <= version,
+                                    or_(
+                                        s.events.c.addressed_to.any(aid),
+                                        s.events.c.addressed_to.is_(None)
+                                        & s.events.c.type.in_(DIGEST_TYPES | VERDICT_TYPES),
+                                    ),
+                                )
+                                .order_by(s.events.c.version)
+                                .limit(2001)
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    if len(events) > 2000:
+                        raise HTTPException(409, "Board changes exceed this bounded context window")
+                    content = "\n".join(
+                        render_events(
+                            [{str(k): v for k, v in event.items()} for event in events],
+                            value["binding"]["agent_id"],
+                            100,
+                        )
+                    )
+                    if len(content) > 131072:
+                        raise HTTPException(409, "Board changes exceed this bounded context window")
+                    context = {
+                        "version": version,
+                        "content": content,
+                        "source_digest": hashlib.sha256(content.encode()).hexdigest(),
+                    }
+            if known_revision == value["prompt_revision"] and context is None:
                 return None
-            return {
+            result = {
                 "protocol": PROTOCOL,
                 "fence": fence(owner),
                 "binding_id": bid,
                 "prompt_revision": value["prompt_revision"],
                 "instructions": value["instructions"],
             }
+            if context is not None:
+                result["board_context"] = context
+            return result

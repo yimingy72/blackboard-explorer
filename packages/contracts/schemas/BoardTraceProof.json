@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "JournalCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Hash",
+          "type": "string"
+        },
+        "leaf_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Leaf Id"
+        },
+        "anchor_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Anchor Offset",
+          "type": "integer"
+        },
+        "anchor_size": {
+          "maximum": 2097152,
+          "minimum": 0,
+          "title": "Anchor Size",
+          "type": "integer"
+        },
+        "anchor_hash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Anchor Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offset",
+        "seq",
+        "hash",
+        "anchor_offset",
+        "anchor_size",
+        "anchor_hash"
+      ],
+      "title": "JournalCursor",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binding_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "sdk_session_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Sdk Session Id",
+      "type": "string"
+    },
+    "cursor": {
+      "$ref": "#/$defs/JournalCursor"
+    },
+    "entry_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Entry Id",
+      "type": "string"
+    },
+    "run_number": {
+      "minimum": 1,
+      "title": "Run Number",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "binding_id",
+    "sdk_session_id",
+    "cursor",
+    "entry_id",
+    "run_number"
+  ],
+  "title": "BoardTraceProof",
+  "type": "object"
+}

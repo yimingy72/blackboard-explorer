@@ -12,6 +12,7 @@ from bbx_contracts.native_gateway import native_usd_amount
 from bbx_contracts.runner import Digest
 from bbx_contracts.runner_bootstrap import (
     BINDING_CAPTURE_CONFIG_FIELDS,
+    BlackboardCreationCapability,
     NativeCtfEnvironment,
     TaskCreationCapabilities,
     management_document_digest,
@@ -121,11 +122,14 @@ class PublicationState:
     publication: NativeCtfPublication | None = None
     stamp: str = ""
 
-    def capabilities(self, *, available: bool = True) -> TaskCreationCapabilities:
+    def capabilities(
+        self, *, blackboard: BlackboardCreationCapability, native_available: bool = True
+    ) -> TaskCreationCapabilities:
         return TaskCreationCapabilities(
             mode="native-ctf" if self.exclusive else "legacy",
+            blackboard=blackboard,
             native_ctf=self.publication.public(self.stamp)
-            if available and self.publication
+            if native_available and self.publication
             else None,
         )
 
@@ -210,6 +214,8 @@ def load_publication(settings: Settings, *, allow_test_only: bool = False) -> Pu
         if {
             "retirement_single_apiserver",
             "mcp_transport",
+            "board_network",
+            "execution_contract",
             "mcp_gateway_url",
             "runner_gateway_url",
             "native_mcp_gateway_url",

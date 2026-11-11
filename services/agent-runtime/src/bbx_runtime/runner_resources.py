@@ -20,8 +20,12 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 import httpx
+from bbx_contracts.legacy_network import LegacyNetworkPolicy, read_gateway_credentials
+from bbx_contracts.runner import runner_json_text
 from bbx_contracts.runner_bootstrap import (
     BINDING_CAPTURE_CONFIG_FIELDS,
+    board_network_policy,
+    explicit_board_journal_restart,
     validate_binding_capture_deployment,
 )
 from bbx_contracts.runner_inputs import INPUT_PROFILE
@@ -81,6 +85,7 @@ class RunnerResources:
         if type(lock) is not bool or (lock and not self.sandbox_host):
             raise ValueError("Journal writer locking requires the trusted Sandbox host profile")
         self.journal_writer_lock = lock
+        self.board_network = board_network_policy(config)
         raw_vpn = config.get("vpn")
         self.vpn = vpn_deployment(raw_vpn) if raw_vpn else None
         if self.vpn and not self.sandbox_host:
@@ -114,7 +119,7 @@ class RunnerResources:
             ipaddress.IPv4Address(network["ipv4"])
             if self.config.get("sandbox_host_execd_origin"):
                 self._execd_origin(self.config["sandbox_host_execd_origin"])
-        if TRAFFIC_CONFIG_FIELDS & self.config.keys():
+        if self.board_network or TRAFFIC_CONFIG_FIELDS & self.config.keys():
             validate_binding_capture_deployment(self.config)
             images.append("traffic_sandbox_image")
         for key in images:
@@ -328,6 +333,32 @@ class RunnerResources:
             raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
         return enabled
 
+    def board_network_for(self, operation):
+        board = self.board_network
+        is_board = operation.get("data", {}).get("execution_contract") == "exploration-board-v1"
+        if is_board != (board is not None):
+            raise ResourceUnknown("The trusted Blackboard network deployment changed")
+        if board is not None and (
+            operation["data"].get("native_network")
+            != ("default" if board["mode"] == "default" else "vpn")
+            or (board["mode"] != "default" and not self.vpn_enabled(operation))
+            or not self.traffic_enabled(operation)
+        ):
+            raise ResourceUnknown("The trusted Blackboard route is unavailable")
+        return board
+
+    def board_direct(self, operation):
+        board = self.board_network_for(operation)
+        return board if board and board["mode"] == "default" else None
+
+    def _forced_board(self):
+        return self.board_network is not None and self.board_network["mode"] != "default"
+
+    def _uses_route_policy(self, operation):
+        return self.board_direct(operation) or (
+            self.vpn_enabled(operation) and isinstance(self.vpn, NativeTaskVpnProfile)
+        )
+
     async def _vpn_peer_rule(self, namespace):
         if not isinstance(self.vpn, NativeVpnProfile):
             raise ResourceUnknown("The original Task VPN profile is missing")
@@ -401,6 +432,8 @@ class RunnerResources:
         if any(address in prefix for prefix in cluster):
             raise ResourceUnknown("Original VPN peer overlaps Kubernetes control addresses")
         generation = str(operation["data"].get("resource_generation", 1))
+        board = self.board_network_for(operation)
+        protocol = "TCP" if board and board["mode"] == "socks5" else "UDP"
         runner = pod["metadata"]
         if runner["labels"].get(GENERATION_LABEL) != generation or peer in {
             operation["observation"]["runner"]["pod_ip"],
@@ -425,7 +458,7 @@ class RunnerResources:
                 "egress": [
                     {
                         "toCIDR": [peer + "/32"],
-                        "toPorts": [{"ports": [{"port": str(port), "protocol": "UDP"}]}],
+                        "toPorts": [{"ports": [{"port": str(port), "protocol": protocol}]}],
                     }
                 ],
             },
@@ -477,8 +510,16 @@ class RunnerResources:
             raise ResourceUnknown("The published VPN source boundary omits Kubernetes addresses")
 
     async def _verify_route_boundary(self, operation, policy, allowed):
-        if not isinstance(self.vpn, NativeTaskVpnProfile):
+        board = self.board_direct(operation)
+        if board is None and not isinstance(self.vpn, NativeTaskVpnProfile):
             raise ResourceUnknown("Original dynamic network boundary is unavailable")
+        configured_deny = (
+            board["deny_cidrs"]
+            if board
+            else self.vpn.deny_cidrs
+            if isinstance(self.vpn, NativeTaskVpnProfile)
+            else []
+        )
         wanted = [ipaddress.IPv4Network(cidr) for cidr in allowed]
         observed = operation["observation"]
         denied = [ipaddress.IPv4Network(cidr) for cidr in policy.deny_cidrs]
@@ -488,7 +529,7 @@ class RunnerResources:
             *(
                 ipaddress.IPv4Network(cidr)
                 for cidr in (
-                    *self.vpn.deny_cidrs,
+                    *configured_deny,
                     observed["sandbox"]["pod_ip"],
                     observed["runner"]["pod_ip"],
                     *(
@@ -508,7 +549,10 @@ class RunnerResources:
         return cluster
 
     async def ensure_default_network_policy(self, operation):
-        if not self.vpn_enabled(operation) or not isinstance(self.vpn, NativeTaskVpnProfile):
+        board = self.board_direct(operation)
+        if board is None and (
+            not self.vpn_enabled(operation) or not isinstance(self.vpn, NativeTaskVpnProfile)
+        ):
             raise ResourceUnknown("Original default Task network deployment is unavailable")
         data = operation["data"]
         policy = NativeTaskRoutePolicy.model_validate(data["route_policy"])
@@ -516,7 +560,29 @@ class RunnerResources:
         if data["native_network"] != "default" or not re.fullmatch(r"[a-f0-9]{64}", digest):
             raise ResourceUnknown("Original default Task network was not selected")
         namespace, labels, _ = await self._original_host_runner(operation)
-        await self._verify_route_boundary(operation, policy, self.vpn.default_cidrs)
+        allowed = (
+            board["allow_cidrs"]
+            if board
+            else self.vpn.default_cidrs
+            if isinstance(self.vpn, NativeTaskVpnProfile)
+            else []
+        )
+        await self._verify_route_boundary(operation, policy, allowed)
+        dns_rule = []
+        if board:
+            resolver = ipaddress.IPv4Address(board["dns_ipv4"])
+            if (
+                data.get("dns_ipv4") != str(resolver)
+                or not any(resolver in ipaddress.IPv4Network(cidr) for cidr in policy.allow_cidrs)
+                or any(resolver in ipaddress.IPv4Network(cidr) for cidr in policy.deny_cidrs)
+            ):
+                raise ResourceUnknown("The original Blackboard resolver changed")
+            dns_rule.append(
+                {
+                    "toCIDR": [f"{resolver}/32"],
+                    "toPorts": [{"ports": [{"port": "53", "protocol": "UDP"}]}],
+                }
+            )
         ref = operation["observation"]["sandbox"]
         pod = await self._get("pod", ref["pod_name"], namespace)
         if (
@@ -547,7 +613,8 @@ class RunnerResources:
                         "toPorts": [
                             {"ports": [{"port": "1", "endPort": 65535, "protocol": "TCP"}]}
                         ],
-                    }
+                    },
+                    *dns_rule,
                 ],
                 "egressDeny": [{"toCIDR": policy.deny_cidrs}],
             },
@@ -736,7 +803,7 @@ class RunnerResources:
                 namespace,
                 spec={
                     "hard": {
-                        "pods": "2",
+                        "pods": "3" if operation["data"].get("board_workspace_source") else "2",
                         "persistentvolumeclaims": "2",
                         "requests.storage": "192Mi",
                         "requests.cpu": "1",
@@ -795,6 +862,7 @@ class RunnerResources:
             },
         )
         vpn = self.vpn_enabled(operation)
+        board = self.board_direct(operation)
         if vpn:
             link = [{"ports": [{"port": str(VPN_WG_PORT), "protocol": "UDP"}]}]
             same, system = policy["spec"]["ingress"][0]["fromEndpoints"]
@@ -805,7 +873,7 @@ class RunnerResources:
             policy["spec"]["egress"][0]["toPorts"] = link
         policy["apiVersion"] = "cilium.io/v2"
         await self._ensure(policy, labels)
-        if self.traffic_enabled(operation) and not vpn:
+        if self.traffic_enabled(operation) and not vpn and not board:
             target = self._document(
                 "CiliumNetworkPolicy",
                 "bbx-binding-traffic",
@@ -908,6 +976,11 @@ class RunnerResources:
                 "name": claim["metadata"]["name"],
                 "uid": claim["metadata"]["uid"],
             }
+        fresh_journal = self.journal_writer_lock and explicit_board_journal_restart(
+            {**operation, "observation": {**observed, **refs}}
+        )
+        if fresh_journal:
+            journal_identity["journal_fresh"] = True
         secret = await self._ensure(
             self._document(
                 "Secret",
@@ -1056,9 +1129,9 @@ class RunnerResources:
                 labels,
                 observed.get("vpn_egress_secret", {}).get("uid"),
             )
-            self._vpn_secret(egress, dynamic=isinstance(self.vpn, NativeTaskVpnProfile))
+            self._check_egress_secret(egress)
             refs["vpn_egress_secret"] = {"name": VPN_SECRET, "uid": egress["metadata"]["uid"]}
-        if self.journal_writer_lock and generation > 1:
+        if self.journal_writer_lock and generation > 1 and not fresh_journal:
             storage = await self._recovery_storage(namespace, labels, refs)
             if storage != observed.get("journal_storage"):
                 raise ResourceUnknown("The original journal Node or bound PV changed")
@@ -1073,7 +1146,9 @@ class RunnerResources:
             ):
                 raise ResourceUnknown("Unexpected Pod before opening the replacement writer")
         lock_id = observed.get("journal_lock_id")
-        runner_doc = self._runner_document(namespace, labels, generation, lock_id, with_vpn=vpn)
+        runner_doc = self._runner_document(
+            namespace, labels, generation, lock_id, with_vpn=vpn, fresh_journal=fresh_journal
+        )
         fingerprint = hashlib.sha256(
             json.dumps(runner_doc["spec"], sort_keys=True).encode()
         ).hexdigest()
@@ -1145,10 +1220,11 @@ class RunnerResources:
                 runner_uid,
             )
             self._runner_spec(runner, runner_doc["spec"])
-        if self.journal_writer_lock and generation == 1:
-            journal_identity["journal_storage"] = await self._recovery_storage(
-                namespace, labels, refs
-            )
+        if self.journal_writer_lock and (generation == 1 or fresh_journal):
+            storage = await self._recovery_storage(namespace, labels, refs)
+            if observed.get("journal_storage") not in (None, storage):
+                raise ResourceUnknown("The original journal Node or bound PV changed")
+            journal_identity["journal_storage"] = storage
         return {
             "source_id": self.config["source_id"],
             "cluster_uid": self.config["cluster_uid"],
@@ -1167,7 +1243,11 @@ class RunnerResources:
                 "pod_uid": pod["metadata"]["uid"],
                 "environment_revision": environment_revision,
                 "container_id": self._pod_projection(pod).get("container_id"),
-                **({"pod_ip": str(ipaddress.IPv4Address(pod["status"]["podIP"]))} if vpn else {}),
+                **(
+                    {"pod_ip": str(ipaddress.IPv4Address(pod["status"]["podIP"]))}
+                    if vpn or board
+                    else {}
+                ),
             },
             "runner": {
                 **projection,
@@ -1246,7 +1326,9 @@ class RunnerResources:
             self._workspace_input_mount(pod, main)
         return env["BBX_ENVIRONMENT_REVISION"]["value"]
 
-    def _runner_document(self, namespace, labels, generation=1, lock_id=None, *, with_vpn=False):
+    def _runner_document(
+        self, namespace, labels, generation=1, lock_id=None, *, with_vpn=False, fresh_journal=False
+    ):
         document = self._document(
             "Pod",
             "bbx-runner",
@@ -1274,6 +1356,11 @@ class RunnerResources:
                                 "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}},
                             },
                             {"name": "NODE_EXTRA_CA_CERTS", "value": "/var/run/bbx/ca.pem"},
+                            *(
+                                [{"name": "BBX_PROTECTED_BOARD_START", "value": "1"}]
+                                if with_vpn and self._forced_board()
+                                else []
+                            ),
                         ],
                         "resources": {
                             "requests": {"cpu": "50m", "memory": "128Mi"},
@@ -1307,7 +1394,12 @@ class RunnerResources:
             if (
                 type(generation) is not int
                 or not 1 <= generation <= 999999999
-                or (generation > 1 and not JOURNAL_LOCK_ID.fullmatch(lock_id or ""))
+                or (fresh_journal and (self.board_network is None or generation == 1))
+                or (
+                    generation > 1
+                    and not fresh_journal
+                    and not JOURNAL_LOCK_ID.fullmatch(lock_id or "")
+                )
             ):
                 raise ResourceUnknown("The journal resource generation or original lock is absent")
             spec = document["spec"]
@@ -1316,7 +1408,7 @@ class RunnerResources:
                 "node",
                 JOURNAL_SCRIPT,
                 "run",
-                *([lock_id] if generation > 1 else []),
+                *([lock_id] if generation > 1 and not fresh_journal else []),
             ]
             runner["volumeMounts"][1]["subPath"] = f"epoch-{generation}"
             runner["volumeMounts"].append(
@@ -1327,11 +1419,26 @@ class RunnerResources:
                     "readOnly": True,
                 }
             )
-            if generation == 1:
+            if generation == 1 or fresh_journal:
+                initialize = ["node", JOURNAL_SCRIPT, "initial"]
+                if fresh_journal:
+                    # The explicit new run has a distinct volume and original resources remain
+                    # untouched. Reuse the SDK journal's existing creation and lock helpers.
+                    initialize = [
+                        "node",
+                        "--input-type=module",
+                        "-e",
+                        "import { prepareJournalDirectory, withWriterLock } "
+                        f"from '{JOURNAL_SCRIPT}';"
+                        "await prepareJournalDirectory('/journal-root', 'epoch-1', true);"
+                        f"await withWriterLock('/journal-root/{JOURNAL_LOCK}', null, "
+                        "() => prepareJournalDirectory('/journal-root', process.argv[1]));",
+                        f"epoch-{generation}",
+                    ]
                 spec["initContainers"] = [
                     self._journal_container(
                         "journal-initial",
-                        ["node", JOURNAL_SCRIPT, "initial"],
+                        initialize,
                         [{"name": "journal", "mountPath": "/journal-root"}],
                     )
                 ]
@@ -1379,6 +1486,11 @@ class RunnerResources:
             if isinstance(self.vpn, NativeTaskVpnProfile):
                 document["metadata"]["labels"][GENERATION_LABEL] = str(generation)
             spec = document["spec"]
+            tun = (
+                {}
+                if self.board_network and self.board_network["mode"] == "socks5"
+                else {"devic.es/tun": "1"}
+            )
             spec["securityContext"]["sysctls"] = [{"name": "net.ipv4.ip_forward", "value": "1"}]
             spec["containers"].append(
                 {
@@ -1395,8 +1507,8 @@ class RunnerResources:
                     ],
                     "args": ["egress"],
                     "resources": {
-                        "requests": {"cpu": "25m", "memory": "64Mi", "devic.es/tun": "1"},
-                        "limits": {"cpu": "200m", "memory": "128Mi", "devic.es/tun": "1"},
+                        "requests": {"cpu": "25m", "memory": "64Mi", **tun},
+                        "limits": {"cpu": "200m", "memory": "128Mi", **tun},
                     },
                     "securityContext": {
                         "runAsUser": 0,
@@ -1458,13 +1570,20 @@ class RunnerResources:
             raise ResourceUnknown("The Sandbox host Secret contains undeclared material")
 
     @staticmethod
-    def _vpn_secret(secret, *, dynamic=False):
+    def _vpn_secret(secret, *, dynamic=False, forced=False):
         data = secret.get("data", {})
         published = {"ca.pem", "config.json"}
         if not dynamic:
             published |= {"ca.crt", "tls.crt", "tls.key"}
+        if forced:
+            published.add("credentials.json")
         if secret.get("type") != "Opaque" or set(data) not in ({"ca.pem"}, published):
             raise ResourceUnknown("The original VPN egress Secret changed")
+
+    def _check_egress_secret(self, secret):
+        self._vpn_secret(
+            secret, dynamic=isinstance(self.vpn, NativeTaskVpnProfile), forced=self._forced_board()
+        )
 
     @staticmethod
     def _runner_spec(pod, expected):
@@ -1637,6 +1756,7 @@ class RunnerResources:
                 observed.get("resource_generation", 1),
                 observed.get("journal_lock_id"),
                 with_vpn=self.vpn_enabled(operation),
+                fresh_journal=observed.get("journal_fresh") is True,
             )["spec"],
         )
         actual = self._pod_projection(pod, with_host=True, with_vpn=self.vpn_enabled(operation))
@@ -1655,6 +1775,98 @@ class RunnerResources:
         ):
             raise ResourceUnknown("The original Sandbox host process is not live")
         return namespace, labels, pod
+
+    async def read_board_terminal(self, operation, agent_id, receipt):
+        original = operation["observation"]["runner"]
+        if (
+            receipt["fence"]["task_id"] != operation["task_id"]
+            or receipt["fence"]["pod_uid"] != original["pod_uid"]
+        ):
+            raise ResourceUnknown("Blackboard terminal does not belong to the original Runner")
+        namespace, _, pod = await self._original_host_runner(operation)
+        raw = await self._kubectl(
+            "-n",
+            namespace,
+            "exec",
+            pod["metadata"]["name"],
+            "-c",
+            "runner",
+            "--",
+            "node",
+            JOURNAL_SCRIPT,
+            "board-terminal",
+            runner_json_text({"agent_id": agent_id, "receipt": receipt}),
+        )
+        await self._original_host_runner(operation)
+        try:
+            text = json.loads(raw)["text"]
+            if not isinstance(text, str) or len(text.encode()) > 131072:
+                raise ValueError("Invalid terminal text")
+        except (KeyError, TypeError, ValueError):
+            raise ResourceUnknown("Blackboard terminal journal evidence is unavailable") from None
+        return text
+
+    async def read_board_journal(self, operation, agent_id, receipt, output):
+        original = operation["observation"]["runner"]
+        size = receipt["cursor"]["offset"]
+        if (
+            not 0 < size <= 64 * 1024 * 1024
+            or receipt["fence"]["task_id"] != operation["task_id"]
+            or receipt["fence"]["pod_uid"] != original["pod_uid"]
+        ):
+            raise ResourceUnknown("The original Blackboard journal is outside the export bound")
+        namespace, _, pod = await self._original_host_runner(operation)
+        result = await self._copy_board_journal(
+            namespace, pod["metadata"]["name"], "runner", agent_id, receipt, output
+        )
+        await self._original_host_runner(operation)
+        return result
+
+    async def _copy_board_journal(self, namespace, pod_name, container, agent_id, receipt, output):
+        size = receipt["cursor"]["offset"]
+        if not 0 < size <= 64 * 1024 * 1024:
+            raise ResourceUnknown("The original Blackboard journal is outside the export bound")
+        command = await asyncio.create_subprocess_exec(
+            "kubectl",
+            "--kubeconfig",
+            self.config["kubeconfig"],
+            "--context",
+            self.config["context"],
+            "-n",
+            namespace,
+            "exec",
+            pod_name,
+            "-c",
+            container,
+            "--",
+            "node",
+            JOURNAL_SCRIPT,
+            "board-journal",
+            runner_json_text({"agent_id": agent_id, "receipt": receipt}),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        digest = hashlib.sha256()
+        total = 0
+        assert command.stdout is not None
+        try:
+            async with asyncio.timeout(60):
+                while chunk := await command.stdout.read(65536):
+                    total += len(chunk)
+                    if total > size:
+                        raise ResourceUnknown(
+                            "Original Blackboard journal exceeded its confirmed cursor"
+                        )
+                    digest.update(chunk)
+                    output.write(chunk)
+                if await command.wait() or total != size:
+                    raise ResourceUnknown("Original Blackboard journal prefix was not confirmed")
+        finally:
+            if command.returncode is None:
+                command.kill()
+                await command.wait()
+        return total, digest.hexdigest()
 
     async def publish_vpn_mount(self, operation, material, blackboard_url):
         if not self.vpn_enabled(operation) or self.vpn is None:
@@ -1682,8 +1894,7 @@ class RunnerResources:
             labels,
             observed["vpn_egress_secret"]["uid"],
         )
-        dynamic = isinstance(self.vpn, NativeTaskVpnProfile)
-        self._vpn_secret(secret, dynamic=dynamic)
+        self._check_egress_secret(secret)
         document = {
             "scope": scope,
             "report_key": material["report_key"],
@@ -1695,6 +1906,18 @@ class RunnerResources:
         desired = {"ca.pem": secret["data"]["ca.pem"]}
         if isinstance(self.vpn, NativeTaskVpnProfile):
             document.update(profile=VPN_DYNAMIC_PROFILE, deny_cidrs=self.vpn.deny_cidrs)
+            if self._forced_board():
+                assert self.board_network is not None
+                board = LegacyNetworkPolicy.model_validate(self.board_network["legacy_policy"])
+                assert board.gateway is not None
+                try:
+                    credentials = await asyncio.to_thread(read_gateway_credentials, board.gateway)
+                except (OSError, ValueError):
+                    raise ResourceUnknown("Original protected credentials are invalid") from None
+                document["board_mode"] = board.mode
+                desired["credentials.json"] = base64.b64encode(
+                    json.dumps(credentials, separators=(",", ":")).encode()
+                ).decode()
         else:
             desired.update(await self._original_vpn_credentials(self.vpn))
             document.update(
@@ -1833,6 +2056,16 @@ class RunnerResources:
             "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
             "environment_revision": observed["sandbox"]["environment_revision"],
             "network": self.config["sandbox_network"],
+            **(
+                {
+                    "board_network": {
+                        "mode": board["mode"],
+                        **({"dns_ipv4": board["dns_ipv4"]} if board["mode"] == "default" else {}),
+                    }
+                }
+                if (board := self.board_network_for(operation))
+                else {}
+            ),
             **(
                 {"traffic_targets": self.config["traffic_targets"]}
                 if self.traffic_enabled(operation)
@@ -1997,6 +2230,7 @@ class RunnerResources:
                 observation.get("resource_generation", 1),
                 observation.get("journal_lock_id"),
                 with_vpn=with_vpn,
+                fresh_journal=observation.get("journal_fresh") is True,
             )["spec"],
         )
         if self.sandbox_host:
@@ -2162,7 +2396,7 @@ class RunnerResources:
             elif key == "sandbox_host_secret":
                 self._host_secret(value)
             elif key == "vpn_egress_secret":
-                self._vpn_secret(value, dynamic=isinstance(self.vpn, NativeTaskVpnProfile))
+                self._check_egress_secret(value)
             elif (
                 value.get("type") != "Opaque"
                 or set(value.get("data", {})) != {"token"}
@@ -2206,7 +2440,7 @@ class RunnerResources:
                             key
                         ] != projection.get(key):
                             raise ResourceUnknown("The original Sandbox process identity changed")
-                    if vpn:
+                    if vpn or self.board_direct(operation):
                         pod_ip = str(ipaddress.IPv4Address(pod["status"]["podIP"]))
                         if prior.get("sandbox", {}).get("pod_ip", pod_ip) != pod_ip:
                             raise ResourceUnknown("Original VPN Sandbox Pod address changed")
@@ -2227,6 +2461,7 @@ class RunnerResources:
                     prior.get("resource_generation", 1),
                     prior.get("journal_lock_id"),
                     with_vpn=vpn,
+                    fresh_journal=prior.get("journal_fresh") is True,
                 )["spec"],
             )
             projection = self._pod_projection(runner, with_host=self.sandbox_host, with_vpn=vpn)
@@ -2282,6 +2517,7 @@ class RunnerResources:
                             observation.get("resource_generation", 1),
                             observation.get("journal_lock_id"),
                             with_vpn=bool(ref.get("egress_container_id")),
+                            fresh_journal=observation.get("journal_fresh") is True,
                         )["spec"],
                     )
                 if (
@@ -2295,16 +2531,13 @@ class RunnerResources:
 
     async def _terminated_watch(self, reference, namespace):
         container_id = reference.get("container_id")
-        if (
-            not container_id
-            or not reference.get("resource_version")
-            or not reference.get("container_name")
-        ):
+        start_revision = reference.get("watch_revision") or reference.get("resource_version")
+        if not container_id or not start_revision or not reference.get("container_name"):
             return False
         meta = {
             "name": self._name(reference["pod_name"]),
             "uid": reference["pod_uid"],
-            "resourceVersion": reference["resource_version"],
+            "resourceVersion": start_revision,
         }
         query = urlencode(
             {
@@ -2374,6 +2607,23 @@ class RunnerResources:
             logging.getLogger(__name__).warning("Native Pod exit remains unresolved (%s)", failure)
         return confirmed
 
+    async def _pod_stop_snapshot(self, name, namespace):
+        # A live Pod's own resourceVersion may predate the watch cache. A consistent,
+        # field-selected LIST proves that same Pod at a current collection revision.
+        # Use the API document, not kubectl's synthesized List (which drops its revision).
+        query = urlencode({"fieldSelector": "metadata.name=" + self._name(name)})
+        uri = f"/api/v1/namespaces/{self._name(namespace)}/pods?{query}"
+        selected = json.loads(await self._kubectl("get", "--raw", uri))
+        if selected.get("kind") != "PodList":
+            raise ResourceUnknown("The original Pod stop snapshot is unavailable")
+        pods = selected["items"]
+        revision = selected.get("metadata", {}).get("resourceVersion")
+        if len(pods) > 1 or (pods and (not isinstance(revision, str) or not revision)):
+            raise ResourceUnknown("The original Pod stop snapshot is unconfirmed")
+        if pods and pods[0]["metadata"]["name"] != name:
+            raise ResourceUnknown("The original Pod stop snapshot changed")
+        return (pods[0], revision) if pods else (None, None)
+
     async def stop(self, observation, tenant_key):
         namespace, labels = self._scope(observation)
         await self._cluster()
@@ -2390,7 +2640,7 @@ class RunnerResources:
                     continue
                 if key == "runner" and self.sandbox_host and not ref.get("host_container_id"):
                     continue
-                pod = await self._get("pod", ref["pod_name"], namespace)
+                pod, revision = await self._pod_stop_snapshot(ref["pod_name"], namespace)
                 if pod:
                     if pod["metadata"]["uid"] != ref["pod_uid"]:
                         raise ResourceUnknown("The original Pod identity changed")
@@ -2404,7 +2654,7 @@ class RunnerResources:
                     if projection["terminated"]:
                         result[key + "_terminated"] = True
                         continue
-                    watch_reference = {**ref, **projection}
+                    watch_reference = {**ref, **projection, "watch_revision": revision}
                     runner_delete = runner_delete or key == "runner"
                 else:
                     # A prior cursor selects history; only an actual exit event proves termination.
@@ -2631,7 +2881,7 @@ class RunnerResources:
                 )
         if await self._get("batchsandbox", observed["sandbox"]["id"], namespace):
             raise ResourceUnknown("The original logical Sandbox still exists")
-        if self.vpn_enabled(operation) and isinstance(self.vpn, NativeTaskVpnProfile):
+        if self._uses_route_policy(operation):
             for name in (VPN_PEER_POLICY, DEFAULT_NETWORK_POLICY):
                 policy = await self._get("ciliumnetworkpolicies", name, namespace)
                 if policy:
@@ -2678,7 +2928,7 @@ class RunnerResources:
         direct = policy["metadata"]["name"] == DEFAULT_NETWORK_POLICY
         if data.get("native_network") != ("default" if direct else "vpn"):
             raise ResourceUnknown("The original Task network mode does not own this policy")
-        vpn = data["vpn"]
+        vpn = data.get("vpn", {})
         receipt = (data.get("network_policy") if direct else vpn.get("policy")) or {}
         digest = (
             data.get("network_digest") if direct else vpn.get("network", {}).get("network_digest")
@@ -3011,7 +3261,11 @@ class RunnerResources:
             ("CiliumNetworkPolicy", "bbx-task"),
             ("CiliumNetworkPolicy", "bbx-runner-control"),
         }
-        if self.traffic_enabled(operation) and not self.vpn_enabled(operation):
+        if (
+            self.traffic_enabled(operation)
+            and not self.vpn_enabled(operation)
+            and not self.board_direct(operation)
+        ):
             allowed.add(("CiliumNetworkPolicy", "bbx-binding-traffic"))
         original = {observed["namespace_uid"]}
         for value in observed.values():
@@ -3111,8 +3365,7 @@ class RunnerResources:
             if (
                 kind == "CiliumNetworkPolicy"
                 and name in {VPN_PEER_POLICY, DEFAULT_NETWORK_POLICY}
-                and self.vpn_enabled(operation)
-                and isinstance(self.vpn, NativeTaskVpnProfile)
+                and self._uses_route_policy(operation)
             ):
                 expected = self._network_policy_for_cleanup(value, operation, labels)
             if kind == "BatchSandbox" or (expected is None and (kind, name) not in allowed):
@@ -3126,7 +3379,7 @@ class RunnerResources:
                 elif name == SANDBOX_HOST_SECRET and self.sandbox_host:
                     self._host_secret(value)
                 elif name == VPN_SECRET and self.vpn_enabled(operation):
-                    self._vpn_secret(value, dynamic=isinstance(self.vpn, NativeTaskVpnProfile))
+                    self._check_egress_secret(value)
                 elif value.get("type") != "Opaque" or set(value.get("data", {})) != {"token"}:
                     raise ResourceUnknown("The original execd Secret changed")
             resources.append({"path": path, "uid": uid, "kind": kind, "name": name})

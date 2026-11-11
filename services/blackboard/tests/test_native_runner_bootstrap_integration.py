@@ -124,7 +124,6 @@ async def test_native_bootstrap_fence_lead_closing_and_exit_reconciliation(
     options = settings().model_copy(
         update={
             "pi_site_id": "fixture-primary",
-            "pi_model_primary_site": "fixture-primary",
             "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
         }
@@ -453,7 +452,6 @@ async def test_native_never_dispatched_cancel_and_retained_ownership(ctf, ctf_ur
     options = settings().model_copy(
         update={
             "pi_site_id": "fixture-primary",
-            "pi_model_primary_site": "fixture-primary",
             "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
         }
@@ -582,7 +580,6 @@ async def test_native_hold_refreshes_only_control_and_never_activates_input(ctf,
     options = settings().model_copy(
         update={
             "pi_site_id": "fixture-primary",
-            "pi_model_primary_site": "fixture-primary",
             "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
         }
@@ -791,7 +788,6 @@ async def test_native_recovery_freezes_the_original_and_keeps_late_evidence(
     options = settings().model_copy(
         update={
             "pi_site_id": "fixture-primary",
-            "pi_model_primary_site": "fixture-primary",
             "pi_model_authority": "fixture-authority",
             "sandbox_tenant_resolver_token": SecretStr("synthetic-resolver-only"),
         }

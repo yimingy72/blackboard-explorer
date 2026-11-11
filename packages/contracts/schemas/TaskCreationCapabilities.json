@@ -1,5 +1,31 @@
 {
   "$defs": {
+    "BlackboardCreationCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "title": "BlackboardCreationCapability",
+      "type": "object"
+    },
     "NativeCtfEnvironment": {
       "additionalProperties": false,
       "properties": {
@@ -17,6 +43,11 @@
           "pattern": "^[a-f0-9]{64}$",
           "title": "Publication Stamp",
           "type": "string"
+        },
+        "external_mcp": {
+          "default": false,
+          "title": "External Mcp",
+          "type": "boolean"
         },
         "label": {
           "maxLength": 100,
@@ -123,6 +154,9 @@
       "title": "Mode",
       "type": "string"
     },
+    "blackboard": {
+      "$ref": "#/$defs/BlackboardCreationCapability"
+    },
     "native_ctf": {
       "anyOf": [
         {
@@ -136,7 +170,8 @@
     }
   },
   "required": [
-    "mode"
+    "mode",
+    "blackboard"
   ],
   "title": "TaskCreationCapabilities",
   "type": "object"

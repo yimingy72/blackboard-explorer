@@ -1,12 +1,15 @@
 """Necessary identity, once-dispatch, byte-bound and positive-scope receipts; no network."""
 
+import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from bbx_runtime import sandbox_tools as tools
+from bbx_runtime.sandbox_mcp import SandboxMCP
 from bbx_sandbox_execution.execution import (
     AlreadyAdmitted,
     AssignmentBinding,
@@ -25,6 +28,56 @@ from opensandbox.models.execd import (
 
 def fake(**values) -> Any:
     return SimpleNamespace(**values)
+
+
+async def test_ordinary_file_capture_keeps_one_stream_and_full_bytes_beyond_model_preview():
+    body = b"a" * (70 * 1024) + b"original-final-bytes"
+    path = "/workspace/agents/agent-1/evidence.bin"
+    info = fake(path=path, entry_type="file", size=len(body))
+    opened = 0
+    uploaded = bytearray()
+
+    async def read(_path, *, chunk_size):
+        nonlocal opened
+        opened += 1
+        assert _path == path and chunk_size == 65536
+
+        async def chunks():
+            for offset in range(0, len(body), 8192):
+                yield body[offset : offset + 8192]
+
+        return chunks()
+
+    files = fake(get_file_info=AsyncMock(return_value={path: info}), read_bytes_stream=read)
+    sandbox = fake(files_with_identity=lambda *_identity: files)
+    host = SandboxMCP.__new__(SandboxMCP)
+    host.config = {"hard_deadline": (datetime.now(UTC) + timedelta(minutes=1)).isoformat()}
+
+    async def control(method, path, body=None, *, authorization=None, sdk=None, raw=None):
+        assert method == "PUT" and path == "calls/original-read/evidence" and raw is not None
+        async for block in raw:
+            uploaded.extend(block)
+        return {
+            "uri": "evidence/task/agent-1/original.bin",
+            "size": len(uploaded),
+            "sha256": hashlib.sha256(uploaded).hexdigest(),
+        }
+
+    host.control = control
+    result = await host.capture_board_file(
+        sandbox, fake(invocation_id="original-read"), path, 65536
+    )
+    assert opened == 1 and bytes(uploaded) == body
+    assert result["retained_bytes"] == 65536 and result["truncated"] is True
+    assert result["content"] == "a" * 65536
+    assert result["artifact"]["sha256"] == hashlib.sha256(body).hexdigest()
+    assert result["artifact"]["size"] == len(body)
+
+    files.get_file_info.return_value = {path: fake(path=path, entry_type="directory", size=0)}
+    assert (await host.capture_board_file(sandbox, fake(invocation_id="other"), path, 65536))[
+        "output_unavailable"
+    ] is True
+    assert opened == 1
 
 
 def binding():

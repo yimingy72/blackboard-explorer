@@ -6,17 +6,17 @@
 
 普通黑板还提供**成果树**：独立的成果整理 Agent 从整体目标出发，跨意图归并发现、关键尝试、排除结果与剩余缺口。可以查看树上结论的依据，或直接向整理 Agent 提问；原始 Fact/Intent 黑板继续完整保留。
 
-系统由三个运行组件构成：`blackboard` 提供 API、浏览器工作台、事件流和持久化；`agent-runtime` 调用模型、同步黑板，运行求解调度器及独立成果整理会话；每个任务的 `exec-env` 容器承接命令操作，使用 Ubuntu 或任务配置指定的 Kali 镜像。PostgreSQL 保存事件和折叠状态，MinIO 保存证据、工具记录、报告及归档。浏览器通过黑板服务创建任务、查看实时变化和下载产物，不直接连接执行容器。
+Blackboard 提供一个登录入口、工作台和 API；共同 Runtime 负责两种模式的调度、Pi 会话和 OpenSandbox 执行环境。PostgreSQL 保存事件和任务状态，MinIO 保存证据、工具记录、报告和归档。浏览器通过 Blackboard 创建任务、查看实时变化和下载产物。
 
-平台默认允许 2 个任务同时运行，两种协作模式共用容量，超出后按创建时间排队。各任务独立使用执行容器、黑板、会话和预算；任务结束并归档后释放槽位。可用 `MAX_RUNNING_TASKS` 调整容量，见[多任务部署说明](docs/使用与部署.md#多任务并行)。
+平台默认允许 2 个任务同时运行，两种协作模式共用容量，超出后按创建时间排队。各任务独立使用执行容器、黑板、会话和预算；任务结束并归档后释放槽位。可用 `MAX_RUNNING_TASKS` 调整容量，见[部署说明](docs/使用与部署.md#模型mcp-和并行任务)。
 
 ## PI 执行层
 
-当前代码以 [PI](https://github.com/earendil-works/pi) 替换 MAF。`pi-agent-core` 原生循环负责工具验证、顺序/并行执行与继续生成；`pi-ai` 负责模型协议、流式、多模态和 token 用量；`pi-telemetry` 接入现有按 Agent 归属的逻辑流量记录。版本固定为 1.4.0。
+当前代码以 [PI](https://github.com/earendil-works/pi) 替换 MAF。`pi-agent-core` 原生循环负责工具验证、顺序/并行执行与继续生成；`pi-ai` 负责模型协议、流式、多模态和 token 用量；`pi-telemetry` 接入现有按 Agent 归属的逻辑流量记录。求解 Task Runner 固定使用 Pi 1.5.0。
 
 Python 保留黑板/CTF 调度、预算与权限、持久事务和执行容器；受控 Node 进程承接 PI。旧会话兼容读取，新消息保留 PI 的工具 ID、思考签名等元信息。每次完整模型响应先保存会话和费用收据，再执行其工具；未知副作用不重放。普通三种 Worker、Lead/队友、成果整理和复盘共用这一执行层。
 
-本机源码运行需要 Node.js **22.21+**，安装依赖后执行 `make pi-install`。runtime 镜像自带 Node 和锁定的 PI 依赖，启动先验证版本。PI 不自动加载本机 CLI 资源或本地文件工具；命令仍在每任务的 Ubuntu/Kali 中执行。部署状态与验证限度见 [PI 迁移报告](docs/tasks/PI-runtime-migration-report.md)，组件取舍见 [迁移设计](docs/design/PI运行时迁移.md)。
+本机源码运行需要 Node.js **22.21+**，安装依赖后执行 `make pi-install`。runtime 镜像自带 Node 和锁定的 PI 依赖，启动先验证版本。PI 不自动加载本机 CLI 资源或本地文件工具；命令在当前任务的 OpenSandbox 中执行。部署状态与验证限度见 [PI 迁移报告](docs/tasks/PI-runtime-migration-report.md)，组件取舍见 [迁移设计](docs/design/PI运行时迁移.md)。
 
 ## 两种协作模式
 
@@ -86,9 +86,7 @@ Intent 是组织线索，不是一条意图就对应一个分支，也不是一�
 
 任务有一个目标、可选的领域背景、至少一项带编号的文字验收条件，以及金额、时长、并发上限。目标回答“要解决什么”；验收条件回答“拿什么证据判断完成”；领域背景提供资源地址、业务规则和操作边界。任务名只用于列表和标题，长目标仍完整保存并可展开。初始附件先存入 MinIO，启动前恢复到 `/workspace/shared/inputs/<file-id>/<filename>`，三种 Worker 都能读取；它们是待核实资料，不自动成为 Fact。原件随任务归档保留，删除任务时一并清理。创建任务时选择模型，后台固定模型、工具、调度参数和执行环境快照；系统提示词支持按平台Worker设置动态更新，并记录应用轨迹。领域专属要求应写在任务中，而不是塞进通用 Profile。调度器记录用量并强制预算，但不把剩余金额或时间数值塞给 Agent。
 
-普通黑板任务默认使用独立的 Ubuntu 执行容器，也可通过配置选择 Kali；同一任务的 Explore 共用 `/workspace`，但各自使用独立 Linux 用户。普通黑板中只有 Explore 能通过 `execute_command` 在其中运行命令、读取目标、发请求或生成证据文件。Agent runtime 持有模型客户端和黑板工具，执行容器不接收模型密钥或服务密钥。容器默认直连公网，代理隔离模式需要显式启用，详见[网络模式](docs/使用与部署.md#网络模式与排障)。
-
-Explore 普通命令以各自用户运行，需要时可在同一 Ubuntu 内用 `sudo -n` 安装工具、管理进程和网络；新容器提供 NET_ADMIN、NET_RAW 和 TUN 设备。保留 Agent 工作目录及任务共享目录，不设额外 private 目录。修改共享文件前先复制到自己的工作目录，验证后另存成果并发布 Fact。sudo 可以越过 Agent 间文件权限，因此目录用于减少协作误操作，不作为对 root 的强隔离。命令与结果由平台持久化，sudo 原生记录和执行审计在容器销毁前按任务、轮次存入 MinIO。
+黑板模式中只有 Explore 可以使用命令和工作区写工具，Derive 和 Close 保留各自的业务范围。OpenSandbox 按任务和 Agent 限定命令及文件访问，命令、退出状态和证据由平台记录。管理员配置强制 VPN 或 SOCKS5 时，黑板只能走已验证的路径；详见[网络模式](docs/使用与部署.md#网络模式与排障)。
 
 ### 黑板：Fact、Intent 和关系
 
@@ -130,7 +128,7 @@ Close 每项裁定记录 `completion_basis` 与 `completion_reason`。默认 `in
 
 非明确完成的静止任务必须运行“完成复核”derive，提出必要方向或给出具体排除理由，再由 Close 裁定。普通并行推导、失败/拒绝/无效空回执均不能充当完成复核；黑板新变化使旧复核失效。关闭主动推导也保留最少一次必要复核，旧 single 评估的调用量不能与新版本直接混算。时限、预算、人工停止和运行失败仍允许结束，这些停止不表示目标已明确达成。
 
-出现新的 `satisfies` 声明后，调度器可在 Explore 继续工作时启动一次 `judge`；探索全部停下且黑板自上次裁定后有变化时也会裁定。若还有未满足项，裁定理由和 `missing` 会反馈给探索者；没有可查意图时再交给 derive。derive 连续无法提出方向、探索预算用尽或人工停止时，进入终结收尾；全部验收项有明确完成依据时可以直接成功收尾；其余 met 必须经过当前黑板上的有效 derive 复核，再由 Close 重新裁定。收尾先通知仍在运行的 Agent 交接，之后由 `final` Close 写报告，任务变为 `finished`。即使以未满足项结束，报告也应列出缺口。模型或运行环境连续失败等异常可使任务直接 `failed`，此时可能没有终结报告。任务结束后，系统把黑板、会话及已登记文件按任务和运行轮次归档到 MinIO，再销毁该任务的 Ubuntu 容器。
+出现新的 `satisfies` 声明后，调度器可在 Explore 继续工作时启动一次 `judge`；探索全部停下且黑板自上次裁定后有变化时也会裁定。若还有未满足项，裁定理由和 `missing` 会反馈给探索者；没有可查意图时再交给 derive。derive 连续无法提出方向、探索预算用尽或人工停止时，进入终结收尾；全部验收项有明确完成依据时可以直接成功收尾；其余 met 必须经过当前黑板上的有效 derive 复核，再由 Close 重新裁定。收尾先通知仍在运行的 Agent 交接，之后由 `final` Close 写报告，任务变为 `finished`。即使以未满足项结束，报告也应列出缺口。模型或运行环境连续失败等异常可使任务直接 `failed`，此时可能没有终结报告。任务结束后，系统把黑板、会话及已登记文件按任务和运行轮次归档到 MinIO，再释放该任务的 OpenSandbox 执行资源。
 
 默认 Profile 允许并发探索与主动 derive。评测用的 `single` Profile 关闭主动推导，但仍保留必要完成复核；只有在创建任务时同时把并发上限设为 1，才是项目当前的单 Explore 基线。它**仍使用黑板、Fact/Intent、必要 derive 复核、Close 裁定和报告**，不是“没有黑板”的传统单 Agent。历史评测结果见 [HANDOFF](docs/HANDOFF.md)，不能把旧网络或旧 Profile 的样本当作当前配置的同版本对比。
 
@@ -174,7 +172,7 @@ CTF 模式另有受预算限制的有界自动续接：步数到限每成员每�
 
 Explore 应及时把复现脚本、必要输入和依赖逐个登记为 Fact 附件（`post_fact.evidence` 的 `type`、`path`、`summary` 均必填）。仅在事实正文、意图或命令中提到路径不算登记；未登记的下载包、缓存、镜像展开内容和扫描临时文件不会保留，也不应为归档而登记整个临时目录。工具记录、报告等继续作为本任务对象保存。归档按任务和运行轮次隔离；删除任务才删除该任务的所有轮次归档与会话。旧版全量工作区归档仍可读取和下载，新任务的必要文件归档不包含完整工作区。
 
-归档和清理完成后，终态任务可点击“续跑任务”：追加额度增加原总预算和总时长，累计使用不清零。新 Ubuntu 容器只恢复已登记的必要文件，再由调度器继续未完成方向或启动推导；之前的完成复核不会直接使新一轮结束。旧报告、归档按运行轮次保留。未登记文件、系统软件、后台进程和网络连接不恢复；运行依赖需按登记的脚本与输入重新建立。若选择采用当前 Worker 工具设置，只更新新的执行轮次配置，历史配置保留。
+归档和清理完成后，终态任务可点击“续跑任务”：追加额度增加原总预算和总时长，累计使用不清零。新执行环境只恢复已登记的必要文件，再由调度器继续未完成方向或启动推导；之前的完成复核不会直接使新一轮结束。旧报告、归档按运行轮次保留。未登记文件、系统软件、后台进程和网络连接不恢复；运行依赖需按登记的脚本与输入重新建立。若选择采用当前 Worker 工具设置，只更新新的执行轮次配置，历史配置保留。
 
 ## 按 Agent 查看流量
 
@@ -182,7 +180,7 @@ Explore 应及时把复现脚本、必要输入和依赖逐个登记为 Fact 附
 
 帧号按采集源计数，同一帧号需结合 Agent/来源识别；`R` 前缀表示事务或逻辑记录，不冒充实际数据包。启用显示过滤器时返回真实包的原生匹配结果，不把模型逻辑调用套入包过滤语义。完整解析按快照更新，界面显示覆盖范围及不完整状态；旧轮未保存的解密材料无法补建。
 
-新执行环境为同一 Ubuntu 内每个 Agent 建立网络命名空间，以采集源确认 TCP/UDP/ICMP、IPv6、localhost 和 TUN 流量归属；文件与已安装软件仍共享。跨 Agent 服务使用 `BBX_AGENT_IP`、任务共享网关或 `/workspace/shared/network.json` 中的地址，localhost 仅属于当前 Agent。sudo 保留原有能力，envd 新增的命名空间管理能力不会授予 Agent。
+新任务按已确认的任务和 Agent 作用域归集网络记录；缺少原始记录时不会补造采集结果。
 
 HTTPS 使用任务专用 CA 与 mitmproxy 解码，模型调用由 PI 原生追踪接入平台、工具调用沿用平台观测。证书固定、独立 TLS 信任库、绕过代理或 QUIC 等未解码连接保留密文，界面不会补造正文。共享网关流量单独标记；原始包保留原始数据，展示副本有界脱敏。容量/丢包/中断如实显示不完整，达到采集限额仍保留代理转发。历史任务不能补录流量，新任务或显式续跑的新轮开始采集。
 
@@ -190,24 +188,17 @@ HTTPS 使用任务专用 CA 与 mitmproxy 解码，模型调用由 PI 原生追�
 
 ## 本地启动
 
-以下命令用于**首次部署**。在仓库根目录，将 `.env.example` 复制为 `.env`，由你填好本地服务凭据、`ADMIN_USERS` 和模型密钥。不要把 `.env` 提交到 Git。
+首次部署复制 `.env.example` 为 `.env`，填写本地账号、存储及签名配置。已有部署保留原 Compose 项目、数据卷和签名加密材料。
 
 ```sh
-UV_CACHE_DIR=/private/tmp/bbx-uv-cache uv sync --locked
-make pi-install
-make web-install web-build
-make image-exec-env image-agent-runtime image-blackboard
-docker compose --project-name blackboard-explorer up -d --wait
+make web-install web-build image-blackboard image-agent-runtime
+docker compose up -d --wait
 ```
 
-打开 <http://127.0.0.1:58000/login>，使用自己配置的管理员账号登录。需要使用仓库内的评测目标时，先运行 `make eval-targets`，启动命令再叠加 `-f docker-compose.yml -f docker-compose.dev.yml`；具体命令、网络模式切换和排障见 [使用与部署](docs/使用与部署.md)。`make up` 只启动基础 Compose 服务，不会构建镜像或启用内置评测目标。
-
-**已有部署应沿用原 Compose 项目名、数据卷、执行网络及运维入口**，不要另换项目名创建一个看似空白的平台。本机既有 `bbx-ctf-team-mode` 部署使用 `sh scripts/deploy_ctf_team_mode.sh up -d --wait`；公网部署沿用 `/opt/blackboard-explorer/operations/compose.py`。更新或清理镜像时，保留原 PostgreSQL/MinIO 数据、签名与加密材料及备份，勿删除数据卷；有运行任务时不强行重建应用容器。
-
-执行 Ubuntu 容器默认直接出网（`EXEC_EGRESS_MODE=direct`、`EXEC_NETWORK_INTERNAL=false`）。宿主机下载依赖所用代理、运行时访问模型的 `RUNTIME_HTTP_PROXY`，以及可选的执行容器白名单代理，是三个不同配置；参见[网络说明](docs/使用与部署.md#网络模式与排障)。
+使用配置的站点端口登录，默认是 [127.0.0.1:58000](http://127.0.0.1:58000/login)。从同一个“新建任务”页面选择黑板模式或 CTF 模式。实际运行还需要按[使用与部署](docs/使用与部署.md)配置和验证共同 Runtime、OpenSandbox 以及各模式的发布文件；配置完成后使用 `docker compose --profile shared-runtime up -d --wait` 启动。模型和 MCP 都在该站点配置。
 
 ## 验证与进一步阅读
 
-`make check` 使用假模型；`make test-integration` 使用隔离 Docker 环境。真实任务使用 AgentGateway 已发布模型，并按该模型费用记录。任务选择与评分见 [评测任务](eval/tasks/README.md) 和 [评测运行器](eval/runner/README.md)。
+`make check` 使用假模型；`make test-integration` 使用隔离 Docker 环境。真实任务使用平台启用的 Pi 模型，并按原账本计费。任务选择与评分见 [评测任务](eval/tasks/README.md) 和 [评测运行器](eval/runner/README.md)。
 
 设计正本见 [概念设计](docs/design/黑板式探索架构设计.md)及 [实现架构](docs/design/黑板系统实现架构.md)，当前进度见 [HANDOFF](docs/HANDOFF.md)。运行时实现见 [Agent runtime](services/agent-runtime/README.md)，前端见 [Web](web/README.md)。

@@ -8,8 +8,7 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -18,14 +17,10 @@ from alembic.config import Config
 from bbx_blackboard.api import create_app
 from bbx_blackboard.settings import Settings as BoardSettings
 from bbx_runtime.clients import BlackboardClient
-from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.runner import CtfRunner
-from bbx_runtime.execenv import ExecEnvHandle
-from bbx_runtime.execenv.manager import ArchiveResult
 from bbx_runtime.pi import ResponseStream
-from bbx_runtime.scheduler.supervisor import TaskSupervisor
 from bbx_runtime.settings import Settings
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from pydantic import SecretStr
@@ -321,158 +316,5 @@ async def test_http_team_sessions_results_and_deferred_close(ctf_vertical_databa
     finally:
         if coordinator:
             await coordinator.close()
-        await app.state.workspace_cache.close()
-        await engine.dispose()
-
-
-async def test_replacement_uses_persisted_execution_boot_over_restarted_daemon(
-    ctf_vertical_database, monkeypatch
-):
-    """Combine real DB binding/CAS routes with supervisor replacement orchestration."""
-    settings = BoardSettings(
-        postgres_password=SecretStr("isolated-test"),
-        minio_root_password=SecretStr("unused-test"),
-        service_token=SecretStr("ctf-vertical-service"),
-        agent_token_secret=SecretStr("ctf-vertical-isolated-test-signing-key"),
-        admin_users=SecretStr("admin:test"),
-        profiles_dir=ROOT / "profiles/default",
-    )
-    engine = create_async_engine(ctf_vertical_database)
-    app = create_app(settings, engine=engine, objects=MemoryObjects())
-    await app.state.profile_store.ensure_bundled(settings.profiles_dir, app.state.platform_store)
-    original_boot, unknown_boot, fresh_boot = [str(uuid4()) for _ in range(3)]
-    phase_checks = []
-    returned = None
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://board", trust_env=False
-        ) as http:
-            board = BlackboardClient("http://board", "ctf-vertical-service", http)
-            tid = (
-                await board.create_task(
-                    {
-                        "mode": "ctf",
-                        "goal": "Restore registered work after a daemon crash",
-                        "budget": {"max_cost": "100", "max_minutes": 20},
-                    }
-                )
-            )["id"]
-            await board.start_task(tid)
-            ctf = CtfClient(board)
-            await ctf.runtime(tid, "start")
-            turn = await ctf.runtime(
-                tid, "claim_turn", agent_id="lead", runtime_instance="before-crash"
-            )
-            await ctf.runtime(
-                tid,
-                "record_execution",
-                agent_id="lead",
-                turn_id=turn["id"],
-                generation=turn["generation"],
-                boot_id=original_boot,
-            )
-            old = ExecEnvHandle(UUID(tid), "old-container", "old", "http://old-envd", "test-token")
-            fresh = ExecEnvHandle(
-                UUID(tid), "new-container", "new", "http://new-envd", "test-token"
-            )
-            archive_uri = f"workspace/{tid}/replacement-old-container.tar.zst"
-
-            async def phase(expected):
-                state = await ctf.state(tid)
-                replacement = state["task"]["ctf_control"]["replacement"]
-                assert replacement["phase"] == expected
-                assert replacement["old_boot_id"] == original_boot
-                assert replacement["old_boot_id"] != unknown_boot
-                member = next(m for m in state["members"] if m["id"] == "lead")
-                assert member["execution"]["boot_id"] == original_boot
-                assert not member["execution"]["drained"]
-                assert member["generation"] == turn["generation"]
-                phase_checks.append(expected)
-
-            async def archive(handle, *, uri):
-                assert handle == old and uri == archive_uri
-                await phase("begin")
-                return ArchiveResult(uri, 123, "none")
-
-            async def destroy(task_id, container_id):
-                assert task_id == tid and container_id == old.container_id
-                await phase("archive_saved")
-
-            async def provision(task_id, profile, uri):
-                assert task_id == tid and uri == archive_uri
-                assert profile.mode == "ctf"
-                await phase("destroyed")
-                return fresh
-
-            class DaemonStatus:
-                def __init__(self, base_url, token):
-                    self.base_url = base_url
-                    self.closed = False
-                    assert token == "test-token"
-
-                async def __aenter__(self):
-                    return self
-
-                async def __aexit__(self, *args):
-                    await self.close()
-
-                async def close(self):
-                    self.closed = True
-
-                async def ctf_status(self):
-                    return {
-                        "task_id": tid,
-                        "boot_id": unknown_boot if self.base_url == old.base_url else fresh_boot,
-                        "state": "unknown" if self.base_url == old.base_url else "ready",
-                        "drained": False,
-                    }
-
-            monkeypatch.setattr("bbx_runtime.scheduler.supervisor.EnvdClient", DaemonStatus)
-            manager = Mock()
-            manager.find = AsyncMock(return_value=old)
-            manager.archive_to_store = AsyncMock(side_effect=archive)
-            manager.destroy_confirmed = AsyncMock(side_effect=destroy)
-            manager.provision = AsyncMock(side_effect=provision)
-            manager.start_traffic = AsyncMock()
-            supervisor = TaskSupervisor(
-                Settings.model_construct(),
-                board,
-                manager,
-                Mock(),
-            )
-            returned = await supervisor._replace_ctf_envd(tid)
-            assert returned.base_url == fresh.base_url
-            manager.start_traffic.assert_awaited_once()
-            assert manager.start_traffic.call_args.args[0] == fresh
-            assert phase_checks == ["begin", "archive_saved", "destroyed"]
-            final = await ctf.state(tid)
-            replacement = final["task"]["ctf_control"]["replacement"]
-            assert replacement == {
-                "old_container_id": old.container_id,
-                "old_boot_id": original_boot,
-                "phase": "ready",
-                "archive_uri": archive_uri,
-                "new_boot_id": fresh_boot,
-            }
-            lead = next(m for m in final["members"] if m["id"] == "lead")
-            assert lead["generation"] == turn["generation"] + 1
-            assert lead["execution"]["drained"] is True
-            assert lead["execution"]["container_destroyed"] == old.container_id
-            assert lead["execution"]["replacement_boot_id"] == fresh_boot
-            with pytest.raises(RemoteError) as stale:
-                await ctf.runtime(
-                    tid,
-                    "authorize_member",
-                    agent_id="lead",
-                    turn_id=turn["id"],
-                    generation=turn["generation"],
-                )
-            assert stale.value.status in {403, 409}
-            manager.destroy_confirmed.assert_awaited_once_with(tid, old.container_id)
-            manager.archive_to_store.assert_awaited_once()
-            manager.provision.assert_awaited_once()
-    finally:
-        if returned is not None:
-            await returned.close()
         await app.state.workspace_cache.close()
         await engine.dispose()

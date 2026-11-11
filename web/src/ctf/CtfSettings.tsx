@@ -27,7 +27,7 @@ export default function CtfSettings() {
     if (query.isLoading) return <LoadingState label="正在读取原生 CTF 发布" />;
     if (query.isError) return <Alert type="error" title="无法读取原生 CTF 发布" action={<Button onClick={() => void query.refetch()}>重试</Button>} />;
     const published = query.data;
-    if (!published?.published) return <Alert type="info" title="此站点没有已发布的原生 CTF 环境" description="历史任务仍可查看。原生 CTF 任务使用部署管理员发布的角色与权限。" />;
+    if (!published?.published) return <Alert type="info" title="当前没有已发布的原生 CTF 环境" description="历史任务仍可查看。原生 CTF 任务使用部署管理员发布的角色与权限。" />;
     return <section className={styles.catalogEditor} aria-label="已发布 CTF 配置">
         <div className={styles.contentHeader}>
             <h2 className={styles.sectionTitle}>已发布角色</h2>

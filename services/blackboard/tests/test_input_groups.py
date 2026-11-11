@@ -107,7 +107,11 @@ def test_explicit_input_selection_normalizes_ids_and_requires_group():
     reordered = TaskCreateBody.model_validate({**body, "input_file_ids": [second, first]})
     assert selected.input_file_ids is not None and len(selected.input_file_ids) == 2
     assert request_hash(selected.model_dump()) == request_hash(reordered.model_dump())
-    assert TaskCreateBody.model_validate(body).input_file_ids is None
+    implicit = TaskCreateBody.model_validate(body)
+    explicit = TaskCreateBody.model_validate({**body, "mode": "blackboard"})
+    assert implicit.input_file_ids is None
+    assert "mode" not in explicit.model_dump()
+    assert request_hash(implicit.model_dump()) == request_hash(explicit.model_dump())
     assert TaskCreateBody.model_validate({**body, "input_file_ids": []}).input_file_ids == []
     assert request_hash(selected.model_dump()) != request_hash(
         TaskCreateBody.model_validate({**body, "input_file_ids": []}).model_dump()

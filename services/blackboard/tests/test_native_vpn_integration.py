@@ -143,6 +143,7 @@ async def task_fixture_with_profile(app, http, ctf, runtime, profile):
             },
         },
         "data": {
+            "mcp_transport": "direct-v2",
             "owner_epoch": 1,
             "vpn_profile": profile["profile"],
             "vpn": {"state": "idle"},
@@ -198,7 +199,8 @@ async def task_fixture_with_profile(app, http, ctf, runtime, profile):
 async def saved_tool(app, http, lead, name, args, suffix):
     gateway = app.state.runner_gateway
     tid = lead["tid"]
-    headers = support.cap(lead, "mcp")
+    target = "sandbox" if name == "exec_command" else "business"
+    headers = support.cap(lead, target)
     raw = support.invocation(lead, name, args, suffix)
     route = control(tid) + f"/bindings/{lead['binding']['binding_id']}/tools/admit"
     admitted = await http.post(route, headers=headers, json=raw)
@@ -208,7 +210,7 @@ async def saved_tool(app, http, lead, name, args, suffix):
         identity = require_gateway_identity(
             Request({"type": "http", "app": app, "headers": []}),
             tid,
-            "mcp",
+            f"{target}-mcp",
             authorization=headers["Authorization"],
         )
         from bbx_contracts.runner import ToolInvocation
@@ -219,6 +221,7 @@ async def saved_tool(app, http, lead, name, args, suffix):
             ToolInvocation.model_validate(raw),
             name,
             args,
+            target=target,
         )
         assert dispatch is None
     assert receipt["disposition"] == "completed"
@@ -261,7 +264,7 @@ async def test_original_vpn_authority_and_deployment_slot(ctf, ctf_url, monkeypa
         )
         denied_worker = await http.post(
             control(worker["tid"]) + f"/bindings/{worker['binding']['binding_id']}/tools/admit",
-            headers=support.cap(worker, "mcp"),
+            headers=support.cap(worker, "business"),
             json=worker_config,
         )
         assert denied_worker.status_code == 403, denied_worker.text

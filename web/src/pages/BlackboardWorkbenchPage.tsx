@@ -26,6 +26,7 @@ import controls from '../styles/controls.module.css';
 import { formatMoney, taskStatusLabel } from './format';
 import styles from './TaskWorkbenchPage.module.css';
 import TrafficDrawer from '../components/TrafficDrawer';
+import CommandAuditDrawer from '../components/CommandAuditDrawer';
 import type { ProgressUiState } from '../progress/ProgressPage';
 const ProgressPage = lazy(() => import('../progress/ProgressPage'));
 const WorkbenchDrawer = lazy(() => import('../components/WorkbenchDrawer'));
@@ -47,6 +48,7 @@ export default function BlackboardWorkbenchPage() {
     const saveProgressUi = useCallback((value: Partial<ProgressUiState>) => { setProgressUi(current => ({ ...current, ...value })); }, []);
     const queryClient = useQueryClient();
     const [recordsOpen, setRecordsOpen] = useState(false);
+    const [commandAuditOpen, setCommandAuditOpen] = useState(false);
     const [trafficAgent, setTrafficAgent] = useState<string | null | undefined>(undefined);
     const [goalOpen,setGoalOpen]=useState(false);
     const goalButton=useRef<HTMLButtonElement|HTMLAnchorElement>(null);
@@ -82,6 +84,22 @@ export default function BlackboardWorkbenchPage() {
     const agents = useMemo(() => orderedAgents(viewState, numbers), [viewState, numbers]);
     const contributions = useMemo(() => agentContributions(viewState, viewEvents), [viewState, viewEvents]);
     const selectedAgent = selectedId ? viewState.agents[selectedId] : undefined;
+    const journalRun = viewState.task?.runNumber ?? taskQuery.data?.run_number;
+    const sessionPath = taskId && selectedAgent && journalRun
+      ? `/api/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(selectedAgent.id)}/session`
+      : null;
+    const journal = useQuery({
+      queryKey: ['board-journal', taskId, selectedAgent?.id, selectedAgent?.status, journalRun],
+      enabled: Boolean(sessionPath && taskQuery.data?.business_contract === 'exploration-board-v1'),
+      queryFn: async ({ signal }) => {
+        const response = await fetch(`${sessionPath}?journal=true&run_number=${journalRun}`, { signal });
+        if (response.status === 404) return false;
+        if (!response.ok) throw new Error('原始会话暂时不可读');
+        return true;
+      },
+      staleTime: 3000,
+      refetchInterval: query => !query.state.data && ['running', 'concluding'].includes(selectedAgent?.status ?? '') ? 5000 : false,
+    });
     const draftAgentId = selectedAgent?.id;
     const changeDraft = useCallback((value: string) => {
         if (draftAgentId) setDrafts(current => ({ ...current, [draftAgentId]: value }));
@@ -99,7 +117,7 @@ export default function BlackboardWorkbenchPage() {
         setSelectedId(null);
         requestAnimationFrame(() => agentButtons.current.get(id)?.focus());
     }
-    useEffect(() => { setSelectedId(null); setVersion(null); setRecordsOpen(false); }, [taskId]);
+    useEffect(() => { setSelectedId(null); setVersion(null); setRecordsOpen(false); setCommandAuditOpen(false); }, [taskId]);
     useEffect(() => {
         if (selectedId && board.state.agents[selectedId] && !viewState.agents[selectedId])
             setSelectedId(null);
@@ -205,7 +223,7 @@ export default function BlackboardWorkbenchPage() {
         <h1 title={taskTitle(boardTask ?? task ?? {})}>{taskTitle(boardTask ?? task ?? {})}</h1><code className={styles.taskId}>{taskId.slice(0,8)}</code>
         <Tag color={status === 'running' ? 'processing' : status === 'failed' ? 'error' : 'default'}>{taskStatusLabel(status)}</Tag>
         <div className={styles.titleMeta}><span>第 {boardTask?.runNumber??task?.run_number??1} 轮</span><span>累计运行 {duration}</span><span>{usedCost == null ? "费用待核" : task?.pi_model && version === null ? `估算 ${formatMoney(usedCost, 'USD')}` : formatMoney(usedCost,task?.cost_currency)}{Boolean(piSolver?.unknown_calls) && ` · ${piSolver?.unknown_calls} 笔待核`}{maxCost === undefined ? '' : ` / ${formatMoney(maxCost,task?.cost_currency)}`}</span>{historicalGatewayFees && <span>旧网关：{historicalGatewayFees.confirmed_usd == null ? '费用待核' : formatMoney(historicalGatewayFees.confirmed_usd, 'USD')}</span>}<span className={styles.connection} data-state={board.connection}><span aria-hidden />{connectionText[board.connection]}</span>{networkMode && <Tag title="逐 Agent 流量采集必需">{networkMode} · {networkStage}</Tag>}</div>
-        <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button><Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')openRecords();if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
+        <div className={styles.actions}><Button type="text" size="small" icon={<ApiOutlined aria-hidden="true" />} onClick={() => setTrafficAgent(null)}>流量</Button>{task?.business_contract === 'exploration-board-v1' && <Button type="text" size="small" onClick={() => setCommandAuditOpen(true)}>命令记录</Button>}<Button ref={goalButton} type="text" size="small" icon={<Icon name="file" />} aria-label={goalOpen?"收起任务目标":"查看任务目标"} aria-expanded={goalOpen} aria-controls="task-goal-content" onClick={()=>setGoalOpen(!goalOpen)} onKeyDown={event=>{if(event.key==="Escape"&&goalOpen){event.stopPropagation();closeGoal();}}}>目标</Button><Dropdown trigger={['click']} menu={{items:[{key:'records',label:'复盘记录'},...(journal.data && sessionPath ? [{key:'journal',label:'下载原始会话'}] : journal.isError ? [{key:'journal-unavailable',label:'原始会话暂时不可读',disabled:true}] : []),...((boardTask?.workspace_uri ?? (version === null ? task?.workspace_uri : null)) ? [{key:'archive',label:'下载归档'}] : [])],onClick:({key})=>{if(key==='records')openRecords();if(key==='journal'&&sessionPath)window.location.assign(`${sessionPath}/journal?run_number=${journalRun}`);if(key==='archive')window.location.assign(`/api/tasks/${encodeURIComponent(taskId)}/workspace`);}}}><Button ref={taskMenuButton} type="text" icon={<Icon name="more" />} aria-label="更多任务操作" /></Dropdown>
           {reportUri && <Button type="primary" onClick={()=>navigate(`/tasks/${encodeURIComponent(taskId)}/report`,{state:location.state})}>查看报告</Button>}
           {['finished','failed','stopped'].includes(status) && canExecute && <Button disabled={version !== null} onClick={() => {resumeRequest.current=randomUUID();setResumeError('');setResumeOpen(true);}}>续跑任务</Button>}
           {status==='created' && canExecute && <Button aria-label="启动任务" aria-busy={action==='start'} type="primary" loading={action==='start'} disabled={action!==null || version!==null} onClick={()=>void changeStatus('start')}>启动任务</Button>}
@@ -231,6 +249,7 @@ export default function BlackboardWorkbenchPage() {
         <TaskGoal key={taskId} open={goalOpen} goal={boardTask?.goal??(version===null?task?.goal:'')??''} context={boardTask?.domain_context??null} files={boardTask?.initialAttachments??(version===null?task?.initial_attachments:[])??[]} requirements={boardTask?.acceptance.length?<ul>{boardTask.acceptance.map(item=><li key={item.id}>{item.id} · {item.desc}</li>)}</ul>:undefined} onClose={closeGoal} />
         <section className={styles.canvasArea} aria-label="黑板关系图">{board.loading ? <LoadingState page label="黑板关系图加载中" lines={5} /> : <Suspense fallback={<LoadingState page label="黑板关系图加载中" lines={5} />}><TopologyFlowCanvas key={taskId} taskId={taskId} events={viewEvents} historical={version!==null} state={viewState} agentNumbers={numbers} selectedId={selectedId} onSelect={selectObject} /></Suspense>}</section>
       </InspectorLayout>
+      {task?.business_contract === 'exploration-board-v1' && <CommandAuditDrawer taskId={taskId} agents={agents.map(agent => ({ id: agent.id, name: agentLabel(agent.id, numbers) }))} challenges={[]} open={commandAuditOpen} onClose={() => setCommandAuditOpen(false)} />}
       <TrafficDrawer active={['provisioning','running','closing'].includes(status)} taskId={taskId} currentRun={task?.run_number ?? boardTask?.runNumber ?? 1} runs={task?.runs?.map(run => run.run_number) ?? []} agents={agents.map(agent => ({ id: agent.id, name: agentLabel(agent.id, numbers) }))} open={trafficAgent !== undefined} initialAgentId={trafficAgent} onClose={() => setTrafficAgent(undefined)} />
       <DeferredPanel active={recordsOpen}><WorkbenchDrawer open={recordsOpen} onClose={() => setRecordsOpen(false)} onRestoreFocus={()=>taskMenuButton.current?.focus({preventScroll:true})} taskId={taskId} state={viewState} events={viewEvents} allEvents={board.events} version={version} onVersion={setVersion} onSelect={selectObject} agentNumbers={numbers}/></DeferredPanel>
       <Modal title="续跑任务" open={resumeOpen} onCancel={() => { if(!resuming) setResumeOpen(false); }} footer={null} closable={!resuming} mask={{closable:!resuming}} keyboard={!resuming}>

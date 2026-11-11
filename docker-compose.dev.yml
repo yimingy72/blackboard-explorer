@@ -7,3 +7,6 @@ services:
     networks:
       exec:
         aliases: [eval-targets]
+
+networks:
+  exec: {}

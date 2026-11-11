@@ -4,6 +4,7 @@ import { access, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { decodeCommand, digest, jsonText } from "../src/protocol.mjs";
 import { HttpPlatform, MountedCredentials } from "../src/platform.mjs";
+import { readBoardTerminal } from "../src/recovery-journal.mjs";
 import { TaskRunner } from "../src/runner.mjs";
 import { deferred, fixture, waitFor } from "./support.mjs";
 
@@ -12,6 +13,145 @@ async function project(h, records) {
   await writeFile(next, JSON.stringify(records));
   await rename(next, h.config.credential_file);
 }
+
+test("a blackboard input finishes only after its original SDK journal settles", { timeout: 15000 }, async (t) => {
+  const h = await fixture(t);
+  const spec = h.spec("one");
+  spec.binding.business_contract = "exploration-board-v1";
+  const gate = deferred();
+  h.state.modelGate = () => gate.promise;
+  h.state.dropBoardTerminal = true;
+  const actor = h.start();
+  const prepare = h.command({ kind: "prepare", spec });
+  const terminals = () => h.state.receipts.filter((receipt) => receipt.status === "completed");
+  try {
+    await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === prepare.request_id
+      && receipt.status === "prepared"), "blackboard binding prepared");
+    const input = h.command({ kind: "input", binding_id: "one", input_id: "board-start",
+      content: "Summarize the synthetic note.", mode: "follow_up" });
+    await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === input.request_id
+      && receipt.status === "applied"), "blackboard input applied while Pi is waiting");
+    assert.equal(terminals().length, 0);
+    gate.resolve();
+    const settled = await waitFor(() => terminals()[0], "blackboard SDK terminal");
+    assert.equal(settled.request_id, input.request_id);
+    assert.equal(settled.input_id, "board-start");
+    assert.equal(settled.sdk_idle, true);
+    assert.equal(settled.journal_confirmed, true);
+    assert.equal(settled.board_terminal.outcome, "completed");
+    assert.deepEqual(settled.cursor, h.state.journal.get("one").cursor);
+    const entries = (await readFile(join(h.config.journal_root, "one", "session.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(entries.find((entry) => entry.id === settled.board_terminal.assistant_entry_id)?.message?.role, "assistant");
+    assert.equal(entries.filter((entry) => entry.customType === "bbx.board-terminal").length, 1);
+    assert.equal(await readBoardTerminal(h.config.journal_root, spec.binding.agent_id, settled), "Done.");
+    const copied = [];
+    await readBoardTerminal(h.config.journal_root, spec.binding.agent_id, settled, (block) => copied.push(block));
+    assert.deepEqual(Buffer.concat(copied),
+      (await readFile(join(h.config.journal_root, "one", "session.jsonl"))).subarray(0, settled.cursor.offset));
+    await assert.rejects(readBoardTerminal(h.config.journal_root, spec.binding.agent_id, {
+      ...settled, cursor: { ...settled.cursor, hash: "f".repeat(64) },
+    }), /confirmed journal prefix/);
+
+    await h.stop(actor);
+    const sent = terminals().length;
+    h.state.dropBoardTerminal = false;
+    h.start();
+    const replay = await waitFor(() => terminals()[sent], "terminal replay from the original journal");
+    assert.deepEqual(replay, settled);
+    assert.equal(h.state.modelCalls.length, 1);
+    h.assertClean();
+  } finally {
+    gate.resolve();
+  }
+});
+
+test("a restored blackboard input without terminal proof stays blocked without a new model send", { timeout: 15000 }, async (t) => {
+  const h = await fixture(t);
+  const spec = h.spec("one");
+  spec.binding.business_contract = "exploration-board-v1";
+  const gate = deferred();
+  h.state.modelGate = () => gate.promise;
+  const actor = h.start();
+  const prepare = h.command({ kind: "prepare", spec });
+  try {
+    await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === prepare.request_id
+      && receipt.status === "prepared"), "blackboard binding prepared");
+    const input = h.command({ kind: "input", binding_id: "one", input_id: "board-start",
+      content: "Read the synthetic note.", mode: "follow_up" });
+    await waitFor(() => h.state.modelCalls.length === 1, "the one original model request");
+    await h.stop(actor, "SIGKILL");
+    gate.resolve();
+    h.start();
+    const held = await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === input.request_id
+      && receipt.status === "rejected"), "unconfirmed original input is blocked");
+    assert.equal(held.input_id, "board-start");
+    assert.equal(held.error_code, "boundary_frozen");
+    assert.equal(held.board_terminal, undefined);
+    assert.equal(h.state.modelCalls.length, 1);
+    h.assertClean();
+  } finally {
+    gate.resolve();
+  }
+});
+
+test("blackboard context is confirmed before each model turn and not injected twice", { timeout: 15000 }, async (t) => {
+  const h = await fixture(t);
+  const spec = h.spec("one");
+  spec.binding.business_contract = "exploration-board-v1";
+  h.state.useTools = true;
+  h.state.boardContexts = new Map([["one", { version: 1, content: "Original synthetic fact." }]]);
+  h.state.modelGate = (_binding, index) => {
+    if (index === 1) h.state.boardContexts.set("one", { version: 2, content: "A committed update after the first turn." });
+  };
+  h.start();
+  const prepare = h.command({ kind: "prepare", spec });
+  await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === prepare.request_id
+    && receipt.status === "prepared"), "blackboard context binding");
+  h.command({ kind: "input", binding_id: "one", input_id: "board-context-start",
+    content: "Read the synthetic note.", mode: "follow_up" });
+  await waitFor(() => h.state.receipts.find((receipt) => receipt.status === "completed"), "blackboard context terminal");
+  assert.equal(h.state.modelCalls.length, 2);
+  const first = JSON.stringify(h.state.modelCalls[0].body.messages);
+  const second = JSON.stringify(h.state.modelCalls[1].body.messages);
+  assert.ok(first.includes("Original synthetic fact."));
+  assert.ok(!first.includes("A committed update after the first turn."));
+  assert.ok(second.includes("A committed update after the first turn."));
+  assert.deepEqual(h.state.boardVersions, [0, 1]);
+  const entries = (await readFile(join(h.config.journal_root, "one", "session.jsonl"), "utf8"))
+    .trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(entries.filter((entry) => entry.customType === "bbx.board-context").map((entry) => entry.data.version), [1, 2]);
+  h.assertClean();
+});
+
+test("an original successful blackboard final tool stops before another provider call", { timeout: 15000 }, async (t) => {
+  const h = await fixture(t);
+  const spec = h.spec("one");
+  spec.binding.business_contract = "exploration-board-v1";
+  spec.allowed_tools = ["submit_close"];
+  spec.mcp_tool_routes = { submit_close: { target: "business", wire_name: "submit_close" } };
+  h.state.remoteTools = new Map([["one", [{ name: "submit_close", description: "Record synthetic completion",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false } }]]]);
+  h.state.wireNames = h.state.logicalNames = new Map([["one", "submit_close"]]);
+  h.state.modelTool = (_binding, index) => index === 1 && { name: "submit_close", arguments: {} };
+  h.state.finalBoardReceipt = true;
+  h.start();
+  const prepare = h.command({ kind: "prepare", spec });
+  await waitFor(() => h.state.receipts.find((receipt) => receipt.request_id === prepare.request_id
+    && receipt.status === "prepared"), "blackboard final binding");
+  h.command({ kind: "input", binding_id: "one", input_id: "board-final-start",
+    content: "Finish the synthetic task.", mode: "follow_up" });
+  const path = join(h.config.journal_root, "one", "session.jsonl");
+  await waitFor(async () => {
+    if (!h.state.toolCalls.length) return false;
+    const prefix = (await readFile(path)).subarray(0, h.state.journal.get("one").cursor.offset);
+    return prefix.toString().split("\n").some((line) => line && JSON.parse(line).message?.role === "toolResult");
+  }, "saved and confirmed final tool result");
+  assert.equal(h.state.modelCalls.length, 1);
+  assert.equal(h.state.toolCalls.length, 1);
+  assert.equal(h.state.receipts.some((receipt) => receipt.status === "completed"), false);
+  h.assertClean();
+});
 
 test("a resumed Lead uses a new native session without replaying the closed Lead", { timeout: 15000 }, async (t) => {
   let runner;

@@ -27,7 +27,8 @@
           "enum": [
             "lead",
             "worker",
-            "helper"
+            "helper",
+            "explore"
           ],
           "title": "Role",
           "type": "string"

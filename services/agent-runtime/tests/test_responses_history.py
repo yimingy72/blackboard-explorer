@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-from bbx_runtime.middleware import append_board_update
 from bbx_runtime.models import close_model_client, load_runtime_profile
 from bbx_runtime.pi import AgentSession, Content, Message, PiChatClient
 from bbx_runtime.pi.data import from_pi_message, pi_messages
@@ -108,7 +107,7 @@ def test_incomplete_or_ambiguous_tool_groups_are_never_rewritten(problem):
 def test_blackboard_update_and_full_result_survive_snapshot_and_projection():
     session = AgentSession()
     messages = history()
-    append_board_update(messages, "[黑板更新] Important independent evidence")
+    messages[-1].contents.append(Content.from_text("[黑板更新] Important independent evidence"))
     session.state["in_memory"] = {"messages": messages}
     restored = AgentSession.from_dict(session.to_dict())
     original = restored.to_dict()
