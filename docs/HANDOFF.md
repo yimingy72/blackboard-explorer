@@ -7,6 +7,8 @@
 
 ## 0. 一页速览
 
+- **P10 已完成（2026-11-12）**：公开部署流程先推送，再从远端同版 `2e3abef` 重建原 Kind 的 App、Runtime、PostgreSQL、MinIO 四个 Pod。镜像、Retain 卷、原账号和业务数据保持，Runtime 单锁代次 8→9，正式 [15800 登录入口](http://127.0.0.1:15800/login)已重接。见 [部署手册](../deploy/kubernetes/p9/README.md)和 [P10 实施报告](tasks/P10-公开本地部署流程-20261111-report.md)。
+
 - **P9 已切换（2026-11-11）**：正式 [127.0.0.1:15800/login](http://127.0.0.1:15800/login) 由本机 Kubernetes 浏览器转发提供；应用、Runtime、PostgreSQL、MinIO 和内部代理在原 Kind。原账号、目录和逻辑数据核对通过，原源卷和验收证据保留。App 源 `e388370`，Runtime 源 `212d548`，清单 `b80adee`。见 [P9 实施与切换报告](tasks/P9-平台全量本地Kubernetes-20261111-report.md)。
 
 - **P8 已更新（2026-11-11）**：正式 [127.0.0.1:15800/login](http://127.0.0.1:15800/login) 上线普通 Worker、CTF、成果整理、模型管理和外部 MCP 五页；应用及共同 Runtime 源码 `d70f2f91`，三家角色模板为版本 2，CTF 发布版本 5。原账号、PostgreSQL/MinIO、原执行镜像和资源验收保持；单一 Runtime 锁已交接。未调用真实模型。见 [P8 实施与验收报告](tasks/P8-配置工作台与角色合同-20261111-report.md)。
