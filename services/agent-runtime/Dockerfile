@@ -26,6 +26,6 @@ FROM runtime-base AS kubernetes
 ADD --chmod=0555 --checksum=sha256:cfda68cba5848bc3b6c6135ae2f20ba2c78de20059f68789c090166d6abc3e2c https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl /usr/local/bin/kubectl
 ENV HOME=/tmp PYTHONDONTWRITEBYTECODE=1
 USER 10001:10001
-RUN kubectl version --client
+RUN python -c 'import bbx_runtime.native_runner' && kubectl version --client
 
 FROM runtime-base AS runtime

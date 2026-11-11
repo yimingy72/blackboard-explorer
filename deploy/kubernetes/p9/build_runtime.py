@@ -64,8 +64,14 @@ def build(git_dir, revision, output):
     tree = checked((*git, "rev-parse", f"{revision}^{{tree}}")).decode().strip()
     with source_tar.open("wb") as file:
         subprocess.run((*git, "archive", "--format=tar", revision), stdout=file, check=True)
-    with tarfile.open(source_tar) as bundle:
-        bundle.extractall(source, filter="data")
+    # The enclosing artifact directory stays private. The reviewed image source must
+    # be traversable by the image's non-root Runtime user.
+    previous_umask = os.umask(0o022)
+    try:
+        with tarfile.open(source_tar) as bundle:
+            bundle.extractall(source, filter="data")
+    finally:
+        os.umask(previous_umask)
     assert not (source / ".git").exists() and not (source / ".env").exists()
     tag = f"bbx-p9-runtime:{revision[:12]}"
     with (output / "build.log").open("wb") as log:
