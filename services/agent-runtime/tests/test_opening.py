@@ -125,6 +125,25 @@ def opening(run: RunContext) -> BoardOpening:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["explore", "derive", "close"])
+async def test_attachment_notice_matches_available_tool_boundaries(role: str) -> None:
+    run, _ = run_context(role, mode="judge" if role == "close" else None)
+    run.state["task"]["initial_attachments"] = [
+        {
+            "filename": "notes.txt",
+            "path": "/workspace/shared/notes.txt",
+            "uri": "inputs/demo/notes.txt",
+            "size": 16,
+        }
+    ]
+    rendered = await opening(run).render()
+    notice = rendered.split("# 用户初始附件（未验证资料）")[1]
+    assert "inputs/demo/notes.txt" in notice
+    assert "或看图工具" not in notice
+    assert "Derive/Close 仅在获授权时用 read_evidence" in notice
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("profile_name", ["default", "single"])
 async def test_seed_explore_has_only_l0_and_uses_pinned_template(profile_name: str) -> None:
     run, board = run_context("explore")

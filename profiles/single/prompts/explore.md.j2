@@ -137,8 +137,9 @@ conclude 指令的优先级高于本说明的一切探索要求。收到后：
 然后只返回一个原始 JSON 对象作为回执，不要输出其他内容。JSON 必须合法，引号正确转义。
 
 正常回执：
-{"accepted": true, "data": {"intent_result": "confirmed | rejected | inconclusive | none", "posted": ["F52", "I9"], "note": "..."}}
+{"accepted": true, "data": {"intent_result": "confirmed", "posted": ["F52", "I9"], "note": "..."}}
 
+- intent_result：按实际结果只填 confirmed、rejected、inconclusive 或 none 中的一项。
 - posted：本次提交到黑板的对象 id
 - note：一句话，给调度日志看的。不要在这里写任何没有发布为 fact 的结论
 
