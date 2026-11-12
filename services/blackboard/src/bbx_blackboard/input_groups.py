@@ -14,7 +14,6 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import anyio
-from anyio import BrokenWorkerProcess
 from bbx_contracts.models import InitialAttachment
 from bbx_contracts.runner_inputs import INPUT_FILE_LIMIT, INPUT_PROFILE, INPUT_TOTAL_LIMIT
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -376,18 +375,12 @@ async def upload_private_vpn_source(request: Request, group_id: UUID) -> Private
                 content.extend(chunk)
     except TimeoutError:
         raise HTTPException(408, "VPN configuration upload timed out") from None
+    if not content:
+        raise HTTPException(422, "Private attachment cannot be empty")
     raw = bytes(content)
     bootstrap = request.app.state.native_runner_bootstrap
     if bootstrap is None:
         raise HTTPException(503, "Private VPN configuration is unavailable")
-    try:
-        await bootstrap.vpn.parse_source(raw)
-    except (ValueError, TypeError):
-        raise HTTPException(422, "Unsupported OpenVPN configuration") from None
-    except BrokenWorkerProcess:
-        raise HTTPException(503, "Private VPN configuration validation is unavailable") from None
-    except TimeoutError:
-        raise HTTPException(408, "VPN configuration validation timed out") from None
     digest = hashlib.sha256(raw).hexdigest()
     cipher = bootstrap.vpn.asset_cipher
     async with store.engine.begin() as conn:

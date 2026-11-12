@@ -423,7 +423,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         uploads = f"/api/task-input-groups/{source_group}/files"
         payload = b"\x00\xffinitial attachment\x00"
         attached = []
-        for filename, data in (("材料.bin", payload), ("empty", b"")):
+        for filename, data in (("材料.zip", payload), ("empty.png", b"")):
             response = await http.post(
                 uploads, headers=user, params={"filename": filename}, content=data
             )
@@ -461,8 +461,9 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             "initial_attachment_state"
         ] == "pending"
         # Users retain the original object; a Task-agent token cannot use the group API.
-        downloaded = await http.get(uploads + "/" + selected[0], headers=user)
-        assert downloaded.status_code == 200 and downloaded.content == payload
+        for file_id, data in zip(selected, (payload, b""), strict=True):
+            downloaded = await http.get(uploads + "/" + file_id, headers=user)
+            assert downloaded.status_code == 200 and downloaded.content == data
         agent_token = issue_agent_token(
             rotated, UUID(attached_tid), "lead", generation=1, turn_id=uuid4()
         )
@@ -658,8 +659,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             with pytest.raises(HTTPException, match="not confirmed"):
                 require_inputs_confirmed(replacement)
 
-        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
-        from test_native_vpn_integration import task_openvpn_file
+        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_SOURCE_LIMIT
 
         app.state.settings = options
         user = {"Authorization": f"Bearer {issue_user_token(options, 'alice')}"}
@@ -695,19 +695,13 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         reference = {key: environment[key] for key in ("id", "revision", "publication_stamp")}
         private_group = await group()
         source_url = f"/api/task-input-groups/{private_group}/private-vpn-source"
-        raw = task_openvpn_file()
+        raw = b"\x00\xffopaque private attachment"
         assert (await http.put(source_url, headers=other, content=raw)).status_code == 403
-
-        async def broken_parser(_):
-            from anyio import BrokenWorkerProcess
-
-            raise BrokenWorkerProcess("private-worker-startup-detail")
-
-        with monkeypatch.context() as failing:
-            failing.setattr(app.state.native_runner_bootstrap.vpn, "parse_source", broken_parser)
-            unavailable = await http.put(source_url, headers=user, content=raw)
-            assert unavailable.status_code == 503
-            assert "private-worker-startup-detail" not in unavailable.text
+        assert (await http.put(source_url, headers=user, content=b"")).status_code == 422
+        too_large = await http.put(source_url, headers=user, content=b"x" * (VPN_SOURCE_LIMIT + 1))
+        assert too_large.status_code == 413
+        parser = AsyncMock(side_effect=AssertionError("Draft upload must not parse private bytes"))
+        monkeypatch.setattr(app.state.native_runner_bootstrap.vpn, "parse_source", parser)
         upload = await http.put(source_url, headers=user, content=raw)
         assert upload.status_code == 200, upload.text
         source_id = upload.json()["source_id"]
@@ -801,8 +795,10 @@ async def test_public_native_creation_freezes_and_replays_original_task(
                 .one()
             )
             assert asset["task_id"] == tid and "PRIVATE KEY" not in asset["ciphertext"]
+            assert asset["digest"] == hashlib.sha256(raw).hexdigest()
             bootstrap = app.state.native_runner_bootstrap
             assert bootstrap.vpn.asset_cipher.decrypt(asset["ciphertext"].encode()) == raw
+            parser.assert_not_awaited()
             instructions = (
                 (
                     await conn.execute(

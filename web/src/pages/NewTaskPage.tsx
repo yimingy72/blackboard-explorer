@@ -255,7 +255,7 @@ export default function NewTaskPage() {
                   limits={sharedInputs ?? undefined} allowShared={!nativeTask || Boolean(sharedInputs)} privateVpn={nativeTask ? privateVpn : undefined} onStatus={attachmentsStatus}
                   description={nativeTask ? [
                       sharedInputs ? `共享附件对任务团队可见。单件最多 ${sharedInputs.max_file_bytes / 1048576} MiB，合计 ${sharedInputs.max_total_bytes / 1048576} MiB，最多 ${sharedInputs.max_files} 件。` : '此环境暂不支持共享附件。',
-                      privateVpn && '可另添加一个私有 .ovpn 文件。',
+                      privateVpn && '可另添加一个私有 .ovpn 文件，连接时校验配置。',
                   ].filter(Boolean).join(' ') : undefined} />
               </section>}
             </section>
