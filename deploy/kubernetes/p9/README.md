@@ -102,6 +102,16 @@ done
 
 两个镜像变量必须为各自已验的 `repo@sha256:...`。用零副本配置先校验 Service、准入、Secret 引用、模板及镜像，再按顺序启动并等待就绪：PostgreSQL → MinIO → App → Runtime。对于确认是全新初始化、或已完成存储恢复的环境，可逐项使用 `kubectl ... -n bbx-platform scale statefulset/postgres --replicas=1` 和 `rollout status statefulset/postgres`，随后同样处理 `statefulset/minio`、`deployment/blackboard`、`deployment/runtime`。先关闭用户入口，用已验合成流程证明两种模式、身份拒绝、归档、流量、存储重建与唯一 Runtime 锁；正式阶段使用原身份和真实数据的只读核验。缺任一验收项不启正式写入。服务端权限实测工具为 `python3 deploy/kubernetes/p9/check_rbac.py --kubeconfig <文件>`；它会创建并清理测试命名空间，不是常规只读检查。
 
+## 原生 CTF 会话展示（P13 候选，已暂停）
+
+以下是尚未发布的 P13 设计与部署预案，仅供恢复开发后的验收和评审。当前 P12 没有该收集器、准入策略或归档导入接口。暂停期间不要执行本节操作。当前状态与恢复顺序见 [P13 暂停交接](../../../docs/tasks/P13-会话显示与职责边界-20261112-handoff.md)。
+
+会话收集器是独立部署，不接管 Runtime、也不启动或恢复任务。它只读取当前原 Runner 的已确认日志；原 Pod 消失后保留已发布的有界展示。需要补回终态记录时，由平台操作者用已校验原始备份和数据库确认游标导入展示，页面注明来源。原会话、费用和未确认调用均不变。
+
+发布前先用同版本隔离集群验证准入。通过后，用同一份已审源码运行 `python3 deploy/kubernetes/p9/conversation_admission.py` 生成准入策略及绑定，先应用这两项，再应用 `conversation-collector.yaml`。绑定失败或固定投影命令未通过允许/拒绝实测时，保留零副本。移除时先停止收集器并撤销角色绑定，再移除准入。通过后使用已验 Runtime 制品摘要覆盖收集器占位镜像；不要改变执行 Runtime 部署。
+
+专用 Secret `bbx-conversation-collector-auth` 的 `token` 只供收集器和 App：App 的 `CONVERSATION_COLLECTOR_TOKEN` 引用同一键。不要复用服务、Agent 或模型令牌。收集器不需要数据库、MinIO、模型或 OpenSandbox 凭据。
+
 ## 备份、恢复与回退
 
 - Retain 只防止 PV 随声明自动回收。节点、卷或宿主丢失仍需要独立备份。记录工作负载/镜像、密钥引用、配置摘要及卷身份；在仓库外另保全原签名/Vault 密钥、数据库/对象认证和信任链。
