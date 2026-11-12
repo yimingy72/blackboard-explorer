@@ -1098,7 +1098,7 @@ def create_app(
         if (
             body.model_id is not None
             or body.model_version is not None
-            or body.reasoning_effort is not None
+            or (isinstance(body, TaskCreateBody) and body.reasoning_effort is not None)
         ):
             raise HTTPException(422, "新任务只能引用平台 Pi 模型")
 
@@ -1122,7 +1122,6 @@ def create_app(
             if (
                 body.agent_profile != "ctf"
                 or body.profile_version not in (None, publication.ctf_profile_version)
-                or body.reasoning_effort is not None
                 or body.egress_allowlist
                 or body.ctf_options.model_fields_set - {"dispatch_mode", "max_teammates"}
                 or (
@@ -1133,6 +1132,8 @@ def create_app(
                 raise HTTPException(422, "该原生 CTF 环境要求已发布的模型、配置和自动派工")
             publication.validate_budget(body.budget.max_cost)
             selected = await selected_task_model(request, body)
+            if body.reasoning_effort not in (None, "off", "none") and not selected.reasoning:
+                raise HTTPException(422, "所选模型不支持思考强度")
             bootstrap = request.app.state.native_runner_bootstrap
             if bootstrap is None:
                 raise HTTPException(503, "原生 CTF 控制服务不可用")
@@ -1172,12 +1173,13 @@ def create_app(
             assert publication is not None and selected is not None
             profile = await resolve_ctf_creation(request, publication)
             try:
-                profile = CtfAgentProfile.model_validate(
-                    {
-                        **profile.model_dump(mode="json"),
-                        "model": display_pi_model(selected),
-                    }
-                )
+                content = profile.model_dump(mode="json")
+                content["model"] = display_pi_model(selected).model_dump(mode="json")
+                if body.reasoning_effort is not None:
+                    content["model"]["reasoning_effort"] = body.reasoning_effort
+                    for role_options in content["role_run_options"].values():
+                        role_options.pop("reasoning_effort", None)
+                profile = CtfAgentProfile.model_validate(content)
                 for role in ("lead", "teammate"):
                     thinking = native_role_thinking(
                         resolve_ctf_model(profile, role).reasoning_effort

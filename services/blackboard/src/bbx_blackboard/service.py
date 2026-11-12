@@ -58,7 +58,12 @@ from bbx_blackboard.domain import (
     pending_claims,
 )
 from bbx_blackboard.domain.rules import event
-from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
+from bbx_blackboard.input_groups import (
+    InputGroups,
+    check_mutable,
+    check_owner,
+    discard_private_source,
+)
 from bbx_blackboard.legacy_network import require_run_ready, require_run_retired
 from bbx_blackboard.profiles import ProfileStore
 from bbx_blackboard.store import Repository
@@ -182,6 +187,7 @@ class BoardService:
                 ],
             )
             if input_group_id is not None:
+                await discard_private_source(conn, input_group_id)
                 await conn.execute(
                     update(s.task_input_groups)
                     .where(s.task_input_groups.c.id == input_group_id)

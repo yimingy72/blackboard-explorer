@@ -9,10 +9,13 @@ import httpx
 import pytest
 from bbx_blackboard import api
 from bbx_blackboard.auth import issue_agent_token, issue_user_token
+from bbx_blackboard.native_ctf_publication import NativeCtfPublication, PublicationState
+from bbx_blackboard.native_runner_bootstrap import effective_role_model
 from bbx_blackboard.profiles import _content, ctf_profile
 from bbx_blackboard.service import ctf_agent_event
 from bbx_blackboard.settings import Settings
-from bbx_contracts.ctf import load_ctf_profile
+from bbx_contracts.ctf import CtfRoleRunOptions, load_ctf_profile
+from bbx_contracts.pi_models import PiModelVersion
 from pydantic import SecretStr
 
 
@@ -24,6 +27,103 @@ def settings():
         agent_token_secret=SecretStr("test-secret-with-at-least-thirty-two-characters"),
         admin_users=SecretStr("alice:test"),
     )
+
+
+async def test_task_thinking_freezes_role_settings(monkeypatch):
+    app = api.create_app(settings())
+    profile = load_ctf_profile(Path(__file__).resolve().parents[3] / "profiles/ctf")
+    profile.role_run_options["lead"] = CtfRoleRunOptions(
+        reasoning_effort="low", max_output_tokens=64
+    )
+    publication = NativeCtfPublication(
+        id="fixture",
+        revision=1,
+        label="Fixture",
+        release="test_only",
+        ctf_profile_version=1,
+        runtime_resource_config={},
+    )
+    app.state.native_ctf_publication = PublicationState(True, publication, "a" * 64)
+    app.state.native_runner_bootstrap = SimpleNamespace(require_launch_configuration=lambda: None)
+    app.state.objects = object()
+    app.state.input_groups = SimpleNamespace(prior_task=AsyncMock(return_value=None))
+    created_profile = AsyncMock(return_value={"name": "ctf-task-settings", "version": 2})
+    app.state.profile_store = SimpleNamespace(
+        get=AsyncMock(return_value=_content(profile)), create=created_profile
+    )
+    model = PiModelVersion.model_validate(
+        {
+            "id": "fixture",
+            "model_revision": 1,
+            "label": "Fixture",
+            "upstream_model": "fixture",
+            "base_url": "https://provider.invalid",
+            "has_secret": True,
+            "reasoning": True,
+            "context_window": 32000,
+            "max_output_tokens": 128,
+            "input_modalities": ["text"],
+            "usd_rates": {"input": "1", "output": "1", "cache_read": "1", "cache_write": "1"},
+            "pricing_source": "Synthetic fixture",
+        }
+    )
+    selected = AsyncMock(return_value=model)
+    app.state.pi_registry = SimpleNamespace(enabled=True, selected=selected)
+    tid = uuid4()
+    app.state.ctf_service = SimpleNamespace(create_task=AsyncMock(return_value=tid))
+    monkeypatch.setattr(
+        api,
+        "_task",
+        AsyncMock(return_value={"agent_profile": "ctf-task-settings", "agent_profile_version": 2}),
+    )
+    body = {
+        "mode": "ctf",
+        "goal": "A neutral fixture",
+        "input_group_id": str(tid),
+        "pi_model": model.reference().model_dump(),
+        "budget": {"currency": "USD", "max_cost": 1, "max_minutes": 5},
+        "native_environment": {"id": "fixture", "revision": 1, "publication_stamp": "a" * 64},
+    }
+    headers = {"Authorization": f"Bearer {issue_user_token(settings(), 'alice')}"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as http:
+        original = await http.post("/api/tasks", headers=headers, json=body)
+        assert original.status_code == 200, original.text
+        inherited = ctf_profile(_content(created_profile.call_args.args[1]))
+        assert inherited.model.reasoning_effort == "none"
+        assert inherited.role_run_options["lead"].reasoning_effort == "low"
+
+        changed = await http.post(
+            "/api/tasks", headers=headers, json={**body, "reasoning_effort": "high"}
+        )
+        assert changed.status_code == 200, changed.text
+        frozen = ctf_profile(_content(created_profile.call_args.args[1]))
+        sdk = {
+            "id": model.id,
+            "api": model.api,
+            "input": ["text"],
+            "reasoning": True,
+            "context_window": 32000,
+            "max_output_tokens": 128,
+        }
+        lead = effective_role_model(frozen, "lead", sdk)
+        assert (lead["thinking_level"], lead["max_output_tokens"]) == ("high", 64)
+        assert effective_role_model(frozen, "teammate", sdk)["thinking_level"] == "high"
+
+        selected.return_value = model.model_copy(update={"reasoning": False})
+        for effort in ("high", "max"):
+            assert (
+                await http.post(
+                    "/api/tasks", headers=headers, json={**body, "reasoning_effort": effort}
+                )
+            ).status_code == 422
+        assert created_profile.await_count == 2
+        off = await http.post(
+            "/api/tasks", headers=headers, json={**body, "reasoning_effort": "off"}
+        )
+        assert off.status_code == 200, off.text
+        assert created_profile.call_args.args[1].model.reasoning_effort == "off"
 
 
 async def test_historical_ctf_cannot_create_or_restart_execution(monkeypatch):

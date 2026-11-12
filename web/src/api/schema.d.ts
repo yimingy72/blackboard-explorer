@@ -501,6 +501,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/tool-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tools */
+        get: operations["tools_api_settings_tool_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/workers": {
         parameters: {
             query?: never;
@@ -633,7 +650,8 @@ export interface paths {
         /** Upload Private Vpn Source */
         put: operations["upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put"];
         post?: never;
-        delete?: never;
+        /** Remove Private Vpn Source */
+        delete: operations["remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4389,8 +4407,11 @@ export interface components {
             profile_version?: number | null;
             /** Public Input Ids */
             public_input_ids?: string[] | null;
-            /** Reasoning Effort */
-            reasoning_effort?: string | null;
+            /**
+             * Reasoning Effort
+             * @description 任务思考强度；省略或 null 沿用已发布配置
+             */
+            reasoning_effort?: ("off" | "none" | "minimal" | "low" | "medium" | "high") | null;
         };
         /** CtfVerificationRequiredRequest */
         CtfVerificationRequiredRequest: {
@@ -6806,6 +6827,8 @@ export interface components {
         };
         /** ProgressGlobalSettings */
         ProgressGlobalSettings: {
+            /** Default Prompt */
+            default_prompt?: string | null;
             /** Enabled Tools */
             enabled_tools?: string[];
             /** Expected Revision */
@@ -9509,6 +9532,28 @@ export interface operations {
             };
         };
     };
+    tools_api_settings_tool_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     workers_api_settings_workers_get: {
         parameters: {
             query?: never;
@@ -9791,6 +9836,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrivateVpnSourceView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete: {
+        parameters: {
+            query?: {
+                source_id?: string | null;
+            };
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
                 };
             };
             /** @description Validation Error */

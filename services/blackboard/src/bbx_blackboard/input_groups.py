@@ -84,6 +84,17 @@ def check_mutable(row: dict[str, Any], owner: str) -> None:
         raise HTTPException(410, "附件组已取消或过期，请重新上传")
 
 
+async def discard_private_source(
+    conn: AsyncConnection, group_id: UUID, source_id: UUID | None = None
+) -> None:
+    """Delete only draft assets; the caller holds the input group lock."""
+    table = s.native_vpn_assets
+    query = delete(table).where(table.c.group_id == group_id, table.c.task_id.is_(None))
+    if source_id is not None:
+        query = query.where(table.c.id == source_id)
+    await conn.execute(query)
+
+
 class InputGroupView(BaseModel):
     id: UUID
     expires_at: datetime
@@ -406,6 +417,18 @@ async def upload_private_vpn_source(request: Request, group_id: UUID) -> Private
             )
         )
     return PrivateVpnSourceView(source_id=source_id)
+
+
+@router.delete("/{group_id}/private-vpn-source")
+async def remove_private_vpn_source(
+    request: Request, group_id: UUID, source_id: UUID | None = None
+) -> dict[str, bool]:
+    identity = require_user_or_service(request)
+    store = groups(request)
+    async with store.engine.begin() as conn:
+        check_mutable(await store.row(conn, group_id, lock=True), owner_key(identity))
+        await discard_private_source(conn, group_id, source_id)
+    return {"deleted": True}
 
 
 @router.post(

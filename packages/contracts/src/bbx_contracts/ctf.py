@@ -266,7 +266,9 @@ class CtfTaskCreate(CtfTaskSpec):
     model_id: str | None = Field(default=None, min_length=1)
     model_version: int | None = Field(default=None, ge=1)
     profile_version: int | None = Field(default=None, ge=1)
-    reasoning_effort: str | None = Field(default=None, min_length=1)
+    reasoning_effort: Literal["off", "none", "minimal", "low", "medium", "high"] | None = Field(
+        default=None, description="任务思考强度；省略或 null 沿用已发布配置"
+    )
 
     @model_validator(mode="after")
     def validate_selection(self) -> CtfTaskCreate:

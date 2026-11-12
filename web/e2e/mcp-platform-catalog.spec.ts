@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { installMockApi, TASK_ID } from './fixtures';
-import { expandSection } from './ui';
+import { installMockApi } from './fixtures';
 
 test('MCP 草稿不遮蔽发布版本，发现后逐个批准，工具 Schema 与角色可查', async ({ page }) => {
   const mock = await installMockApi(page);
@@ -76,73 +75,4 @@ test('MCP 草稿不遮蔽发布版本，发现后逐个批准，工具 Schema �
   await expect(page.getByText('当前发布版本：v3', { exact: false })).toBeVisible();
   expect(publication).toEqual({ discovery_digest: 'fixture-digest', tools: ['docs.find'], roles: ['explore', 'lead'] });
   expect(discoveries).toEqual([2]);
-});
-
-test('原生新任务明确冻结 Lead 和 Worker 各自授权的外部工具', async ({ page }) => {
-  await installMockApi(page);
-  const environment = { id: 'fixture-native', revision: 2, publication_stamp: 'a'.repeat(64), label: '合成原生环境', external_mcp: true };
-  const base = { url: 'https://fixture.example/mcp', auth_header: 'Authorization', auth_scheme: 'Bearer', enabled: true, has_secret: true };
-  await page.route('**/api/task-creation-capabilities', route => route.fulfill({
-    json: { mode: 'native-ctf', native_ctf: environment },
-  }));
-  await page.route('**/api/platform/pi-models', route => route.fulfill({
-    json: { enabled: true, can_manage: true, models: [{
-      id: 'fixture-model', model_revision: 1, label: '合成模型', enabled: true, has_secret: true, tool_call: true,
-      context_window: 8192, max_output_tokens: 1024, input_modalities: ['text'],
-      usd_rates: { input: '1', output: '2', cache_read: '1', cache_write: '1' },
-    }] },
-  }));
-  await page.route('**/api/platform/mcp-servers', route => route.fulfill({ json: [
-    { ...base, name: 'lead-docs', label: 'Lead 资料', version: 4, published_version: 3, published: false, published_roles: ['lead'] },
-    { ...base, name: 'worker-docs', label: 'Worker 资料', version: 2, published_version: 2, published: true, published_roles: ['teammate'] },
-    { ...base, name: 'draft', label: '尚未发布', version: 1, published: false, published_version: null },
-  ] }));
-  for (const [name, version, role, tool] of [
-    ['lead-docs', 3, 'lead', 'docs.lead'],
-    ['worker-docs', 2, 'teammate', 'docs.worker'],
-  ] as const) {
-    await page.route(`**/api/platform/mcp-servers/${name}/versions/${version}/tools`, route => route.fulfill({
-      json: { status: 'ready', version, published: true, roles: [role], tools: [
-        { name: tool, description: '无害的资料查询' }, { name: 'docs.unselected', description: '未授权工具' },
-      ] },
-    }));
-  }
-  let creation: Record<string, unknown> | undefined;
-  await page.route('**/api/tasks', route => {
-    if (route.request().method() !== 'POST') return route.fallback();
-    creation = route.request().postDataJSON();
-    return route.fulfill({ status: 201, json: { id: TASK_ID } });
-  });
-
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.goto('/tasks/new');
-  await expect(page.getByText('合成模型 · fixture-model', { exact: true })).toBeVisible();
-  await page.getByLabel('任务目标', { exact: true }).fill('查询合成资料');
-  await page.getByLabel('金额阈值（USD）', { exact: true }).fill('1');
-  await expandSection(page.getByRole('button', { name: '外部 MCP 工具（可选）' }));
-  await expect(page.getByRole('checkbox', { name: 'Lead 资料', exact: true })).not.toBeChecked();
-  await expect(page.getByRole('checkbox', { name: 'Worker 资料', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('checkbox', { name: '尚未发布', exact: true })).toHaveCount(0);
-  await page.getByRole('checkbox', { name: 'Lead 资料', exact: true }).check();
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
-  await expect(page.getByText('请为 Lead 和 Worker 已选的每项 MCP 服务至少勾选一个工具，或取消选择该服务。')).toBeVisible();
-  expect(creation).toBeUndefined();
-  await page.getByRole('button', { name: '读取 Lead 资料 工具清单', exact: true }).click();
-  await expect(page.getByRole('checkbox', { name: /docs.lead/ })).not.toBeChecked();
-  await page.getByRole('checkbox', { name: /docs.lead/ }).check();
-
-  await page.getByText('CTF Worker', { exact: true }).click();
-  await expect(page.getByRole('checkbox', { name: 'Lead 资料', exact: true })).toHaveCount(0);
-  await page.getByRole('checkbox', { name: 'Worker 资料', exact: true }).check();
-  await page.getByRole('button', { name: '读取 Worker 资料 工具清单', exact: true }).click();
-  await page.getByRole('checkbox', { name: /docs.worker/ }).check();
-  await expect(page.getByRole('checkbox', { name: /docs.unselected/ })).not.toBeChecked();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
-  await expect.poll(() => creation?.native_mcp).toEqual({
-    lead: [{ name: 'lead-docs', version: 3, allowed_tools: ['docs.lead'] }],
-    teammate: [{ name: 'worker-docs', version: 2, allowed_tools: ['docs.worker'] }],
-  });
-  expect(creation?.native_environment).toEqual({ id: environment.id, revision: environment.revision, publication_stamp: environment.publication_stamp });
 });

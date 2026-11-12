@@ -184,7 +184,7 @@ export function piModelCanTest(model: PiModel): boolean {
 export function piModelCanRunTask(model: PiModel): boolean {
   return piModelCanTest(model) && model.tool_call === true && model.usd_rates != null;
 }
-export type PiModelInput = PiModelConfig & { secret?: string; clear_secret?: boolean; expected_revision?: number };
+export type PiModelInput = Omit<PiModelConfig, 'pricing_source' | 'confirmed_free'> & { secret?: string; clear_secret?: boolean; expected_revision?: number };
 export type PiModelDirectory = { enabled: boolean; can_manage: boolean; can_test?: boolean; models: PiModel[] };
 export type PiModelTestView = {
   request_id: string; model_id: string; model_revision: number;
@@ -221,13 +221,17 @@ export const api = {
     if (filters.status !== 'all') params.set('status', filters.status);
     return request<TaskPage>(`/tasks/page?${params}`, { signal });
   },
-  uploadPrivateVpnSource: (id: string, file: File) => request<{ source_id: string }>(
-    `/task-input-groups/${encodeURIComponent(id)}/private-vpn-source`,
-    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
-  ),
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),
+  uploadPrivateVpnSource: (group: string, file: File, signal?: AbortSignal) => request<{ source_id: string }>(
+    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source`,
+    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file, signal },
+  ),
+  deletePrivateVpnSource: (group: string, sourceId?: string) => request<{ deleted: boolean }>(
+    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`,
+    { method: 'DELETE' },
+  ),
   deleteInput: (group: string, id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(group)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
   piModels: () => request<PiModelDirectory>('/platform/pi-models'),

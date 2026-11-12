@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, piModelCanTest, type PiModel, type PiModelInput, type PiUsdRates } from '../api/client';
 import PiModelTest from './PiModelTest';
 import LoadingState from './LoadingState';
-import ReviewFees from './ReviewFees';
 import { DetailHeading, SettingsFrame, SettingsHeading, SettingsRail } from '../settings/SettingsShell';
 import { useSettingsLogin, useTrackSettings, type ChangeTracking } from '../settings/settingsChanges';
 import styles from '../settings/Settings.module.css';
@@ -14,21 +13,18 @@ const rateLabels: Record<keyof PiUsdRates, string> = {
     input: '输入', output: '输出', cache_read: '缓存读取', cache_write: '缓存写入',
 };
 const emptyRates = (): PiUsdRates => ({ input: '', output: '', cache_read: '', cache_write: '' });
-const emptyModel = (): PiModelInput => ({
-    label: '', upstream_model: '', base_url: '', context_window: 32768, max_output_tokens: 4096,
-    input_modalities: ['text'], reasoning: false, tool_call: true, usd_rates: null,
-    pricing_source: '', confirmed_free: false, enabled: true,
-});
-type ModelDraft = Omit<PiModelInput, 'context_window' | 'max_output_tokens' | 'tool_call'> & {
+type ModelDraft = Omit<PiModelInput, 'context_window' | 'max_output_tokens' | 'tool_call' | 'usd_rates'> & {
     context_window: number | null; max_output_tokens: number | null; tool_call: boolean | null;
 };
 function draftOf(model?: PiModel): ModelDraft {
-    if (!model) return emptyModel();
+    if (!model) return {
+        label: '', upstream_model: '', base_url: '', context_window: 32768, max_output_tokens: 4096,
+        input_modalities: ['text'], reasoning: false, tool_call: true, enabled: true,
+    };
     return {
         label: model.label, upstream_model: model.upstream_model, base_url: model.base_url,
         context_window: model.context_window, max_output_tokens: model.max_output_tokens,
         input_modalities: model.input_modalities, reasoning: model.reasoning, tool_call: model.tool_call,
-        usd_rates: model.usd_rates, pricing_source: model.pricing_source, confirmed_free: model.confirmed_free,
         enabled: model.enabled, expected_revision: model.model_revision,
     };
 }
@@ -91,11 +87,8 @@ export default function PiModelCatalog(tracking: ChangeTracking) {
         if (draft.context_window == null || draft.max_output_tokens == null || draft.tool_call == null || !draft.input_modalities.includes('text')) {
             setError('请在能力与限制中填写已确认的上下文长度、最大输出，确认文本输入及是否启用工具。'); return;
         }
-        if (anyRate && (Object.values(rates).some(value => !/^\d+(\.\d+)?$/.test(value.trim())) || !draft.pricing_source.trim())) {
-            setError('请填写四项非负费率，并注明报价来源。'); return;
-        }
-        if (draft.confirmed_free !== (anyRate && Object.values(rates).every(value => Number(value) === 0))) {
-            setError('四项费率均为零时，请明确确认该模型免费。'); return;
+        if (anyRate && Object.values(rates).some(value => !/^\d+(\.\d+)?$/.test(value.trim()))) {
+            setError('请填写四项非负费率。'); return;
         }
         inFlight.current = true;
         setBusy(true);
@@ -109,7 +102,7 @@ export default function PiModelCatalog(tracking: ChangeTracking) {
                 usd_rates: anyRate ? rates : null,
             }, selected?.id);
             choose(saved, true);
-            setNotice('已保存新版本。既有任务保留原模型和费率。');
+            setNotice('模型已保存。');
             await client.invalidateQueries({ queryKey: ['pi-models'] });
         } catch (cause) {
             setError(cause instanceof ApiError && cause.status === 409
@@ -145,7 +138,7 @@ export default function PiModelCatalog(tracking: ChangeTracking) {
         {data?.enabled && !data.can_manage && <Alert className={styles.feedback} type="info" showIcon title="此站点只读，连接、密钥和费率由主站管理员维护。" />}
         <SettingsFrame>
           <SettingsRail title="模型列表" intro="连接、能力限制与计费参数" note="模型可供任务和角色引用。"
-            items={(data?.models ?? []).map(model => ({ id: model.id, title: model.label, caption: 'v' + model.model_revision + ' · ' + modelStatus(model), icon: <DatabaseOutlined /> }))}
+            items={(data?.models ?? []).map(model => ({ id: model.id, title: model.label, caption: model.upstream_model, icon: <DatabaseOutlined /> }))}
             active={selected?.id ?? ''} disabled={busy || testBusy}
             onSelect={id => { const model = data?.models.find(item => item.id === id); if (model && id !== selected?.id) choose(model); }} />
           <section className={styles.main} aria-label="模型配置编辑">
@@ -161,7 +154,7 @@ export default function PiModelCatalog(tracking: ChangeTracking) {
               <Form id="model-config" layout="vertical" className={styles.body} onFinish={() => void save()} disabled={busy || !canManage}>
                 {error && <Alert className={styles.feedback} type="error" title={error} showIcon />}
                 {notice && <Alert className={styles.feedback} role="status" type="success" title={notice} showIcon />}
-                <section className={styles.formBlock}><h3>连接信息</h3><div className={styles.fields}>
+                <section className={styles.formBlock}><h3>连接信息</h3><div className={`${styles.fields} ${styles.modelConnection}`}>
                   <Form.Item label="显示名称" htmlFor="pi-label" required><Input id="pi-label" value={draft.label} onChange={e => patch({ label: e.target.value })} maxLength={160} /></Form.Item>
                   <Form.Item label="上游模型" htmlFor="pi-upstream" required><Input id="pi-upstream" value={draft.upstream_model} onChange={e => patch({ upstream_model: e.target.value })} maxLength={512} /></Form.Item>
                   <Form.Item label="HTTPS Base URL" htmlFor="pi-url" required><Input id="pi-url" value={draft.base_url} onChange={e => patch({ base_url: e.target.value })} placeholder="https://provider.example/v1" /></Form.Item>
@@ -194,16 +187,10 @@ export default function PiModelCatalog(tracking: ChangeTracking) {
                   <div className={`${styles.fields} ${styles.four}`}>{Object.entries(rateLabels).map(([key, label]) =>
                     <Form.Item key={key} label={label} htmlFor={`pi-rate-${key}`}><Input id={`pi-rate-${key}`} inputMode="decimal"
                       placeholder="待配置" value={rates[key as keyof PiUsdRates]} onChange={e => { setRates({ ...rates, [key]: e.target.value }); setNotice(''); }} /></Form.Item>)}</div>
-                  <div className={styles.fields}>
-                    <Form.Item label="报价来源" htmlFor="pi-price-source"><Input id="pi-price-source" value={draft.pricing_source} onChange={e => patch({ pricing_source: e.target.value })} /></Form.Item>
-                    <dl className={styles.values}><div><dt>模型版本</dt><dd>{selected ? 'v' + selected.model_revision : '保存后生成'}</dd></div></dl>
-                  </div>
-                  <Checkbox checked={draft.confirmed_free} onChange={e => patch({ confirmed_free: e.target.checked })}>已确认该模型免费</Checkbox>
+                  <p className={styles.formHint}>四项均填 0 表示免费。</p>
                 </section>
-                <p className={styles.note}>费率未配置时，符合条件的模型仍可测试，不能用于有预算的任务。已创建任务沿用原模型版本和费率。</p>
               </Form>
             </>}
-            <div className={styles.fees}><ReviewFees direct /></div>
           </section>
         </SettingsFrame>
       </>}

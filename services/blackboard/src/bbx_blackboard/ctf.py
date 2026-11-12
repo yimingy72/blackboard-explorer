@@ -36,7 +36,12 @@ from bbx_blackboard.ctf_readback import CtfReadbackMixin
 from bbx_blackboard.ctf_review import CtfReviewMixin
 from bbx_blackboard.domain.rules import event
 from bbx_blackboard.gateway_tasks import ctf_review_allowed, ctf_review_generation
-from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
+from bbx_blackboard.input_groups import (
+    InputGroups,
+    check_mutable,
+    check_owner,
+    discard_private_source,
+)
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
@@ -727,6 +732,7 @@ class CtfService(
                 if matched.scalar_one_or_none() is None:
                     raise HTTPException(422, "Private VPN source is not available for this Task")
             if input_group_id is not None:
+                await discard_private_source(conn, input_group_id)
                 await conn.execute(
                     update(s.task_input_groups)
                     .where(s.task_input_groups.c.id == tid)

@@ -93,27 +93,6 @@
       "title": "CtfOptions",
       "type": "object"
     },
-    "GatewayModelRef": {
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
-          "title": "Alias",
-          "type": "string"
-        },
-        "catalog_revision": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Catalog Revision",
-          "type": "string"
-        }
-      },
-      "required": [
-        "alias",
-        "catalog_revision"
-      ],
-      "title": "GatewayModelRef",
-      "type": "object"
-    },
     "NativeCtfEnvironmentRef": {
       "additionalProperties": false,
       "properties": {
@@ -139,6 +118,83 @@
         "publication_stamp"
       ],
       "title": "NativeCtfEnvironmentRef",
+      "type": "object"
+    },
+    "NativeMcpGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "allowed_tools": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Allowed Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "allowed_tools"
+      ],
+      "title": "NativeMcpGrant",
+      "type": "object"
+    },
+    "NativeMcpGrants": {
+      "additionalProperties": false,
+      "properties": {
+        "lead": {
+          "items": {
+            "$ref": "#/$defs/NativeMcpGrant"
+          },
+          "maxItems": 8,
+          "title": "Lead",
+          "type": "array"
+        },
+        "teammate": {
+          "items": {
+            "$ref": "#/$defs/NativeMcpGrant"
+          },
+          "maxItems": 8,
+          "title": "Teammate",
+          "type": "array"
+        }
+      },
+      "title": "NativeMcpGrants",
+      "type": "object"
+    },
+    "PiModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_revision": {
+          "minimum": 1,
+          "title": "Model Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model_id",
+        "model_revision"
+      ],
+      "title": "PiModelRef",
       "type": "object"
     }
   },
@@ -211,10 +267,21 @@
       "title": "Egress Allowlist",
       "type": "array"
     },
-    "gateway_model": {
+    "native_mcp": {
       "anyOf": [
         {
-          "$ref": "#/$defs/GatewayModelRef"
+          "$ref": "#/$defs/NativeMcpGrants"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "pi_model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PiModelRef"
         },
         {
           "type": "null"
@@ -335,7 +402,14 @@
     "reasoning_effort": {
       "anyOf": [
         {
-          "minLength": 1,
+          "enum": [
+            "off",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
           "type": "string"
         },
         {
@@ -343,6 +417,7 @@
         }
       ],
       "default": null,
+      "description": "任务思考强度；省略或 null 沿用已发布配置",
       "title": "Reasoning Effort"
     }
   },

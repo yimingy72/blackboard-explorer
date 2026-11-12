@@ -2,9 +2,10 @@
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -91,7 +92,13 @@ class PiModelInput(PiModelConfig):
     expected_revision: Revision | None = None
 
     @model_validator(mode="after")
-    def require_execution_settings(self):
+    def validate_model(self):
+        self.confirmed_free = self.usd_rates is not None and not any(
+            self.usd_rates.model_dump().values()
+        )
+        if self.usd_rates is not None and not self.pricing_source.strip():
+            self.pricing_source = "platform-operator"
+        cast(Callable[[], PiModelConfig], super().validate_model)()
         if not self.has_text_limits() or self.tool_call is None:
             raise ValueError("Model settings require explicit text limits and tool capability")
         return self

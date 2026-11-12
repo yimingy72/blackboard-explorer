@@ -26,7 +26,7 @@ export default function PiModelTest({ model, onClose, onBusyChange }: { model: P
         } catch (cause) {
             if (!read && cause instanceof ApiError && [400, 401, 403, 404, 422].includes(cause.status)) {
                 setRequestId(undefined);
-                setError('演练未登记。请确认模型版本和测试权限后重新发送。');
+                setError('演练未登记。请确认模型配置和测试权限后重新发送。');
             } else {
                 setError('未收到本次演练的确认。请读取原请求结果。');
             }
@@ -35,9 +35,9 @@ export default function PiModelTest({ model, onClose, onBusyChange }: { model: P
             setBusy(false);
         }
     }
-    return <Modal title={`测试模型：${model.label} · v${model.model_revision}`} open footer={null}
+    return <Modal title={`测试模型：${model.label}`} open footer={null}
         onCancel={onClose} closable={!busy} keyboard={!busy} mask={{ closable: false }}>
-        <p className={controls.hint}>发送一轮文本，由供应商计费。费用独立于任务和复盘。没有费率时仍可测试，费用显示为未知。</p>
+        <p className={controls.hint}>发送测试将由模型供应商计费。</p>
         <Form layout="vertical" onFinish={() => void run(false)}>
             <Form.Item label="测试消息" htmlFor="pi-test-prompt" required>
                 <Input.TextArea id="pi-test-prompt" value={prompt} autoSize={{ minRows: 3, maxRows: 8 }}

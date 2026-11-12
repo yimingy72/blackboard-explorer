@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 from bbx_contracts.billing import add_usage, effective_price, token_cost
 from bbx_contracts.models import ModelConfig, Price, Usage
+from bbx_contracts.pi_models import PiModelInput, PiModelVersion
 
 
 def model(**price) -> ModelConfig:
@@ -85,3 +86,49 @@ def test_money_sums_are_decimal_and_third_party_cannot_claim_discount():
         )
     with pytest.raises(ValueError, match="timezone"):
         effective_price(model(), datetime(2026, 9, 28))
+
+
+@pytest.mark.parametrize("input_rate", [None, "0", "0.125"])
+def test_pi_model_rates_do_not_require_pricing_metadata(input_rate):
+    base = {
+        "label": "Fixture model",
+        "upstream_model": "fixture",
+        "base_url": "https://model.example",
+        "context_window": 4096,
+        "max_output_tokens": 1024,
+        "input_modalities": ["text"],
+    }
+    rates = {"input": input_rate, "output": "0", "cache_read": "0", "cache_write": "0"}
+    raw = {**base, "usd_rates": rates if input_rate is not None else None}
+    entry = PiModelInput.model_validate(raw)
+    assert "pricing_source" not in raw and "confirmed_free" not in raw
+    snapshot = PiModelVersion.model_validate(
+        {
+            **entry.model_dump(
+                mode="json", exclude={"secret", "expected_revision", "clear_secret"}
+            ),
+            "id": "fixture",
+            "model_revision": 1,
+            "has_secret": True,
+        }
+    )
+    assert snapshot.confirmed_free is (input_rate == "0")
+    assert (snapshot.usd_rates is None) is (input_rate is None)
+    assert snapshot.pricing_source == ("platform-operator" if input_rate is not None else "")
+    if snapshot.usd_rates is not None:
+        assert snapshot.usd_rates.input == Decimal(str(input_rate))
+
+    historical_rates = {
+        "usd_rates": {**rates, "input": "0"},
+        "pricing_source": "Historical fixture",
+        "confirmed_free": True,
+    }
+    assert PiModelInput.model_validate({**base, **historical_rates}).pricing_source == (
+        "Historical fixture"
+    )
+    original = PiModelVersion.model_validate(
+        {**snapshot.model_dump(), **historical_rates}
+    ).model_dump(mode="json")
+    assert all(original[key] == value for key, value in historical_rates.items())
+    with pytest.raises(ValueError, match="cache_write"):
+        PiModelInput.model_validate({**base, "usd_rates": {"input": "0"}})

@@ -713,6 +713,58 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         source_id = upload.json()["source_id"]
         replay_upload = await http.put(source_url, headers=user, content=raw)
         assert replay_upload.json() == {"source_id": source_id}
+        assert (await http.delete(source_url, headers=other)).status_code == 403
+        deleted = await http.delete(source_url, headers=user, params={"source_id": str(uuid4())})
+        assert deleted.status_code == 200
+        replay_upload = await http.put(source_url, headers=user, content=raw)
+        assert replay_upload.json() == {"source_id": source_id}
+        for _ in range(2):
+            deleted = await http.delete(source_url, headers=user, params={"source_id": source_id})
+            assert deleted.status_code == 200
+        # A lost PUT response leaves the client without an ID but the draft still has one slot.
+        replaced = await http.put(source_url, headers=user, content=raw)
+        assert replaced.status_code == 200 and replaced.json()["source_id"] != source_id
+        assert (await http.delete(source_url, headers=user)).status_code == 200
+        upload = await http.put(source_url, headers=user, content=raw)
+        assert (
+            upload.status_code == 200 and upload.json()["source_id"] != replaced.json()["source_id"]
+        )
+        source_id = upload.json()["source_id"]
+        for mode in ("ctf", "blackboard"):
+            late_group = await group()
+            late_source_url = f"/api/task-input-groups/{late_group}/private-vpn-source"
+            # Simulate a lost upload finishing after the user removed the draft slot.
+            assert (await http.delete(late_source_url, headers=user)).status_code == 200
+            assert (await http.put(late_source_url, headers=user, content=raw)).status_code == 200
+            if mode == "ctf":
+                without_source = await http.post(
+                    "/api/tasks",
+                    headers=user,
+                    json={**create, "input_group_id": late_group, "native_environment": reference},
+                )
+                assert without_source.status_code == 200, without_source.text
+            else:
+                spec = {
+                    "goal": create["goal"],
+                    "agent_profile": "default",
+                    "budget": create["budget"],
+                    "acceptance": [{"id": "A1", "desc": "Check the fixture"}],
+                }
+                await app.state.board_service.create_task(
+                    spec,
+                    input_group_id=UUID(late_group),
+                    input_owner="user:alice",
+                    create_request_hash=request_hash(spec),
+                )
+            async with ctf.repo.engine.connect() as conn:
+                assert (
+                    await conn.scalar(
+                        select(s.native_vpn_assets.c.id).where(
+                            s.native_vpn_assets.c.group_id == late_group
+                        )
+                    )
+                    is None
+                )
         listed = (await http.get(f"/api/task-input-groups/{private_group}", headers=user)).json()
         assert listed["files"] == [] and source_id not in json.dumps(listed)
         private_create = {
@@ -727,6 +779,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         assert wrong_group.status_code == 422
         created = await http.post("/api/tasks", headers=user, json=private_create)
         assert created.status_code == 200, created.text
+        assert (await http.delete(source_url, headers=user)).status_code == 409
         tid = UUID(created.json()["id"])
         shared = f"/api/tasks/{tid}/runtime/runner-bootstrap"
         assert (await http.get(shared, headers=user)).status_code == 409

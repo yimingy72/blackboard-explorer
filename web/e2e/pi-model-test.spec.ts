@@ -29,7 +29,7 @@ test('模型演练结果断线后按原编号读取，费用未知，不再次�
   await expect(page.getByText('费率待配置', { exact: true })).toBeVisible();
   await expect(page.getByText('AgentGateway', { exact: false })).toHaveCount(0);
   await page.getByRole('button', { name: '测试模型', exact: true }).click();
-  const testDialog = page.getByRole('dialog', { name: '测试模型：合成模型 · v3' });
+  const testDialog = page.getByRole('dialog', { name: '测试模型：合成模型' });
   await testDialog.getByLabel('测试消息').fill('合成问题');
   await testDialog.getByRole('button', { name: '发送测试', exact: true }).click();
   await expect(testDialog.getByRole('alert')).toContainText('请读取原请求结果');

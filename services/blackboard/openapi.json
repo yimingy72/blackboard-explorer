@@ -2655,13 +2655,21 @@
           "reasoning_effort": {
             "anyOf": [
               {
-                "minLength": 1,
+                "enum": [
+                  "off",
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
+            "description": "任务思考强度；省略或 null 沿用已发布配置",
             "title": "Reasoning Effort"
           }
         },
@@ -15540,6 +15548,68 @@
       }
     },
     "/api/task-input-groups/{group_id}/private-vpn-source": {
+      "delete": {
+        "operationId": "remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Remove Private Vpn Source Api Task Input Groups  Group Id  Private Vpn Source Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Private Vpn Source",
+        "tags": [
+          "inputs"
+        ]
+      },
       "put": {
         "operationId": "upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put",
         "parameters": [

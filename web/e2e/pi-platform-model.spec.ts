@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { installMockApi, TASK_ID } from './fixtures';
 
 test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => {
-  await installMockApi(page);
+  const mock = await installMockApi(page);
   let model: Record<string, unknown> | undefined;
   let saved: Record<string, unknown> | undefined;
   let task: Record<string, unknown> | undefined;
@@ -17,9 +17,6 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
     model = { ...config, id: 'fixture-model', model_revision: method === 'PUT' ? 2 : 1, has_secret: true };
     return route.fulfill({ json: model });
   });
-  await page.route('**/api/platform/pi-review-fees', route => route.fulfill({
-    json: { currency: 'USD', estimated_usd: '0', unknown_calls: 2, sites: [], partial: true },
-  }));
   await page.route('**/api/tasks', async route => {
     if (route.request().method() !== 'POST') return route.fallback();
     task = route.request().postDataJSON();
@@ -34,6 +31,7 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
   await page.getByLabel('上游 API 密钥', { exact: true }).fill('synthetic-model-key');
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   await expect(page.getByText('费率待配置', { exact: true })).toBeVisible();
+  expect(saved?.usd_rates).toBeNull();
   await expect(page.getByLabel('上游 API 密钥', { exact: true })).toBeEmpty();
 
   await page.goto('/tasks/new');
@@ -41,15 +39,21 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
   await expect(page.getByRole('button', { name: '创建任务', exact: true })).toBeDisabled();
 
   await page.goto('/profiles?section=models');
+  await page.getByLabel('输入', { exact: true }).fill('1.5');
+  await page.getByRole('button', { name: '保存模型', exact: true }).click();
+  await expect(page.getByText('请填写四项非负费率。', { exact: true })).toBeVisible();
+  expect(saved?.usd_rates).toBeNull();
   for (const label of ['输入', '输出', '缓存读取', '缓存写入']) {
-    await page.getByLabel(label, { exact: true }).fill('1.5');
+    await page.getByLabel(label, { exact: true }).fill('0');
   }
-  await page.getByLabel('报价来源', { exact: true }).fill('合成测试报价');
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   await expect(page.getByText('可用于任务', { exact: true })).toBeVisible();
+  expect(saved?.usd_rates).toEqual({ input: '0', output: '0', cache_read: '0', cache_write: '0' });
   expect(saved?.secret).toBeUndefined();
-  await page.getByRole('button', { name: '复盘费用' }).click();
-  await expect(page.getByText(/本账户复盘费用：待核.*2 笔待核.*站点覆盖不完整/)).toBeVisible();
+  expect(saved).not.toHaveProperty('pricing_source');
+  expect(saved).not.toHaveProperty('confirmed_free');
+  await expect(page.getByText('复盘费用', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('模型版本', { exact: true })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 900 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
 
@@ -61,4 +65,5 @@ test('平台模型编辑与冻结选模保留未知费用', async ({ page }) => 
   await page.getByRole('button', { name: '创建任务', exact: true }).click();
   await expect.poll(() => task?.pi_model).toEqual({ model_id: 'fixture-model', model_revision: 2 });
   expect(task?.gateway_model).toBeUndefined();
+  expect(mock.unexpected).toEqual([]);
 });
