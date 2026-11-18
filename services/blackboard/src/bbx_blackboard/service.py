@@ -987,7 +987,10 @@ def ctf_agent_event(item: dict[str, Any], agent_id: str) -> dict[str, Any]:
     public = {"ctf.started", "ctf.conclusion.requested", "ctf.conclusion.finalized"}
     if kind in public:
         return item
-    if kind in {"ctf.challenge.created", "ctf.challenge.updated", "ctf.record.appended"}:
+    audience = item.get("addressed_to")
+    if kind in {"ctf.challenge.created", "ctf.challenge.updated", "ctf.record.appended"} and (
+        audience is None or agent_id in audience
+    ):
         return {**item, "payload": {"result": payload["result"]}}
     if kind in {"ctf.member.created", "ctf.member.state_changed", "ctf.member.removed"}:
         return {

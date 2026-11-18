@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from bbx_blackboard.auth import Principal, principal, require_user_or_service
+from bbx_blackboard.auth import Principal, principal, require_task_reader, require_user_or_service
 from bbx_blackboard.store import schema as s
 
 FILE_LIMIT = 50 * 1024 * 1024
@@ -289,20 +289,32 @@ def groups(request: Request) -> InputGroups:
 
 async def readable(request: Request, group_id: UUID) -> dict[str, Any]:
     identity = principal(request)
-    row = await groups(request).get(group_id)
-    if row["bound_task_id"] is None:
+    store = groups(request)
+    row = await store.get(group_id)
+    task_id = row["bound_task_id"]
+    if task_id is None:
         check_mutable(row, owner_key(identity))
-    else:
-        if identity.kind == "agent" and identity.task_id != row["bound_task_id"]:
-            raise HTTPException(403, "Task access denied")
-        async with groups(request).engine.connect() as conn:
-            task = (
-                await conn.execute(
-                    select(s.tasks.c.deleting).where(s.tasks.c.id == row["bound_task_id"])
-                )
-            ).first()
-        if task is None or task[0]:
-            raise HTTPException(404, "Task not found")
+        return row
+
+    identity = require_task_reader(request, task_id)
+    async with store.engine.connect() as conn:
+        task = (
+            await conn.execute(
+                select(s.tasks.c.deleting, s.tasks.c.mode).where(s.tasks.c.id == task_id)
+            )
+        ).one_or_none()
+    if task is None or task.deleting:
+        raise HTTPException(404, "Task not found")
+    if identity.kind == "agent":
+        if identity.mode != task.mode:
+            raise HTTPException(409, "mode_mismatch")
+        if task.mode == "ctf":
+            if identity.generation is None or identity.agent_id is None:
+                raise HTTPException(403, "CTF token required")
+            ctf_service = request.app.state.ctf_service
+            if ctf_service is None:
+                raise HTTPException(503, "CTF service unavailable")
+            await ctf_service.authorize_reader(task_id, identity.agent_id, identity.generation)
     return row
 
 

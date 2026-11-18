@@ -2,19 +2,21 @@
 
 import asyncio
 import hashlib
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
 import pytest
 from bbx_blackboard.api import TaskCreateBody, create_app
-from bbx_blackboard.auth import issue_agent_token, issue_user_token
-from bbx_blackboard.input_groups import check_filename, request_hash
+from bbx_blackboard.auth import issue_agent_token, issue_progress_token, issue_user_token
+from bbx_blackboard.input_groups import check_filename, request_hash, router
 from bbx_blackboard.settings import Settings
 from bbx_contracts.models import InitialAttachment, TaskSpec
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import SecretStr, ValidationError
 
 
@@ -141,6 +143,61 @@ async def test_unbound_group_is_owner_scoped(actor):
         )
     assert response.status_code == (403 if actor else 401)
     assert row["owner"] not in response.text
+
+
+@pytest.mark.parametrize(
+    ("actor", "mode", "status"),
+    [
+        ("solver", "blackboard", 200),
+        ("progress", "blackboard", 403),
+        ("solver", "ctf", 409),
+        ("stale", "ctf", 403),
+        ("member", "ctf", 200),
+    ],
+)
+async def test_bound_attachment_groups_require_task_scope_and_current_member(actor, mode, status):
+    config = settings()
+    app = FastAPI()
+    app.include_router(router)
+    app.state.settings = config
+    attachment_group = group()
+    task_id = attachment_group["id"]
+    attachment_group["bound_task_id"] = task_id
+    task = SimpleNamespace(deleting=False, mode=mode)
+    execute = AsyncMock(return_value=SimpleNamespace(one_or_none=lambda: task))
+
+    @asynccontextmanager
+    async def connect():
+        yield SimpleNamespace(execute=execute)
+
+    app.state.input_groups = SimpleNamespace(
+        get=AsyncMock(return_value=attachment_group), engine=SimpleNamespace(connect=connect)
+    )
+    authorize_reader = AsyncMock()
+    if actor == "stale":
+        authorize_reader.side_effect = HTTPException(403, "Stale reader")
+    app.state.ctf_service = SimpleNamespace(authorize_reader=authorize_reader)
+    if actor == "progress":
+        token = issue_progress_token(config, task_id, uuid4(), uuid4(), 1)
+    elif actor == "solver":
+        token = issue_agent_token(config, task_id, "agent-1")
+    else:
+        token = issue_agent_token(config, task_id, "agent-1", generation=2, turn_id=uuid4())
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/api/task-input-groups/{attachment_group['id']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == status
+    if actor in {"stale", "member"}:
+        authorize_reader.assert_awaited_once_with(task_id, "agent-1", 2)
+    else:
+        authorize_reader.assert_not_awaited()
+    if actor == "progress":
+        execute.assert_not_awaited()
 
 
 async def test_upload_spools_and_hashes_before_store_write(monkeypatch):

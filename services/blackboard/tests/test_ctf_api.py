@@ -330,6 +330,25 @@ def test_ctf_event_filter_preserves_cursor_and_own_messages():
     assert "claim_token" not in visible["payload"]
 
 
+def test_ctf_event_projection_hides_records_outside_their_audience():
+    event = {
+        "type": "ctf.record.appended",
+        "version": 12,
+        "actor": "member-1",
+        "object_id": "record",
+        "payload": {"result": {"body": "Private fixture"}},
+        "addressed_to": ["member-2"],
+    }
+    hidden = ctf_agent_event(event, "member-3")
+    assert hidden["type"] == "ctf.cursor"
+    assert hidden["version"] == 12
+    assert hidden["payload"] == {}
+    assert ctf_agent_event(event, "member-2")["payload"] == event["payload"]
+    assert (
+        ctf_agent_event({**event, "addressed_to": None}, "member-3")["payload"] == event["payload"]
+    )
+
+
 async def test_ctf_sse_uses_filtered_events_and_advances_hidden_cursor():
     import asyncio
     import json
