@@ -29,7 +29,7 @@ export type CtfMessage = {
   id: string; sender_id: string; sender_kind: string; recipient_id: string; kind: string;
   reply_to?: string | null; source_turn_id?: string | null; purpose?: string; body: string; status: string; deferred: boolean; created_at?: string;
 };
-export type CtfSession = { session: Record<string, unknown>; revision: number };
+export type CtfSession = { session: Record<string, unknown>; revision: number; transcript_pending?: boolean };
 export type CtfReasoning = { text: string; kind: 'reasoning' | 'summary' };
 export type CtfToolCall = { id: string; name: string; arguments: unknown; result?: unknown; status: 'pending' | 'completed' | 'failed' };
 export type CtfState = {

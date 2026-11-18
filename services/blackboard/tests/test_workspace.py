@@ -41,6 +41,9 @@ class Objects:
     async def exists(self, uri: str) -> bool:
         return uri in self.values
 
+    async def get(self, uri: str) -> bytes:
+        return self.values[uri]
+
     async def stream(self, uri: str, chunk_size: int = 65536) -> AsyncIterator[bytes]:
         self.streams.append(uri)
         data = self.values[uri]
@@ -168,6 +171,45 @@ async def test_workspace_requires_registered_existing_archive_and_task_scope(
         assert (
             await client.get(base, headers={"Authorization": "Bearer service-test"})
         ).status_code == 200
+    await app.state.workspace_cache.close()
+
+
+@pytest.mark.asyncio
+async def test_report_reads_only_the_registered_artifact_for_the_task_and_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_id, other_id = uuid4(), uuid4()
+    original_uri = f"reports/{task_id}.md"
+    current_uri = f"reports/{task_id}/run-2.md"
+    other_uri = f"reports/{other_id}/run-3.md"
+    app = app_for(
+        monkeypatch,
+        task_id,
+        Objects(
+            {original_uri: b"First report", current_uri: b"Current report", other_uri: b"Other"}
+        ),
+    )
+
+    async def task(_request, requested):
+        return {"id": requested, "run_number": 2, "report_uri": current_uri}
+
+    async def run_record(_request, requested, run):
+        assert requested == task_id
+        return {"report_uri": {1: original_uri, 3: other_uri}.get(run)}
+
+    monkeypatch.setattr(api, "_task", task)
+    monkeypatch.setattr(api, "_run_record", run_record)
+    endpoint = f"/api/tasks/{task_id}/report"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.get(endpoint)).status_code == 401
+        headers = {"Authorization": "Bearer service-test"}
+        assert (await client.get(endpoint, headers=headers)).text == "Current report"
+        assert (
+            await client.get(endpoint, params={"run": 1}, headers=headers)
+        ).text == "First report"
+        assert (await client.get(endpoint, params={"run": 3}, headers=headers)).status_code == 404
     await app.state.workspace_cache.close()
 
 

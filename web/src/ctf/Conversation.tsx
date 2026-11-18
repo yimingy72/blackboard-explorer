@@ -3,7 +3,7 @@ import { formatTime } from '../pages/format';
 import { Alert, Avatar, Button, Collapse, Empty, Modal } from 'antd';
 import { Sender } from '@ant-design/x';
 import ConversationBubbles from '../components/ConversationBubbles';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ctfApi } from './api';
 import { randomUUID } from '../api/uuid';
@@ -38,7 +38,17 @@ export default function Conversation({ taskId, member, members, phase, onClose, 
     const active = ['created', 'provisioning', 'running', 'closing'].includes(phase);
     const messages = useQuery({ queryKey: ['ctf', taskId, 'messages', member.id], queryFn: ({ signal }) => ctfApi.messages(taskId, member.id, signal), staleTime: 2000, refetchInterval: active ? 3000 : false });
     // Session snapshots can be large; messages already provide the live mailbox view.
-    const session = useQuery({ queryKey: ['ctf', taskId, 'session', member.id], queryFn: ({ signal }) => ctfApi.session(taskId, member.id, signal), staleTime: 8000, refetchInterval: active ? 10000 : false });
+    const session = useQuery({
+        queryKey: ['ctf', taskId, 'session', member.id],
+        queryFn: ({ signal }) => ctfApi.session(taskId, member.id, signal),
+        staleTime: 8000,
+        refetchInterval: query => active || query.state.data?.transcript_pending === true ? 10000 : false,
+    });
+    useEffect(() => {
+        if (!review) return;
+        void queryClient.invalidateQueries({ queryKey: ['ctf', taskId, 'messages', member.id] });
+        void queryClient.invalidateQueries({ queryKey: ['ctf', taskId, 'session', member.id] });
+    }, [review, taskId, member.id, queryClient]);
     const entries = useMemo(() => conversationEntries(session.data, messages.data?.messages ?? [], member.id), [session.data, messages.data, member.id]);
     async function send() {
         const content = draft.trim();

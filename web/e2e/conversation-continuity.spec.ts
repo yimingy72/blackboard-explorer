@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installConversationFixture } from './conversation-fixture';
-import { CTF_ID, installCtfApi } from './ctf-fixtures';
+import { CTF_ID, installCtfApi, openCtfMenu } from './ctf-fixtures';
 import { TASK_ID } from './fixtures';
 import type { AgentMessage } from '../src/api/client';
 
@@ -170,5 +170,62 @@ test('手机 Goal 与附件 Modal 的 Esc 分层关闭，恢复焦点且不卸�
   expect(mock.operations).toEqual([]);
   expect(mock.resumes).toEqual([]);
   expect(mock.deletions).toEqual([]);
+  expect(mock.unexpected).toEqual([]);
+});
+
+test('CTF 进入复盘时刷新送达状态并等待最后的工具结果', async ({ page }) => {
+  const mock = await installCtfApi(page);
+  let sessionReads = 0;
+  let mailboxReads = 0;
+  let synchronized = false;
+  await page.route(`**/api/tasks/${CTF_ID}/agents/lead/session`, (route) => {
+    sessionReads += 1;
+    const terminal = mock.task.status === 'finished';
+    const messages: Array<{ message_id: string; role: string; contents: unknown[] }> = [{
+      message_id: 'last-answer', role: 'assistant', contents: [
+        { type: 'text', text: '已开始读取模拟记录' },
+        ...(terminal ? [{ type: 'function_call', call_id: 'last-call', name: 'read_note', arguments: {} }] : []),
+      ],
+    }];
+    if (synchronized) messages.push({
+      message_id: 'last-result', role: 'tool',
+      contents: [{ type: 'function_result', call_id: 'last-call', result: '模拟记录已保存' }],
+    });
+    return route.fulfill({ json: {
+      revision: synchronized ? 3 : terminal ? 2 : 1,
+      ...(terminal ? { transcript_pending: !synchronized } : {}),
+      session: { state: { in_memory: { messages } } },
+    } });
+  });
+  await page.route(`**/api/tasks/${CTF_ID}/agents/lead/messages`, (route) => {
+    mailboxReads += 1;
+    return route.fulfill({ json: { messages: [{
+      id: 'opening', body: '模拟初始输入', sender_id: 'user', sender_kind: 'user',
+      recipient_id: 'lead', kind: 'message', deferred: false,
+      status: mock.task.status === 'running' ? 'queued' : 'delivered', created_at: '2026-10-10T08:00:00Z',
+    }] } });
+  });
+  await page.clock.install();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/tasks/${CTF_ID}`);
+  const chat = await openLead(page);
+  await expect(chat).toContainText('等待送达');
+  await expect(chat).toContainText('已开始读取模拟记录');
+  mock.finish('finished');
+  await openCtfMenu(page);
+  await page.getByRole('menuitem', { name: '刷新', exact: true }).click();
+  await expect(chat).toContainText('本轮已结束');
+  await expect(chat).toContainText('已送达');
+  await expect(chat.getByRole('button', { name: /read_note.*等待结果/ })).toBeVisible();
+  const terminalMailboxReads = mailboxReads;
+
+  synchronized = true;
+  await page.clock.fastForward(11_000);
+  await chat.getByRole('button', { name: /read_note.*已完成/ }).click();
+  await expect(chat.getByRole('region', { name: 'read_note 参数与结果' })).toContainText('模拟记录已保存');
+  const finalSessionReads = sessionReads;
+  await page.clock.fastForward(11_000);
+  expect(sessionReads).toBe(finalSessionReads);
+  expect(mailboxReads).toBe(terminalMailboxReads);
   expect(mock.unexpected).toEqual([]);
 });

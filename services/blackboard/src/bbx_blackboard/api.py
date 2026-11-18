@@ -445,18 +445,22 @@ async def _task_runs(request: Request, task_id: UUID) -> list[dict[str, Any]]:
     return [dict(item) for item in rows]
 
 
-async def _workspace_uri(request: Request, task_id: UUID, run: int | None = None) -> str:
+async def _run_artifact_uri(
+    request: Request, *, task_id: UUID, run: int | None, artifact: Literal["report", "workspace"]
+) -> str:
+    require_task_reader(request, task_id)
     task = await _task(request, task_id)
-    number = run or task.get("run_number", 1)
-    uri = (
-        (await _run_record(request, task_id, number)).get("workspace_uri")
-        if run
-        else task.get("workspace_uri")
-    )
-    if not uri or uri != _run_uri("workspace", task_id, number):
-        raise HTTPException(404, "Workspace archive not found")
-    if not await request.app.state.objects.exists(uri):
-        raise HTTPException(404, "Workspace archive not found")
+    number = run if run is not None else task.get("run_number", 1)
+    record = await _run_record(request, task_id, number) if run is not None else task
+    uri = record.get(f"{artifact}_uri")
+    kind = "reports" if artifact == "report" else "workspace"
+    if (
+        not isinstance(uri, str)
+        or uri != _run_uri(kind, task_id, number)
+        or not await request.app.state.objects.exists(uri)
+    ):
+        message = "Report not found" if artifact == "report" else "Workspace archive not found"
+        raise HTTPException(404, message)
     return uri
 
 
@@ -1397,18 +1401,7 @@ def create_app(
     async def report(
         request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
     ) -> PlainTextResponse:
-        require_task_reader(request, task_id)
-        task = await _task(request, task_id)
-        number = run or task.get("run_number", 1)
-        uri = (
-            (await _run_record(request, task_id, number)).get("report_uri")
-            if run
-            else task.get("report_uri")
-        )
-        if not uri or uri != _run_uri("reports", task_id, number):
-            raise HTTPException(404, "Report not found")
-        if not await request.app.state.objects.exists(uri):
-            raise HTTPException(404, "Report not found")
+        uri = await _run_artifact_uri(request, task_id=task_id, run=run, artifact="report")
         data = await request.app.state.objects.get(uri)
         return PlainTextResponse(data.decode("utf-8"), media_type="text/markdown; charset=utf-8")
 
@@ -1416,8 +1409,7 @@ def create_app(
     async def workspace(
         request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
     ) -> StreamingResponse:
-        require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id, run)
+        uri = await _run_artifact_uri(request, task_id=task_id, run=run, artifact="workspace")
         return StreamingResponse(
             request.app.state.objects.stream(uri),
             media_type="application/zstd",
@@ -1430,8 +1422,7 @@ def create_app(
     async def workspace_tree(
         request: Request, task_id: UUID, run: int | None = Query(default=None, ge=1)
     ) -> WorkspaceTreeView:
-        require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id, run)
+        uri = await _run_artifact_uri(request, task_id=task_id, run=run, artifact="workspace")
         try:
             entries = await request.app.state.workspace_cache.tree(request.app.state.objects, uri)
         except ArchiveTooLarge as exc:
@@ -1451,8 +1442,7 @@ def create_app(
         path: str = Query(min_length=1),
         run: int | None = Query(default=None, ge=1),
     ) -> WorkspaceFileView:
-        require_task_reader(request, task_id)
-        uri = await _workspace_uri(request, task_id, run)
+        uri = await _run_artifact_uri(request, task_id=task_id, run=run, artifact="workspace")
         try:
             preview = await request.app.state.workspace_cache.file(
                 request.app.state.objects, uri, path
