@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "response_uri": {
+      "minLength": 1,
+      "title": "Response Uri",
+      "type": "string"
+    },
+    "response_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Response Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "response_uri",
+    "response_sha256"
+  ],
+  "title": "FlagReceiptRequest",
+  "type": "object"
+}

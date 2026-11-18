@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "criteria": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Criteria",
+      "type": "string"
+    },
+    "evidence_required": {
+      "default": true,
+      "title": "Evidence Required",
+      "type": "boolean"
+    },
+    "validator_ref": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Validator Ref"
+    }
+  },
+  "required": [
+    "criteria"
+  ],
+  "title": "CtfWorkDeliverable",
+  "type": "object"
+}

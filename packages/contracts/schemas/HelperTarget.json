@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "child_run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Child Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "child_run_id"
+  ],
+  "title": "HelperTarget",
+  "type": "object"
+}

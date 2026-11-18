@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "CtfPrerequisite": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "gate",
+            "work_completed"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "title": "CtfPrerequisite",
+      "type": "object"
+    },
+    "CtfWorkDeliverable": {
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Criteria",
+          "type": "string"
+        },
+        "evidence_required": {
+          "default": true,
+          "title": "Evidence Required",
+          "type": "boolean"
+        },
+        "validator_ref": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validator Ref"
+        }
+      },
+      "required": [
+        "criteria"
+      ],
+      "title": "CtfWorkDeliverable",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "permission_profile": {
+      "const": "solver",
+      "default": "solver",
+      "title": "Permission Profile",
+      "type": "string"
+    },
+    "deliverable": {
+      "$ref": "#/$defs/CtfWorkDeliverable"
+    },
+    "priority": {
+      "default": 1,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "title": "Priority",
+      "type": "integer"
+    },
+    "boundary": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Boundary",
+      "type": "string"
+    },
+    "input_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Input Refs",
+      "type": "array"
+    },
+    "resource_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "title": "Resource Refs",
+      "type": "array"
+    },
+    "requires": {
+      "items": {
+        "$ref": "#/$defs/CtfPrerequisite"
+      },
+      "maxItems": 16,
+      "title": "Requires",
+      "type": "array"
+    },
+    "max_auto_solve_items": {
+      "default": 20,
+      "maximum": 200,
+      "minimum": 1,
+      "title": "Max Auto Solve Items",
+      "type": "integer"
+    },
+    "source_namespace": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$",
+      "title": "Source Namespace",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deliverable",
+    "boundary",
+    "source_namespace"
+  ],
+  "title": "CtfSolveTemplate",
+  "type": "object"
+}

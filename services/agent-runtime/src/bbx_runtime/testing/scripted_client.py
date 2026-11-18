@@ -1,4 +1,4 @@
-"""Deterministic MAF chat client for real agent and tool-loop tests."""
+"""Deterministic Pi chat client for real agent and tool-loop tests."""
 
 from __future__ import annotations
 
@@ -7,13 +7,11 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from agent_framework import (
+from bbx_runtime.pi import (
     BaseChatClient,
-    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvocationLayer,
     Message,
     ResponseStream,
     UsageDetails,
@@ -34,7 +32,7 @@ class ScriptUsage:
     completion_tokens: int = 0
     reasoning_tokens: int = 0
 
-    def as_maf(self) -> UsageDetails:
+    def as_platform(self) -> UsageDetails:
         return cast(
             UsageDetails,
             {
@@ -59,8 +57,8 @@ class ScriptStep:
     expect_contains: str | None = None
 
 
-class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
-    """Runs MAF's own function loop while replacing only the model response."""
+class ScriptedChatClient(BaseChatClient):
+    """Runs Pi's own function loop while replacing only the model response."""
 
     def __init__(
         self,
@@ -145,7 +143,7 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
             async def updates():
                 yield ChatResponseUpdate(
                     role="assistant",
-                    contents=[*contents, Content.from_usage(step.usage.as_maf())],
+                    contents=[*contents, Content.from_usage(step.usage.as_platform())],
                     response_id=response_id,
                     raw_representation={"usage": raw_usage},
                 )
@@ -157,7 +155,7 @@ class ScriptedChatClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatC
                 messages=[Message(role="assistant", contents=contents)],
                 response_id=response_id,
                 model="scripted",
-                usage_details=step.usage.as_maf(),
+                usage_details=step.usage.as_platform(),
                 raw_representation={"usage": raw_usage},
             )
 

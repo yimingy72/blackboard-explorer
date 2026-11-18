@@ -1,0 +1,291 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="drawio" version="31.4.5" type="device">
+  <diagram id="ctf-architecture" name="01 任务架构与题内子Agent">
+    <mxGraphModel dx="1800" dy="1280" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1280" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="CTF 任务架构：全局分题，题内委派" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=34;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="30" width="1580" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="3" value="01 / 02" style="text;html=1;whiteSpace=wrap;align=right;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#7b8798;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="40" width="100" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="4" value="一题一个 owner；owner 可申请同题子 Agent。调度、预算、权限与停止仍由平台统一约束。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="95" width="1680" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="5" value="2026-11-03  ·  CTF 自动模式目标架构  ·  新增规则尚未部署；旧任务保留冻结语义" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#66758a;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1230" width="1680" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="6" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;入口 · 既有&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;比赛任务与授权范围&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:18px;&quot;&gt;目标题库、题面与初始附件&lt;br&gt;总预算 / 时限 / 成员上限；允许的靶场&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="170" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="7" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;1 名 · 既有角色，协调规则扩展&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;Lead：全局策略与例外&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:18px;&quot;&gt;离线优先、重点题优先级、跨题资源取舍&lt;br&gt;接收汇总与升级；不逐条转发题内消息&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="680" y="170" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="8" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;建议扩展 · 名额与请求并发分别计算&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;统一准入与权限&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:18px;&quot;&gt;owner + 子 Agent 共享工作名额&lt;br&gt;模型 / 命令 / 靶机分别限额；停止优先&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="170" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="9" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;台账既有 · 完整目录映射待接入&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;① 逐题台账&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;稳定题目 ID → 一题一行，分类仅分组&lt;br&gt;题面、输入引用、owner、状态、验证回执&lt;br&gt;目录逐页导入；已发现题先推进&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="430" width="440" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="10" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;建议新增 · 复用数据库事务与邮箱&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;② 代码调度器&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;可执行题查询 → 选空闲成员 → 原子派工&lt;br&gt;优先独立题覆盖；空闲容量再用于增援&lt;br&gt;无可用容量时说明原因，不重复派工&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="680" y="430" width="440" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="③ 题内执行组（子 Agent 新增）" style="swimlane;html=1;startSize=42;container=1;collapsible=0;pointerEvents=0;rounded=1;arcSize=6;fillColor=#dae8fc;swimlaneFillColor=#f8fbff;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=21;fontStyle=1;align=left;spacingLeft=16;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="430" width="440" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;题目 owner&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;自主选路线；合并证据；统一交付&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=8;" vertex="1" parent="11">
+          <mxGeometry x="20" y="55" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="13" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;子 Agent A&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;分析附件 / 独立假设&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=14;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=8;" vertex="1" parent="11">
+          <mxGeometry x="20" y="175" width="190" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="14" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;子 Agent B&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;复核结果 / 脚本实验&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=14;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=8;" vertex="1" parent="11">
+          <mxGeometry x="230" y="175" width="190" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="15" value="获准委派" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="12" target="13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="16" value="获准委派" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="12" target="14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="17" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;真实平台适配待接入 · 代码执行&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;材料与实例准备&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;批量取材 → 校验 → 登记不可变输入&lt;br&gt;可离线则交付材料；可释放时归还实例&lt;br&gt;有可执行步骤就先盘点，不等全部下载&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="760" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="18" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;记录既有 · 父子归属与合并规则新增&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;④ 题内成果与共享证据&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;子 Agent → owner：产物、依据、阻塞&lt;br&gt;owner 决定采用；关键成果写共享记录&lt;br&gt;Lead 接收摘要与需要全局处理的例外&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="680" y="760" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="19" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;候选机制既有 · 真实提交适配待接入&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;⑤ 提交与可信验证&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;owner / 授权服务提交候选&lt;br&gt;accepted 才记平台得分；拒绝则针对性复核&lt;br&gt;unknown 先查询回执，不盲目重交&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="760" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="20" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;建议规则 · 不将等待当作失败&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;等待与恢复&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;材料 / 实例 / 预算 / 限流分别记录&lt;br&gt;条件恢复才重新评估；不靠模型轮询&lt;br&gt;子任务没获准：owner 继续本地路线&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1000" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;复用现有顺序 · 不新增清理服务&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;⑥ 既有结算链释放成员&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;保存交付 → stop_member / drain&lt;br&gt;→ finish_turn → 允许安全接下一项&lt;br&gt;子任务同样清理结算后释放槽位&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="680" y="1000" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;span style=&quot;font-size:13px;color:#536277;&quot;&gt;既有收尾 · 子执行必须纳入停止范围&lt;/span&gt;&lt;br&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;比赛结果与任务收尾&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:17px;&quot;&gt;Lead 核对完整范围、逐题结果和未解项&lt;br&gt;目标达成：汇总得分 / 解题记录&lt;br&gt;停止或预算耗尽：保存部分成果后收尾&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="1000" width="440" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="目标" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=1;exitY=0.45;exitDx=0;exitDy=0;entryX=0;entryY=0.45;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="6" target="7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="24" value="逐页盘点" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="6" target="9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="25" value="优先级 / 例外决策" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#9673a6;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="7" target="10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="26" value="统一准入" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#d79b00;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="8" target="11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="27" value="可执行题" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=1;exitY=0.35;exitDx=0;exitDy=0;entryX=0;entryY=0.33;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="9" target="10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="28" value="缺必要材料" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="9" target="17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="29" value="材料可用" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#d79b00;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=1;exitY=0.45;exitDx=0;exitDy=0;entryX=0;entryY=0.66;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="17" target="10">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="570" y="830" />
+              <mxPoint x="570" y="555" />
+            </Array>
+            <mxPoint x="0" y="-8" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="30" value="一个明确范围" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=1;exitY=0.46;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="10" target="12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="31" value="子结果交 owner 合并" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.72;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="11" target="18">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1520" y="720" />
+              <mxPoint x="1000" y="720" />
+            </Array>
+            <mxPoint x="0" y="-4" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="32" value="候选与证据" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="18" target="19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="33" value="完成 / 有交接的释放" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="18" target="21">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="-2" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="34" value="逐题回执" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="19" target="22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="35" value="条件不足" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6B7C93;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=0;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="17" target="20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="36" value="自动补位" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=blockThin;endFill=1;strokeWidth=2;strokeColor=#6c8ebf;fontFamily=PingFang SC;fontSize=16;fontColor=#425466;labelBackgroundColor=#ffffff;exitX=0;exitY=0.53;exitDx=0;exitDy=0;entryX=0;entryY=0.84;entryDx=0;entryDy=0;dashed=1;jumpStyle=arc;jumpSize=8;" edge="1" parent="1" source="21" target="10">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="620" y="1080" />
+              <mxPoint x="620" y="590" />
+            </Array>
+            <mxPoint x="-7" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="37" value="" style="rounded=0;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1185" width="25" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="38" value="策略" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="95" y="1180" width="175" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="39" value="" style="rounded=0;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="295" y="1185" width="25" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="40" value="自动调度" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="330" y="1180" width="175" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="41" value="" style="rounded=0;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="530" y="1185" width="25" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="42" value="Agent / 执行" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="565" y="1180" width="175" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="43" value="" style="rounded=0;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="765" y="1185" width="25" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="44" value="台账 / 成果" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="800" y="1180" width="175" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="45" value="" style="rounded=0;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1185" width="25" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="46" value="准备 / 准入" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1035" y="1180" width="175" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="47" value="框内标记“新增 / 扩展”的能力均为建议；委派、结果、停止是受控流程。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="1175" width="520" height="45" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="ctf-rules" name="02 调度规则与子Agent权限">
+    <mxGraphModel dx="1800" dy="1280" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1280" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="实际调度规则与子 Agent 权限" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=34;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="30" width="1580" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="3" value="02 / 02" style="text;html=1;whiteSpace=wrap;align=right;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#7b8798;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="40" width="100" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="4" value="首版只允许 owner → 子 Agent 一层委派；分工关系归 owner，执行权与费用账本归平台。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#536277;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="95" width="1680" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="5" value="2026-11-03  ·  CTF 自动模式目标架构  ·  新增规则尚未部署；旧任务保留冻结语义" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=15;fontColor=#66758a;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1230" width="1680" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="6" value="调度规则 · 按触发事件执行" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=25;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="165" width="960" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="7" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="225" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="8" value="R1 发现新题" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="7">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="9" value="逐题登记；有题面和可访问来源即可盘点。目录未读完不挡住已就绪题。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="7">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="10" value="" style="rounded=0;html=1;fillColor=#ffffff;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="312" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="R2 选择下一项" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="10">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="先检查前置条件，再按 Lead 优先级与等待时间排序；未开工题留公共队列。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="10">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="13" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="399" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="14" value="R3 分配 owner" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="13">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="15" value="复用空闲成员；没有合适成员时，在名册和启动容量允许范围内创建。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="13">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="16" value="" style="rounded=0;html=1;fillColor=#ffffff;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="486" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="17" value="R4 申请子 Agent" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="16">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="18" value="写明同题子目标、输入、输出和权限；平台原子准入，默认同时最多 2 个。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="16">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="19" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="573" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="20" value="R5 容量已满" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="19">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="不把未获准子任务当作已启动；owner 继续独立路线，或明确交接后让位。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="19">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="" style="rounded=0;html=1;fillColor=#ffffff;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="660" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="R6 子任务结束" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="22">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="24" value="产物与费用持久化，执行清理并结算后释放名额；owner 决定采用或否定。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="22">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="25" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="747" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="26" value="R7 交接与停止" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="25">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="27" value="停新派工，撤销旧范围，收拢相关子执行；确认清理后才转交责任。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="25">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="28" value="" style="rounded=0;html=1;fillColor=#ffffff;strokeColor=#e0e5ec;container=1;pointerEvents=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="834" width="970" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="29" value="R8 故障与恢复" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="28">
+          <mxGeometry x="18" y="12" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="30" value="可证明局部的失败只影响该工作；共享状态不明走恢复，未知副作用不重放。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=17;fontColor=#243247;fontStyle=0;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="28">
+          <mxGeometry x="210" y="10" width="735" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="31" value="子 Agent 的最小权限" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=25;fontColor=#243247;fontStyle=1;strokeColor=none;fillColor=none;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="165" width="640" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="32" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;允许&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;只读本题获授权的题面、附件快照与共享记录&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="225" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="33" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;按需授予&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;命令经 envd；独立输出目录、受限工具与资源&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="317" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="34" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;允许&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;追加自己的观察 / 候选，结果返回父 owner&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="409" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="35" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;禁止&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;改 owner、认领别题、宣布整题完成或直接计分&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="501" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="36" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;默认禁止&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;启停靶机、直接提交 flag、访问平台凭据&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="593" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="37" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:19px;&quot;&gt;禁止&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;再创建孙 Agent、扩大权限、修改预算或安装扩展&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=1.5;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="685" width="640" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="38" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;权限由平台执行&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:16px;&quot;&gt;有效权限 = 任务授权 ∩ owner可委派权限 ∩ 子模板 ∩ 本次请求&lt;br&gt;不默认继承父会话、密钥和全部扩展；工具白名单不等于沙箱&lt;br&gt;父 scope 失效或用户停止：撤销派工并回收子执行&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=16;fontColor=#243247;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="805" width="640" height="155" as="geometry" />
+        </mxCell>
+        <mxCell id="39" value="&lt;div style=&quot;line-height:1.32;text-align:left;&quot;&gt;&lt;b style=&quot;font-size:22px;&quot;&gt;容量示例：为什么既能铺开，也不超额&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:18px;&quot;&gt;假设 24 道独立题：16 道离线就绪 + 8 道需在线实例；总工作名额 20，靶机配额 3。&lt;br&gt;先运行 16 个离线 owner + 3 个在线 owner = 19；其余 5 道在线题等实例，不空开 Agent。&lt;br&gt;某 owner 有独立离线分析分支，可使用最后 1 个名额启动子 Agent：19 owner + 1 child = 20。&lt;br&gt;仅示意：假定模型、预算和计算准入均允许。旧 max_teammates 名册语义不自动改变。&lt;/span&gt;&lt;/div&gt;" style="rounded=1;arcSize=9;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontFamily=PingFang SC;fontSize=18;fontColor=#243247;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=1.5;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="990" width="1680" height="195" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "after_revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "After Revision",
+      "type": "integer"
+    },
+    "limit": {
+      "default": 100,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "title": "AnnouncementReadRequest",
+  "type": "object"
+}

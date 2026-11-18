@@ -54,8 +54,8 @@ export const trafficApi = {
       throw error;
     }
   },
-  openNativeQuery(taskId: string, run: number, agentId: string, expression: string, signal?: AbortSignal) {
-    return request<NativeTrafficQuery>(`${base(taskId)}/native/queries`, { method: 'POST', body: JSON.stringify({ run, agent_id: agentId || null, display_filter: expression }), signal });
+  openNativeQuery(taskId: string, run: number, agentId: string, expression: string, signal?: AbortSignal, sourceId?: string) {
+    return request<NativeTrafficQuery>(`${base(taskId)}/native/queries`, { method: 'POST', body: JSON.stringify({ run, agent_id: agentId || null, display_filter: expression, ...(sourceId && { source_id: sourceId }) }), signal });
   },
   nativeQuery(taskId: string, queryId: string, seen?: string | null, signal?: AbortSignal) {
     const params = new URLSearchParams();

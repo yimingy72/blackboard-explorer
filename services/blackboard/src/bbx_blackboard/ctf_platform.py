@@ -8,6 +8,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from bbx_contracts.ctf import CtfFakePlatformResult, CtfVerification
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from bbx_blackboard.ctf_board import ensure
@@ -318,6 +319,10 @@ class CtfPlatformMixin:
         else:
             await self._board_write(conn, tid, agent_id, generation, turn_id)
         task = await row(conn, s.tasks, tid)
+        if not allow_settlement and task["ctf_control"].get("failure_hold"):
+            raise HTTPException(
+                409, {"code": "ctf_admission_paused", "message": "Execution safety is unconfirmed"}
+            )
         member = await row(conn, s.ctf_members, tid, agent_id)
         profile_row = (
             (

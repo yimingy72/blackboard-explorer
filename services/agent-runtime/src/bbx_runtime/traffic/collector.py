@@ -73,10 +73,12 @@ class TrafficCollector:
         *,
         poll_seconds: float = 1,
         max_bytes: int = 2 * 1024**3,
+        raw_only: bool = False,
     ) -> None:
         self.envd, self.objects, self.task_id, self.run = envd, objects, task_id, run
         self.prefix = f"traffic/{task_id}/run-{run}/"
         self.poll_seconds, self.max_bytes = poll_seconds, max_bytes
+        self.raw_only = raw_only
         self.manifest: dict[str, Any] = {}
         self.lock = asyncio.Lock()
         self.artifact_lock = asyncio.Lock()
@@ -131,6 +133,8 @@ class TrafficCollector:
                 "chunks": [],
                 "files": [],
             }
+        if self.raw_only:
+            self.manifest["raw_only"] = True
         if status.get("native_enabled") is True:
             self.native_archive = NativeArchive(self.envd, self.objects, self.task_id, self.run)
             await self.native_archive.restore(self.manifest.get("native", []))
@@ -209,7 +213,7 @@ class TrafficCollector:
                 self.error
                 or self.manifest["preview_dropped"]
                 or self.manifest["dropped_packets"]
-                or self.manifest["https"] != "enabled"
+                or (not self.raw_only and self.manifest["https"] != "enabled")
             )
             else "collecting"
         )
@@ -521,7 +525,7 @@ class TrafficCollector:
                     if self.error
                     or self.manifest["dropped_packets"]
                     or self.manifest.get("preview_dropped")
-                    or self.manifest["https"] != "enabled"
+                    or (not self.raw_only and self.manifest["https"] != "enabled")
                     else "complete"
                 )
                 await self._publish()

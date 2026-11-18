@@ -109,7 +109,11 @@ def test_explicit_input_selection_normalizes_ids_and_requires_group():
     reordered = TaskCreateBody.model_validate({**body, "input_file_ids": [second, first]})
     assert selected.input_file_ids is not None and len(selected.input_file_ids) == 2
     assert request_hash(selected.model_dump()) == request_hash(reordered.model_dump())
-    assert TaskCreateBody.model_validate(body).input_file_ids is None
+    implicit = TaskCreateBody.model_validate(body)
+    explicit = TaskCreateBody.model_validate({**body, "mode": "blackboard"})
+    assert implicit.input_file_ids is None
+    assert "mode" not in explicit.model_dump()
+    assert request_hash(implicit.model_dump()) == request_hash(explicit.model_dump())
     assert TaskCreateBody.model_validate({**body, "input_file_ids": []}).input_file_ids == []
     assert request_hash(selected.model_dump()) != request_hash(
         TaskCreateBody.model_validate({**body, "input_file_ids": []}).model_dump()
@@ -146,16 +150,20 @@ async def test_unbound_group_is_owner_scoped(actor):
 
 
 @pytest.mark.parametrize(
-    ("actor", "mode", "status"),
+    ("actor", "mode", "native", "status"),
     [
-        ("solver", "blackboard", 200),
-        ("progress", "blackboard", 403),
-        ("solver", "ctf", 409),
-        ("stale", "ctf", 403),
-        ("member", "ctf", 200),
+        ("solver", "blackboard", False, 200),
+        ("solver", "blackboard", True, 403),
+        ("progress", "blackboard", False, 403),
+        ("solver", "ctf", False, 409),
+        ("stale", "ctf", False, 403),
+        ("member", "ctf", False, 200),
+        ("member", "ctf", True, 403),
     ],
 )
-async def test_bound_attachment_groups_require_task_scope_and_current_member(actor, mode, status):
+async def test_bound_attachment_groups_require_task_scope_and_current_member(
+    actor, mode, native, status
+):
     config = settings()
     app = FastAPI()
     app.include_router(router)
@@ -163,7 +171,11 @@ async def test_bound_attachment_groups_require_task_scope_and_current_member(act
     attachment_group = group()
     task_id = attachment_group["id"]
     attachment_group["bound_task_id"] = task_id
-    task = SimpleNamespace(deleting=False, mode=mode)
+    task = SimpleNamespace(
+        deleting=False,
+        mode=mode,
+        ctf_control={"initial_attachment_state": "ready"} if native else {},
+    )
     execute = AsyncMock(return_value=SimpleNamespace(one_or_none=lambda: task))
 
     @asynccontextmanager
@@ -192,7 +204,7 @@ async def test_bound_attachment_groups_require_task_scope_and_current_member(act
             headers={"Authorization": f"Bearer {token}"},
         )
     assert response.status_code == status
-    if actor in {"stale", "member"}:
+    if actor in {"stale", "member"} and not native:
         authorize_reader.assert_awaited_once_with(task_id, "agent-1", 2)
     else:
         authorize_reader.assert_not_awaited()

@@ -3,17 +3,20 @@ import type { components } from './schema';
 export type TaskView = Omit<components['schemas']['TaskView'], 'budget' | 'runs'> & {
   name?: string | null;
   initial_attachments?: InitialAttachment[];
-  budget: { max_cost: string | number; max_minutes: number; max_concurrent_agents: number };
+  budget: { currency?: 'USD' | 'CNY' | null; max_cost: string | number; max_minutes: number; max_concurrent_agents: number };
+  pi_model?: PiModelRef | null;
   run_number: number;
   active_seconds: number;
+  execution_blocked_reason?: string | null;
   active_since: string | null;
   cleanup_ready: boolean;
   runs: Array<{ run_number: number; report_uri: string | null; workspace_uri: string | null }>;
 };
 export type TaskPage = Omit<components['schemas']['TaskPage'], 'items'> & { items: TaskView[] };
-export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { model_id?: string; model_version?: number; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
+export type BlackboardTaskCreateInput = components['schemas']['TaskCreateBody'] & { pi_model?: PiModelRef; name?: string | null; input_group_id?: string; input_file_ids?: string[] };
 export type CtfTaskCreateInput = Omit<components['schemas']['CtfTaskCreate'], 'ctf_options'> & {
-  ctf_options?: Partial<components['schemas']['CtfOptions']>;
+  pi_model?: PiModelRef;
+  ctf_options?: Partial<components['schemas']['CtfOptions-Input']>;
 };
 export type TaskCreateInput = BlackboardTaskCreateInput | CtfTaskCreateInput;
 export type InitialAttachment = { id: string; filename: string; path: string; uri: string; size: number; sha256: string };
@@ -25,58 +28,39 @@ export type ProfileDocument = components['schemas']['ProfileDocument'];
 export type ProfileInput = components['schemas']['AgentProfile-Input'];
 export type WorkerRole = 'explore' | 'derive' | 'close';
 export type WorkerTools = components['schemas']['WorkerTools'];
-export type WorkerSettings = { revision: number; profile: ProfileInput };
-export type CtfPlatformToolBinding = {
-  server_name: string; server_version: number; tool_name: string;
-  purpose: 'management' | 'connect' | 'submit' | 'status' | 'unknown';
-  result_adapter: 'none' | 'fake_ctf_v1'; read_only: boolean;
+export type WorkerSettingsProfile = Omit<ProfileInput, 'models' | 'privileged_allowlist'>;
+export type WorkerSettings = { revision: number; profile: WorkerSettingsProfile };
+export type SettingsRole = WorkerRole | 'lead' | 'teammate' | 'progress';
+export type SettingsTool = {
+  name: string; group: 'platform' | 'sandbox'; access: 'read' | 'write' | 'execute';
+  required: boolean; configurable: boolean; setting_key: string | null;
+  input_schema: Record<string, unknown>; description: string | null;
 };
-export type CtfWorkerSettings = { revision: number; profile: {
+export type SettingsToolCatalog = { roles: Partial<Record<SettingsRole, { tools: SettingsTool[]; external_mcp: boolean }>> };
+export type PublishedCtfSettings = { published: false } | {
+  published: true; revision: number; task_network: boolean;
   prompt_templates: Record<'lead' | 'teammate', string>;
-  worker_tools: Record<'lead' | 'teammate', WorkerTools>;
-  platform_tools?: CtfPlatformToolBinding[];
-} };
-export type RuntimeInput = Pick<ProfileInput, 'params' | 'exec_image' | 'exec_resources' | 'privileged_allowlist'>;
-export type ProviderField = { name: string; label?: string; required: boolean; options?: Array<{ value: string; label: string }>; default_value?: string };
-export type ProviderSpec = {
-  id: string; label: string; options_fields: ProviderField[]; credential_fields: ProviderField[];
-  allow_no_auth: boolean; default_base_url: string; base_url_required: boolean; supports_reasoning_effort: boolean;
-  reasoning_efforts: string[];
+  business_tools: Record<'lead' | 'teammate', string[]>;
 };
-export type PlatformModel = {
-  name: string; version: number; label: string;
-  config: ProfileInput['models']['explore'] & { max_input_tokens?: number | null; max_output_tokens?: number | null; provider_options?: Record<string, string>; platform_id?: string; platform_version?: number };
-  credential_source: 'environment' | 'stored' | 'none'; has_secret: boolean; enabled: boolean;
-  configured_credentials: string[]; is_default: boolean;
-  effective_limits?: { context_window: number | null; max_input_tokens: number | null; max_output_tokens: number };
-};
-export type PlatformModelInput = {
-  label: string; provider: string; model: string; base_url: string; reasoning_effort: string;
-  supports_vision?: boolean | null;
-  context_window?: number | null;
-  max_input_tokens?: number | null;
-  max_output_tokens?: number | null;
-  price: ProfileInput['models']['explore']['price']; provider_options?: Record<string, string>;
-  credentials?: Record<string, string>; api_key?: string; enabled: boolean;
-};
-export type DiscoveredModel = {
-  id: string; name?: string | null; context_window?: number | null;
-  max_input_tokens?: number | null; max_output_tokens?: number | null;
-  supports_vision?: boolean | null; price?: PlatformModelInput['price'] | null;
-  metadata_source: string;
-};
-export type ModelDiscovery = { models: DiscoveredModel[]; warnings: string[]; supported: boolean };
-export type ModelCatalog = { providers: Array<{ id: string; name: string }>; models: DiscoveredModel[]; warnings: string[]; provider?: string | null };
-export type ModelDiscoveryInput = Pick<PlatformModelInput, 'provider' | 'base_url' | 'provider_options' | 'credentials'> & { saved_name?: string; saved_version?: number };
+export type RuntimeInput = Pick<ProfileInput, 'params' | 'exec_resources'>;
+export type McpRole = 'explore' | 'lead' | 'teammate';
 export type McpServer = {
   name: string; version: number; label: string; url: string; auth_header: string;
   auth_scheme: string; has_secret: boolean; enabled: boolean;
+  published?: boolean; published_version?: number | null; published_roles?: McpRole[];
 };
 export type McpServerInput = {
   label: string; url: string; auth_header: string; auth_scheme: string;
   secret?: string; clear_secret?: boolean; enabled: boolean;
 };
-export type McpTool = { name: string; description: string };
+export type McpTool = {
+  name: string; description: string; input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown> | null; annotations?: Record<string, unknown> | null;
+};
+export type McpDiscovery = {
+  status: 'untested' | 'ready' | 'error'; version: number; published: boolean;
+  discovery_digest: string | null; tools: McpTool[]; roles?: McpRole[]; checked_at?: string | null; error?: string | null;
+};
 export type BoardEvent = components['schemas']['Event'];
 export type PreviewData = { text: string; size: number; truncated: boolean; binary: boolean };
 export type AgentMessage = {
@@ -87,7 +71,7 @@ export type AgentMessage = {
 };
 export type AgentMessages = {
   messages: AgentMessage[]; session_available: boolean; session_origin: 'native' | 'legacy' | null;
-  mode: 'active' | 'review';
+  mode: 'active' | 'review' | 'unavailable';
 };
 export type WorkspaceEntry = { path: string; kind: 'file' | 'directory' | 'link'; size: number };
 export type WorkspaceTree = { entries: WorkspaceEntry[] };
@@ -96,6 +80,9 @@ export type ObjectDetails = {
   object: Record<string, unknown>;
   related: Record<string, Record<string, unknown>>;
 };
+export type SandboxCommandSummary = components['schemas']['SandboxCommandSummary'];
+export type SandboxCommandPage = components['schemas']['SandboxCommandPage'];
+export type SandboxCommandDetail = components['schemas']['SandboxCommandDetail'];
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -179,6 +166,47 @@ export async function previewResponse(response: Response, limit = 200 * 1024): P
   return { text, size, truncated, binary };
 }
 
+export type PiModelRef = { model_id: string; model_revision: number };
+export type PiUsdRates = { input: string; output: string; cache_read: string; cache_write: string };
+export type PiModelConfig = {
+  label: string; upstream_model: string; base_url: string; context_window: number; max_output_tokens: number;
+  input_modalities: ('text' | 'image')[]; reasoning: boolean; tool_call: boolean;
+  usd_rates: PiUsdRates | null; pricing_source: string; confirmed_free: boolean; enabled: boolean;
+};
+export type PiModel = Omit<PiModelConfig, 'context_window' | 'max_output_tokens' | 'tool_call'> & {
+  id: string; model_revision: number; has_secret: boolean;
+  context_window: number | null; max_output_tokens: number | null; tool_call: boolean | null;
+};
+export function piModelCanTest(model: PiModel): boolean {
+  return model.enabled && model.has_secret && model.context_window != null && model.max_output_tokens != null
+    && model.input_modalities.includes('text');
+}
+export function piModelCanRunTask(model: PiModel): boolean {
+  return piModelCanTest(model) && model.tool_call === true && model.usd_rates != null;
+}
+export type PiModelInput = Omit<PiModelConfig, 'pricing_source' | 'confirmed_free'> & { secret?: string; clear_secret?: boolean; expected_revision?: number };
+export type PiModelDirectory = { enabled: boolean; can_manage: boolean; can_test?: boolean; models: PiModel[] };
+export type PiModelTestView = {
+  request_id: string; model_id: string; model_revision: number;
+  state: 'prepared' | 'dispatched' | 'complete' | 'unknown' | 'not_sent';
+  result_text?: string | null; amount_usd?: string | null;
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+};
+export type PiFeeSummary = { estimated_usd: string; unknown_calls: number };
+type PiTaskFees = { enabled: false } | { enabled: true; currency: 'USD'; threshold_usd: string; solver: PiFeeSummary; progress: PiFeeSummary; agents?: Record<string, PiFeeSummary> };
+type PiReviewFees = PiFeeSummary & { currency: 'USD'; sites: (PiFeeSummary & { site_id: string })[]; partial: boolean };
+
+export type GatewayModelRef = { alias: string; catalog_revision: string };
+type GatewayUsdRates = { input: string; output: string; cache_read: string; cache_write: string };
+export type GatewayModel = GatewayModelRef & {
+  label: string; context_window: number; max_output_tokens: number; max_input_tokens?: number;
+  input_modalities: ('text' | 'image')[]; tool_call: boolean; reasoning?: boolean; usd_rates: GatewayUsdRates;
+};
+export type ReviewFees = {
+  confirmed_usd: string | null; pending: number; more: boolean;
+  calls: { attempt_id: string; site_id?: string; task_id?: string; agent_id: string; conversation_id: string; model_alias: string; at: string | null; cost_usd: string | null }[];
+};
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ username: string }>('/login', {
@@ -196,12 +224,41 @@ export const api = {
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),
+  uploadPrivateVpnSource: (group: string, file: File, signal?: AbortSignal) => request<{ source_id: string }>(
+    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source`,
+    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file, signal },
+  ),
+  deletePrivateVpnSource: (group: string, sourceId?: string) => request<{ deleted: boolean }>(
+    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`,
+    { method: 'DELETE' },
+  ),
   deleteInput: (group: string, id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(group)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
+  piModels: () => request<PiModelDirectory>('/platform/pi-models'),
+  testPiModel: (input: { request_id: string; model_id: string; model_revision: number; prompt: string }) =>
+    request<PiModelTestView>('/platform/pi-model-tests', { method: 'POST', body: JSON.stringify(input) }),
+  readPiModelTest: (requestId: string) =>
+    request<PiModelTestView>(`/platform/pi-model-tests/${encodeURIComponent(requestId)}`),
+  savePiModel: (input: PiModelInput, id?: string) => request<PiModel>(
+    id ? `/platform/pi-models/${encodeURIComponent(id)}` : '/platform/pi-models',
+    { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) },
+  ),
+  piTaskFees: (taskId: string) => request<PiTaskFees>(`${taskPath(taskId)}/pi-fees`),
+  piReviewFees: () => request<PiReviewFees>('/platform/pi-review-fees'),
+  gatewayReviewFees: (taskId: string) => request<ReviewFees>(`${taskPath(taskId)}/gateway-model/review-costs`),
+  taskCreationCapabilities: () => request<components['schemas']['TaskCreationCapabilities']>('/task-creation-capabilities'),
   createTask: (input: TaskCreateInput) =>
     request<TaskCreated>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string, signal?: AbortSignal) => request<TaskView>(taskPath(id), { signal }),
-  resumeTask: (id: string, input: { request_id: string; additional_cost: string; additional_minutes: number; refresh_tools: boolean }) =>
+  listSandboxCommands: (id: string, filters: { agentId?: string; before?: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ limit: '50' });
+    if (filters.agentId) params.set('agent_id', filters.agentId);
+    if (filters.before !== undefined) params.set('before', String(filters.before));
+    return request<SandboxCommandPage>(`${taskPath(id)}/sandbox/commands?${params}`, { signal });
+  },
+  getSandboxCommand: (id: string, commandId: string, signal?: AbortSignal) =>
+    request<SandboxCommandDetail>(`${taskPath(id)}/sandbox/commands/${encodeURIComponent(commandId)}`, { signal }),
+  resumeTask: (id: string, input: { request_id: string; currency?: "USD"; additional_cost: string; additional_minutes: number; refresh_tools: boolean }) =>
     request<TaskView>(`${taskPath(id)}/resume`, { method: 'POST', body: JSON.stringify(input) }),
   deleteTask: (id: string) => request<{ deleting: boolean }>(taskPath(id), { method: 'DELETE' }),
   getAgentMessages: (id: string, agent: string, signal?: AbortSignal) => request<AgentMessages>(`${taskPath(id)}/agents/${encodeURIComponent(agent)}/messages`, { signal }),
@@ -223,32 +280,27 @@ export const api = {
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions/${version}`),
   createProfileVersion: (name: string, profile: ProfileInput) =>
     request<ProfileDocument>(`/profiles/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify(profile) }),
+  getSettingsToolCatalog: (signal?: AbortSignal) => request<SettingsToolCatalog>('/settings/tool-catalog', { signal }),
   getWorkerSettings: () => request<WorkerSettings>('/settings/workers'),
-  getCtfWorkerSettings: () => request<CtfWorkerSettings>('/settings/ctf/workers'),
-  saveCtfWorkerSettings: (role: 'lead' | 'teammate', expected_revision: number, prompt: string, tools: WorkerTools, platform_tools?: CtfPlatformToolBinding[]) =>
-    request<CtfWorkerSettings>(`/settings/ctf/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools, platform_tools }) }),
+  getCtfWorkerSettings: () => request<PublishedCtfSettings>('/settings/ctf/workers'),
   saveWorkerSettings: (role: WorkerRole, expected_revision: number, prompt: string, tools: WorkerTools) =>
     request<WorkerSettings>(`/settings/workers/${role}`, { method: 'PUT', body: JSON.stringify({ expected_revision, prompt, tools }) }),
   saveRuntimeSettings: (expected_revision: number, input: RuntimeInput) =>
     request<WorkerSettings>('/settings/runtime', { method: 'PUT', body: JSON.stringify({ expected_revision, ...input }) }),
-  listProviders: () => request<ProviderSpec[]>('/platform/providers'),
-  listPlatformModels: () => request<PlatformModel[]>('/platform/models'),
-  modelCatalog: (provider?: string, signal?: AbortSignal) => request<ModelCatalog>(`/platform/model-catalog${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`, { signal }),
-  discoverModels: (input: ModelDiscoveryInput, signal?: AbortSignal) => request<ModelDiscovery>('/platform/models/discover', { method: 'POST', body: JSON.stringify(input), signal }),
-  deletePlatformModel: (name: string) => request<void>(`/platform/models/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  createPlatformModel: (input: PlatformModelInput) =>
-    request<PlatformModel>('/platform/models', { method: 'POST', body: JSON.stringify(input) }),
-  setDefaultPlatformModel: (name: string) =>
-    request<{ default_model_id: string }>(`/platform/models/${encodeURIComponent(name)}/default`, { method: 'POST' }),
-  savePlatformModel: (name: string, input: PlatformModelInput) =>
-    request<PlatformModel>(`/platform/models/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
+  mcpCapabilities: () => request<{ can_manage: boolean; external_roles: McpRole[] }>('/platform/mcp-servers/capabilities'),
   listMcpServers: () => request<McpServer[]>('/platform/mcp-servers'),
   createMcpServer: (input: McpServerInput) =>
     request<McpServer>('/platform/mcp-servers', { method: 'POST', body: JSON.stringify(input) }),
   saveMcpServer: (name: string, input: McpServerInput) =>
     request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify(input) }),
   listMcpTools: (name: string, version: number) =>
-    request<{ tools: McpTool[] }>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
+    request<McpDiscovery>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/tools`),
+  discoverMcp: (name: string, version: number) =>
+    request<McpDiscovery>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/discover`, { method: 'POST' }),
+  publishMcp: (name: string, version: number, discovery_digest: string, tools: string[], roles: McpRole[]) =>
+    request<McpServer>(`/platform/mcp-servers/${encodeURIComponent(name)}/versions/${version}/publish`, {
+      method: 'POST', body: JSON.stringify({ discovery_digest, tools, roles }),
+    }),
   getReport: async (id: string, signal?: AbortSignal, run?: number) => (await textResponse(`${taskPath(id)}/report${run ? `?run=${run}` : ''}`, signal)).text(),
   getWorkspaceTree: (id: string, run?: number) => request<WorkspaceTree>(`${taskPath(id)}/workspace/tree${run ? `?run=${run}` : ''}`),
   getWorkspaceFile: (id: string, path: string, run?: number) => request<WorkspacePreview>(`${taskPath(id)}/workspace/file?path=${encodeURIComponent(path)}${run ? `&run=${run}` : ''}`),

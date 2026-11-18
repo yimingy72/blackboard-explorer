@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "RunnerFence": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "runner_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Runner Id",
+          "type": "string"
+        },
+        "pod_uid": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Pod Uid",
+          "type": "string"
+        },
+        "epoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "runner_id",
+        "pod_uid",
+        "epoch"
+      ],
+      "title": "RunnerFence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "bbx.task-runner.v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "fence": {
+      "$ref": "#/$defs/RunnerFence"
+    },
+    "binding_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "sdk_session_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Sdk Session Id",
+      "type": "string"
+    },
+    "call_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Call Id",
+      "type": "string"
+    },
+    "attempt_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "body_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Body Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "fence",
+    "binding_id",
+    "sdk_session_id",
+    "call_id",
+    "attempt_id",
+    "body_digest"
+  ],
+  "title": "NativeModelDispatchRequest",
+  "type": "object"
+}

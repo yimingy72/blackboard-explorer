@@ -1,0 +1,287 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bbx-platform
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: bbx-platform-retain
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: bbx-platform
+data:
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  MINIO_ENDPOINT: http://minio:9000
+  HOME: /tmp
+  PYTHONDONTWRITEBYTECODE: "1"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runtime-kubeconfig
+  namespace: bbx-platform
+data:
+  config: |
+    apiVersion: v1
+    kind: Config
+    current-context: in-cluster
+    clusters:
+      - name: existing-kind
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/bbx/kube/ca.crt
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: existing-kind
+          user: runtime
+          namespace: bbx-platform
+    users:
+      - name: runtime
+        user:
+          tokenFile: /var/run/bbx/kube/token
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-control-proxy
+  namespace: bbx-platform
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 256; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/client;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8443 ssl;
+        ssl_certificate /run/bbx/tls/tls.crt;
+        ssl_certificate_key /run/bbx/tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        client_max_body_size 128m;
+        location / {
+          include /run/bbx/proxy/upstream;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header Connection "";
+          proxy_buffering off;
+          proxy_request_buffering off;
+          proxy_read_timeout 180s;
+        }
+      }
+    }
+  blackboard: |
+    proxy_pass http://127.0.0.1:8000;
+  runtime: |
+    proxy_pass http://127.0.0.1:8081;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackboard
+  namespace: bbx-platform
+spec:
+  selector: {app.kubernetes.io/name: blackboard}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackboard-control
+  namespace: bbx-platform
+spec:
+  selector: {app.kubernetes.io/name: blackboard}
+  ports: [{name: https, port: 443, targetPort: control}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime-control
+  namespace: bbx-platform
+spec:
+  selector: {app.kubernetes.io/name: runtime}
+  ports: [{name: https, port: 443, targetPort: control}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackboard
+  namespace: bbx-platform
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: blackboard}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: blackboard}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: bbx-p9-blackboard:verified
+          imagePullPolicy: Never
+          securityContext: &container-security
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8000}]
+          envFrom:
+            - configMapRef: {name: platform-config}
+            - secretRef: {name: postgres-auth}
+            - secretRef: {name: minio-auth}
+            - secretRef: {name: blackboard-auth}
+          env:
+            - {name: NATIVE_CTF_PUBLICATION_FILE, value: /run/bbx/publications/ctf.json}
+            - {name: BOARD_RUNNER_PUBLICATION_FILE, value: /run/bbx/publications/board.json}
+            - {name: PI_MODEL_PEER_CA_FILE, value: /run/bbx/ca/ca.pem}
+            - {name: PI_PLAYGROUND_RUNTIME_URL, value: "https://runtime-control.bbx-platform.svc.cluster.local"}
+          startupProbe:
+            httpGet: {path: /login, port: http}
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet: {path: /login, port: http}
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - {name: app-tmp, mountPath: /tmp}
+            - {name: publications, mountPath: /run/bbx/publications, readOnly: true}
+            - {name: ca, mountPath: /run/bbx/ca, readOnly: true}
+        - name: control-tls
+          image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+          imagePullPolicy: Never
+          command: [nginx, -c, /run/bbx/proxy/nginx.conf, -g, "daemon off;"]
+          ports: [{name: control, containerPort: 8443}]
+          securityContext: *container-security
+          readinessProbe: {tcpSocket: {port: control}}
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          volumeMounts:
+            - {name: proxy-tmp, mountPath: /tmp}
+            - {name: tls, mountPath: /run/bbx/tls, readOnly: true}
+            - {name: proxy, mountPath: /run/bbx/proxy, readOnly: true}
+      volumes:
+        - {name: app-tmp, emptyDir: {sizeLimit: 256Mi}}
+        - {name: proxy-tmp, emptyDir: {sizeLimit: 128Mi}}
+        - {name: ca, configMap: {name: platform-control-ca}}
+        - {name: publications, configMap: {name: platform-publications}}
+        - {name: tls, secret: {secretName: blackboard-control-tls, defaultMode: 288}}
+        - name: proxy
+          configMap:
+            name: platform-control-proxy
+            items: [{key: nginx.conf, path: nginx.conf}, {key: blackboard, path: upstream}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime
+  namespace: bbx-platform
+spec:
+  replicas: 0
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: runtime}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: runtime}
+    spec:
+      serviceAccountName: bbx-runtime
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: runtime
+          image: bbx-p9-runtime:verified
+          imagePullPolicy: Never
+          securityContext: &runtime-security
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          envFrom:
+            - configMapRef: {name: platform-config}
+            - secretRef: {name: postgres-auth}
+            - secretRef: {name: minio-auth}
+            - secretRef: {name: runtime-auth}
+          env:
+            - {name: BLACKBOARD_URL, value: "https://blackboard-control.bbx-platform.svc.cluster.local"}
+            - {name: RUNNER_BLACKBOARD_URL, value: "https://blackboard-control.bbx-platform.svc.cluster.local"}
+            - {name: RUNNER_MODEL_PROXY_URL, value: "https://runtime-control.bbx-platform.svc.cluster.local"}
+            - {name: RUNNER_RESOURCE_CONFIG_FILE, value: /run/bbx/publications/ctf-runtime.json}
+            - {name: BOARD_RESOURCE_CONFIG_FILE, value: /run/bbx/publications/board-runtime.json}
+            - {name: RUNNER_PROXY_HOST, value: "127.0.0.1"}
+            - {name: RUNNER_PROXY_PORT, value: "8081"}
+            - {name: MAX_RUNNING_TASKS, value: "2"}
+          readinessProbe:
+            exec:
+              command: [python, -c, "import socket; socket.create_connection(('127.0.0.1', 8081), 2).close()"]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1024Mi}
+          volumeMounts:
+            - {name: app-tmp, mountPath: /tmp}
+            - {name: publications, mountPath: /run/bbx/publications, readOnly: true}
+            - {name: ca, mountPath: /run/bbx/ca, readOnly: true}
+            - {name: kubeconfig, mountPath: /run/bbx/kubeconfig, readOnly: true}
+            - {name: kube, mountPath: /var/run/bbx/kube, readOnly: true}
+        - name: control-tls
+          image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+          imagePullPolicy: Never
+          command: [nginx, -c, /run/bbx/proxy/nginx.conf, -g, "daemon off;"]
+          ports: [{name: control, containerPort: 8443}]
+          securityContext: *runtime-security
+          readinessProbe: {tcpSocket: {port: control}}
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          volumeMounts:
+            - {name: proxy-tmp, mountPath: /tmp}
+            - {name: tls, mountPath: /run/bbx/tls, readOnly: true}
+            - {name: proxy, mountPath: /run/bbx/proxy, readOnly: true}
+      volumes:
+        - {name: app-tmp, emptyDir: {sizeLimit: 512Mi}}
+        - {name: proxy-tmp, emptyDir: {sizeLimit: 128Mi}}
+        - {name: ca, configMap: {name: platform-control-ca}}
+        - {name: publications, configMap: {name: platform-publications}}
+        - {name: kubeconfig, configMap: {name: runtime-kubeconfig}}
+        - name: kube
+          projected:
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+        - {name: tls, secret: {secretName: runtime-control-tls, defaultMode: 288}}
+        - name: proxy
+          configMap:
+            name: platform-control-proxy
+            items: [{key: nginx.conf, path: nginx.conf}, {key: runtime, path: upstream}]

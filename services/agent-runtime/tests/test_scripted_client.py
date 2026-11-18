@@ -1,6 +1,6 @@
 """The scripted client exercises MAF's own function loop without a model API."""
 
-from agent_framework import Agent, BaseChatClient, Message, tool
+from bbx_runtime.pi import Agent, BaseChatClient, Message, tool
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,
     ScriptStep,
@@ -46,7 +46,7 @@ async def test_script_jump_and_deepseek_usage_fields():
     response = await client.get_response([Message(role="user", contents=["[conclude]"])])
     assert response.text == "handoff"
     assert len(client.received_messages) == 1
-    usage = ScriptUsage(11, 13, 5, 2).as_maf()
+    usage = ScriptUsage(11, 13, 5, 2).as_platform()
     assert usage.get("cache_read_input_token_count") == 11
     assert usage["prompt_cache_miss_tokens"] == 13
     assert usage.get("reasoning_output_token_count") == 2

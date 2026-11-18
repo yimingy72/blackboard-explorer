@@ -13,14 +13,12 @@ export function deliveryLabel(message: CtfMessage): string {
   return ({ queued: '等待送达', leased: '正在投递', delivered: '已送达', cancelled: '已取消', failed: '投递失败' } as Record<string, string>)[message.status] ?? message.status;
 }
 export function composeHint(phase: string, member: CtfMember): string {
-  if (isReviewPhase(phase)) return '只读复盘：可查阅记录与证据，费用单独记录；消息不会续跑任务或恢复成员。';
-  if (member.lifecycle === 'removed') return '该成员已移除，仅保留会话历史。';
+  if (isReviewPhase(phase) || member.lifecycle === 'stopped' || member.lifecycle === 'removed') return '只读复盘：可查阅记录与证据，费用单独记录；消息不会续跑任务或恢复成员。';
   if (phase === 'closing') return '任务正在收尾，新消息会保留为待处理，不再启动执行。';
-  if (member.lifecycle === 'stopped') return '消息会排队保留；成员只有在明确恢复后才继续执行。';
   return member.role === 'lead' ? '告诉 Lead 下一步目标、补充信息或调整方向。' : '消息直接送达此成员，不需要经 Lead 转发。';
 }
 export function canSend(phase: string, member: CtfMember): boolean {
-  return isReviewPhase(phase) || member.lifecycle !== 'removed' && ['created', 'provisioning', 'running', 'closing'].includes(phase);
+  return isReviewPhase(phase) || member.lifecycle === 'stopped' || member.lifecycle === 'removed' || ['created', 'provisioning', 'running', 'closing'].includes(phase);
 }
 export function verificationLabel(verification: Record<string, unknown>): string {
   const status = String(verification.status ?? 'unknown');
@@ -118,7 +116,8 @@ export function conversationEntries(session: CtfSession | null | undefined, mess
   return entries;
 }
 
-export function recoveryBlocker(task: { status: string; ctf_phase?: string | null; cleanup_ready?: boolean; workspace_uri?: string | null }): string | null {
+export function recoveryBlocker(task: { status: string; ctf_phase?: string | null; cleanup_ready?: boolean; workspace_uri?: string | null; execution_blocked_reason?: string | null }): string | null {
+    if (task.execution_blocked_reason) return "旧执行无法安全恢复。可查看原记录和归档。";
   if (!['finished', 'stopped', 'failed'].includes(task.status)) return '本轮仍在执行或收尾，请等待结束后再续跑。';
   if (!task.cleanup_ready) return '归档和本机清理尚未完成。若保存失败，执行环境将保留以供重试。';
   if (!task.workspace_uri) return '没有可恢复的已登记归档，暂不能续跑。';

@@ -1,1 +1,1 @@
-"""Task-scoped packet and MAF logical-call observability."""
+"""Task-scoped packet and model/tool logical-call observability."""

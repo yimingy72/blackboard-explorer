@@ -31,6 +31,32 @@ COMMAND_LOG = AUDIT_DIR / "commands.jsonl"
 SUDO_LOG = AUDIT_DIR / "sudo.log"
 
 
+class CommandInputError(ValueError):
+    """A bounded parameter refusal raised before starting any command process."""
+
+    _MESSAGES = {
+        "invalid_cwd": "cwd must be an existing directory within /workspace. "
+        "Create a new directory from an existing cwd first, then retry.",
+        "invalid_timeout": "timeout_sec must be a positive integer within the execution limit.",
+        "invalid_command": "command cannot contain a NUL character. "
+        "Write binary data through a file or escaped script instead.",
+        "privileged_disabled": "Protected commands do not support sudo or privileged mode. "
+        "Install tools in your user or workspace directory.",
+        "capture_unavailable": "Original Agent capture unavailable; command was not run.",
+    }
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(self._MESSAGES[code])
+
+    def result(self) -> dict[str, object]:
+        return {
+            "state": "rejected",
+            "dispatched": False,
+            "error": {"code": self.code, "message": self._MESSAGES[self.code]},
+        }
+
+
 def valid_agent_id(value: str) -> bool:
     return AGENT_ID.fullmatch(value) is not None
 
@@ -201,12 +227,20 @@ async def execute_command(
     process_started: Callable[[asyncio.subprocess.Process], None] | None = None,
     traffic: TrafficCapture | None = None,
 ) -> dict[str, object]:
+    protected = settings.envd_protected_network is not None
+    if protected and privileged:
+        raise CommandInputError("privileged_disabled")
     home = agent_home(agent_id)
-    if not 1 <= timeout_sec <= settings.command_timeout_max:
-        raise ValueError("invalid timeout_sec")
-    directory = workspace_path(cwd) if cwd is not None else home
+    if type(timeout_sec) is not int or not 1 <= timeout_sec <= settings.command_timeout_max:
+        raise CommandInputError("invalid_timeout")
+    if "\x00" in command:
+        raise CommandInputError("invalid_command")
+    try:
+        directory = workspace_path(cwd) if cwd is not None else home
+    except (ValueError, FileNotFoundError, NotADirectoryError):
+        raise CommandInputError("invalid_cwd") from None
     if not directory.is_dir():
-        raise ValueError("cwd is not a directory")
+        raise CommandInputError("invalid_cwd")
     started = time.monotonic()
     execution: dict[str, object] = {
         "command_id": command_id or str(uuid.uuid4()),
@@ -217,6 +251,13 @@ async def execute_command(
         "started_at": utc_now(),
     }
     network_prefix: list[str] = []
+    if protected and (
+        traffic is None
+        or traffic.networks is None
+        or not traffic.original_raw_live(agent_id)
+        or not traffic.networks.permitted()
+    ):
+        raise CommandInputError("capture_unavailable")
     if traffic is not None and traffic.networks is not None:
         if traffic.state is None or (
             traffic.state["status"] != "collecting" and not traffic.limited
@@ -231,7 +272,22 @@ async def execute_command(
     exit_code: int | None = None
     try:
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-            args = [*network_prefix, "runuser", "-u", agent_id, "--"]
+            if protected:
+                owner = pwd.getpwnam(agent_id)
+                args = [
+                    *network_prefix,
+                    "/usr/bin/setpriv",
+                    f"--reuid={owner.pw_uid}",
+                    f"--regid={owner.pw_gid}",
+                    "--clear-groups",
+                    "--bounding-set=-all",
+                    "--inh-caps=-all",
+                    "--ambient-caps=-all",
+                    "--no-new-privs",
+                    "--",
+                ]
+            else:
+                args = [*network_prefix, "runuser", "-u", agent_id, "--"]
             if privileged:
                 args += ["sudo", "-n", "--"]
             args += ["bash", "-lc", command]
@@ -246,12 +302,22 @@ async def execute_command(
                     "MITMPROXY_SSLKEYLOGFILE",
                 }
             }
+            if protected:
+                environment = {
+                    key: value
+                    for key, value in environment.items()
+                    if not key.upper().startswith(("ENVD_", "LD_"))
+                    and key.lower()
+                    not in {"http_proxy", "https_proxy", "all_proxy", "no_proxy", "bash_env", "env"}
+                }
+                environment.update(HOME=str(home), USER=agent_id, LOGNAME=agent_id)
             if traffic is not None:
                 if traffic.networks is not None:
                     environment.update(traffic.networks.environment(agent_id))
-                environment.update(
-                    traffic.command_environment(agent_id, str(execution["command_id"]))
-                )
+                if not protected:
+                    environment.update(
+                        traffic.command_environment(agent_id, str(execution["command_id"]))
+                    )
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     *args,
@@ -347,6 +413,7 @@ class CtfRegistration:
     stopping: bool = False
     commands: dict[str, tuple[str, asyncio.Task[dict[str, object]]]] = field(default_factory=dict)
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=dict)
+    async_commands: set[str] = field(default_factory=set)
 
 
 class CtfCommandRegistry:
@@ -415,7 +482,12 @@ class CtfCommandRegistry:
         return True
 
     def status(self, agent_id: str | None = None) -> dict[str, object]:
-        base: dict[str, object] = {"boot_id": self.boot_id, "task_id": self.task_id}
+        base: dict[str, object] = {
+            "boot_id": self.boot_id,
+            "task_id": self.task_id,
+        }
+        if agent_id is None:
+            base["capabilities"] = ["ctf_async_commands_v1"]
         if self.unknown:
             return {**base, "state": "unknown", "drained": False}
         if agent_id is None:
@@ -470,7 +542,7 @@ class CtfCommandRegistry:
             await asyncio.sleep(min(0.02, remaining))
         return self.status(str(body["agent_id"]))
 
-    async def execute(
+    def _command(
         self,
         agent_id: str,
         metadata: dict[str, object],
@@ -480,7 +552,9 @@ class CtfCommandRegistry:
         privileged: bool,
         settings: Settings,
         traffic: TrafficCapture | None = None,
-    ) -> dict[str, object]:
+        *,
+        background: bool = False,
+    ) -> tuple[str, asyncio.Task[dict[str, object]]] | dict[str, object]:
         body = {**metadata, "agent_id": agent_id}
         registration = self.registered(body)
         if registration.stopping:
@@ -495,8 +569,27 @@ class CtfCommandRegistry:
                 raise ValueError("Command ID reused with different arguments")
             if previous[0] != registration.generation:
                 raise ValueError("Command belongs to a previous generation; reconcile its outcome")
+            if background != (command_id in registration.async_commands):
+                raise ValueError("Command execution mode changed")
             task = previous[2]
         else:
+            running = [
+                identifier
+                for identifier, (_, active) in registration.commands.items()
+                if not active.done()
+                or (
+                    identifier in registration.async_commands
+                    and self._process_alive(registration.processes.get(identifier))
+                )
+            ]
+            if running and (
+                background or any(cid in registration.async_commands for cid in running)
+            ):
+                return {
+                    "state": "busy",
+                    "command_id": running[0],
+                    "message": "This member has an active command; wait for its result.",
+                }
             task = asyncio.create_task(
                 execute_command(
                     agent_id,
@@ -514,6 +607,118 @@ class CtfCommandRegistry:
             )
             registration.commands[command_id] = (digest, task)
             self.commands[(agent_id, command_id)] = (registration.generation, digest, task)
+            if background:
+                registration.async_commands.add(command_id)
             # Consume errors even when the original MCP client disconnects.
             task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-        return await asyncio.shield(task)
+        return command_id, task
+
+    @staticmethod
+    def _process_alive(process: asyncio.subprocess.Process | None) -> bool:
+        if process is None:
+            return False
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    async def execute(
+        self,
+        agent_id: str,
+        metadata: dict[str, object],
+        command: str,
+        cwd: str | None,
+        timeout_sec: int,
+        privileged: bool,
+        settings: Settings,
+        traffic: TrafficCapture | None = None,
+    ) -> dict[str, object]:
+        launched = self._command(
+            agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic
+        )
+        if isinstance(launched, dict):
+            return launched
+        return await asyncio.shield(launched[1])
+
+    def command_status(self, body: dict[str, object]) -> dict[str, object]:
+        registration = self.registered(body)
+        command_id = str(uuid.UUID(str(body.get("command_id", ""))))
+        previous = self.commands.get((str(body["agent_id"]), command_id))
+        result: dict[str, object] = {
+            **{
+                key: body[key]
+                for key in ("task_id", "member_id", "agent_id", "generation", "boot_id")
+            },
+            "command_id": command_id,
+        }
+        if previous is None:
+            return {**result, "state": "not_found"}
+        if previous[0] != registration.generation:
+            raise ValueError("Command belongs to a previous generation")
+        task = previous[2]
+        if not task.done():
+            return {**result, "state": "running"}
+        if self._process_alive(registration.processes.get(command_id)):
+            return {**result, "state": "running"}
+        if task.cancelled():
+            return {**result, "state": "cancelled", "result": {"status": "cancelled"}}
+        error = task.exception()
+        if isinstance(error, CommandInputError):
+            return {**result, "state": "failed", "result": error.result()}
+        if error is not None:
+            return {
+                **result,
+                "state": "failed",
+                "result": {"error": "Command failed; side effects may have occurred."},
+            }
+        output = task.result()
+        return {
+            **result,
+            "state": "timed_out" if output.get("exit_code") == 124 else "completed",
+            "result": output,
+        }
+
+    async def start(
+        self,
+        agent_id: str,
+        metadata: dict[str, object],
+        command: str,
+        cwd: str | None,
+        timeout_sec: int,
+        privileged: bool,
+        settings: Settings,
+        traffic: TrafficCapture | None = None,
+    ) -> dict[str, object]:
+        launched = self._command(
+            agent_id,
+            metadata,
+            command,
+            cwd,
+            timeout_sec,
+            privileged,
+            settings,
+            traffic,
+            background=True,
+        )
+        if isinstance(launched, dict):
+            return launched
+        # Waiting on a task set never cancels the registered process on client disconnect.
+        await asyncio.wait({launched[1]}, timeout=1.0)
+        return self.command_status({**metadata, "agent_id": agent_id})
+
+    async def cancel_command(self, body: dict[str, object]) -> dict[str, object]:
+        registration = self.registered(body)
+        if str(body.get("command_id")) not in registration.async_commands:
+            raise ValueError("Only asynchronous commands can be individually cancelled")
+        status = self.command_status(body)
+        if status["state"] != "running":
+            return status
+        task = self.commands[(str(body["agent_id"]), str(body["command_id"]))][2]
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        process = registration.processes.get(str(body["command_id"]))
+        if self._process_alive(process):
+            assert process is not None
+            await finish_process_group(process)
+        return self.command_status(body)

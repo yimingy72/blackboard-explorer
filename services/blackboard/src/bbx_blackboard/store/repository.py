@@ -7,6 +7,12 @@ from typing import Any
 from uuid import UUID
 
 from bbx_contracts.billing import add_usage
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_EVENTS,
+    CHALLENGE_KNOWLEDGE_EVENTS,
+    business_contract,
+)
 from bbx_contracts.storage import storage_safe
 from sqlalchemy import delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -129,6 +135,13 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         pass
     elif kind in {"ctf.conclusion.requested", "ctf.conclusion.finalized"}:
         await patch(conn, s.tasks, tid, {"ctf_conclusion": p["conclusion"]})
+        if business_contract(await row(conn, s.tasks, tid)) == BOARD_CONTRACT:
+            from bbx_blackboard.board_events import cancel_prepared
+
+            await cancel_prepared(conn, tid, evt["version"])
+            from bbx_blackboard.runner_gateway import cancel_admitted
+
+            await cancel_admitted(conn, tid, through=evt["created_at"])
     elif kind == "ctf.member.created":
         await patch(
             conn,
@@ -154,11 +167,16 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         )
     elif kind in {
         "ctf.platform.dispatched",
+        "ctf.platform.result_captured",
         "ctf.member.state_changed",
         "ctf.member.removed",
         "ctf.started",
         "ctf.turn.started",
         "ctf.message.delivered",
+        "ctf.native_worker.assigned",
+        "ctf.native_worker.released",
+        "ctf.native_worker.stopped",
+        "ctf.native_worker.cleanup_changed",
         "ctf.coordination.reminded",
         "agent.trace.recorded",
         "tool_call.recorded",
@@ -172,6 +190,11 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
     """Project one durable event into folded tables."""
     tid, kind, p, version = evt["task_id"], evt["type"], evt["payload"], evt["version"]
     stamp = evt["created_at"]
+    if kind in BOARD_EVENTS:
+        from bbx_blackboard.board_events import apply_board_event
+
+        await apply_board_event(conn, evt)
+        return
     if kind.startswith("progress."):
         return
     if kind.startswith("ctf."):
@@ -285,6 +308,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         fields = {
             k: p.get(k)
             for k in (
+                "challenge_id",
+                "assignment_ref",
                 "kind",
                 "statement",
                 "evidence",
@@ -305,6 +330,8 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         fields = {
             k: p.get(k)
             for k in (
+                "challenge_id",
+                "assignment_ref",
                 "statement",
                 "based_on",
                 "expected",
@@ -630,7 +657,13 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
 
 async def board_has_content(conn: AsyncConnection, tid: UUID) -> bool:
     for table in (s.facts, s.intents):
-        if (await conn.execute(select(table.c.id).where(table.c.task_id == tid).limit(1))).first():
+        if (
+            await conn.execute(
+                select(table.c.id)
+                .where(table.c.task_id == tid, table.c.challenge_id.is_(None))
+                .limit(1)
+            )
+        ).first():
             return True
     return False
 
@@ -671,10 +704,36 @@ class Repository:
                 s.tool_calls.c.task_id == tid, s.tool_calls.c.id.in_(identifiers)
             )
         )
-        return {record["id"]: dict(record) for record in records.mappings()}
+        found = {record["id"]: dict(record) for record in records.mappings()}
+        missing = set(identifiers) - found.keys()
+        if missing:
+            # New Runner commands are already durable; project ownership without a second log.
+            native = await conn.execute(
+                select(s.sandbox_command_records.c.id, s.sandbox_command_records.c.agent_id).where(
+                    s.sandbox_command_records.c.task_id == tid,
+                    s.sandbox_command_records.c.id.in_(missing),
+                )
+            )
+            found.update({record["id"]: dict(record) for record in native.mappings()})
+        return found
+
+    async def historical_challenges(self, conn: AsyncConnection, tid: UUID, aid: str) -> set[str]:
+        identifiers = await conn.execute(
+            select(s.events.c.payload["result"]["id"].astext).where(
+                s.events.c.task_id == tid,
+                s.events.c.type.in_(("ctf.challenge.created", "ctf.challenge.updated")),
+                s.events.c.payload["result"]["owner_id"].astext == aid,
+            )
+        )
+        return {identifier for identifier in identifiers.scalars() if identifier is not None}
 
     async def load(
-        self, conn: AsyncConnection, tid: UUID, *, include_tool_calls: bool = True
+        self,
+        conn: AsyncConnection,
+        tid: UUID,
+        *,
+        include_tool_calls: bool = True,
+        challenge_id: str | None = None,
     ) -> BoardState:
         task = await row(conn, s.tasks, tid)
         latest_version = select(func.max(s.events.c.version)).where(s.events.c.task_id == tid)
@@ -707,11 +766,12 @@ class Repository:
             task["closing_reason"] = event_state["closing"].get("reason")
 
         async def mapped(table):
+            scope = [table.c.challenge_id == challenge_id] if "challenge_id" in table.c else []
             rows = (
                 (
                     await conn.execute(
                         select(table)
-                        .where(table.c.task_id == tid)
+                        .where(table.c.task_id == tid, *scope)
                         .order_by(table.c.version if "version" in table.c else table.c.id)
                     )
                 )
@@ -763,8 +823,23 @@ class Repository:
                 ).mappings()
             ]
             if task["mode"] == "ctf":
+                for table in (s.facts, s.intents):
+                    await conn.execute(
+                        delete(table).where(
+                            table.c.task_id == tid, table.c.challenge_id.is_not(None)
+                        )
+                    )
                 for evt in log:
-                    await apply_ctf_view(conn, evt)
+                    if evt["type"] in BOARD_EVENTS:
+                        from bbx_blackboard.board_events import apply_board_event
+
+                        await apply_board_event(conn, evt)
+                    elif evt["type"] in CHALLENGE_KNOWLEDGE_EVENTS and evt["payload"].get(
+                        "challenge_id"
+                    ):
+                        await apply(conn, evt)
+                    else:
+                        await apply_ctf_view(conn, evt)
                 return
             for table in (
                 s.facts,

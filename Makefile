@@ -79,7 +79,16 @@ test:
 test-integration: image-exec-env image-egress-proxy image-agent-runtime image-eval-env
 	$(VENV)/pytest -m "integration and not live"
 
-check: lint typecheck test
+.PHONY: pi-install pi-check
+
+pi-install:
+	npm --prefix services/agent-runtime/pi ci --ignore-scripts --no-audit --no-fund
+
+pi-check:
+	node --check services/agent-runtime/pi/worker.mjs
+	npm --prefix services/agent-runtime/pi test
+
+check: lint typecheck pi-check test
 
 check-all: check test-integration
 
@@ -87,13 +96,6 @@ schemas:
 	$(VENV)/python -m bbx_contracts.schemas
 
 .PHONY: eval-targets eval-verify
-
-E2E_ENV_FILE ?=
-E2E_ARGS ?=
-.PHONY: e2e
-
-e2e: eval-targets
-	uv run $(if $(E2E_ENV_FILE),--env-file "$(E2E_ENV_FILE)") --no-sync python -m bbx_runtime.e2e $(E2E_ARGS)
 
 eval-targets:
 	sh eval/targets/build.sh
@@ -110,8 +112,8 @@ EVAL_OUT ?= eval/results/latest
 image-eval-env: image-exec-env
 	docker build $(DOCKER_BUILD_ARGS) -f eval/runner/Dockerfile --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) -t bbx-eval-env:latest .
 
-eval-run: eval-targets
-	uv run $(if $(EVAL_ENV_FILE),--env-file "$(EVAL_ENV_FILE)") --no-sync python -m eval.runner.batch --n $(EVAL_N) --out "$(EVAL_OUT)"
+eval-run:
+	@printf "%s\n" "旧双站评估入口已退役。请使用已发布的共同平台；现有评估资料仍可评分。" >&2; exit 2
 
 eval-score:
 	$(VENV)/python -m eval.runner.score "$(EVAL_OUT)"
@@ -147,8 +149,3 @@ web-check:
 web-types:
 	pnpm --dir web types
 
-.PHONY: test-live
-
-test-live:
-	@test -n "$$DEEPSEEK_API_KEY" && test "$$DEEPSEEK_API_KEY" != "replace-me" || { echo "DEEPSEEK_API_KEY is required for explicit live tests"; exit 1; }
-	$(VENV)/pytest -m live

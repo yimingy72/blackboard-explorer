@@ -33,7 +33,7 @@ test('切换MCP服务拒绝旧清单，保存时保护输入和资源选择', as
     await expect(editor.getByText('current_tool', { exact: true })).toBeVisible();
     await expect(editor.getByText('outdated_tool', { exact: true })).toHaveCount(0);
     await editor.getByLabel('显示名称').fill('分析工具 · 调整');
-    await editor.getByRole('button', { name: /保存$/ }).click();
+    await editor.getByRole('button', { name: '保存草稿' }).click();
     await expect(editor.getByLabel('显示名称')).toBeDisabled();
     await expect(connection).toBeDisabled();
     await expect(page.getByRole('tab', { name: /模型配置$/ })).toBeDisabled();

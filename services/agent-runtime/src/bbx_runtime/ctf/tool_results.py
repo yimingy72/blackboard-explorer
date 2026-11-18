@@ -4,10 +4,10 @@ import json
 from collections.abc import Awaitable
 from typing import Any
 
-from agent_framework import Content
 from bbx_contracts.tool_errors import CTF_BOARD_ERROR_CODES, solution_validation_details
 
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.pi import Content
 
 ToolJsonResult = str | Content
 
@@ -45,7 +45,7 @@ _BOARD_ERROR_HINTS = {
 
 
 def tool_error_content(error: dict[str, Any]) -> Content:
-    """Keep JSON feedback model-visible and carry an explicit public MAF failure marker."""
+    """Keep JSON feedback model-visible and carry an explicit recoverable tool marker."""
     return Content.from_text(
         json.dumps({"error": error}, ensure_ascii=False),
         additional_properties={"ctf_tool_error": error["code"]},
@@ -57,6 +57,8 @@ _ARGUMENT_ERRORS = frozenset(
         "Invalid identifier",
         "Message IDs must be UUIDs",
         "Valid challenge ID required",
+        "Valid record ID required",
+        "Invalid command result page",
         "Challenge is required",
         "Invalid CTF board request",
         "Invalid verification request",
@@ -83,6 +85,21 @@ def recoverable_tool_error(error: RemoteError) -> Content | None:
                 "code": "challenge_not_found",
                 "message": "Use list_challenges to read this task's real challenge IDs, "
                 "then choose the relevant ID before calling this tool again.",
+            }
+        }
+    elif error.status == 404 and error.message == "Challenge record not found":
+        result = {
+            "error": {
+                "code": "record_not_found",
+                "message": "Use the challenge_id and record_id from the shared reference. "
+                "If the reference is incomplete, read this challenge's records; do not guess IDs.",
+            }
+        }
+    elif error.status == 404 and error.message == "Saved command result not found":
+        result = {
+            "error": {
+                "code": "command_unavailable",
+                "message": "Read a command_id from your saved start result or completion notice.",
             }
         }
     elif error.status == 409 and error.code == "revision_conflict":

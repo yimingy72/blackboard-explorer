@@ -255,6 +255,7 @@ class NativeQuery:
     expression: str
     agent_id: str | None
     objects: Any
+    source_id: str | None = None
     id: UUID = field(default_factory=uuid4)
     status: str = "building"
     revision: str | None = None
@@ -327,14 +328,22 @@ class NativeAnalysisCache:
         return query
 
     def create(
-        self, task_id: UUID, run: int, expression: str, agent_id: str | None, objects: Any
+        self,
+        task_id: UUID,
+        run: int,
+        expression: str,
+        agent_id: str | None,
+        objects: Any,
+        *,
+        source_id: str | None = None,
     ) -> NativeQuery:
         for query in self.queries.values():
-            if (query.task_id, query.run, query.expression, query.agent_id) == (
+            if (query.task_id, query.run, query.expression, query.agent_id, query.source_id) == (
                 task_id,
                 run,
                 expression,
                 agent_id,
+                source_id,
             ):
                 query.touched = monotonic()
                 return query
@@ -350,7 +359,7 @@ class NativeAnalysisCache:
             if removable is None:
                 raise NativeUnavailable("Native analysis queue is full")
             del self.queries[removable]
-        query = NativeQuery(task_id, run, expression, agent_id, objects)
+        query = NativeQuery(task_id, run, expression, agent_id, objects, source_id=source_id)
         self.queries[query.id] = query
         if self.sweeper is None:
             self.sweeper = asyncio.create_task(self._sweep())
@@ -371,9 +380,12 @@ class NativeAnalysisCache:
         self, query: NativeQuery, refs: list[TrafficNativeSourceRef], *, retry: bool = False
     ) -> None:
         query.touched = monotonic()
-        previous_refs = {ref.source_id: ref.revision for ref in query.refs}
+        previous_refs = {ref.source_id: ref for ref in query.refs}
         selected_refs = [
-            ref for ref in refs if query.agent_id is None or ref.agent_id == query.agent_id
+            ref
+            for ref in refs
+            if (query.agent_id is None or ref.agent_id == query.agent_id)
+            and (query.source_id is None or ref.source_id == query.source_id)
         ]
         selected_refs.sort(key=lambda ref: ref.source_id)
         revision = hashlib.sha256(
@@ -386,16 +398,12 @@ class NativeAnalysisCache:
             for ref in selected_refs:
                 known = query.indices.get(ref.source_id)
                 previous_ref = next(
-                    (
-                        item
-                        for item in query.committed_refs
-                        if item.source_id == ref.source_id and item.revision == ref.revision
-                    ),
+                    (item for item in query.committed_refs if item == ref),
                     None,
                 )
                 if previous_ref is not None:
                     indices[ref.source_id] = query.committed_indices[ref.source_id]
-                elif known is not None and previous_refs.get(ref.source_id) == ref.revision:
+                elif known is not None and previous_refs.get(ref.source_id) == ref:
                     indices[ref.source_id] = known
                 else:
                     # Pin immediately: the writer may collect old immutable index revisions later.
@@ -527,8 +535,9 @@ class NativeAnalysisCache:
             session.users -= 1
             session.touched = monotonic()
 
+    @staticmethod
     async def _source_index(
-        self, objects: Any, task_id: UUID | None, run: int, ref: TrafficNativeSourceRef
+        objects: Any, task_id: UUID | None, run: int, ref: TrafficNativeSourceRef
     ) -> TrafficNativeSourceIndex:
         prefix = f"traffic/{task_id}/run-{run}/native/"
         data = await object_bytes(
@@ -544,9 +553,16 @@ class NativeAnalysisCache:
             index.agent_id,
             index.packet_count,
             index.complete,
-        ) != (task_id, run, ref.source_id, ref.agent_id, ref.packet_count, ref.complete) or sum(
-            part.size_bytes for part in index.parts
-        ) != ref.available_bytes:
+            index.scope,
+        ) != (
+            task_id,
+            run,
+            ref.source_id,
+            ref.agent_id,
+            ref.packet_count,
+            ref.complete,
+            ref.scope,
+        ) or sum(part.size_bytes for part in index.parts) != ref.available_bytes:
             raise NativeUnavailable("Native source index ownership or coverage is inconsistent")
         if not index.parts or ref.available_bytes > INPUT_LIMIT:
             raise NativeUnavailable("Native source input is empty or exceeds its resource limit")
@@ -709,6 +725,7 @@ class NativeAnalysisCache:
                                             source_id=ref.source_id,
                                             source_number=int(row["num"]),
                                             agent_id=ref.agent_id,
+                                            scope=ref.scope,
                                             attribution="exact" if ref.agent_id else "shared",
                                             columns=cells,
                                             background=row.get("bg"),
@@ -733,6 +750,7 @@ class NativeAnalysisCache:
                         TrafficNativeCoverage(
                             source_id=ref.source_id,
                             agent_id=ref.agent_id,
+                            scope=ref.scope,
                             packet_count=ref.packet_count,
                             available_bytes=ref.available_bytes,
                             complete=ref.complete,
@@ -927,6 +945,7 @@ def native_detail(
         source_id=ref.source_id,
         source_number=number,
         agent_id=ref.agent_id,
+        scope=ref.scope,
         revision=revision,
         columns=[redact_traffic_text(str(cell), 4096) for cell in columns],
         layers=layers,

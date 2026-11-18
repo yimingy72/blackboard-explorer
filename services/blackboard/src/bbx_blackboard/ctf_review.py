@@ -6,13 +6,26 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from bbx_contracts.ctf import CtfFailureDiagnostic
+from bbx_contracts.pi_models import PiModelVersion
 from sqlalchemy import insert, select
 
 from bbx_blackboard.ctf_board import ensure
+from bbx_blackboard.gateway_tasks import (
+    ctf_review_allowed,
+    ctf_review_closed,
+    ctf_review_generation,
+)
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
 
 TERMINAL = {"finished", "failed", "stopped"}
+
+
+def review_projection(model):
+    if (model or {}).get("pi_model"):
+        reference = PiModelVersion.model_validate(model["pi_model"]).reference()
+        return {"pi_model": reference.model_dump(mode="json")}
+    return {}
 
 
 class CtfReviewMixin:
@@ -26,16 +39,15 @@ class CtfReviewMixin:
     _settle: Any
     _retire_checkpoint_barrier: Any
 
-    def _authorize_review(self, task, turn):
-        ensure(task["status"] in TERMINAL, "Review requires a terminal task")
+    def _authorize_review(self, task, member, turn):
+        ensure(ctf_review_allowed(task, member), "Review requires a finished Agent or Task")
         ensure(turn["purpose"] == "review", "Review turn required")
 
     async def authorize_review(self, tid, agent_id, generation, turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
-            ensure(task["status"] in TERMINAL, "Review requires a terminal task")
             member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
-            self._authorize_review(task, turn)
+            self._authorize_review(task, member, turn)
             return member
 
     async def claim_review_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
@@ -45,8 +57,8 @@ class CtfReviewMixin:
             if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
                 return None
             if (
-                task["status"] not in TERMINAL
-                or not task["cleanup_ready"]
+                not ctf_review_allowed(task, member)
+                or not await ctf_review_closed(conn, task)
                 or task["ctf_control"].get("unresolved_checkpoints")
                 or member.get("pending_operation")
             ):
@@ -60,15 +72,22 @@ class CtfReviewMixin:
                     and turn["agent_id"] == agent_id
                     and turn["generation"] == member["generation"]
                 ):
-                    return turn
+                    selected = turn["review_model"]
+                    if not (selected or {}).get("pi_model"):
+                        return None
+                    return {**turn, **review_projection(selected)}
                 return None
+            source_generation = await ctf_review_generation(conn, tid, member)
             pending = (
                 await conn.execute(
-                    select(s.ctf_messages.c.id)
+                    select(s.ctf_messages.c.id, s.ctf_messages.c.review_model)
                     .where(
                         s.ctf_messages.c.task_id == tid,
                         s.ctf_messages.c.recipient_id == agent_id,
                         s.ctf_messages.c.purpose == "review",
+                        s.ctf_messages.c.request_run_number == task["run_number"],
+                        s.ctf_messages.c.request_agent_generation == source_generation,
+                        s.ctf_messages.c.review_model["pi_model"].astext.is_not(None),
                         s.ctf_messages.c.sender_kind == "user",
                         s.ctf_messages.c.status == "queued",
                         s.ctf_messages.c.deferred.is_(False),
@@ -86,7 +105,9 @@ class CtfReviewMixin:
                 runtime_instance=runtime_instance,
                 status="running",
                 purpose="review",
-                assignment_message_ids=[],
+                review_model=pending.review_model,
+                review_origin_generation=source_generation,
+                assignment_message_ids=[pending.id],
                 explicit_reply_ids=[],
                 checkpoint_revision=0,
                 usage={},
@@ -103,7 +124,7 @@ class CtfReviewMixin:
                 agent_id,
             )
             await self._emit(conn, tid, "turn.started", "system", values)
-            return values
+            return {**values, **review_projection(pending.review_model)}
 
     async def recover_reviews(
         self,
@@ -265,8 +286,29 @@ class CtfReviewMixin:
                 )
             ).mappings()
         )
+        dispatched = await conn.scalar(
+            select(s.gateway_execution_attempts.c.id)
+            .where(
+                s.gateway_execution_attempts.c.task_id == tid,
+                s.gateway_execution_attempts.c.purpose == "review",
+                s.gateway_execution_attempts.c.attributes["bbx_conversation_id"].astext
+                == turn["id"],
+            )
+            .limit(1)
+        )
+        if dispatched is None:
+            dispatched = await conn.scalar(
+                select(s.pi_model_calls.c.call_id)
+                .where(
+                    s.pi_model_calls.c.task_id == tid,
+                    s.pi_model_calls.c.purpose == "review",
+                    s.pi_model_calls.c.turn_id == turn["id"],
+                    s.pi_model_calls.c.state.in_(("dispatched", "unknown", "complete")),
+                )
+                .limit(1)
+            )
         for message in messages:
-            if message["status"] == "leased":
+            if message["status"] == "leased" and dispatched is None:
                 # Nothing durable consumed this input: leave it available to a new review.
                 await patch(
                     conn,
@@ -282,7 +324,7 @@ class CtfReviewMixin:
                     message["id"],
                 )
                 continue
-            if message["status"] != "delivered":
+            if message["status"] not in {"leased", "delivered"}:
                 continue
             reply = await self._message(
                 conn,

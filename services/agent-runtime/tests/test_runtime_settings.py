@@ -6,7 +6,6 @@ from pydantic import SecretStr, ValidationError
 def test_settings(monkeypatch) -> None:
     monkeypatch.delenv("MAX_RUNNING_TASKS", raising=False)
     for key in (
-        "DEEPSEEK_API_KEY",
         "MINIO_ROOT_PASSWORD",
         "SERVICE_TOKEN",
         "ENVD_TOKEN_SECRET",
@@ -15,7 +14,7 @@ def test_settings(monkeypatch) -> None:
     settings = Settings()  # pyright: ignore[reportCallIssue]
     assert settings.max_running_tasks == 2
     assert settings.exec_min_pids == 1024
-    assert settings.deepseek_api_key.get_secret_value() == "replace-me"
+    assert settings.service_token.get_secret_value() == "replace-me"
     assert "replace-me" not in repr(settings)
 
 
@@ -48,10 +47,3 @@ def test_execution_pid_floor_can_be_overridden(monkeypatch) -> None:
         envd_token_secret=SecretStr("test"),
     )
     assert settings.exec_min_pids == 2048
-
-
-def test_settings_allow_platform_only_models_without_deepseek_key(monkeypatch) -> None:
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    for key in ("MINIO_ROOT_PASSWORD", "SERVICE_TOKEN", "ENVD_TOKEN_SECRET"):
-        monkeypatch.setenv(key, "test-only-value")
-    assert Settings().deepseek_api_key.get_secret_value() == ""  # pyright: ignore[reportCallIssue]

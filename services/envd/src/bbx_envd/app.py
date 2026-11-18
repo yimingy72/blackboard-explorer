@@ -4,16 +4,18 @@ import asyncio
 import fcntl
 import fnmatch
 import hmac
+import ipaddress
 import json
 import os
 import pwd
 import stat as stat_mode
 import subprocess
+import sys
 import tarfile
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.applications import Starlette
@@ -24,6 +26,7 @@ from bbx_envd.core import (
     COMMAND_LOG,
     SUDO_LOG,
     WORKSPACE,
+    CommandInputError,
     CtfCommandRegistry,
     execute_command,
     prepare_audit_logs,
@@ -40,6 +43,7 @@ mcp = FastMCP("envd", host="0.0.0.0")
 RESTORE_MARKER = Path("/var/lib/bbx/restore-ready")
 AUDIT_MAX_BYTES = 32 * 1024 * 1024
 CTF_BOOT_MARKER = Path("/var/lib/bbx/ctf-boot")
+PROTECTED_PROBE_AGENT = "agent-999999"
 ctf_registry: CtfCommandRegistry | None = None
 traffic_capture: TrafficCapture | None = None
 
@@ -55,6 +59,8 @@ async def execute_command_tool(
 ) -> dict[str, object]:
     """Run a command in the current agent's workspace and network namespace.
 
+    cwd must already exist. Create a directory from an existing cwd first;
+    creating it inside the same command cannot satisfy this precondition.
     Localhost belongs to this Agent. BBX_AGENT_IP and BBX_TASK_GATEWAY identify its
     task network. Shared services should listen on 0.0.0.0; find other Agents at
     /workspace/shared/network.json. Files and installed tools remain shared.
@@ -68,12 +74,44 @@ async def execute_command_tool(
         metadata = meta.model_dump().get("ctf") if meta is not None else None
         if not isinstance(metadata, dict):
             raise ValueError("CTF command metadata required")
-        return await ctf_registry.execute(
-            agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
+        try:
+            return await ctf_registry.execute(
+                agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
+            )
+        except CommandInputError as error:
+            return error.result()
+    try:
+        return await execute_command(
+            agent_id, command, cwd, timeout_sec, privileged, settings, traffic=traffic_capture
         )
-    return await execute_command(
-        agent_id, command, cwd, timeout_sec, privileged, settings, traffic=traffic_capture
+    except CommandInputError as error:
+        return error.result()
+
+
+async def start_command_tool(
+    command: str,
+    cwd: str | None = None,
+    timeout_sec: int = 120,
+    privileged: bool = False,
+    *,
+    ctx: Context,
+) -> dict[str, object]:
+    """Start a fenced CTF command and return after at most one second of execution."""
+    if settings.envd_mode != "ctf" or ctf_registry is None:
+        raise ValueError("Asynchronous commands require CTF mode")
+    request = ctx.request_context.request
+    agent_id = request.headers.get("X-Agent-Id", "") if request is not None else ""
+    meta = ctx.request_context.meta
+    metadata = meta.model_dump().get("ctf") if meta is not None else None
+    if not isinstance(metadata, dict):
+        raise ValueError("CTF command metadata required")
+    return await ctf_registry.start(
+        agent_id, metadata, command, cwd, timeout_sec, privileged, settings, traffic_capture
     )
+
+
+if settings.envd_mode == "ctf":
+    mcp.add_tool(start_command_tool, name="start_command")
 
 
 async def execute_control(request) -> Response:
@@ -117,6 +155,10 @@ async def ctf_control(request) -> Response:
     try:
         if request.method == "GET":
             agent_id = request.query_params.get("agent_id")
+            if "command_id" in request.query_params:
+                identity: dict[str, Any] = dict(request.query_params)
+                identity["generation"] = int(identity.get("generation", "-1"))
+                return JSONResponse(ctf_registry.command_status(identity))
             result = ctf_registry.status(agent_id)
             if agent_id is not None and "generation" in request.query_params:
                 if result.get("generation") != int(request.query_params["generation"]):
@@ -131,6 +173,8 @@ async def ctf_control(request) -> Response:
                 await traffic_capture.prepare_agent(
                     body["agent_id"], body["member_id"], str(settings.envd_task_id)
                 )
+        elif request.url.path.endswith("/cancel-command"):
+            result = await ctf_registry.cancel_command(body)
         else:
             result = await ctf_registry.stop(body)
         return JSONResponse(result)
@@ -142,7 +186,88 @@ async def health(request) -> Response:
     result = {"status": "ok", "runtime_audit": True}
     if settings.envd_traffic_enabled:
         result["traffic"] = True
+    if settings.envd_protected_network:
+        result["protected_network"] = "legacy-agent-network-v1"
+        result["task_id"] = str(settings.envd_task_id)
+        result["network_mode"] = settings.envd_protected_network
     return JSONResponse(result)
+
+
+async def protected_network(request) -> Response:
+    capture = traffic_capture
+    networks = capture.networks if capture else None
+    if not networks or not networks.protected or settings.envd_task_id is None:
+        return JSONResponse({"error": "Protected execution unavailable"}, status_code=409)
+    try:
+        body = await request.json()
+        action = request.path_params["action"]
+        if not isinstance(body, dict):
+            raise ValueError
+        if action == "link" and set(body) == {"public_key"}:
+            if not isinstance(body["public_key"], str):
+                raise ValueError
+            return JSONResponse({"public_key": await networks.configure_link(body["public_key"])})
+        if action == "fence" and not body:
+            await networks.fence()
+            return JSONResponse({"fenced": True})
+        if action == "renew" and not body:
+            networks.renew()
+            return JSONResponse({"renewed": True})
+        if (
+            action != "probe"
+            or capture is None
+            or not networks.permitted()
+            or set(body)
+            != (
+                {"ipv4", "port", "scheme", "path", "status", "server_name"}
+                if networks.forced
+                else set()
+            )
+        ):
+            raise ValueError
+        if networks.forced:
+            address = ipaddress.IPv4Address(body["ipv4"])
+            port = body["port"]
+            if (
+                str(address) != body["ipv4"]
+                or type(port) is not int
+                or not 1 <= port <= 65535
+                or not any(address in ipaddress.ip_network(cidr) for cidr in networks.allow)
+                or any(address in ipaddress.ip_network(cidr) for cidr in networks.deny)
+            ):
+                raise ValueError
+        await capture.prepare_agent(
+            PROTECTED_PROBE_AGENT, "system-network-probe", str(settings.envd_task_id)
+        )
+        if not capture.original_raw_live(PROTECTED_PROBE_AGENT):
+            raise ValueError
+        if networks.forced:
+            async with asyncio.timeout(5):
+                await networks.run(
+                    *networks.prefix(PROTECTED_PROBE_AGENT),
+                    "/usr/bin/setpriv",
+                    "--reuid=65534",
+                    "--regid=65534",
+                    "--clear-groups",
+                    "--bounding-set=-all",
+                    "--inh-caps=-all",
+                    "--ambient-caps=-all",
+                    "--no-new-privs",
+                    "--",
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "bbx_envd.network_probe",
+                    body["ipv4"],
+                    str(body["port"]),
+                    body["scheme"],
+                    body["path"],
+                    str(body["status"]),
+                    body["server_name"] or "",
+                )
+        return JSONResponse({"capture_ready": True, "probe_ready": networks.forced})
+    except (OSError, TimeoutError, TypeError, ValueError):
+        return JSONResponse({"error": "Original execution network is unconfirmed"}, status_code=409)
 
 
 async def traffic_control(request) -> Response:
@@ -290,7 +415,11 @@ async def users(request) -> Response:
     try:
         body = await request.json()
         agent_id = body["agent_id"]
-        if not isinstance(agent_id, str) or not valid_agent_id(agent_id):
+        if (
+            not isinstance(agent_id, str)
+            or not valid_agent_id(agent_id)
+            or (settings.envd_protected_network and agent_id == PROTECTED_PROBE_AGENT)
+        ):
             raise ValueError("invalid agent id")
         canonical_agent_id = body.get("canonical_agent_id", agent_id)
         if not isinstance(canonical_agent_id, str):
@@ -312,7 +441,7 @@ async def users(request) -> Response:
     home.mkdir(mode=0o755, exist_ok=True)
     try:
         subprocess.run(
-            ["usermod", "-a", "-G", "bbx-agents", agent_id],
+            agent_groups(agent_id),
             check=True,
             capture_output=True,
         )
@@ -333,6 +462,12 @@ async def users(request) -> Response:
                 {"error": "Agent network unavailable; command execution disabled"}, status_code=409
             )
     return JSONResponse({"agent_id": agent_id, "home": str(home)})
+
+
+def agent_groups(agent_id):
+    if settings.envd_protected_network:
+        return ["usermod", "-G", "", agent_id]
+    return ["usermod", "-a", "-G", "bbx-agents", agent_id]
 
 
 def requested_path(request) -> Path | Response:
@@ -654,7 +789,7 @@ def _restore_archive(compressed: Path, unpacked: Path) -> int:
                     capture_output=True,
                 )
             subprocess.run(
-                ["usermod", "-a", "-G", "bbx-agents", agent_id],
+                agent_groups(agent_id),
                 check=True,
                 capture_output=True,
             )
@@ -744,18 +879,31 @@ async def lifespan(app):
         ctf_registry = CtfCommandRegistry(str(settings.envd_task_id), CTF_BOOT_MARKER)
     prepare_workspace()
     prepare_audit_logs()
+    watchdog = None
     if settings.envd_traffic_enabled:
         traffic_capture = TrafficCapture(
             Path("/var/lib/bbx/traffic"),
             settings.envd_traffic_max_bytes,
             settings.envd_traffic_max_records,
         )
-        traffic_capture.networks = AgentNetworks(Path("/var/lib/bbx/network"), WORKSPACE / "shared")
+        traffic_capture.networks = AgentNetworks(
+            Path("/var/lib/bbx/network"),
+            WORKSPACE / "shared",
+            mode=settings.envd_protected_network,
+            next_hop=settings.envd_protected_next_hop,
+            allow=settings.envd_protected_allow,
+            deny=settings.envd_protected_deny,
+        )
         traffic_capture.restore()
+        if traffic_capture.networks.protected:
+            watchdog = asyncio.create_task(traffic_capture.networks.watchdog())
     try:
         async with mcp.session_manager.run():
             yield
     finally:
+        if watchdog:
+            watchdog.cancel()
+            await asyncio.gather(watchdog, return_exceptions=True)
         if traffic_capture is not None and traffic_capture.state is not None:
             await traffic_capture.stop()
         if traffic_capture is not None and traffic_capture.networks is not None:
@@ -766,6 +914,7 @@ app = TokenAuth(
     Starlette(
         routes=[
             Route("/health", health),
+            Route("/execution-network/{action}", protected_network, methods=["POST"]),
             Route("/execute", execute_control, methods=["POST"]),
             Route("/traffic/{action}/parts/{identifier}", traffic_control),
             Route("/traffic/{action}/ack", traffic_control, methods=["POST"]),
@@ -775,6 +924,7 @@ app = TokenAuth(
             Route("/ctf/register", ctf_control, methods=["POST"]),
             Route("/ctf/stop", ctf_control, methods=["POST"]),
             Route("/ctf/drain", ctf_control, methods=["POST"]),
+            Route("/ctf/cancel-command", ctf_control, methods=["POST"]),
             Route("/audit", audit),
             Route("/users", users, methods=["POST"]),
             Route("/files", files),

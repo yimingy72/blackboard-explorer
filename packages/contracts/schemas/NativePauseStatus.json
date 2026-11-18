@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "pause_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pause Id"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "draining",
+        "paused",
+        "resuming",
+        "resumed",
+        "stopping",
+        "stopped"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "blocker": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocker"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "NativePauseStatus",
+  "type": "object"
+}

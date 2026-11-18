@@ -106,7 +106,8 @@ async def test_service_requires_exact_existing_object(monkeypatch: pytest.Monkey
     service = BoardService(engine=None, objects=objects)  # type: ignore[arg-type]
     calls = []
 
-    async def write(tid, command, actor, data):
+    async def write(tid, command, actor, data, *, runner_archive=None):
+        assert runner_archive is None
         calls.append((tid, command, actor, data))
         return []
 
@@ -137,7 +138,8 @@ async def test_archive_api_service_only_and_validates_body(monkeypatch: pytest.M
     seen = []
 
     class Service:
-        async def record_archive(self, tid, uri, size, fallback):
+        async def record_archive(self, tid, uri, size, fallback, *, runner_archive=None):
+            assert runner_archive is None
             seen.append((tid, uri, size, fallback))
             return []
 

@@ -2,6 +2,14 @@
   "$defs": {
     "EventType": {
       "enum": [
+        "board.announcement.published",
+        "board.flag.candidate",
+        "board.flag.submission",
+        "board.flag.dispatched",
+        "board.flag.unknown",
+        "board.flag.cancelled",
+        "board.flag.receipt",
+        "board.request.linked",
         "progress.settings.updated",
         "progress.message.posted",
         "progress.message.replied",

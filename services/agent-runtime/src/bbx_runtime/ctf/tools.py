@@ -1,16 +1,17 @@
 """Small role-specific tool surface; the backend independently enforces authority."""
 
+import json
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from agent_framework import FunctionInvocationContext, tool
 from bbx_contracts.ctf import CtfSolution
 from pydantic import Field
 
 from bbx_runtime.ctf.board_tools import build_board_tools
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.images import make_view_image_tool
-from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
+from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result, tool_error_content
+from bbx_runtime.pi import FunctionInvocationContext, tool
 
 
 def build_tools(
@@ -253,6 +254,8 @@ def build_tools(
     ) -> str:
         """Execute in this member's fenced workspace; timeout uses the configured envd maximum.
 
+        cwd must already exist. To create a new directory, omit cwd or use an
+        existing directory for the creation command, then set cwd in a later call.
         Prefer short, coherent operations and inspect each result before starting the
         next independent step. Publish a useful result or blocker before continuing a
         long investigation. Do not use long sleeps or repeated shell polling to wait
@@ -284,6 +287,99 @@ def build_tools(
                 },
             )
         return str(await envd.execute(task_id, member_id, command))
+
+    @tool
+    async def start_command(
+        command: str,
+        ctx: FunctionInvocationContext,
+        cwd: str | None = None,
+        timeout_sec: Annotated[int, Field(ge=1)] = 120,
+        privileged: bool = False,
+    ) -> str:
+        """Start a fenced command; return a result or running/command_id after one second.
+
+        cwd must already exist; use a separate command from an existing cwd to create it.
+        Only one asynchronous command may be pending for you. While it runs, continue
+        useful coordination or finish your response to wait for its completion message.
+        Do not poll, start another command or repeat an uncertain start. A temporary
+        final response does not cancel the command. Existing workspace, network,
+        privilege, task budget and timeout rules still apply.
+        """
+        return await envd.start_call(
+            task_id,
+            member_id,
+            turn,
+            checkpoint_provider(),
+            ctx,
+            {"command": command, "cwd": cwd, "timeout_sec": timeout_sec, "privileged": privileged},
+        )
+
+    @tool
+    async def cancel_command(command_id: str) -> ToolJsonResult:
+        """Cancel your asynchronous command and wait for process-group cleanup.
+
+        A completed command keeps its result. Cancellation cannot undo external effects.
+        Only this turn's saved command may be cancelled; do not invent command IDs.
+        """
+        try:
+            return await envd.cancel_call(
+                task_id, member_id, turn, checkpoint_provider(), command_id
+            )
+        except ValueError:
+            return tool_error_content(
+                {
+                    "code": "command_unavailable",
+                    "message": "Use your current turn's command_id returned by start_command.",
+                }
+            )
+
+    @tool
+    async def read_command_result(
+        command_id: str,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        limit: Annotated[int, Field(ge=1, le=16000)] = 2000,
+    ) -> ToolJsonResult:
+        """Read a page of your saved asynchronous command result after its completion notice.
+
+        This never starts, polls or repeats execution. Follow next_offset for omitted
+        output; a running command has no result yet. Other members' results are private.
+        completed means the process ended; inspect exit_code and output before claiming success.
+        """
+        await service.runtime(
+            task_id,
+            "authorize_member",
+            agent_id=member_id,
+            turn_id=turn["id"],
+            generation=turn["generation"],
+        )
+        try:
+            entry = envd.job_entry(checkpoint_provider(), command_id)
+        except ValueError:
+            return tool_error_content(
+                {
+                    "code": "command_unavailable",
+                    "message": "Use a command_id from your own saved start_command result.",
+                }
+            )
+        if entry["state"] != "finished":
+            return json.dumps(
+                {
+                    "command_id": command_id,
+                    "state": entry["state"],
+                    "message": "Wait for the completion notice; do not poll.",
+                }
+            )
+        result = entry["result"]
+        end = min(len(result), offset + limit)
+        return json.dumps(
+            {
+                "command_id": command_id,
+                "state": entry["terminal_status"],
+                "result": result[offset:end],
+                "next_offset": end if end < len(result) else None,
+            },
+            ensure_ascii=False,
+        )
 
     @tool
     async def stop_teammate(member_id: str) -> ToolJsonResult:
@@ -327,6 +423,11 @@ def build_tools(
     return [
         *build_board_tools(service, task_id, member_id, turn, artifacts, role=role),
         *([execute_command] if envd is not None else []),
+        *(
+            [start_command, cancel_command, read_command_result]
+            if hasattr(envd, "start_call")
+            else []
+        ),
         *([view_image] if view_image is not None else []),
         list_members,
         send_message,

@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "incident_id": {
+      "format": "uuid",
+      "title": "Incident Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "incident_id"
+  ],
+  "title": "NativeRecoveryIntent",
+  "type": "object"
+}

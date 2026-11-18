@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import httpx
-from agent_framework import Agent, FunctionMiddleware, MCPStreamableHTTPTool
+from bbx_runtime.pi import Agent, FunctionMiddleware, MCPStreamableHTTPTool
 from bbx_runtime.testing.fake_envd import CommandOutput, FakeEnvd
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 

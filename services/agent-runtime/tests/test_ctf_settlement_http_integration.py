@@ -11,7 +11,6 @@ import pytest
 from bbx_runtime.ctf.coordinator import CtfCoordinator
 from bbx_runtime.ctf.runner import CtfRunner
 from bbx_runtime.settings import Settings
-from pydantic import SecretStr
 from test_ctf_cooperation_integration import HeldScriptedClient, create_task, wait_until
 from test_ctf_cooperation_integration import cooperation_board as cooperation_board
 from test_ctf_vertical_integration import SimulatedDrain
@@ -45,7 +44,7 @@ async def test_settlement_transport_loss_keeps_peer_running_and_does_not_replay(
         clients[mid] = client
         return client
 
-    settings = Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted"))
+    settings = Settings.model_construct()
     envd = MemberDrain()
     runner = CtfRunner(ctf, settings, factory, envd=envd)
     coordinator = CtfCoordinator(board, settings, runner=runner, envd=envd)
@@ -224,7 +223,7 @@ async def test_joined_review_recovery_accepts_real_native_checkpoint_usage_and_t
             )
         ]
     )
-    settings = Settings.model_construct(deepseek_api_key=SecretStr("unused-scripted"))
+    settings = Settings.model_construct()
     runner = CtfRunner(ctf, settings, lambda *_: client)
     writes = 0
 

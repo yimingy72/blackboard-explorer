@@ -881,6 +881,69 @@ async def test_conversation_cas_claim_and_reply_are_atomic(board_service):
     assert len((await store.list_messages(first, aid))["messages"]) == 2
 
 
+async def test_external_mcp_unknown_holds_a_new_agent_until_original_receipt(board_service):
+    tid = await task(board_service)
+    original = await board_service.register_agent(tid, "explore")
+    replacement = await board_service.register_agent(tid, "explore")
+    store = Conversations(board_service.repo.engine)
+    pending = {"attempt_id": str(uuid4()), "call_id": "call-original"}
+    other = {"attempt_id": str(uuid4()), "call_id": "call-new"}
+    key = "bbx_external_mcp_pending"
+    checkpoint = await store.put_session(
+        tid, original, {"state": {key: pending}}, "start", "native", 0, []
+    )
+    assert checkpoint["revision"] == 1
+    with pytest.raises(HTTPException) as held:
+        await store.put_session(tid, replacement, {"state": {key: other}}, "start", "native", 0, [])
+    assert held.value.status_code == 409
+    with pytest.raises(HTTPException) as mismatched:
+        await store.put_session(
+            tid,
+            original,
+            {"state": {"bbx_external_mcp_completed": other}},
+            "start",
+            "native",
+            1,
+            [],
+        )
+    assert mismatched.value.status_code == 409
+    assert (await store.get_session(tid, original))["session"]["state"][key] == pending
+    with pytest.raises(HTTPException) as no_result:
+        await store.put_session(
+            tid,
+            original,
+            {"state": {"bbx_external_mcp_completed": pending}},
+            "start",
+            "native",
+            1,
+            [],
+        )
+    assert no_result.value.status_code == 409
+    await store.put_session(
+        tid,
+        original,
+        {
+            "state": {
+                "bbx_external_mcp_completed": pending,
+                "bbx_tool_results": {
+                    pending["call_id"]: {
+                        "type": "function_result",
+                        "call_id": pending["call_id"],
+                        "result": "original",
+                    }
+                },
+            },
+        },
+        "start",
+        "native",
+        1,
+        [],
+    )
+    assert (
+        await store.put_session(tid, replacement, {"state": {key: other}}, "start", "native", 0, [])
+    )["revision"] == 1
+
+
 async def test_session_storage_escapes_nested_nul_and_returns_stored_snapshot(board_service):
     tid = await task(board_service)
     aid = await board_service.register_agent(tid, "explore")
@@ -2267,63 +2330,10 @@ async def test_concurrent_bundled_profile_initialization_creates_one_version(boa
     assert len(await store.versions("concurrent-bundled")) == 1
 
 
-async def test_platform_credentials_versions_and_profile_bindings(board_service):
-    from bbx_blackboard.platform import McpInput, ModelInput, PlatformStore
-    from bbx_blackboard.store.schema import platform_configs
-    from bbx_contracts.profile import load_profile
-    from fastapi import HTTPException
-    from sqlalchemy import select
+async def test_mcp_credentials_retain_version_and_do_not_echo_secret(board_service):
+    from bbx_blackboard.platform import McpInput, PlatformStore
 
     store = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
-    fields = dict(
-        label="Example model",
-        provider="openai_chat",
-        model="example-model",
-        base_url="https://example.invalid/v1",
-        reasoning_effort="none",
-        credential_source="stored",
-        price={
-            "currency": "CNY",
-            "cache_hit_per_m": 0,
-            "cache_miss_per_m": 1,
-            "output_per_m": 2,
-            "off_peak": False,
-        },
-    )
-    original = await store.save(
-        "models",
-        "example-model",
-        ModelInput.model_validate({**fields, "api_key": "fixture-secret"}),
-        "tester",
-    )
-    assert original["has_secret"] and "fixture-secret" not in str(original)
-    async with board_service.repo.engine.connect() as conn:
-        encrypted = (
-            await conn.execute(
-                select(platform_configs.c.secret_ciphertext).where(
-                    platform_configs.c.name == "example-model"
-                )
-            )
-        ).scalar_one()
-    assert encrypted and "fixture-secret" not in encrypted
-    second = await store.save(
-        "models",
-        "example-model",
-        ModelInput.model_validate({**fields, "model": "new-model"}),
-        "tester",
-    )
-    assert second["version"] == 2
-    assert (await store.credentials("models", "example-model", 2))["secret"] == "fixture-secret"
-    assert (await store.get("models", "example-model", 1))["config"]["model"] == "example-model"
-    profile, _ = load_profile(Path(__file__).resolve().parents[3] / "profiles/default")
-    for role in ("explore", "derive", "close"):
-        model = getattr(profile.models, role)
-        model.platform_id = "example-model"
-        model.platform_version = 1
-        model.model = "tampered-redundant-field"
-    fixed = await store.normalize_profile(profile)
-    assert fixed.models.explore.model == "example-model"
-    assert fixed.models.close.price.output_per_m == 2
     mcp = await store.save(
         "mcp-servers",
         "tools",
@@ -2341,28 +2351,19 @@ async def test_platform_credentials_versions_and_profile_bindings(board_service)
     )
     assert not cleared["has_secret"]
     assert (await store.credentials("mcp-servers", "tools", 1))["secret"] == "mcp-fixture-secret"
-    with pytest.raises(HTTPException):
-        await store.save("models", "missing-key", ModelInput.model_validate(fields), "tester")
 
 
-async def test_direct_worker_settings_default_model_and_pinned_task(board_service):
+async def test_worker_settings_and_gateway_task_keep_original_profile_versions(board_service):
     import httpx
     from bbx_blackboard.api import create_app
-    from bbx_blackboard.platform import PlatformStore
     from bbx_blackboard.profiles import ProfileStore
     from bbx_blackboard.settings import Settings
     from bbx_contracts.models import BUILTIN_TOOLS
+    from bbx_contracts.pi_models import PiModelVersion
     from pydantic import SecretStr
 
-    platform = PlatformStore(board_service.repo.engine, "test-secret-for-platform-encryption")
     profiles = ProfileStore(board_service.repo.engine)
-    await profiles.ensure_bundled(
-        Path(__file__).resolve().parents[3] / "profiles/default", platform
-    )
-    assert await platform.import_environment_key("fixture-existing-environment-key") >= 1
-    assert await platform.import_environment_key("must-not-overwrite-user-key") == 0
-    imported = await platform.credentials("models", "deepseek-default", 1)
-    assert imported["credentials"]["api_key"] == "fixture-existing-environment-key"
+    await profiles.ensure_bundled(Path(__file__).resolve().parents[3] / "profiles/default")
     settings = Settings.model_construct(
         postgres_password=SecretStr("test"),
         minio_root_password=SecretStr("test"),
@@ -2400,39 +2401,38 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
             json={**body, "expected_revision": revision, "prompt": "{{ unsupported_variable }}"},
         )
         assert bad.status_code == 422
-        model = await client.post(
-            "/api/platform/models",
-            json={
-                "label": "Task model",
-                "provider": "openai_chat",
-                "model": "chosen-model",
+        assert "models" not in saved.json()["profile"]
+        assert (await client.post("/api/platform/models", json={})).status_code in {404, 405}
+        model = PiModelVersion.model_validate(
+            {
+                "id": "chosen-model",
+                "model_revision": 1,
+                "label": "Chosen Pi model",
+                "upstream_model": "fixture",
+                "base_url": "https://fixture.invalid/v1",
                 "context_window": 500000,
-                "base_url": "https://example.invalid/v1",
-                "credentials": {"api_key": "fixture-platform-key"},
-                "price": {
-                    "currency": "CNY",
-                    "cache_hit_per_m": 0,
-                    "cache_miss_per_m": 1,
-                    "output_per_m": 2,
-                    "off_peak": False,
-                },
-            },
+                "max_output_tokens": 8192,
+                "input_modalities": ["text"],
+                "tool_call": True,
+                "has_secret": True,
+                "usd_rates": {"input": "1", "output": "2", "cache_read": "0", "cache_write": "0"},
+                "pricing_source": "Synthetic USD",
+            }
         )
-        assert model.status_code == 200, model.text
-        model_data = model.json()
-        assert model_data["name"].startswith("model-")
-        assert "fixture-platform-key" not in model.text
-        assert model_data["configured_credentials"] == ["api_key"]
-        assert (
-            await client.post(f"/api/platform/models/{model_data['name']}/default")
-        ).status_code == 200
-        assert (await platform.default_model_name()) == model_data["name"]
-        listed = (await client.get("/api/platform/models")).json()
-        assert [item["name"] for item in listed if item["is_default"]] == [model_data["name"]]
+
+        async def selected(reference):
+            assert reference == model.reference()
+            return model
+
+        app.state.settings.pi_site_id = "fixture-primary"
+        app.state.settings.pi_model_authority = "fixture-authority"
+        app.state.pi_registry.enabled = True
+        app.state.pi_registry.selected = selected
         spec = {
             "goal": "Check task model",
             "acceptance": [{"id": "A1", "desc": "Evidence"}],
-            "budget": {"max_cost": "1", "max_minutes": 10},
+            "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 10},
+            "pi_model": model.reference().model_dump(mode="json"),
             "agent_profile": "default",
         }
         created = await client.post("/api/tasks", json=spec)
@@ -2455,9 +2455,7 @@ async def test_direct_worker_settings_default_model_and_pinned_task(board_servic
         assert (await client.get("/api/settings/prompts/explore")).json()[
             "prompt"
         ] == "Live follow-up {{ goal }}"
-        await profiles.ensure_bundled(
-            Path(__file__).resolve().parents[3] / "profiles/default", platform
-        )
+        await profiles.ensure_bundled(Path(__file__).resolve().parents[3] / "profiles/default")
         assert (await profiles.get("default"))["prompt_templates"][
             "explore"
         ] == "Live follow-up {{ goal }}"

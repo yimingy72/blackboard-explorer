@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useLocation, useNavigate, useNavigation } from 'react-router-dom';
 import { App as AntApp, Alert, Avatar, Button, Drawer, Dropdown, Layout, Menu, Tooltip } from 'antd';
-import { ApartmentOutlined, AppstoreOutlined, DownOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
+import { ApartmentOutlined, AppstoreOutlined, DownOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined, ApiOutlined, DatabaseOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import { api } from './api/client';
 import { preloadPage } from './pages/routeModules';
 import { tasksQueryOptions, taskQueryOptions } from './api/queries';
@@ -15,8 +15,12 @@ function Shell() {
   const pending = useNavigation().state === 'loading';
   const workbench = /^\/tasks\/[^/]+(?:\/progress)?$/.test(pathname) && pathname !== '/tasks/new';
   const routeKey = pathname.replace(/^(\/tasks\/[^/]+)\/progress$/, '$1');
-  const [expanded, setExpanded] = useState(false);
+  const configuration = pathname === '/profiles' || pathname === '/models' || pathname === '/mcp';
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(false);
+  const [configExpanded, setConfigExpanded] = useState(true);
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 899px)').matches);
+  const expanded = configuration && !narrow ? configExpanded : workspaceExpanded;
+  const setExpanded = configuration && !narrow ? setConfigExpanded : setWorkspaceExpanded;
   const [logoutError, setLogoutError] = useState(''); const [loggingOut, setLoggingOut] = useState(false);
   const toggle = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
   const navigationTrigger = useRef<HTMLElement | null>(null);
@@ -25,7 +29,7 @@ function Shell() {
   useEffect(() => { document.getElementById('main-content')?.focus({ preventScroll: true }); }, [pathname]);
   useEffect(() => {
     const media = matchMedia('(max-width: 899px)');
-    const update = () => { setNarrow(media.matches); if (media.matches) setExpanded(false); };
+    const update = () => { setNarrow(media.matches); if (media.matches) setWorkspaceExpanded(false); };
     media.addEventListener('change', update); return () => media.removeEventListener('change', update);
   }, []);
   async function logout() {
@@ -40,10 +44,12 @@ function Shell() {
     const taskId = /^\/tasks\/([^/]+)(?:\/(?:report|progress))?$/.exec(path)?.[1];
     if (taskId && taskId !== 'new') void queryClient.prefetchQuery(taskQueryOptions(taskId));
   }
-  const selected = pathname.startsWith('/profiles') ? 'profiles' : 'tasks';
+  const selected = pathname === '/profiles' ? 'profiles' : pathname === '/models' ? 'models' : pathname === '/mcp' ? 'mcp' : 'tasks';
   const items = [
     { key: 'tasks', icon: <AppstoreOutlined aria-hidden="true" />, label: <Link to="/tasks" aria-current={selected === 'tasks' ? 'page' : undefined}>任务</Link> },
     { key: 'profiles', icon: <SettingOutlined aria-hidden="true" />, label: <Link to="/profiles" aria-current={selected === 'profiles' ? 'page' : undefined}>Agent 配置</Link> },
+    { key: 'models', icon: <DatabaseOutlined aria-hidden="true" />, label: <Link to="/models" aria-current={selected === 'models' ? 'page' : undefined}>模型管理</Link> },
+    { key: 'mcp', icon: <ApiOutlined aria-hidden="true" />, label: <Link to="/mcp" aria-current={selected === 'mcp' ? 'page' : undefined}>MCP 管理</Link> },
   ];
   const navigation = (full: boolean, id: string) => <>
     <Tooltip title={full ? undefined : '新建任务'} placement="right"><Button className={styles.newTask} type="primary" icon={<PlusOutlined aria-hidden="true" />} aria-label="新建任务" onPointerEnter={() => preloadPage('/tasks/new')} onFocus={() => preloadPage('/tasks/new')} onClick={() => { if (narrow) {restoreNavigationFocus.current=false;setExpanded(false);} navigate('/tasks/new'); }}>{full ? '新建任务' : null}</Button></Tooltip>
@@ -59,7 +65,8 @@ function Shell() {
       <div className={styles.sidebarBottom}><Tooltip title={expanded ? '收起导航' : '展开导航'} placement="right"><Button ref={toggle} type="text" className={styles.toggle} icon={expanded ? <MenuFoldOutlined aria-hidden="true" /> : <MenuUnfoldOutlined aria-hidden="true" />} aria-label={expanded ? '收起导航' : '展开导航'} aria-expanded={expanded} aria-controls={narrow ? 'workspace-navigation-drawer' : 'workspace-navigation'} onClick={event => {navigationTrigger.current=event.currentTarget;restoreNavigationFocus.current=false;setExpanded(!expanded);}}>{expanded && !narrow ? '收起导航' : null}</Button></Tooltip></div>
     </Layout.Sider>
     <Layout className={styles.contentLayout}>
-      <Layout.Header className={styles.topbar}><div className={styles.context}><Button className={styles.mobileToggle} type="text" icon={<MenuUnfoldOutlined aria-hidden="true" />} aria-label={expanded ? '收起导航' : '展开导航'} aria-expanded={expanded} aria-controls="workspace-navigation-drawer" onClick={event => {navigationTrigger.current=event.currentTarget;restoreNavigationFocus.current=false;setExpanded(!expanded);}} /><span>{pathname.startsWith('/profiles') ? '配置中心' : '工作空间'}</span></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'logout', label: '退出登录', icon: <LogoutOutlined aria-hidden="true" />, disabled: loggingOut }], onClick: ({key}) => { if (key === 'logout') void logout(); } }}><Button type="text" className={styles.account} aria-label="账户菜单" loading={loggingOut}><Avatar size={26} icon={<UserOutlined aria-hidden="true" />} style={{ background: '#edf1f6', color: '#526580' }} /><DownOutlined aria-hidden="true" /></Button></Dropdown></Layout.Header>
+      <Layout.Header className={styles.topbar}><div className={styles.context}><Button className={styles.mobileToggle} type="text" icon={<MenuUnfoldOutlined aria-hidden="true" />} aria-label={expanded ? '收起导航' : '展开导航'} aria-expanded={expanded} aria-controls="workspace-navigation-drawer" onClick={event => {navigationTrigger.current=event.currentTarget;restoreNavigationFocus.current=false;setExpanded(!expanded);}} /><span>{configuration ? '配置中心' : '工作空间'}</span>{configuration && <strong className={styles.contextTitle}>
+        {selected === 'profiles' ? 'Agent 配置' : selected === 'models' ? '模型管理' : 'MCP 管理'}</strong>}</div><Dropdown trigger={['click']} menu={{ items: [{ key: 'logout', label: '退出登录', icon: <LogoutOutlined aria-hidden="true" />, disabled: loggingOut }], onClick: ({key}) => { if (key === 'logout') void logout(); } }}><Button type="text" className={styles.account} aria-label="账户菜单" loading={loggingOut}><Avatar size={26} icon={<UserOutlined aria-hidden="true" />} style={{ background: '#edf1f6', color: '#526580' }} /><DownOutlined aria-hidden="true" /></Button></Dropdown></Layout.Header>
       {logoutError && <Alert type="error" showIcon title={logoutError} />}
       <Layout.Content aria-busy={pending} data-navigating={pending || undefined} id="main-content" tabIndex={-1} className={styles.main}><div key={routeKey} className={styles.route}><Outlet /></div></Layout.Content>
     </Layout>

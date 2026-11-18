@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "description": "题目元信息 revision；知识追加不递增此值",
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "statement": {
+      "minLength": 1,
+      "title": "Statement",
+      "type": "string"
+    },
+    "based_on": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Based On",
+      "type": "array"
+    },
+    "expected": {
+      "minLength": 1,
+      "title": "Expected",
+      "type": "string"
+    },
+    "method": {
+      "minLength": 1,
+      "title": "Method",
+      "type": "string"
+    },
+    "retry_of": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry Of"
+    }
+  },
+  "required": [
+    "request_id",
+    "expected_revision",
+    "statement",
+    "based_on",
+    "expected",
+    "method"
+  ],
+  "title": "ChallengeIntentRequest",
+  "type": "object"
+}

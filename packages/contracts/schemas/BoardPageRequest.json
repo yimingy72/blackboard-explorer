@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "default": 100,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    }
+  },
+  "title": "BoardPageRequest",
+  "type": "object"
+}

@@ -3,12 +3,15 @@
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     MetaData,
+    Numeric,
     Table,
     Text,
     func,
@@ -87,6 +90,45 @@ task_input_groups = Table(
 )
 
 
+native_vpn_assets = Table(
+    "native_vpn_assets",
+    metadata,
+    col("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "group_id",
+        UUID(as_uuid=True),
+        ForeignKey("task_input_groups.id", ondelete="CASCADE"),
+        unique=True,
+    ),
+    Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE")),
+    col("digest", Text, nullable=False),
+    col("ciphertext", Text, nullable=False),
+)
+
+
+legacy_execution_networks = Table(
+    "legacy_execution_networks",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("snapshot", JSONB, nullable=False),
+)
+
+legacy_execution_receipts = Table(
+    "legacy_execution_receipts",
+    metadata,
+    Column(
+        "task_id",
+        UUID(as_uuid=True),
+        ForeignKey("legacy_execution_networks.task_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    col("run_number", Integer, primary_key=True),
+    col("receipt", JSONB, nullable=False),
+)
+
+
 task_runs = Table(
     "task_runs",
     metadata,
@@ -145,6 +187,8 @@ Index(
 
 facts = scoped(
     "facts",
+    col("challenge_id", Text),
+    col("assignment_ref", JSONB(none_as_null=True)),
     col("kind", Text, nullable=False),
     col("statement", Text, nullable=False),
     col("evidence", JSONB, nullable=False),
@@ -160,6 +204,8 @@ facts = scoped(
 
 intents = scoped(
     "intents",
+    col("challenge_id", Text),
+    col("assignment_ref", JSONB(none_as_null=True)),
     col("statement", Text, nullable=False),
     col("based_on", ARRAY(Text), nullable=False),
     col("expected", Text, nullable=False),
@@ -177,6 +223,9 @@ intents = scoped(
     col("author", Text, nullable=False),
     col("version", BigInteger, nullable=False),
 )
+
+Index("ix_fact_challenge", facts.c.task_id, facts.c.challenge_id, facts.c.version)
+Index("ix_intent_challenge", intents.c.task_id, intents.c.challenge_id, intents.c.version)
 
 agent_runs = scoped(
     "agent_runs",
@@ -237,6 +286,11 @@ agent_messages = Table(
     Column("task_id", UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False),
     col("agent_id", Text, nullable=False),
     col("role", Text, nullable=False),
+    col("purpose", Text),
+    col("request_run_number", Integer),
+    col("request_started_at", DateTime(timezone=True)),
+    col("request_derive_round", Integer),
+    col("review_model", JSONB),
     col("content", Text, nullable=False),
     col("status", Text, nullable=False),
     Column("reply_to", UUID(as_uuid=True), ForeignKey("agent_messages.id")),
@@ -325,6 +379,8 @@ ctf_turns = scoped(
     col("runtime_instance", Text, nullable=False),
     col("status", Text, nullable=False),
     col("purpose", Text, nullable=False),
+    col("review_model", JSONB),
+    col("review_origin_generation", Integer),
     col("assignment_message_ids", JSONB, nullable=False),
     col("explicit_reply_ids", JSONB, nullable=False),
     col("checkpoint_revision", Integer, nullable=False),
@@ -351,6 +407,9 @@ ctf_messages = scoped(
     col("kind", Text, nullable=False),
     col("body", Text, nullable=False),
     col("purpose", Text, nullable=False),
+    col("review_model", JSONB),
+    col("request_run_number", Integer),
+    col("request_agent_generation", Integer),
     col("reply_to", Text),
     col("status", Text, nullable=False),
     col("deferred", Boolean, nullable=False),
@@ -384,6 +443,61 @@ ctf_challenges = scoped(
 )
 ctf_records = scoped(
     "ctf_records", col("data", JSONB, nullable=False), col("version", BigInteger, nullable=False)
+)
+
+board_announcements = scoped(
+    "board_announcements",
+    col("revision", Integer, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_board_announcement_revision",
+    board_announcements.c.task_id,
+    board_announcements.c.revision,
+    unique=True,
+)
+
+flag_candidates = scoped(
+    "flag_candidates",
+    col("challenge_id", Text, nullable=False),
+    col("verification_round", Text, nullable=False),
+    col("value_digest", Text, nullable=False),
+    col("value_ciphertext", Text, nullable=False),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_flag_candidate_value",
+    flag_candidates.c.task_id,
+    flag_candidates.c.challenge_id,
+    flag_candidates.c.verification_round,
+    flag_candidates.c.value_digest,
+    unique=True,
+)
+
+flag_submissions = scoped(
+    "flag_submissions",
+    col("challenge_id", Text, nullable=False),
+    col("candidate_id", Text, nullable=False),
+    col("verification_round", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("platform_call_id", Text),
+    col("data", JSONB, nullable=False),
+    col("version", BigInteger, nullable=False),
+)
+Index(
+    "ux_flag_submission_candidate",
+    flag_submissions.c.task_id,
+    flag_submissions.c.candidate_id,
+    unique=True,
+)
+Index(
+    "ux_flag_submission_call",
+    flag_submissions.c.task_id,
+    flag_submissions.c.platform_call_id,
+    unique=True,
+    postgresql_where=flag_submissions.c.platform_call_id.is_not(None),
 )
 Index(
     "ix_ctf_record_challenge_version",
@@ -433,4 +547,359 @@ Index(
     progress_jobs.c.task_id,
     unique=True,
     postgresql_where=(progress_jobs.c.status == "queued") & (progress_jobs.c.kind == "refresh"),
+)
+
+# Runner epochs are historical authority; only one row may own a task now.
+runner_owners = Table(
+    "runner_owners",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("epoch", BigInteger, primary_key=True),
+    col("current", Boolean, nullable=False),
+    col("runner_id", Text, nullable=False),
+    col("pod_uid", Text, nullable=False),
+    col("token_version", Text, nullable=False),
+    col("expires_at", DateTime(timezone=True), nullable=False),
+    col("hard_deadline", DateTime(timezone=True), nullable=False),
+    col("revoked", Boolean, nullable=False),
+    col("registration_id", Text, nullable=False),
+    col("registration_digest", Text, nullable=False),
+    col("next_seq", BigInteger, nullable=False),
+)
+Index(
+    "ux_runner_current_owner",
+    runner_owners.c.task_id,
+    unique=True,
+    postgresql_where=runner_owners.c.current.is_(True),
+)
+Index(
+    "ux_runner_registration", runner_owners.c.task_id, runner_owners.c.registration_id, unique=True
+)
+
+runner_bindings = scoped(
+    "runner_bindings",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("registration_id", Text, nullable=False),
+    col("registration_digest", Text, nullable=False),
+    col("binding", JSONB, nullable=False),
+    col("business", JSONB, nullable=False),
+    col("prepare_request_id", Text, nullable=False),
+    col("payload_json", Text, nullable=False),
+    col("payload_digest", Text, nullable=False),
+    col("status", Text, nullable=False),
+    col("sdk_session_id", Text),
+    col("cursor", JSONB),
+    col("permit_expires_at", DateTime(timezone=True)),
+    col("permit_revision", BigInteger, nullable=False),
+    col("prompt_revision", BigInteger, nullable=False),
+    col("instructions", Text, nullable=False),
+)
+Index(
+    "ux_runner_binding_registration",
+    runner_bindings.c.task_id,
+    runner_bindings.c.registration_id,
+    unique=True,
+)
+
+runner_commands = scoped(
+    "runner_commands",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("request_id", Text, nullable=False),
+    col("command_seq", BigInteger, nullable=False),
+    col("payload_json", Text, nullable=False),
+    col("payload_digest", Text, nullable=False),
+    col("kind", Text, nullable=False),
+    col("binding_id", Text),
+    col("input_id", Text),
+    col("message_proof", JSONB),
+    col("native_proof", JSONB),
+    col("status", Text, nullable=False),
+    col("origin_epoch", BigInteger, nullable=False),
+)
+Index(
+    "ux_runner_command_request",
+    runner_commands.c.task_id,
+    runner_commands.c.owner_epoch,
+    runner_commands.c.request_id,
+    unique=True,
+)
+Index(
+    "ux_runner_command_seq",
+    runner_commands.c.task_id,
+    runner_commands.c.owner_epoch,
+    runner_commands.c.command_seq,
+    unique=True,
+)
+
+runner_receipts = scoped(
+    "runner_receipts",
+    col("owner_epoch", BigInteger, nullable=False),
+    col("kind", Text, nullable=False),
+    col("request_id", Text, nullable=False),
+    col("binding_id", Text),
+    col("body_text", Text, nullable=False),
+    col("body_digest", Text, nullable=False),
+    col("response", JSONB, nullable=False),
+    col("late", Boolean, nullable=False),
+)
+Index(
+    "ix_runner_receipt_request",
+    runner_receipts.c.task_id,
+    runner_receipts.c.owner_epoch,
+    runner_receipts.c.kind,
+    runner_receipts.c.request_id,
+)
+
+# Call identity and one-shot dispatch evidence; native USD fees have their own source IDs.
+runner_calls = scoped(
+    "runner_calls",
+    col("kind", Text, nullable=False),
+    col("binding_id", Text, nullable=False),
+    col("owner_epoch", BigInteger, nullable=False),
+    col("state", Text, nullable=False),
+    col("concurrency_active", Boolean, nullable=False),
+    col("provider_key", Text),
+    col("data", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ix_runner_calls_active",
+    runner_calls.c.kind,
+    runner_calls.c.concurrency_active,
+    runner_calls.c.provider_key,
+)
+Index(
+    "ix_runner_calls_binding",
+    runner_calls.c.task_id,
+    runner_calls.c.binding_id,
+    runner_calls.c.state,
+)
+
+native_task_budgets = Table(
+    "native_task_budgets",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("key_fingerprint", Text, nullable=False),
+    col("key_ciphertext", Text, nullable=False),
+    col("native_resource_id", Text),
+    col("publication_state", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("status_snapshot", JSONB),
+    col("hold_reason", Text),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ux_native_task_key",
+    native_task_budgets.c.accounting_source_id,
+    native_task_budgets.c.key_fingerprint,
+    unique=True,
+)
+
+task_runner_resources = Table(
+    "task_runner_resources",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("operation_id", Text, nullable=False, unique=True),
+    col("request_id", Text, nullable=False),
+    col("request_digest", Text, nullable=False),
+    col("request", JSONB, nullable=False),
+    col("config", JSONB),
+    col("controller_id", Text),
+    col("controller_backend_pid", Integer),
+    col("controller_backend_start", DateTime(timezone=True)),
+    col("controller_generation", BigInteger, nullable=False),
+    col("revision", BigInteger, nullable=False),
+    col("namespace", Text, nullable=False),
+    col("state", Text, nullable=False),
+    col("desired", Text, nullable=False),
+    col("hard_deadline", DateTime(timezone=True), nullable=False),
+    col("sandbox_create_claimed", Boolean, nullable=False),
+    col("tenant_key_hash", Text, nullable=False, unique=True),
+    col("tenant_key_ciphertext", Text, nullable=False),
+    col("observation", JSONB, nullable=False),
+    col("sandbox_host", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    col("data", JSONB, nullable=False),
+    col("last_error", Text),
+    col("next_check_at", DateTime(timezone=True), nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+
+sandbox_command_records = scoped(
+    "sandbox_command_records",
+    Column("sequence", BigInteger, Identity(), nullable=False),
+    col("binding_id", Text, nullable=False),
+    col("agent_id", Text, nullable=False),
+    col("role", Text, nullable=False),
+    col("challenge_id", UUID(as_uuid=True)),
+    col("assignment_id", Text, nullable=False),
+    col("generation", BigInteger, nullable=False),
+    col("epoch", BigInteger, nullable=False),
+    col("execution_id", Text),
+    col("state", Text, nullable=False),
+    col("exit_code", Integer),
+    col("created_at", DateTime(timezone=True), nullable=False),
+    col("started_at", DateTime(timezone=True)),
+    col("finished_at", DateTime(timezone=True)),
+    col("data", JSONB, nullable=False),
+)
+Index(
+    "ix_sandbox_commands_page",
+    sandbox_command_records.c.task_id,
+    sandbox_command_records.c.sequence,
+)
+
+native_task_mcp_routes = Table(
+    "native_task_mcp_routes",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("resource_id", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("value", JSONB, nullable=False),
+    col("desired", Text, nullable=False),
+    col("publication_state", Text, nullable=False),
+    col("revision", Integer, nullable=False),
+    col("operation_id", Text),
+    col("next_check_at", DateTime(timezone=True), nullable=False),
+    col("last_error", Text),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index(
+    "ux_native_mcp_route",
+    native_task_mcp_routes.c.accounting_source_id,
+    native_task_mcp_routes.c.resource_id,
+    unique=True,
+)
+
+native_request_costs = Table(
+    "native_request_costs",
+    metadata,
+    col("accounting_source_id", Text, primary_key=True),
+    col("native_log_id", Text, primary_key=True),
+    col("task_id", UUID(as_uuid=True), nullable=False),
+    col("attempt_id", Text, nullable=False),
+    col("state", Text, nullable=False),
+    col("cost_usd", Text),
+    col("evidence", JSONB, nullable=False),
+    col("created_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_native_cost_task", native_request_costs.c.task_id, native_request_costs.c.attempt_id)
+
+
+gateway_task_models = Table(
+    "gateway_task_models",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("snapshot", JSONB, nullable=False),
+    col("budget_currency", Text, nullable=False),
+)
+
+
+gateway_execution_budgets = Table(
+    "gateway_execution_budgets",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("purpose", Text, primary_key=True),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("key_fingerprint", Text, nullable=False),
+    col("key_ciphertext", Text, nullable=False),
+    col("native_resource_id", Text),
+    col("publication_state", Text, nullable=False),
+    col("config", JSONB, nullable=False),
+    col("status_snapshot", JSONB),
+)
+Index(
+    "ux_gateway_execution_key",
+    gateway_execution_budgets.c.accounting_source_id,
+    gateway_execution_budgets.c.key_fingerprint,
+    unique=True,
+)
+
+gateway_execution_attempts = Table(
+    "gateway_execution_attempts",
+    metadata,
+    col("task_id", UUID(as_uuid=True), primary_key=True),
+    col("id", UUID(as_uuid=True), primary_key=True),
+    col("purpose", Text, nullable=False),
+    col("accounting_source_id", Text, nullable=False),
+    col("key_name", Text, nullable=False),
+    col("body_sha256", Text, nullable=False),
+    col("attributes", JSONB, nullable=False),
+    col("phase", Text, nullable=False),
+    col("status_code", Integer),
+    col("native_log_id", Text),
+    col("fee_state", Text, nullable=False, server_default=text("'awaiting_log'")),
+    col("next_check_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+pi_task_models = Table(
+    "pi_task_models",
+    metadata,
+    Column(
+        "task_id", UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    ),
+    col("authority", Text, nullable=False),
+    col("snapshot", JSONB, nullable=False),
+)
+
+pi_model_calls = Table(
+    "pi_model_calls",
+    metadata,
+    col("site_id", Text, primary_key=True),
+    col("call_id", UUID(as_uuid=True), primary_key=True),
+    col("attempt_id", UUID(as_uuid=True), nullable=False),
+    col("task_id", UUID(as_uuid=True)),
+    col("purpose", Text, nullable=False),
+    col("agent_id", Text, nullable=False),
+    col("turn_id", Text, nullable=False),
+    col("request_user", Text),
+    col("logical_call_id", Text, nullable=False),
+    col("intent", JSONB, nullable=False),
+    col("model_snapshot", JSONB, nullable=False),
+    col("state", Text, nullable=False),
+    col("request_sha256", Text),
+    col("settlement", JSONB),
+    col("amount_usd", Numeric(42, 24)),
+    col("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    col("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(
+        "(purpose = 'playground' AND task_id IS NULL AND request_user IS NOT NULL "
+        "AND request_user <> '' AND agent_id = '') OR "
+        "(purpose <> 'playground' AND task_id IS NOT NULL)",
+        name="ck_pi_model_calls_playground_scope",
+    ),
+)
+Index("ix_pi_model_calls_task_purpose", pi_model_calls.c.task_id, pi_model_calls.c.purpose)
+Index(
+    "ux_pi_model_calls_logical",
+    pi_model_calls.c.site_id,
+    pi_model_calls.c.task_id,
+    pi_model_calls.c.purpose,
+    pi_model_calls.c.logical_call_id,
+    unique=True,
+)
+Index("ix_pi_model_calls_review_user", pi_model_calls.c.request_user, pi_model_calls.c.purpose)
+Index(
+    "ux_pi_model_calls_playground",
+    pi_model_calls.c.site_id,
+    pi_model_calls.c.request_user,
+    pi_model_calls.c.logical_call_id,
+    unique=True,
+    postgresql_where=pi_model_calls.c.purpose == "playground",
+)
+agent_messages.append_column(col("request_user", Text))
+ctf_messages.append_column(col("request_user", Text))
+Index(
+    "ux_gateway_execution_native_log",
+    gateway_execution_attempts.c.accounting_source_id,
+    gateway_execution_attempts.c.native_log_id,
+    unique=True,
 )

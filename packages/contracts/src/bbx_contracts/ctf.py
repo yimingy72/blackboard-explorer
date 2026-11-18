@@ -11,9 +11,21 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import yaml
-from pydantic import AfterValidator, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
+from .mcp_catalog import NativeMcpGrants
+from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
+from .pi_models import PiModelRef
+from .providers import reasoning_efforts
+from .runner_bootstrap import NativeCtfEnvironmentRef
 
 CtfRole = Literal["lead", "teammate"]
 CTF_BOARD_RESULT_MAX_BYTES = 16000
@@ -22,8 +34,12 @@ CTF_COMMON_TOOLS = frozenset(
         "list_members",
         "send_message",
         "execute_command",
+        "start_command",
+        "cancel_command",
+        "read_command_result",
         "list_challenges",
         "get_challenge",
+        "get_record",
         "create_challenge",
         "update_challenge",
         "list_records",
@@ -37,6 +53,8 @@ CTF_COMMON_TOOLS = frozenset(
     }
 )
 CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {
+    "set_team_plan",
+    "read_task_input",
     "create_challenges",
     "assign_challenges",
     "create_teammate",
@@ -48,7 +66,7 @@ CTF_LEAD_TOOLS = CTF_COMMON_TOOLS | {
     "confirm_messages",
     "list_deferred_messages",
 }
-CTF_TOOLS = {"lead": CTF_LEAD_TOOLS, "teammate": CTF_COMMON_TOOLS}
+CTF_TOOLS = {"lead": CTF_LEAD_TOOLS, "teammate": CTF_COMMON_TOOLS | {"read_task_input"}}
 # Provider billing is settled after a response. Keep a conservative allowance for
 # already-admitted requests instead of treating the configured max as a hard cap.
 CTF_BUDGET_RESERVE_RATIO = Decimal("0.20")
@@ -72,6 +90,9 @@ _PLACEHOLDER = re.compile(r"{{\s*([a-z_]+)\s*}}")
 
 
 class CtfBudget(ContractModel):
+    currency: Literal["USD", "CNY"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     max_cost: Decimal = Field(gt=0)
     max_minutes: int = Field(gt=0)
 
@@ -80,6 +101,138 @@ class CtfOptions(ContractModel):
     max_teammates: int = Field(default=4, ge=0)
     max_steps: int = Field(default=60, ge=1)
     context_threshold: int = Field(default=128000, ge=1)
+    dispatch_mode: Literal["manual", "automatic"] = "manual"
+    first_plan_max_calls: int = Field(default=3, ge=1, le=10)
+    first_plan_timeout_seconds: int = Field(default=60, ge=10, le=300)
+
+    @model_validator(mode="after")
+    def automatic_capacity(self) -> CtfOptions:
+        if self.dispatch_mode == "automatic" and self.max_teammates == 0:
+            raise ValueError("Automatic mode requires at least one teammate")
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_snapshot(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        if self.dispatch_mode == "manual":
+            for key in ("dispatch_mode", "first_plan_max_calls", "first_plan_timeout_seconds"):
+                if key not in self.model_fields_set:
+                    result.pop(key, None)
+        return result
+
+
+class CtfWorkSource(ContractModel):
+    namespace: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
+    external_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class CtfWorkScope(ContractModel):
+    objective: str = Field(min_length=1, max_length=2000)
+    boundary: str = Field(min_length=1, max_length=2000)
+    input_refs: list[str] = Field(default_factory=list, max_length=32)
+    resource_refs: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("input_refs", "resource_refs")
+    @classmethod
+    def bounded_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)) or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", value) for value in values
+        ):
+            raise ValueError("References must be distinct nonempty bounded identifiers")
+        return values
+
+
+class CtfPrerequisite(ContractModel):
+    kind: Literal["gate", "work_completed"]
+    ref: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def work_reference(self) -> CtfPrerequisite:
+        if self.kind == "work_completed":
+            self.ref = str(UUID(self.ref))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", self.ref):
+            raise ValueError("Invalid prerequisite reference")
+        return self
+
+
+class CtfWorkDeliverable(ContractModel):
+    criteria: str = Field(min_length=1, max_length=2000)
+    evidence_required: bool = True
+    validator_ref: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class CtfSolveTemplate(ContractModel):
+    permission_profile: Literal["solver"] = "solver"
+    deliverable: CtfWorkDeliverable
+    priority: Literal[0, 1, 2, 3] = 1
+    boundary: str = Field(min_length=1, max_length=2000)
+    input_refs: list[str] = Field(default_factory=list, max_length=32)
+    resource_refs: list[str] = Field(default_factory=list, max_length=16)
+    requires: list[CtfPrerequisite] = Field(default_factory=list, max_length=16)
+    max_auto_solve_items: int = Field(default=20, ge=1, le=200, strict=True)
+    source_namespace: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
+
+    @field_validator("input_refs", "resource_refs")
+    @classmethod
+    def bounded_refs(cls, values: list[str]) -> list[str]:
+        return CtfWorkScope.bounded_refs(values)
+
+
+class CtfWorkItem(ContractModel):
+    work_id: UUID
+    kind: Literal["prepare", "discover", "solve"]
+    source: CtfWorkSource
+    scope: CtfWorkScope
+    requires: list[CtfPrerequisite] = Field(default_factory=list, max_length=16)
+    priority: Literal[0, 1, 2, 3] = 1
+    deliverable: CtfWorkDeliverable
+    permission_profile: Literal["solver", "env_prepare"] = "solver"
+    solve_template: CtfSolveTemplate | None = None
+
+    @model_validator(mode="after")
+    def bounded_delegation(self) -> CtfWorkItem:
+        template = self.solve_template
+        if self.kind == "solve" and self.permission_profile != "solver":
+            raise ValueError("Solve work requires solver permissions")
+        if any(p.kind == "work_completed" and p.ref == str(self.work_id) for p in self.requires):
+            raise ValueError("Work cannot depend on itself")
+        if template is not None:
+            if self.kind != "discover" or template.source_namespace != self.source.namespace:
+                raise ValueError("Solve templates require a discover item in the same namespace")
+            if not set(template.resource_refs) <= set(self.scope.resource_refs):
+                raise ValueError("Solve template cannot widen discovery resource scope")
+            if any(
+                p.kind == "work_completed" and p.ref == str(self.work_id) for p in template.requires
+            ):
+                raise ValueError("Streaming solve items cannot wait for their discover parent")
+        if len({(p.kind, p.ref) for p in self.requires}) != len(self.requires):
+            raise ValueError("Duplicate prerequisite")
+        return self
+
+
+class CtfTeamPlanRequest(ContractModel):
+    request_id: UUID
+    expected_plan_revision: int = Field(ge=0, strict=True)
+    dispatch_enabled: bool = True
+    upsert: list[CtfWorkItem] = Field(default_factory=list, max_length=20)
+    cancel_ids: list[UUID] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def distinct_work(self) -> CtfTeamPlanRequest:
+        identifiers = [item.work_id for item in self.upsert]
+        if len(identifiers) != len(set(identifiers)) or len(self.cancel_ids) != len(
+            set(self.cancel_ids)
+        ):
+            raise ValueError("Work identifiers must be unique")
+        if set(identifiers) & set(self.cancel_ids):
+            raise ValueError("Cannot update and cancel the same work")
+        return self
+
+
+class CtfTaskInputReadRequest(ContractModel):
+    file_id: UUID | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=2000, ge=1, le=8000)
 
 
 class CtfTaskSpec(ContractModel):
@@ -101,15 +254,26 @@ class CtfTaskSpec(ContractModel):
 
 
 class CtfTaskCreate(CtfTaskSpec):
+    native_mcp: NativeMcpGrants | None = Field(default=None, exclude_if=lambda value: value is None)
+    pi_model: PiModelRef | None = Field(default=None, exclude_if=lambda value: value is None)
+    native_environment: NativeCtfEnvironmentRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    native_vpn_source_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
+    public_input_ids: list[UUID] | None = Field(default=None, max_length=20)
     model_id: str | None = Field(default=None, min_length=1)
     model_version: int | None = Field(default=None, ge=1)
     profile_version: int | None = Field(default=None, ge=1)
-    reasoning_effort: str | None = Field(default=None, min_length=1)
+    reasoning_effort: Literal["off", "none", "minimal", "low", "medium", "high"] | None = Field(
+        default=None, description="任务思考强度；省略或 null 沿用已发布配置"
+    )
 
     @model_validator(mode="after")
     def validate_selection(self) -> CtfTaskCreate:
+        if self.native_vpn_source_id is not None and self.input_group_id is None:
+            raise ValueError("A private VPN configuration requires an owned input group")
         if self.model_version is not None and self.model_id is None:
             raise ValueError("Model version requires a model ID")
         if self.input_file_ids is not None and self.input_group_id is None:
@@ -118,6 +282,15 @@ class CtfTaskCreate(CtfTaskSpec):
             self.input_file_ids
         ):
             raise ValueError("Input file IDs must be unique")
+        if self.public_input_ids is not None:
+            if self.input_group_id is None or len(set(self.public_input_ids)) != len(
+                self.public_input_ids
+            ):
+                raise ValueError("Public inputs require a group and unique file IDs")
+            if self.input_file_ids is not None and not set(self.public_input_ids) <= set(
+                self.input_file_ids
+            ):
+                raise ValueError("Public inputs must belong to the selected inputs")
         return self
 
 
@@ -144,7 +317,7 @@ class CtfPlatformToolBinding(ContractModel):
     server_version: int = Field(ge=1)
     tool_name: str = Field(min_length=1)
     purpose: Literal["management", "connect", "submit", "status", "unknown"] = "unknown"
-    result_adapter: Literal["none", "fake_ctf_v1"] = "none"
+    result_adapter: Literal["none", "fake_ctf_v1", "flag_receipt_v1"] = "none"
     read_only: bool = False
 
     @model_validator(mode="after")
@@ -154,9 +327,15 @@ class CtfPlatformToolBinding(ContractModel):
         return self
 
 
+class CtfRoleRunOptions(ContractModel):
+    reasoning_effort: str | None = Field(default=None, min_length=1)
+    max_output_tokens: int | None = Field(default=None, strict=True, ge=1)
+
+
 class CtfAgentProfile(ContractModel):
     mode: Literal["ctf"] = "ctf"
     model: ModelConfig
+    role_run_options: dict[CtfRole, CtfRoleRunOptions] = Field(default_factory=dict)
     options: CtfOptions = Field(default_factory=CtfOptions)
     prompt_templates: CtfPromptTemplates
     worker_tools: dict[CtfRole, WorkerTools]
@@ -164,6 +343,17 @@ class CtfAgentProfile(ContractModel):
     exec_image: str = Field(min_length=1)
     exec_resources: ExecResources
     privileged_allowlist: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_role_run_options(self) -> CtfAgentProfile:
+        self.role_run_options = {
+            role: options
+            for role, options in self.role_run_options.items()
+            if options.model_dump(exclude_none=True)
+        }
+        for role in self.role_run_options:
+            resolve_ctf_model(self, role)
+        return self
 
     @model_validator(mode="after")
     def validate_tools(self) -> CtfAgentProfile:
@@ -174,6 +364,22 @@ class CtfAgentProfile(ContractModel):
             required = {"list_members", "send_message"}
             if role == "lead":
                 required |= {"create_teammate", "finish_task"}
+            if self.options.dispatch_mode == "automatic":
+                required.add("read_task_input")
+                if role == "lead":
+                    required.add("set_team_plan")
+                    if (
+                        selected
+                        & {
+                            "execute_command",
+                            "start_command",
+                            "cancel_command",
+                            "read_command_result",
+                            "view_image",
+                        }
+                        or tools.mcp_servers
+                    ):
+                        raise ValueError("Automatic Lead cannot execute commands or platform tools")
             if not required <= selected or not selected <= CTF_TOOLS[role]:
                 raise ValueError(f"Invalid {role} tools")
             if len(selected) != len(tools.builtin):
@@ -206,6 +412,23 @@ class CtfAgentProfile(ContractModel):
         if set(bindings) - assigned:
             raise ValueError("Platform bindings must reference an assigned MCP tool/version")
         return self
+
+
+def resolve_ctf_model(profile: CtfAgentProfile, role: CtfRole) -> ModelConfig:
+    """Derive one validated role model without changing the frozen base snapshot."""
+    if role not in {"lead", "teammate"}:
+        raise ValueError("Unknown CTF role")
+    overrides = profile.role_run_options.get(role)
+    updates = overrides.model_dump(exclude_none=True) if overrides is not None else {}
+    effort = updates.get("reasoning_effort")
+    if effort is not None and effort not in reasoning_efforts(
+        profile.model.provider, profile.model.model
+    ):
+        raise ValueError(f"{role} reasoning_effort is unsupported by the selected model")
+    output = updates.get("max_output_tokens")
+    if output is not None and output > effective_max_output_tokens(profile.model):
+        raise ValueError(f"{role} max_output_tokens exceeds the base model output limit")
+    return ModelConfig.model_validate({**profile.model.model_dump(), **updates})
 
 
 def resolve_ctf_options(
@@ -359,6 +582,9 @@ class CtfFailureDiagnostic(ContractModel):
     """Safe coordinator failure metadata; never contains request or tool payloads."""
 
     error_type: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")
+    leaf_error_types: list[Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,99}$")]] = (
+        Field(default_factory=list, max_length=8)
+    )
     phase: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
     occurred_at: datetime
     correlation_id: UUID
@@ -431,13 +657,22 @@ class CtfEvent(ContractModel):
         "ctf.verification.updated",
         "ctf.target.updated",
         "ctf.platform.dispatched",
+        "ctf.platform.result_captured",
         "ctf.message.posted",
         "ctf.message.delivered",
+        "ctf.native_worker.assigned",
+        "ctf.native_worker.released",
+        "ctf.native_worker.stopped",
+        "ctf.native_worker.cleanup_changed",
         "ctf.turn.started",
         "ctf.turn.finished",
         "ctf.conclusion.requested",
         "ctf.conclusion.finalized",
         "ctf.coordination.reminded",
+        "ctf.plan.updated",
+        "ctf.dispatch.assigned",
+        "ctf.work.discovered",
+        "ctf.work.notice",
         "ctf.cursor",
     ]
     actor: str = Field(min_length=1)
@@ -514,6 +749,10 @@ class CtfChallenge(ContractModel):
     target: dict[str, object] = Field(default_factory=dict)
     tombstone: bool = False
     solution_record_id: UUID | None = None
+    work_item: CtfWorkItem | None = None
+    scope_revision: int = Field(default=1, ge=1)
+    origin_work_id: UUID | None = None
+    auto_solve_count: int = Field(default=0, ge=0)
 
 
 class CtfArtifactUploadRequest(ContractModel):
@@ -687,10 +926,13 @@ def ctf_tool_capability_issues(
         if "list_challenges" in selected and "get_challenge" not in selected:
             missing.add("get_challenge")
         if (
-            selected & {"execute_command", "get_challenge", "list_records", "read_turn_result"}
+            selected
+            & {"execute_command", "get_challenge", "get_record", "list_records", "read_turn_result"}
             or tools.mcp_servers
         ) and "read_saved_tool_result" not in selected:
             missing.add("read_saved_tool_result")
+        if "start_command" in selected:
+            missing.update({"cancel_command", "read_command_result"} - selected)
         if missing:
             issues[role] = sorted(missing)
     return issues

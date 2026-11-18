@@ -14,6 +14,7 @@ from bbx_contracts.models import Params
 from bbx_runtime.clients import BlackboardClient
 from bbx_runtime.clients.blackboard import RemoteError, is_control_transport_error
 
+from .actions import SpawnClose, SpawnDerive, SpawnExplore
 from .decision import decide
 from .executor import ActionExecutor
 from .sweeper import Sweeper
@@ -76,6 +77,12 @@ class SchedulerLoop:
             if state["task"]["status"] in {"finished", "failed", "stopped"}:
                 return
             actions = decide(state, self.params, self.now())
+            if state["task"].get("pi_fee_hold") is True:
+                actions = [
+                    action
+                    for action in actions
+                    if not isinstance(action, (SpawnExplore, SpawnDerive, SpawnClose))
+                ]
             try:
                 await self.executor.execute(actions)
             except (httpx.TransportError, ConnectionError, RemoteError) as error:

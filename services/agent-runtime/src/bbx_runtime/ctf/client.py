@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from bbx_runtime.clients.blackboard import BlackboardClient, is_control_transport_error
+from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError, is_control_transport_error
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,16 @@ class CtfControlTransportExhausted(RuntimeError):
 class CtfClient:
     def __init__(self, client: BlackboardClient) -> None:
         self.client = client
+
+    async def _admitted_post(self, client, path, payload):
+        while True:
+            try:
+                return await client._json("POST", path, json=payload)
+            except RemoteError as error:
+                if error.status != 409 or error.code != "ctf_admission_paused":
+                    raise
+                # This code is a definite refusal before dispatch, never an unknown write.
+                await asyncio.sleep(2)
 
     async def _read(self, operation: str, request: Callable[[], Awaitable[Any]]) -> Any:
         for attempt in range(3):
@@ -60,7 +70,7 @@ class CtfClient:
                 operation, lambda: self.client._json("POST", path, json=payload)
             )
         try:
-            result = await self.client._json("POST", path, json=payload)
+            result = await self._admitted_post(self.client, path, payload)
             if operation == "finish_turn" and (
                 not isinstance(result, dict) or result.get("status") != "finished"
             ):
@@ -137,8 +147,8 @@ class CtfClient:
 
     async def tool(self, task_id: str, token: str, operation: str, **payload: Any) -> Any:
         client = self.client.with_token(token)
-        return await client._json(
-            "POST", f"{client._task(task_id)}/ctf/tools/{operation}", json=payload
+        return await self._admitted_post(
+            client, f"{client._task(task_id)}/ctf/tools/{operation}", payload
         )
 
     async def get_agent_session(self, task_id: str, agent_id: str) -> dict[str, Any]:

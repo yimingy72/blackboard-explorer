@@ -1,0 +1,20 @@
+image:
+  pullPolicy: IfNotPresent
+ipam:
+  mode: kubernetes
+kubeProxyReplacement: false
+socketLB:
+  enabled: false
+envoy:
+  enabled: false
+l7Proxy: false
+hubble:
+  enabled: false
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+operator:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}

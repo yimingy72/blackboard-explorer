@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ctf/reviews/pending-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending Ctf Reviews */
+        get: operations["pending_ctf_reviews_api_ctf_reviews_pending_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence": {
         parameters: {
             query?: never;
@@ -89,17 +106,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/platform/import-environment-key": {
+    "/api/native-runner/bootstraps": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Pending Bootstraps */
+        get: operations["pending_bootstraps_api_native_runner_bootstraps_get"];
         put?: never;
-        /** Import Key */
-        post: operations["import_key_api_platform_import_environment_key_post"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/opensandbox/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sandbox Tenant */
+        get: operations["sandbox_tenant_api_opensandbox_tenants_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -124,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/mcp-servers/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capabilities */
+        get: operations["capabilities_api_platform_mcp_servers_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/mcp-servers/{name}": {
         parameters: {
             query?: never;
@@ -141,6 +192,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/mcp-servers/{name}/versions/{version}/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover */
+        post: operations["discover_api_platform_mcp_servers__name__versions__version__discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/mcp-servers/{name}/versions/{version}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish */
+        post: operations["publish_api_platform_mcp_servers__name__versions__version__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/mcp-servers/{name}/versions/{version}/tools": {
         parameters: {
             query?: never;
@@ -148,8 +233,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Mcp Tools */
-        get: operations["list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get"];
+        /** Tool Details */
+        get: operations["tool_details_api_platform_mcp_servers__name__versions__version__tools_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -158,15 +243,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/platform/model-catalog": {
+    "/api/platform/pi-model-tests": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Reference Model Catalog */
-        get: operations["reference_model_catalog_api_platform_model_catalog_get"];
+        get?: never;
+        put?: never;
+        /** Run */
+        post: operations["run_api_platform_pi_model_tests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform/pi-model-tests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read */
+        get: operations["read_api_platform_pi_model_tests__request_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -175,25 +277,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/platform/models": {
+    "/api/platform/pi-models": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Models */
-        get: operations["models_api_platform_models_get"];
+        /** List Models */
+        get: operations["list_models_api_platform_pi_models_get"];
         put?: never;
         /** New Model */
-        post: operations["new_model_api_platform_models_post"];
+        post: operations["new_model_api_platform_pi_models_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/platform/models/discover": {
+    "/api/platform/pi-models/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -201,59 +303,24 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
-        /** Model Discovery */
-        post: operations["model_discovery_api_platform_models_discover_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
         /** Save Model */
-        post: operations["save_model_api_platform_models__name__post"];
-        /** Delete Model */
-        delete: operations["delete_model_api_platform_models__name__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/platform/models/{name}/default": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Default Model */
-        post: operations["default_model_api_platform_models__name__default_post"];
+        put: operations["save_model_api_platform_pi_models__name__put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/platform/providers": {
+    "/api/platform/pi-review-fees": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Providers */
-        get: operations["providers_api_platform_providers_get"];
+        /** Review Fees */
+        get: operations["review_fees_api_platform_pi_review_fees_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -383,23 +450,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/ctf/prompts/{role}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Ctf Prompt */
-        get: operations["ctf_prompt_api_settings_ctf_prompts__role__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/ctf/workers": {
         parameters: {
             query?: never;
@@ -410,23 +460,6 @@ export interface paths {
         /** Ctf Workers */
         get: operations["ctf_workers_api_settings_ctf_workers_get"];
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/ctf/workers/{role}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Update Ctf Worker */
-        put: operations["update_ctf_worker_api_settings_ctf_workers__role__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -468,6 +501,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/tool-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tools */
+        get: operations["tools_api_settings_tool_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/workers": {
         parameters: {
             query?: never;
@@ -495,6 +545,23 @@ export interface paths {
         get?: never;
         /** Update Worker */
         put: operations["update_worker_api_settings_workers__role__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/task-creation-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Creation Capabilities */
+        get: operations["task_creation_capabilities_api_task_creation_capabilities_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -567,6 +634,24 @@ export interface paths {
         post?: never;
         /** Remove File */
         delete: operations["remove_file_api_task_input_groups__group_id__files__file_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/task-input-groups/{group_id}/private-vpn-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload Private Vpn Source */
+        put: operations["upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put"];
+        post?: never;
+        /** Remove Private Vpn Source */
+        delete: operations["remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -807,6 +892,23 @@ export interface paths {
         get: operations["get_agent_session_api_tasks__task_id__agents__agent_id__session_get"];
         /** Put Agent Session */
         put: operations["put_agent_session_api_tasks__task_id__agents__agent_id__session_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/agents/{agent_id}/session/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Agent Journal */
+        get: operations["download_agent_journal_api_tasks__task_id__agents__agent_id__session_journal_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1107,6 +1209,314 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/knowledge/announcements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Announcements */
+        get: operations["announcements_api_tasks__task_id__ctf_knowledge_announcements_get"];
+        put?: never;
+        /** Publish Announcement */
+        post: operations["publish_announcement_api_tasks__task_id__ctf_knowledge_announcements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Challenges */
+        get: operations["challenges_api_tasks__task_id__ctf_knowledge_challenges_get"];
+        put?: never;
+        /** Create Challenge */
+        post: operations["create_challenge_api_tasks__task_id__ctf_knowledge_challenges_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/platform-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Capture Platform Result */
+        post: operations["capture_platform_result_api_tasks__task_id__ctf_knowledge_platform_results_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch */
+        post: operations["dispatch_api_tasks__task_id__ctf_knowledge_submissions__submission_id__dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receipt */
+        post: operations["receipt_api_tasks__task_id__ctf_knowledge_submissions__submission_id__receipt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/submissions/{submission_id}/unknown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unknown */
+        post: operations["unknown_api_tasks__task_id__ctf_knowledge_submissions__submission_id__unknown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tools */
+        get: operations["tools_api_tasks__task_id__ctf_knowledge_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool */
+        post: operations["tool_api_tasks__task_id__ctf_knowledge_tools__operation__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Board */
+        get: operations["board_api_tasks__task_id__ctf_knowledge__challenge_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Fact */
+        post: operations["post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Flag Board */
+        get: operations["flag_board_api_tasks__task_id__ctf_knowledge__challenge_id__flags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Flag */
+        post: operations["record_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/candidates/{candidate_id}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Flag Value */
+        get: operations["flag_value_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates__candidate_id__value_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/flags/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Flag */
+        post: operations["submit_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/intents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Intent */
+        post: operations["post_intent_api_tasks__task_id__ctf_knowledge__challenge_id__intents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/objects/{object_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Object */
+        get: operations["get_object_api_tasks__task_id__ctf_knowledge__challenge_id__objects__object_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search */
+        get: operations["search_api_tasks__task_id__ctf_knowledge__challenge_id__search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/knowledge/{challenge_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Snapshot */
+        get: operations["snapshot_api_tasks__task_id__ctf_knowledge__challenge_id__snapshot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/members/{member_id}/{operation}": {
         parameters: {
             query?: never;
@@ -1135,6 +1545,264 @@ export interface paths {
         get: operations["runtime_state_api_tasks__task_id__ctf_runtime_state_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bootstrap Status */
+        get: operations["bootstrap_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_get"];
+        put?: never;
+        /** Request Bootstrap */
+        post: operations["request_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bootstrap Action */
+        post: operations["bootstrap_action_api_tasks__task_id__ctf_runtime_runner_bootstrap_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/budget-increase": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** User Budget Increase */
+        post: operations["user_budget_increase_api_tasks__task_id__ctf_runtime_runner_bootstrap_budget_increase_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Bootstrap */
+        post: operations["claim_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User Pause Status */
+        get: operations["user_pause_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_get"];
+        put?: never;
+        /** User Pause */
+        post: operations["user_pause_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User Recovery Status */
+        get: operations["user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get"];
+        put?: never;
+        /** User Recovery */
+        post: operations["user_recovery_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-bootstrap/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** User Resume */
+        post: operations["user_resume_api_tasks__task_id__ctf_runtime_runner_bootstrap_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-gateway/bindings/{binding_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Credentials */
+        post: operations["credentials_api_tasks__task_id__ctf_runtime_runner_gateway_bindings__binding_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Binding */
+        post: operations["register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach */
+        post: operations["attach_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__attach_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/bindings/{binding_id}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Publish Prompt */
+        put: operations["publish_prompt_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__prompt_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue */
+        post: operations["enqueue_api_tasks__task_id__ctf_runtime_runner_management_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Owner */
+        post: operations["register_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Owner */
+        post: operations["renew_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/ctf/runtime/runner-management/owners/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Owner */
+        post: operations["revoke_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_revoke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1243,6 +1911,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/gateway-model/review-costs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Costs */
+        get: operations["review_costs_api_tasks__task_id__gateway_model_review_costs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/intents": {
         parameters: {
             query?: never;
@@ -1328,6 +2013,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/pi-fees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Fees */
+        get: operations["task_fees_api_tasks__task_id__pi_fees_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/purge": {
         parameters: {
             query?: never;
@@ -1373,6 +2075,823 @@ export interface paths {
         put?: never;
         /** Resume Task */
         post: operations["resume_task_api_tasks__task_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/acquire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acquire */
+        post: operations["acquire_api_tasks__task_id__runner_control_bindings__binding_id__acquire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Background Helper */
+        post: operations["cancel_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Helper */
+        post: operations["reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Background Helper Status */
+        post: operations["background_helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers_status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Helper Status */
+        get: operations["helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/accepted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Background Helper */
+        post: operations["accept_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__accepted_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Helper */
+        post: operations["cancel_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/launch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Launch Helper */
+        post: operations["launch_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__launch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Helper Result */
+        post: operations["helper_result_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/helpers/{invocation_id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Helper Terminal */
+        post: operations["helper_terminal_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__terminal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Journal */
+        get: operations["journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/journal/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Journal */
+        post: operations["confirm_journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prompt */
+        get: operations["prompt_api_tasks__task_id__runner_control_bindings__binding_id__prompt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admit Tool */
+        post: operations["admit_tool_api_tasks__task_id__runner_control_bindings__binding_id__tools_admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool Result */
+        post: operations["tool_result_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/bindings/{binding_id}/tools/{invocation_id}/unknown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tool Unknown */
+        post: operations["tool_unknown_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__unknown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll */
+        get: operations["poll_api_tasks__task_id__runner_control_commands_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-control/commands/{request_id}/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge */
+        post: operations["acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Claim */
+        post: operations["vpn_egress_claim_api_tasks__task_id__runner_vpn_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/desired": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vpn Egress Desired */
+        get: operations["vpn_egress_desired_api_tasks__task_id__runner_vpn_desired_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Lease */
+        post: operations["vpn_egress_lease_api_tasks__task_id__runner_vpn_lease_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runner-vpn/observe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Egress Observe */
+        post: operations["vpn_egress_observe_api_tasks__task_id__runner_vpn_observe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runtime/runner-bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** View Shared Bootstrap */
+        get: operations["view_shared_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runtime/runner-bootstrap/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bootstrap Action */
+        post: operations["bootstrap_action_api_tasks__task_id__runtime_runner_bootstrap_actions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/runtime/runner-bootstrap/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Bootstrap */
+        post: operations["claim_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Host Admit */
+        post: operations["host_admit_api_tasks__task_id__sandbox_host_admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Host Event */
+        post: operations["host_event_api_tasks__task_id__sandbox_host_calls__invocation_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Host Evidence Receipt */
+        get: operations["host_evidence_receipt_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_get"];
+        /** Host Evidence */
+        put: operations["host_evidence_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/calls/{invocation_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Host Result */
+        post: operations["host_result_api_tasks__task_id__sandbox_host_calls__invocation_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Host Catalog */
+        get: operations["host_catalog_api_tasks__task_id__sandbox_host_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Host Claim */
+        post: operations["host_claim_api_tasks__task_id__sandbox_host_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Input Plan */
+        get: operations["input_plan_api_tasks__task_id__sandbox_host_inputs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Input Claim */
+        post: operations["input_claim_api_tasks__task_id__sandbox_host_inputs_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Input Confirm */
+        post: operations["input_confirm_api_tasks__task_id__sandbox_host_inputs_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/inputs/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Input Content */
+        get: operations["input_content_api_tasks__task_id__sandbox_host_inputs__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Network Scopes */
+        get: operations["network_scopes_api_tasks__task_id__sandbox_host_network_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/bytes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Bytes */
+        post: operations["network_bytes_api_tasks__task_id__sandbox_host_network__source_id__bytes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/observe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Observe */
+        post: operations["network_observe_api_tasks__task_id__sandbox_host_network__source_id__observe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/permit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Permit */
+        post: operations["network_permit_api_tasks__task_id__sandbox_host_network__source_id__permit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/network/{source_id}/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Network Seal */
+        post: operations["network_seal_api_tasks__task_id__sandbox_host_network__source_id__seal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Host Scopes */
+        get: operations["host_scopes_api_tasks__task_id__sandbox_host_scopes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/scopes/{command_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scope Claim */
+        post: operations["scope_claim_api_tasks__task_id__sandbox_host_scopes__command_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/scopes/{command_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scope Event */
+        post: operations["scope_event_api_tasks__task_id__sandbox_host_scopes__command_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vpn Sandbox Desired */
+        get: operations["vpn_sandbox_desired_api_tasks__task_id__sandbox_host_vpn_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Sandbox Link */
+        post: operations["vpn_sandbox_link_api_tasks__task_id__sandbox_host_vpn_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox-host/vpn/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Vpn Sandbox Preflight */
+        post: operations["vpn_sandbox_preflight_api_tasks__task_id__sandbox_host_vpn_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Command Records */
+        get: operations["command_records_api_tasks__task_id__sandbox_commands_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/sandbox/commands/{command_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Command Record */
+        get: operations["command_record_api_tasks__task_id__sandbox_commands__command_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2092,12 +3611,58 @@ export interface components {
              * @enum {string}
              */
             kind: "initial_context" | "board_update" | "model_output" | "model_error";
+            runner_trace?: components["schemas"]["BoardTraceProof"] | null;
             /** Step */
             step: number;
             /** Summary */
             summary: string;
             /** Uri */
             uri: string;
+        };
+        /** Announcement */
+        Announcement: {
+            /** Author Id */
+            author_id: string;
+            /** Body */
+            body: string;
+            /** Created Version */
+            created_version: number;
+            /** Environment Revision */
+            environment_revision?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Revision */
+            revision: number;
+            /** Supersedes */
+            supersedes?: string | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** AnnouncementRequest */
+        AnnouncementRequest: {
+            /** Body */
+            body: string;
+            /**
+             * Expected Revision
+             * @description 上一公告版本；第一版为 0
+             */
+            expected_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
         };
         /** ArchiveBody */
         ArchiveBody: {
@@ -2106,13 +3671,129 @@ export interface components {
              * @enum {string}
              */
             fallback: "none" | "agents-only";
+            runner_archive?: components["schemas"]["BoardArchiveProof"] | null;
             /** Size */
             size: number;
             /** Uri */
             uri: string;
         };
+        /** BlackboardCreationCapability */
+        BlackboardCreationCapability: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** BoardArchiveProof */
+        BoardArchiveProof: {
+            /** Journals Sha256 */
+            journals_sha256?: string | null;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Resource Generation */
+            resource_generation: number;
+            /** Run Number */
+            run_number: number;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Workspace Pvc Uid
+             * Format: uuid
+             */
+            workspace_pvc_uid: string;
+        };
+        /** BoardChallengeRequest */
+        BoardChallengeRequest: {
+            /** Connection */
+            connection?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** External Id */
+            external_id?: string | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Requirements */
+            requirements?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** BoardContext */
+        BoardContext: {
+            /** Content */
+            content: string;
+            /** Source Digest */
+            source_digest: string;
+            /** Version */
+            version: number;
+        };
+        /** BoardJournalProjection */
+        BoardJournalProjection: {
+            /** Binding Id */
+            binding_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Format
+             * @constant
+             */
+            format: "pi-journal-v1";
+            /** Run Number */
+            run_number: number;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Transcript Uri */
+            transcript_uri: string;
+        };
+        /** BoardRunIdentity */
+        BoardRunIdentity: {
+            /** Derive Round */
+            derive_round?: number | null;
+            /** Run Number */
+            run_number: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+        };
+        /** BoardTraceProof */
+        BoardTraceProof: {
+            /** Binding Id */
+            binding_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /** Entry Id */
+            entry_id: string;
+            /** Run Number */
+            run_number: number;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** BoardTurnTerminal */
+        BoardTurnTerminal: {
+            /** Assistant Entry Id */
+            assistant_entry_id?: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "aborted" | "failed";
+        };
         /** Budget */
         Budget: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /**
              * Max Concurrent Agents
              * @description 并发探索和推导上限
@@ -2137,15 +3818,118 @@ export interface components {
              * @default 0
              */
             additional_cost: number | string;
+            /** Currency */
+            currency?: "USD" | null;
             /** Max Minutes */
             max_minutes?: number | null;
+            /** Request Id */
+            request_id?: string | null;
         };
-        /** CatalogProvider */
-        CatalogProvider: {
+        /** ChallengeFactRequest */
+        ChallengeFactRequest: {
+            /** Derived From */
+            derived_from?: string[];
+            /** Disputes */
+            disputes?: string[];
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision；知识追加不递增此值
+             */
+            expected_revision: number;
+            kind: components["schemas"]["FactKind"];
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Resolves */
+            resolves?: string | null;
+            result?: components["schemas"]["IntentResult"] | null;
+            /** Satisfies */
+            satisfies?: string[];
+            /** Statement */
+            statement: string;
+        };
+        /** ChallengeIntentRequest */
+        ChallengeIntentRequest: {
+            /** Based On */
+            based_on: string[];
+            /** Expected */
+            expected: string;
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision；知识追加不递增此值
+             */
+            expected_revision: number;
+            /** Method */
+            method: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Retry Of */
+            retry_of?: string | null;
+            /** Statement */
+            statement: string;
+        };
+        /** ChallengeKnowledge */
+        ChallengeKnowledge: {
+            /**
+             * Board Version
+             * @description Task 持久事件游标，不是知识 CAS 版本
+             */
+            board_version: number;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /** Challenge Revision */
+            challenge_revision: number;
+            /** Facts */
+            facts: {
+                [key: string]: components["schemas"]["Fact"];
+            };
+            /** Intents */
+            intents: {
+                [key: string]: components["schemas"]["Intent"];
+            };
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** ChallengeKnowledgeObject */
+        ChallengeKnowledgeObject: {
+            /** Object */
+            object: components["schemas"]["Fact"] | components["schemas"]["Intent"];
+            /** Related */
+            related: {
+                [key: string]: components["schemas"]["Fact"] | components["schemas"]["Intent"];
+            };
+        };
+        /** ChallengeKnowledgeWrite */
+        ChallengeKnowledgeWrite: {
+            /**
+             * Board Version
+             * @description 本次写入最后一个 Task 事件游标
+             */
+            board_version: number;
+            /**
+             * Challenge Revision
+             * @description 本次写入核对的题目元信息 revision
+             */
+            challenge_revision: number;
+            /** Events */
+            events: components["schemas"]["Event"][];
             /** Id */
             id: string;
-            /** Name */
-            name: string;
+            /** Object */
+            object: components["schemas"]["Fact"] | components["schemas"]["Intent"];
         };
         /** ClaimBody */
         ClaimBody: {
@@ -2170,6 +3954,47 @@ export interface components {
             report_uri?: string | null;
             /** Verdicts */
             verdicts: components["schemas"]["VerdictItem"][];
+        };
+        /** CommandReceipt */
+        CommandReceipt: {
+            /** Binding Id */
+            binding_id?: string | null;
+            board_terminal?: components["schemas"]["BoardTurnTerminal"] | null;
+            cursor?: components["schemas"]["JournalCursor"] | null;
+            /** Error Code */
+            error_code?: ("stale_fence" | "request_conflict" | "binding_unavailable" | "boundary_frozen" | "unsupported_model") | null;
+            fence: components["schemas"]["RunnerFence"];
+            /** Helper Run Id */
+            helper_run_id?: string | null;
+            /** Input Id */
+            input_id?: string | null;
+            /** Journal Confirmed */
+            journal_confirmed?: boolean | null;
+            /** Payload Digest */
+            payload_digest: string;
+            pending_confirmation?: components["schemas"]["JournalConfirmation"] | null;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Idle */
+            sdk_idle?: boolean | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "accepted" | "applied" | "completed" | "aborted" | "closed" | "rejected";
+            /** Supported Business Contracts */
+            supported_business_contracts?: ("challenge-board-v1" | "exploration-board-v1")[];
+            /** Unresolved Attempts */
+            unresolved_attempts?: string[];
+            /** Unresolved Invocations */
+            unresolved_invocations?: string[];
         };
         /** CompleteBody */
         CompleteBody: {
@@ -2224,12 +4049,16 @@ export interface components {
              */
             mode: "ctf";
             model: components["schemas"]["ModelConfig-Output"];
-            options?: components["schemas"]["CtfOptions"];
+            options?: components["schemas"]["CtfOptions-Output"];
             /** Platform Tools */
             platform_tools?: components["schemas"]["CtfPlatformToolBinding"][];
             /** Privileged Allowlist */
             privileged_allowlist?: string[];
             prompt_templates: components["schemas"]["CtfPromptTemplates"];
+            /** Role Run Options */
+            role_run_options?: {
+                [key: string]: components["schemas"]["CtfRoleRunOptions"];
+            };
             /** Worker Tools */
             worker_tools: {
                 [key: string]: components["schemas"]["WorkerTools"];
@@ -2244,6 +4073,8 @@ export interface components {
         };
         /** CtfBudget */
         CtfBudget: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /** Max Cost */
             max_cost: number | string;
             /** Max Minutes */
@@ -2333,7 +4164,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.native_worker.assigned" | "ctf.native_worker.released" | "ctf.native_worker.stopped" | "ctf.native_worker.cleanup_changed" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
             /** Version */
             version: number;
         };
@@ -2391,12 +4222,28 @@ export interface components {
             request_id: string;
         };
         /** CtfOptions */
-        CtfOptions: {
+        "CtfOptions-Input": {
             /**
              * Context Threshold
              * @default 128000
              */
             context_threshold: number;
+            /**
+             * Dispatch Mode
+             * @default manual
+             * @enum {string}
+             */
+            dispatch_mode: "manual" | "automatic";
+            /**
+             * First Plan Max Calls
+             * @default 3
+             */
+            first_plan_max_calls: number;
+            /**
+             * First Plan Timeout Seconds
+             * @default 60
+             */
+            first_plan_timeout_seconds: number;
             /**
              * Max Steps
              * @default 60
@@ -2407,6 +4254,9 @@ export interface components {
              * @default 4
              */
             max_teammates: number;
+        };
+        "CtfOptions-Output": {
+            [key: string]: unknown;
         };
         /**
          * CtfPlatformToolBinding
@@ -2429,7 +4279,7 @@ export interface components {
              * @default none
              * @enum {string}
              */
-            result_adapter: "none" | "fake_ctf_v1";
+            result_adapter: "none" | "fake_ctf_v1" | "flag_receipt_v1";
             /** Server Name */
             server_name: string;
             /** Server Version */
@@ -2475,6 +4325,13 @@ export interface components {
              */
             request_id: string;
         };
+        /** CtfRoleRunOptions */
+        CtfRoleRunOptions: {
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Reasoning Effort */
+            reasoning_effort?: string | null;
+        };
         /** CtfSolution */
         CtfSolution: {
             /** Approach */
@@ -2519,7 +4376,7 @@ export interface components {
             budget: components["schemas"]["CtfBudget"];
             /** Completion Requirements */
             completion_requirements?: string | null;
-            ctf_options?: components["schemas"]["CtfOptions"];
+            ctf_options?: components["schemas"]["CtfOptions-Input"];
             /** Domain Context */
             domain_context?: string | null;
             /** Egress Allowlist */
@@ -2541,10 +4398,20 @@ export interface components {
             model_version?: number | null;
             /** Name */
             name?: string | null;
+            native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
+            native_mcp?: components["schemas"]["NativeMcpGrants"] | null;
+            /** Native Vpn Source Id */
+            native_vpn_source_id?: string | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
-            /** Reasoning Effort */
-            reasoning_effort?: string | null;
+            /** Public Input Ids */
+            public_input_ids?: string[] | null;
+            /**
+             * Reasoning Effort
+             * @description 任务思考强度；省略或 null 沿用已发布配置
+             */
+            reasoning_effort?: ("off" | "none" | "minimal" | "low" | "medium" | "high") | null;
         };
         /** CtfVerificationRequiredRequest */
         CtfVerificationRequiredRequest: {
@@ -2560,16 +4427,6 @@ export interface components {
             /** Required */
             required: boolean;
         };
-        /** CtfWorkerUpdate */
-        CtfWorkerUpdate: {
-            /** Expected Revision */
-            expected_revision: number;
-            /** Platform Tools */
-            platform_tools?: components["schemas"]["CtfPlatformToolBinding"][] | null;
-            /** Prompt */
-            prompt: string;
-            tools: components["schemas"]["WorkerTools"];
-        };
         /** DeliveryBody */
         DeliveryBody: {
             /**
@@ -2583,27 +4440,6 @@ export interface components {
              */
             id: string;
         };
-        /** DiscoveredModel */
-        DiscoveredModel: {
-            /** Context Window */
-            context_window?: number | null;
-            /** Id */
-            id: string;
-            /** Max Input Tokens */
-            max_input_tokens?: number | null;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
-            /**
-             * Metadata Source
-             * @default provider_api
-             */
-            metadata_source: string;
-            /** Name */
-            name?: string | null;
-            price?: components["schemas"]["Price-Output"] | null;
-            /** Supports Vision */
-            supports_vision?: boolean | null;
-        };
         /** DisplayFilterRequest */
         DisplayFilterRequest: {
             /**
@@ -2611,6 +4447,39 @@ export interface components {
              * @default
              */
             display_filter: string;
+        };
+        /** EffectiveRunnerModel */
+        EffectiveRunnerModel: {
+            /**
+             * Api
+             * @constant
+             */
+            api: "openai-completions";
+            /** Context Window */
+            context_window: number;
+            /** Id */
+            id: string;
+            /** Input */
+            input: ("text" | "image")[];
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** Model Revision */
+            model_revision?: number | null;
+            /** Reasoning */
+            reasoning: boolean;
+            /** Thinking Budgets */
+            thinking_budgets?: {
+                [key: string]: number;
+            } | null;
+            /**
+             * Thinking Level
+             * @enum {string}
+             */
+            thinking_level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** Thinking Level Map */
+            thinking_level_map?: {
+                [key: string]: string | null;
+            } | null;
         };
         /** Event */
         Event: {
@@ -2660,7 +4529,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "progress.settings.updated" | "progress.message.posted" | "progress.message.replied" | "progress.turn.completed" | "progress.usage.settled" | "progress.tree.updated" | "progress.turn.failed" | "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
+        EventType: "board.announcement.published" | "board.flag.candidate" | "board.flag.submission" | "board.flag.dispatched" | "board.flag.unknown" | "board.flag.cancelled" | "board.flag.receipt" | "board.request.linked" | "progress.settings.updated" | "progress.message.posted" | "progress.message.replied" | "progress.turn.completed" | "progress.usage.settled" | "progress.tree.updated" | "progress.turn.failed" | "cost.reconciled" | "task.created" | "task.provisioning" | "task.running" | "task.closing" | "task.finished" | "task.failed" | "task.stopped" | "task.archived" | "task.resumed" | "task.cleanup_ready" | "fact.posted" | "fact.disputed" | "fact.undisputed" | "intent.posted" | "intent.claimed" | "intent.released" | "intent.closed" | "agent.spawned" | "agent.reactivated" | "agent.progress" | "agent.finished" | "agent.conclude_requested" | "derive.result" | "acceptance.judged" | "acceptance.reverted" | "task.report" | "budget.updated" | "tool_call.recorded" | "agent.trace.recorded" | "agent.message.posted" | "agent.message.delivered" | "agent.message.replied" | "agent.message.failed";
         /** Evidence */
         Evidence: {
             /**
@@ -2725,11 +4594,86 @@ export interface components {
              */
             pids: number;
         };
+        /** Fact */
+        Fact: {
+            assignment_ref?: components["schemas"]["KnowledgeAssignment"] | null;
+            /**
+             * Author
+             * @description 提交者
+             */
+            author: string;
+            /**
+             * Challenge Id
+             * @description 题目范围；普通与历史记录为空
+             */
+            challenge_id?: string | null;
+            /**
+             * Derived From
+             * @description 推断所依据的事实
+             */
+            derived_from?: string[];
+            /**
+             * Disputes
+             * @description 本事实反驳的事实
+             */
+            disputes?: string[];
+            /**
+             * Evidence
+             * @description 持久化证据
+             */
+            evidence: components["schemas"]["Evidence"][];
+            /**
+             * Id
+             * @description 事实编号
+             */
+            id: string;
+            /** @description 直接观察、推断或结构 */
+            kind: components["schemas"]["FactKind"];
+            /**
+             * Provenance
+             * @description 依据工具调用计算的证据来源
+             */
+            provenance?: ("tool_backed" | "self_reported") | null;
+            /**
+             * Relied By
+             * @description 其他作者依赖此事实的次数
+             */
+            relied_by?: number | null;
+            /**
+             * Resolves
+             * @description 本事实关闭的意图
+             */
+            resolves?: string | null;
+            /** @description 意图结论 */
+            result?: components["schemas"]["IntentResult"] | null;
+            /**
+             * Satisfies
+             * @description 声称满足的验收条件
+             */
+            satisfies?: string[];
+            /**
+             * Statement
+             * @description 可复核的事实陈述
+             */
+            statement: string;
+            /** @description 读时计算的争议状态 */
+            status?: components["schemas"]["FactStatus"] | null;
+            /**
+             * Version
+             * @description 写入事件版本
+             */
+            version?: number | null;
+        };
         /**
          * FactKind
          * @enum {string}
          */
         FactKind: "observation" | "inference" | "structure";
+        /**
+         * FactStatus
+         * @enum {string}
+         */
+        FactStatus: "proposed" | "disputed";
         /** FailBody */
         FailBody: {
             /**
@@ -2756,6 +4700,343 @@ export interface components {
             receipt: {
                 [key: string]: unknown;
             };
+            /** Terminal Request Id */
+            terminal_request_id?: string | null;
+        };
+        /** FlagBoard */
+        FlagBoard: {
+            /** Candidates */
+            candidates: components["schemas"]["FlagCandidate"][];
+            progress: components["schemas"]["FlagProgress"];
+            /** Submissions */
+            submissions: components["schemas"]["FlagSubmission"][];
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagCandidate */
+        FlagCandidate: {
+            assignment_ref: components["schemas"]["KnowledgeAssignment"];
+            /** Author Id */
+            author_id: string;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Version */
+            created_version: number;
+            /** Evidence Refs */
+            evidence_refs?: {
+                [key: string]: unknown;
+            }[];
+            /** Fact Refs */
+            fact_refs?: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Value Digest */
+            value_digest: string;
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagCandidateRequest */
+        FlagCandidateRequest: {
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /**
+             * Expected Revision
+             * @description 题目元信息 revision，不是 Flag 状态版本
+             */
+            expected_revision: number;
+            /** Fact Refs */
+            fact_refs?: string[];
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
+        };
+        /** FlagCaptureRequest */
+        FlagCaptureRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /** Request Digest */
+            request_digest: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Response Text */
+            response_text: string;
+            source: components["schemas"]["FlagSource"];
+        };
+        /** FlagDispatchRequest */
+        FlagDispatchRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** FlagProgress */
+        FlagProgress: {
+            /** Correct Count */
+            correct_count?: number | null;
+            /** Score */
+            score?: string | null;
+            /** Total Count */
+            total_count?: number | null;
+        };
+        /** FlagReceiptRequest */
+        FlagReceiptRequest: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Response Sha256 */
+            response_sha256: string;
+            /** Response Uri */
+            response_uri: string;
+        };
+        /** FlagResult */
+        FlagResult: {
+            /** Correct Count */
+            correct_count?: number | null;
+            /** External Ref */
+            external_ref?: string | null;
+            /** Score */
+            score?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "rejected" | "duplicate" | "unknown";
+            /** Total Count */
+            total_count?: number | null;
+        };
+        /** FlagSource */
+        FlagSource: {
+            /** Server Name */
+            server_name: string;
+            /** Server Version */
+            server_version: number;
+            /** Tool Name */
+            tool_name: string;
+        };
+        /** FlagSubmission */
+        FlagSubmission: {
+            assignment_ref: components["schemas"]["KnowledgeAssignment"];
+            /** Author Id */
+            author_id: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created Version */
+            created_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Late
+             * @default false
+             */
+            late: boolean;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Platform Call Id */
+            platform_call_id?: string | null;
+            /**
+             * Progress Applied
+             * @default false
+             */
+            progress_applied: boolean;
+            /** Request Digest */
+            request_digest: string;
+            /** Response Sha256 */
+            response_sha256?: string | null;
+            /** Response Uri */
+            response_uri?: string | null;
+            result?: components["schemas"]["FlagResult"] | null;
+            source: components["schemas"]["FlagSource"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "dispatched" | "accepted" | "rejected" | "duplicate" | "unknown" | "cancelled";
+            /** Target Ref */
+            target_ref: {
+                [key: string]: unknown;
+            };
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Updated Version */
+            updated_version: number;
+            /** Upstream Response Sha256 */
+            upstream_response_sha256?: string | null;
+            /** Upstream Response Uri */
+            upstream_response_uri?: string | null;
+            /** Verification Round */
+            verification_round: string;
+        };
+        /** FlagSubmissionRequest */
+        FlagSubmissionRequest: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            source: components["schemas"]["FlagSource"];
+        };
+        /** FlagUnknownRequest */
+        FlagUnknownRequest: {
+            /** Platform Call Id */
+            platform_call_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** FlagValueDetail */
+        FlagValueDetail: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Value
+             * @description 敏感值；仅后端明确授权的详情可返回
+             */
+            value: string;
+        };
+        /** FrozenExchangeRate */
+        FrozenExchangeRate: {
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Rate Cny Per Usd */
+            rate_cny_per_usd: number | string;
+            /**
+             * Rounding
+             * @default ROUND_DOWN
+             * @constant
+             */
+            rounding: "ROUND_DOWN";
+            /** Source Ref */
+            source_ref: string;
+            /**
+             * Usd Decimal Places
+             * @default 9
+             * @constant
+             */
+            usd_decimal_places: 9;
+        };
+        /** GatewayCredentialsRequest */
+        GatewayCredentialsRequest: {
+            /** Expected Epoch */
+            expected_epoch: number;
+        };
+        /** GatewayFeeScope */
+        GatewayFeeScope: {
+            /** Confirmed Usd */
+            confirmed_usd?: string | null;
+            /**
+             * Pending
+             * @default 0
+             */
+            pending: number;
+        };
+        /** GatewayModelView */
+        GatewayModelView: {
+            /** Alias */
+            alias: string;
+            /** Catalog Revision */
+            catalog_revision: string;
+            /** Context Window */
+            context_window: number;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens: number;
+            /** Reasoning */
+            reasoning?: boolean | null;
+            /** Tool Call */
+            tool_call: boolean;
+            usd_rates: components["schemas"]["GatewayUsdRates"];
+        };
+        /** GatewayTaskFees */
+        GatewayTaskFees: {
+            progress: components["schemas"]["GatewayFeeScope"];
+            solver: components["schemas"]["GatewayFeeScope"];
+        };
+        /**
+         * GatewayUsdRates
+         * @description USD rates per million tokens for each named usage class.
+         */
+        GatewayUsdRates: {
+            /** Cache Read */
+            cache_read: string;
+            /** Cache Write */
+            cache_write: string;
+            /** Input */
+            input: string;
+            /** Output */
+            output: string;
         };
         /** GraceBody */
         GraceBody: {
@@ -2817,13 +5098,120 @@ export interface components {
              */
             usage_known: boolean;
         };
-        /** ImportKey */
-        ImportKey: {
+        /** HelperAccepted */
+        HelperAccepted: {
+            /** Binding Id */
+            binding_id: string;
+            /** Child Id */
+            child_id: string;
+            /** Payload Digest */
+            payload_digest: string;
+        };
+        /** HelperLaunch */
+        HelperLaunch: {
+            /** Background State */
+            background_state?: ("scheduled" | "running" | "draining" | "finished" | "unknown") | null;
+            /** Binding Id */
+            binding_id?: string | null;
+            /** Child Deadline Ms */
+            child_deadline_ms?: number | null;
+            /** Child Id */
+            child_id?: string | null;
+            command?: components["schemas"]["RunnerCommand"] | null;
+            /** Credentials */
+            credentials?: {
+                [key: string]: unknown;
+            } | null;
+            /** Deadline Ms */
+            deadline_ms?: number | null;
+            /** Delivery */
+            delivery?: ("queued" | "historical" | "applied") | null;
+            /** Invocation Id */
+            invocation_id: string;
             /**
-             * Api Key
-             * Format: password
+             * Launch Allowed
+             * @default false
              */
-            api_key: string;
+            launch_allowed: boolean;
+            /** Outcome Digest */
+            outcome_digest?: string | null;
+            /** Outcome Json */
+            outcome_json?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reserved" | "launch_claimed" | "accepted" | "draining" | "saved" | "unavailable" | "unknown";
+        };
+        /** HelperResult */
+        HelperResult: {
+            /** Result Json */
+            result_json: string;
+        };
+        /** HelperStatus */
+        HelperStatus: {
+            /** Background State */
+            background_state?: ("scheduled" | "running" | "draining" | "finished" | "unknown") | null;
+            /** Binding Id */
+            binding_id?: string | null;
+            /** Child Deadline Ms */
+            child_deadline_ms?: number | null;
+            /** Child Id */
+            child_id?: string | null;
+            /** Deadline Ms */
+            deadline_ms?: number | null;
+            /** Delivery */
+            delivery?: ("queued" | "historical" | "applied") | null;
+            /** Invocation Id */
+            invocation_id: string;
+            /** Outcome Digest */
+            outcome_digest?: string | null;
+            /** Outcome Json */
+            outcome_json?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reserved" | "launch_claimed" | "accepted" | "draining" | "saved" | "unavailable" | "unknown";
+        };
+        /** HelperTerminal */
+        HelperTerminal: {
+            /** Binding Id */
+            binding_id: string;
+            /** Child Id */
+            child_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Disposed
+             * @constant
+             */
+            disposed: true;
+            /**
+             * Journal Confirmed
+             * @constant
+             */
+            journal_confirmed: true;
+            /** Plugin Run Id */
+            plugin_run_id: string;
+            /**
+             * Sdk Idle
+             * @constant
+             */
+            sdk_idle: true;
+            /** Sdk Session Id */
+            sdk_session_id: string;
         };
         /** InitialAttachment */
         InitialAttachment: {
@@ -2843,6 +5231,15 @@ export interface components {
             /** Uri */
             uri: string;
         };
+        /** InputApplication */
+        InputApplication: {
+            /** Entry Id */
+            entry_id: string;
+            /** Input Id */
+            input_id: string;
+            /** Seq */
+            seq: number;
+        };
         /** InputGroupView */
         InputGroupView: {
             /**
@@ -2858,11 +5255,234 @@ export interface components {
              */
             id: string;
         };
+        /** Intent */
+        Intent: {
+            assignment_ref?: components["schemas"]["KnowledgeAssignment"] | null;
+            /**
+             * Attempts
+             * @description 未关闭释放次数
+             * @default 0
+             */
+            attempts: number;
+            /**
+             * Author
+             * @description 提出者
+             */
+            author: string;
+            /**
+             * Based On
+             * @description 至少一条依据事实
+             */
+            based_on: string[];
+            /**
+             * Challenge Id
+             * @description 题目范围；普通与历史记录为空
+             */
+            challenge_id?: string | null;
+            /**
+             * Claimed At
+             * @description 认领时间
+             */
+            claimed_at?: string | null;
+            /**
+             * Closed By
+             * @description 关闭者
+             */
+            closed_by?: string | null;
+            /**
+             * Expected
+             * @description 成立时预期观察
+             */
+            expected: string;
+            /**
+             * Holder
+             * @description 持有者
+             */
+            holder?: string | null;
+            /**
+             * Id
+             * @description 意图编号
+             */
+            id: string;
+            /**
+             * Method
+             * @description 可交接的调查方法
+             */
+            method: string;
+            /**
+             * Notes
+             * @description 交接说明
+             */
+            notes?: components["schemas"]["IntentNote"][];
+            /**
+             * Relates To
+             * @description 普通任务关联的验收条件
+             */
+            relates_to?: string[];
+            /** @description 关闭结论 */
+            result?: components["schemas"]["IntentResult"] | null;
+            /**
+             * Result Facts
+             * @description 结论事实
+             */
+            result_facts?: string[];
+            /**
+             * Retry Of
+             * @description 换方法重试的意图
+             */
+            retry_of?: string | null;
+            /**
+             * Statement
+             * @description 要调查的方向
+             */
+            statement: string;
+            /**
+             * @description 认领状态
+             * @default open
+             */
+            status: components["schemas"]["IntentStatus"];
+            /**
+             * Version
+             * @description 写入事件版本
+             */
+            version?: number | null;
+        };
+        /** IntentNote */
+        IntentNote: {
+            /**
+             * At
+             * Format: date-time
+             * @description 交接时间
+             */
+            at: string;
+            /**
+             * By
+             * @description 交接者
+             */
+            by: string;
+            /**
+             * Text
+             * @description 交接说明
+             */
+            text: string;
+        };
         /**
          * IntentResult
          * @enum {string}
          */
         IntentResult: "confirmed" | "rejected" | "inconclusive";
+        /**
+         * IntentStatus
+         * @enum {string}
+         */
+        IntentStatus: "open" | "claimed" | "closed";
+        /** JournalConfirmation */
+        JournalConfirmation: {
+            /** Applied Inputs */
+            applied_inputs: components["schemas"]["InputApplication"][];
+            binding: components["schemas"]["RunnerBinding"];
+            cursor: components["schemas"]["JournalCursor"];
+            fence: components["schemas"]["RunnerFence"];
+            previous: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** JournalCursor */
+        JournalCursor: {
+            /** Anchor Hash */
+            anchor_hash: string;
+            /** Anchor Offset */
+            anchor_offset: number;
+            /** Anchor Size */
+            anchor_size: number;
+            /** Hash */
+            hash: string;
+            /** Leaf Id */
+            leaf_id?: string | null;
+            /** Offset */
+            offset: number;
+            /** Seq */
+            seq: number;
+        };
+        /** JournalReceipt */
+        JournalReceipt: {
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** JournalState */
+        JournalState: {
+            /** Binding Id */
+            binding_id: string;
+            cursor: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+        };
+        /** KnowledgeAssignment */
+        KnowledgeAssignment: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id?: string | null;
+            /** Epoch */
+            epoch: number;
+            /** Generation */
+            generation: number;
+            /** Owner Id */
+            owner_id?: string | null;
+            /** Scope Revision */
+            scope_revision: number;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
+        /** LegacyNetworkView */
+        LegacyNetworkView: {
+            /**
+             * Capture Required
+             * @default true
+             * @constant
+             */
+            capture_required: true;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "default" | "vpn" | "socks5";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "prepared" | "starting" | "ready" | "fenced" | "exited" | "unknown" | "absent";
+        };
         /** LoginBody */
         LoginBody: {
             /** Password */
@@ -2874,8 +5494,35 @@ export interface components {
         McpBinding: {
             /** Allowed Tools */
             allowed_tools?: string[] | null;
+            /** Catalog Version */
+            catalog_version?: "p6b" | null;
             /** Name */
             name: string;
+            /** Version */
+            version: number;
+        };
+        /** McpDiscovery */
+        McpDiscovery: {
+            /** Checked At */
+            checked_at?: string | null;
+            /** Discovery Digest */
+            discovery_digest?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Published
+             * @default false
+             */
+            published: boolean;
+            /** Roles */
+            roles?: ("explore" | "lead" | "teammate")[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "untested" | "ready" | "error";
+            /** Tools */
+            tools?: components["schemas"]["McpToolDetail"][];
             /** Version */
             version: number;
         };
@@ -2908,16 +5555,38 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** ModelCatalogResult */
-        ModelCatalogResult: {
-            /** Models */
-            models?: components["schemas"]["DiscoveredModel"][];
-            /** Provider */
-            provider?: string | null;
-            /** Providers */
-            providers: components["schemas"]["CatalogProvider"][];
-            /** Warnings */
-            warnings?: string[];
+        /** McpPublish */
+        McpPublish: {
+            /** Discovery Digest */
+            discovery_digest: string;
+            /** Roles */
+            roles: ("explore" | "lead" | "teammate")[];
+            /** Tools */
+            tools: string[];
+        };
+        /** McpToolDetail */
+        McpToolDetail: {
+            /** Annotations */
+            annotations?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Schema Digest */
+            schema_digest: string;
         };
         /** ModelConfig */
         "ModelConfig-Input": {
@@ -3027,92 +5696,6 @@ export interface components {
              */
             supports_vision?: boolean | null;
         };
-        /** ModelDiscoveryInput */
-        ModelDiscoveryInput: {
-            /**
-             * Base Url
-             * @default
-             */
-            base_url: string;
-            /** Credentials */
-            credentials?: {
-                [key: string]: string;
-            };
-            /** Provider */
-            provider: string;
-            /** Provider Options */
-            provider_options?: {
-                [key: string]: string;
-            };
-            /** Saved Name */
-            saved_name?: string | null;
-            /** Saved Version */
-            saved_version?: number | null;
-        };
-        /** ModelDiscoveryResult */
-        ModelDiscoveryResult: {
-            /** Models */
-            models?: components["schemas"]["DiscoveredModel"][];
-            /**
-             * Supported
-             * @default true
-             */
-            supported: boolean;
-            /** Warnings */
-            warnings?: string[];
-        };
-        /** ModelInput */
-        ModelInput: {
-            /** Api Key */
-            api_key?: string | null;
-            /**
-             * Base Url
-             * @default
-             */
-            base_url: string;
-            /**
-             * Context Window
-             * @default 1000000
-             */
-            context_window: number | null;
-            /**
-             * Credential Source
-             * @default stored
-             * @enum {string}
-             */
-            credential_source: "stored" | "none";
-            /** Credentials */
-            credentials?: {
-                [key: string]: string;
-            };
-            /**
-             * Enabled
-             * @default true
-             */
-            enabled: boolean;
-            /** Label */
-            label: string;
-            /** Max Input Tokens */
-            max_input_tokens?: number | null;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
-            /** Model */
-            model: string;
-            price: components["schemas"]["Price-Input"];
-            /** Provider */
-            provider: string;
-            /** Provider Options */
-            provider_options?: {
-                [key: string]: string;
-            };
-            /**
-             * Reasoning Effort
-             * @default none
-             */
-            reasoning_effort: string;
-            /** Supports Vision */
-            supports_vision?: boolean | null;
-        };
         /** ModelSet */
         "ModelSet-Input": {
             close: components["schemas"]["ModelConfig-Input"];
@@ -3124,6 +5707,427 @@ export interface components {
             close: components["schemas"]["ModelConfig-Output"];
             derive: components["schemas"]["ModelConfig-Output"];
             explore: components["schemas"]["ModelConfig-Output"];
+        };
+        /** NativeBudgetIncreaseRequest */
+        NativeBudgetIncreaseRequest: {
+            /** Additional Cny */
+            additional_cny?: number | string | null;
+            /** Additional Usd */
+            additional_usd?: number | string | null;
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativeBudgetIncreaseStatus */
+        NativeBudgetIncreaseStatus: {
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Threshold Cny */
+            threshold_cny?: string | null;
+            /** Threshold Usd */
+            threshold_usd: string;
+        };
+        /** NativeCtfEnvironment */
+        NativeCtfEnvironment: {
+            /**
+             * External Mcp
+             * @default false
+             */
+            external_mcp: boolean;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Publication Stamp */
+            publication_stamp: string;
+            /** Revision */
+            revision: number;
+            shared_inputs?: components["schemas"]["NativeSharedInputLimits"] | null;
+            vpn?: components["schemas"]["NativeVpnCapability"] | null;
+        };
+        /** NativeCtfEnvironmentRef */
+        NativeCtfEnvironmentRef: {
+            /** Id */
+            id: string;
+            /** Publication Stamp */
+            publication_stamp: string;
+            /** Revision */
+            revision: number;
+        };
+        /** NativeInputClaimResult */
+        NativeInputClaimResult: {
+            /** Launch Allowed */
+            launch_allowed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "disabled" | "pending" | "claimed" | "confirmed" | "blocked";
+        };
+        /** NativeInputFile */
+        NativeInputFile: {
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Path */
+            path: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+        };
+        /** NativeInputPlan */
+        NativeInputPlan: {
+            /** Files */
+            files?: components["schemas"]["NativeInputFile"][] | null;
+            scope?: components["schemas"]["NativeInputScope"] | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "disabled" | "pending" | "claimed" | "confirmed" | "blocked";
+        };
+        /** NativeInputScope */
+        NativeInputScope: {
+            /** Execution Context Id */
+            execution_context_id: string;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Resource Generation */
+            resource_generation: number;
+            /** Sandbox Container Id */
+            sandbox_container_id: string;
+            /** Sandbox Id */
+            sandbox_id: string;
+            /** Sandbox Pod Uid */
+            sandbox_pod_uid: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Workspace Pvc Uid */
+            workspace_pvc_uid: string;
+        };
+        /** NativeMcpGrant */
+        NativeMcpGrant: {
+            /** Allowed Tools */
+            allowed_tools: string[];
+            /** Name */
+            name: string;
+            /** Version */
+            version: number;
+        };
+        /** NativeMcpGrants */
+        NativeMcpGrants: {
+            /** Lead */
+            lead?: components["schemas"]["NativeMcpGrant"][];
+            /** Teammate */
+            teammate?: components["schemas"]["NativeMcpGrant"][];
+        };
+        /** NativePauseRequest */
+        NativePauseRequest: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativePauseStatus */
+        NativePauseStatus: {
+            /** Blocker */
+            blocker?: string | null;
+            /** Pause Id */
+            pause_id?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "draining" | "paused" | "resuming" | "resumed" | "stopping" | "stopped";
+        };
+        /** NativeRecoveryBinding */
+        NativeRecoveryBinding: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id?: string | null;
+            /** Binding Id */
+            binding_id: string;
+            /** @description Last database confirmation; this projection does not read journal bytes. */
+            confirmed_cursor?: components["schemas"]["JournalCursor"] | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Sdk Start Unconfirmed */
+            sdk_start_unconfirmed: boolean;
+            /** State */
+            state: string;
+        };
+        /** NativeRecoveryIntent */
+        NativeRecoveryIntent: {
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativeRecoveryRequest */
+        NativeRecoveryRequest: {
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Instruction */
+            instruction?: string | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /**
+         * NativeRecoveryStatus
+         * @description Recovery progress and the original execution ledgers, without journal contents.
+         */
+        NativeRecoveryStatus: {
+            /** Bindings */
+            bindings?: components["schemas"]["NativeRecoveryBinding"][];
+            /**
+             * Bindings Truncated
+             * @default false
+             */
+            bindings_truncated: boolean;
+            /** Blocker */
+            blocker?: string | null;
+            /** Captured At */
+            captured_at?: string | null;
+            /** Controller Generation */
+            controller_generation?: number | null;
+            /** Incident Id */
+            incident_id?: string | null;
+            /** Ledger */
+            ledger?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Operation Id */
+            operation_id?: string | null;
+            /** Original Epoch */
+            original_epoch?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /** Replacement Epoch */
+            replacement_epoch?: number | null;
+            /** Request Id */
+            request_id?: string | null;
+            /** Resources */
+            resources?: {
+                [key: string]: string;
+            };
+            /**
+             * Sandbox Create Claimed
+             * @default false
+             */
+            sandbox_create_claimed: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "not_frozen" | "frozen" | "requested" | "rebuilding" | "resumed" | "stopping" | "stopped";
+        };
+        /** NativeResumeRequest */
+        NativeResumeRequest: {
+            /** Instruction */
+            instruction?: string | null;
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** NativeRunnerAction */
+        NativeRunnerAction: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "sandbox_create" | "board_dispatch" | "board_abort" | "board_workspace_restored" | "observation" | "material" | "activate" | "renew" | "stop" | "cleanup" | "error" | "retire_prepare" | "retire_plan" | "retire_admit" | "retire_complete" | "sandbox_host_material" | "sandbox_host_ready" | "vpn_material" | "vpn_peer_ready" | "vpn_prepare_source" | "network_default_ready" | "recovery_exit" | "recovery_prepare" | "recovery_verifier_admit" | "recovery_verifier_observe" | "recovery_replace" | "recovery_blocked";
+            /** Controller Generation */
+            controller_generation: number;
+            /** Controller Id */
+            controller_id: string;
+            /** Error Code */
+            error_code?: ("native_exit_unconfirmed" | "native_resource_unknown" | "native_control_unavailable" | "native_bootstrap_unavailable") | null;
+            /** Observation */
+            observation?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Proof */
+            proof?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Resource Generation
+             * @default 1
+             */
+            resource_generation: number;
+        };
+        /** NativeRunnerClaim */
+        NativeRunnerClaim: {
+            /** Controller Fence */
+            controller_fence: number;
+            /** Controller Id */
+            controller_id: string;
+            /** Controller Pid */
+            controller_pid: number;
+            /**
+             * Controller Started At
+             * Format: date-time
+             */
+            controller_started_at: string;
+            /** Resource Config */
+            resource_config: {
+                [key: string]: unknown;
+            };
+            /** Retirement Single Apiserver */
+            retirement_single_apiserver?: {
+                [key: string]: string;
+            };
+        };
+        /** NativeRunnerLaunch */
+        NativeRunnerLaunch: {
+            /** Budget Currency */
+            budget_currency?: "USD" | null;
+            exchange_rate?: components["schemas"]["FrozenExchangeRate"] | null;
+            /**
+             * Helper Background
+             * @default false
+             */
+            helper_background: boolean;
+            /**
+             * Helper Foreground
+             * @default false
+             */
+            helper_foreground: boolean;
+            /** Model Alias */
+            model_alias: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Traffic Profile */
+            traffic_profile?: "binding-pcap-v1" | null;
+        };
+        /** NativeSharedInputLimits */
+        NativeSharedInputLimits: {
+            /**
+             * Max File Bytes
+             * @default 16777216
+             */
+            max_file_bytes: number;
+            /**
+             * Max Files
+             * @default 20
+             */
+            max_files: number;
+            /**
+             * Max Total Bytes
+             * @default 25165824
+             */
+            max_total_bytes: number;
+            /**
+             * Profile
+             * @default shared-inputs-v1
+             * @constant
+             */
+            profile: "shared-inputs-v1";
+        };
+        /** NativeTaskNetworkStatus */
+        NativeTaskNetworkStatus: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "unselected" | "default" | "vpn";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "unselected" | "preparing" | "ready" | "failed" | "disconnected" | "stopped";
+        };
+        /** NativeVpnCapability */
+        NativeVpnCapability: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Profile
+             * @enum {string}
+             */
+            profile: "openvpn-ipv4-tcp-v1" | "openvpn-task-ipv4-tcp-v1";
+        };
+        /** OperationAck */
+        OperationAck: {
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Receipt Digest */
+            receipt_digest: string;
+            /** Request Id */
+            request_id: string;
+            /** Status */
+            status: string;
         };
         /** Params */
         "Params-Input": {
@@ -3299,6 +6303,220 @@ export interface components {
              */
             snapshot_max_lines: number;
         };
+        /** PiModelDirectory */
+        PiModelDirectory: {
+            /** Can Manage */
+            can_manage: boolean;
+            /**
+             * Can Test
+             * @default false
+             */
+            can_test: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Models */
+            models: components["schemas"]["PiModelVersion"][];
+        };
+        /** PiModelInput */
+        PiModelInput: {
+            /**
+             * Api
+             * @default openai-completions
+             * @constant
+             */
+            api: "openai-completions";
+            /** Base Url */
+            base_url: string;
+            /**
+             * Clear Secret
+             * @default false
+             */
+            clear_secret: boolean;
+            /**
+             * Confirmed Free
+             * @default false
+             */
+            confirmed_free: boolean;
+            /** Context Window */
+            context_window: number | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision?: number | null;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Output Tokens */
+            max_output_tokens: number | null;
+            /**
+             * Pricing Source
+             * @default
+             */
+            pricing_source: string;
+            /**
+             * Provider
+             * @default openai
+             * @constant
+             */
+            provider: "openai";
+            /**
+             * Reasoning
+             * @default false
+             */
+            reasoning: boolean;
+            /** Secret */
+            secret?: string | null;
+            /**
+             * Tool Call
+             * @default true
+             */
+            tool_call: boolean | null;
+            /** Upstream Model */
+            upstream_model: string;
+            usd_rates?: components["schemas"]["PiUsdRates-Input"] | null;
+        };
+        /** PiModelRef */
+        PiModelRef: {
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+        };
+        /** PiModelVersion */
+        PiModelVersion: {
+            /**
+             * Api
+             * @default openai-completions
+             * @constant
+             */
+            api: "openai-completions";
+            /** Base Url */
+            base_url: string;
+            /**
+             * Confirmed Free
+             * @default false
+             */
+            confirmed_free: boolean;
+            /** Context Window */
+            context_window?: number | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Has Secret */
+            has_secret: boolean;
+            /** Id */
+            id: string;
+            /** Input Modalities */
+            input_modalities?: ("text" | "image")[];
+            /** Label */
+            label: string;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Model Revision */
+            model_revision: number;
+            /**
+             * Pricing Source
+             * @default
+             */
+            pricing_source: string;
+            /**
+             * Provider
+             * @default openai
+             * @constant
+             */
+            provider: "openai";
+            /**
+             * Reasoning
+             * @default false
+             */
+            reasoning: boolean;
+            /** Tool Call */
+            tool_call?: boolean | null;
+            /** Upstream Model */
+            upstream_model: string;
+            usd_rates?: components["schemas"]["PiUsdRates-Output"] | null;
+        };
+        /** PiPlaygroundRequest */
+        PiPlaygroundRequest: {
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** PiPlaygroundView */
+        PiPlaygroundView: {
+            /** Amount Usd */
+            amount_usd?: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Result Text */
+            result_text?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "prepared" | "dispatched" | "complete" | "unknown" | "not_sent";
+            usage?: components["schemas"]["PiUsage"] | null;
+        };
+        /** PiUsage */
+        PiUsage: {
+            /** Cacheread */
+            cacheRead: number;
+            /** Cachewrite */
+            cacheWrite: number;
+            /** Cachewrite1H */
+            cacheWrite1h?: number | null;
+            /** Input */
+            input: number;
+            /** Output */
+            output: number;
+            /** Reasoning */
+            reasoning?: number | null;
+            /** Totaltokens */
+            totalTokens: number;
+        };
+        /** PiUsdRates */
+        "PiUsdRates-Input": {
+            /** Cache Read */
+            cache_read: number | string;
+            /** Cache Write */
+            cache_write: number | string;
+            /** Input */
+            input: number | string;
+            /** Output */
+            output: number | string;
+        };
+        /** PiUsdRates */
+        "PiUsdRates-Output": {
+            /** Cache Read */
+            cache_read: string;
+            /** Cache Write */
+            cache_write: string;
+            /** Input */
+            input: string;
+            /** Output */
+            output: string;
+        };
         /** PostFactRequest */
         PostFactRequest: {
             /** Derived From */
@@ -3405,6 +6623,14 @@ export interface components {
              * @description 每百万输出 token 单价
              */
             output_per_m?: string | null;
+        };
+        /** PrivateVpnSourceView */
+        PrivateVpnSourceView: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
         };
         /** ProfileDocument */
         ProfileDocument: {
@@ -3601,12 +6827,15 @@ export interface components {
         };
         /** ProgressGlobalSettings */
         ProgressGlobalSettings: {
+            /** Default Prompt */
+            default_prompt?: string | null;
             /** Enabled Tools */
             enabled_tools?: string[];
             /** Expected Revision */
             expected_revision: number;
             /** Model Id */
             model_id?: string | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /**
              * Prompt
              * @default
@@ -3721,6 +6950,8 @@ export interface components {
         };
         /** ProgressSettings */
         ProgressSettings: {
+            /** Currency */
+            currency?: ("USD" | "CNY") | null;
             /**
              * Enabled
              * @default false
@@ -3751,6 +6982,7 @@ export interface components {
             model_id?: string | null;
             /** Model Version */
             model_version?: number | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /**
              * Reasoning Effort
              * @description 历史兼容字段，实际思考强度使用固定模型配置
@@ -3840,6 +7072,22 @@ export interface components {
              */
             explore: string;
         };
+        /** PublishedPrompt */
+        PublishedPrompt: {
+            /** Binding Id */
+            binding_id: string;
+            board_context?: components["schemas"]["BoardContext"] | null;
+            fence: components["schemas"]["RunnerFence"];
+            /** Instructions */
+            instructions: string;
+            /** Prompt Revision */
+            prompt_revision: number;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
         /** ReceiptHeartbeatRequest */
         ReceiptHeartbeatRequest: {
             receipt: components["schemas"]["HeartbeatRequest"];
@@ -3860,6 +7108,8 @@ export interface components {
             additional_cost: number | string;
             /** Additional Minutes */
             additional_minutes: number;
+            /** Currency */
+            currency?: "USD" | null;
             /**
              * Refresh Tools
              * @default false
@@ -3871,16 +7121,269 @@ export interface components {
              */
             request_id: string;
         };
+        /** RunnerBinding */
+        RunnerBinding: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Ref */
+            assignment_ref: string | null;
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Business Contract
+             * @enum {string}
+             */
+            business_contract: "challenge-board-v1" | "exploration-board-v1";
+            /**
+             * Generation
+             * @description Platform binding/assignment identity version, not legacy CtfMember claim_turn generation
+             */
+            generation: number;
+            /** Journal Generation */
+            journal_generation: string;
+            /** Platform Session Id */
+            platform_session_id: string;
+        };
+        /** RunnerBindingRegistration */
+        RunnerBindingRegistration: {
+            /** Agent Id */
+            agent_id: string;
+            /** Allowed Tools */
+            allowed_tools?: string[];
+            board_run?: components["schemas"]["BoardRunIdentity"] | null;
+            /** Challenge Id */
+            challenge_id?: string | null;
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Instructions */
+            instructions: string;
+            /** Mcp Credential Ref */
+            mcp_credential_ref: string;
+            model: components["schemas"]["EffectiveRunnerModel"];
+            /** Model Credential Ref */
+            model_credential_ref: string;
+            /** Profile Revision */
+            profile_revision: number;
+            /** Prompt Revision */
+            prompt_revision: number;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** RunnerCommand */
+        RunnerCommand: {
+            /** Command Seq */
+            command_seq: number;
+            fence: components["schemas"]["RunnerFence"];
+            /** Payload Digest */
+            payload_digest: string;
+            /** Payload Json */
+            payload_json: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+        };
+        /** RunnerCommandSubmission */
+        RunnerCommandSubmission: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Payload Digest */
+            payload_digest: string;
+            /** Payload Json */
+            payload_json: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /** RunnerFence */
+        RunnerFence: {
+            /** Epoch */
+            epoch: number;
+            /** Pod Uid */
+            pod_uid: string;
+            /** Runner Id */
+            runner_id: string;
+            /** Task Id */
+            task_id: string;
+        };
+        /** RunnerOwnerRegistration */
+        RunnerOwnerRegistration: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Hard Deadline */
+            hard_deadline?: string | null;
+            /** Pod Uid */
+            pod_uid: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Runner Id */
+            runner_id: string;
+        };
+        /** RunnerOwnerUpdate */
+        RunnerOwnerUpdate: {
+            /** Expected Epoch */
+            expected_epoch: number;
+        };
+        /** RunnerPoll */
+        RunnerPoll: {
+            /** Commands */
+            commands: components["schemas"]["RunnerCommand"][];
+            /** Lease Renewals */
+            lease_renewals?: components["schemas"]["SessionLeaseReceipt"][];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** RunnerPromptPublication */
+        RunnerPromptPublication: {
+            /** Expected Epoch */
+            expected_epoch: number;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Instructions */
+            instructions: string;
+        };
         /** RuntimeUpdate */
         RuntimeUpdate: {
-            /** Exec Image */
-            exec_image: string;
             exec_resources: components["schemas"]["ExecResources"];
             /** Expected Revision */
             expected_revision: number;
             params: components["schemas"]["Params-Input"];
-            /** Privileged Allowlist */
-            privileged_allowlist?: string[];
+        };
+        /** SandboxCommandDetail */
+        SandboxCommandDetail: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id: string;
+            /** Background */
+            background: boolean;
+            /** Challenge Id */
+            challenge_id: string | null;
+            /** Command */
+            command: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Cwd */
+            cwd: string;
+            /** Epoch */
+            epoch: number;
+            /** Execution Id */
+            execution_id: string | null;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Generation */
+            generation: number;
+            /** Id */
+            id: string;
+            /** Output Truncated */
+            output_truncated: boolean;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "lead" | "worker" | "helper" | "explore";
+            /** Sequence */
+            sequence: number;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "dispatched" | "running" | "completed" | "failed" | "unknown";
+            /** Stderr */
+            stderr: string;
+            /** Stderr Bytes */
+            stderr_bytes: number;
+            /** Stdout */
+            stdout: string;
+            /** Stdout Bytes */
+            stdout_bytes: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** SandboxCommandPage */
+        SandboxCommandPage: {
+            /** Items */
+            items: components["schemas"]["SandboxCommandSummary"][];
+            /** Next Before */
+            next_before: number | null;
+        };
+        /** SandboxCommandSummary */
+        SandboxCommandSummary: {
+            /** Agent Id */
+            agent_id: string;
+            /** Assignment Id */
+            assignment_id: string;
+            /** Background */
+            background: boolean;
+            /** Challenge Id */
+            challenge_id: string | null;
+            /** Command */
+            command: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Cwd */
+            cwd: string;
+            /** Epoch */
+            epoch: number;
+            /** Execution Id */
+            execution_id: string | null;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Generation */
+            generation: number;
+            /** Id */
+            id: string;
+            /** Output Truncated */
+            output_truncated: boolean;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "lead" | "worker" | "helper" | "explore";
+            /** Sequence */
+            sequence: number;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "dispatched" | "running" | "completed" | "failed" | "unknown";
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -3916,6 +7419,46 @@ export interface components {
             session: {
                 [key: string]: unknown;
             };
+        };
+        /** SessionLeaseReceipt */
+        SessionLeaseReceipt: {
+            binding: components["schemas"]["RunnerBinding"];
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            cursor?: components["schemas"]["JournalCursor"] | null;
+            fence: components["schemas"]["RunnerFence"];
+            /** Lease Expires At */
+            lease_expires_at: number;
+            /** Lease Revision */
+            lease_revision: number;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+        };
+        /** SessionLeaseRequest */
+        SessionLeaseRequest: {
+            binding: components["schemas"]["RunnerBinding"];
+            fence: components["schemas"]["RunnerFence"];
+            /** Payload Digest */
+            payload_digest: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Request Id */
+            request_id: string;
         };
         /** StatusBody */
         StatusBody: {
@@ -3969,6 +7512,12 @@ export interface components {
             input_file_ids?: string[] | null;
             /** Input Group Id */
             input_group_id?: string | null;
+            /**
+             * Mode
+             * @default blackboard
+             * @constant
+             */
+            mode: "blackboard";
             /** Model Id */
             model_id?: string | null;
             /** Model Version */
@@ -3985,6 +7534,7 @@ export interface components {
             params?: {
                 [key: string]: number | string | boolean;
             };
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
             /**
@@ -4004,6 +7554,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** TaskCreationCapabilities */
+        TaskCreationCapabilities: {
+            blackboard: components["schemas"]["BlackboardCreationCapability"];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "legacy" | "native-ctf";
+            native_ctf?: components["schemas"]["NativeCtfEnvironment"] | null;
         };
         /** TaskPage */
         TaskPage: {
@@ -4050,6 +7610,8 @@ export interface components {
             budget?: {
                 [key: string]: unknown;
             };
+            /** Business Contract */
+            business_contract?: string | null;
             /**
              * Cleanup Ready
              * @default false
@@ -4078,6 +7640,10 @@ export interface components {
             ctf_phase?: string | null;
             /** Deleting */
             deleting: boolean;
+            /** Execution Blocked Reason */
+            execution_blocked_reason?: "legacy_execution_unmapped" | null;
+            gateway_fees?: components["schemas"]["GatewayTaskFees"] | null;
+            gateway_model?: components["schemas"]["GatewayModelView"] | null;
             /** Goal */
             goal: string;
             /**
@@ -4085,8 +7651,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Initial Attachment State */
+            initial_attachment_state?: ("pending" | "ready" | "blocked") | null;
             /** Initial Attachments */
             initial_attachments?: components["schemas"]["InitialAttachment"][];
+            legacy_network?: components["schemas"]["LegacyNetworkView"] | null;
             /** Members */
             members?: {
                 [key: string]: unknown;
@@ -4099,6 +7668,8 @@ export interface components {
             mode: "blackboard" | "ctf";
             /** Name */
             name?: string | null;
+            native_network?: components["schemas"]["NativeTaskNetworkStatus"] | null;
+            pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Report Uri */
             report_uri: string | null;
             /**
@@ -4137,6 +7708,142 @@ export interface components {
             result_uri?: string | null;
             /** Tool */
             tool: string;
+        };
+        /** ToolInvocation */
+        ToolInvocation: {
+            /** Arguments Digest */
+            arguments_digest: string;
+            /** Arguments Json */
+            arguments_json: string;
+            /** Assistant Entry Id */
+            assistant_entry_id: string;
+            binding: components["schemas"]["RunnerBinding"];
+            fence: components["schemas"]["RunnerFence"];
+            /** Invocation Id */
+            invocation_id: string;
+            journal: components["schemas"]["JournalCursor"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Sdk Session Id */
+            sdk_session_id: string;
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Tool Name */
+            tool_name: string;
+        };
+        /** ToolPermit */
+        ToolPermit: {
+            /** Arguments Digest */
+            arguments_digest: string;
+            /** Authorized Wait Until Ms */
+            authorized_wait_until_ms?: number | null;
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "admitted" | "completed" | "unknown";
+            /** Invocation Id */
+            invocation_id: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Result Digest */
+            result_digest?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+        };
+        /** ToolResultConfirmation */
+        ToolResultConfirmation: {
+            invocation: components["schemas"]["ToolInvocation"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** ToolResultReceipt */
+        ToolResultReceipt: {
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /** Invocation Id */
+            invocation_id: string;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+            /** Result Digest */
+            result_digest: string;
+            /** Result Json */
+            result_json: string;
+        };
+        /** ToolUnknownSubmission */
+        ToolUnknownSubmission: {
+            invocation: components["schemas"]["ToolInvocation"];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: "bbx.task-runner.v1";
+        };
+        /** TrafficBindingScope */
+        TrafficBindingScope: {
+            /** Assignment Id */
+            assignment_id: string;
+            /** Binding Id */
+            binding_id: string;
+            /**
+             * Discarded Tail Bytes
+             * @default 0
+             */
+            discarded_tail_bytes: number;
+            /** Dropped Packets */
+            dropped_packets?: number | null;
+            /** Epoch */
+            epoch: number;
+            /** Generation */
+            generation: number;
+            /** Host Ifindex */
+            host_ifindex: number;
+            /** Interface */
+            interface: string;
+            /** Ipv4 */
+            ipv4: string;
+            /** Netns Inode */
+            netns_inode: string;
+            /** Parent Agent Id */
+            parent_agent_id?: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "lead" | "worker" | "helper" | "explore";
+            /** Sandbox Pod Uid */
+            sandbox_pod_uid: string;
+            /**
+             * Snaplen
+             * @default 512
+             * @constant
+             */
+            snaplen: 512;
+            /**
+             * Truncated Packets
+             * @default 0
+             */
+            truncated_packets: number;
         };
         /** TrafficCapture */
         TrafficCapture: {
@@ -4232,10 +7939,16 @@ export interface components {
              * @default false
              */
             has_more: boolean;
+            /** Native Bound */
+            native_bound?: boolean | null;
+            /** Native Sources */
+            native_sources?: components["schemas"]["TrafficNativeSourceRef"][] | null;
             /** Next After */
             next_after?: number | null;
             /** Next Before */
             next_before?: number | null;
+            /** Raw Only */
+            raw_only?: true | null;
             /** Records */
             records?: components["schemas"]["TrafficRecordSummary"][];
             /** Run */
@@ -4302,6 +8015,7 @@ export interface components {
             error?: string | null;
             /** Packet Count */
             packet_count: number;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
         };
@@ -4332,6 +8046,7 @@ export interface components {
             layers: components["schemas"]["TrafficPacketNode"][];
             /** Revision */
             revision: string;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
             /** Source Number */
@@ -4357,6 +8072,7 @@ export interface components {
             columns: string[];
             /** Foreground */
             foreground?: string | null;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
             /** Source Id */
             source_id: string;
             /** Source Number */
@@ -4389,6 +8105,8 @@ export interface components {
             display_filter: string;
             /** Run */
             run?: number | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** TrafficNativeQueryView */
         TrafficNativeQueryView: {
@@ -4431,6 +8149,27 @@ export interface components {
              * @enum {string}
              */
             status: "building" | "ready" | "partial" | "error";
+        };
+        /** TrafficNativeSourceRef */
+        TrafficNativeSourceRef: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Available Bytes */
+            available_bytes: number;
+            /**
+             * Complete
+             * @default false
+             */
+            complete: boolean;
+            /** Last Packet At */
+            last_packet_at?: string | null;
+            /** Packet Count */
+            packet_count: number;
+            /** Revision */
+            revision: string;
+            scope?: components["schemas"]["TrafficBindingScope"] | null;
+            /** Source Id */
+            source_id: string;
         };
         /** TrafficObservation */
         TrafficObservation: {
@@ -4887,6 +8626,28 @@ export interface operations {
             };
         };
     };
+    pending_ctf_reviews_api_ctf_reviews_pending_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string[];
+                    };
+                };
+            };
+        };
+    };
     evidence_api_evidence_get: {
         parameters: {
             query: {
@@ -4975,18 +8736,16 @@ export interface operations {
             };
         };
     };
-    import_key_api_platform_import_environment_key_post: {
+    pending_bootstraps_api_native_runner_bootstraps_get: {
         parameters: {
-            query?: never;
+            query?: {
+                after?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImportKey"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -4994,9 +8753,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -5006,6 +8763,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sandbox_tenant_api_opensandbox_tenants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -5067,6 +8844,28 @@ export interface operations {
             };
         };
     };
+    capabilities_api_platform_mcp_servers_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     save_mcp_api_platform_mcp_servers__name__post: {
         parameters: {
             query?: never;
@@ -5104,7 +8903,7 @@ export interface operations {
             };
         };
     };
-    list_mcp_tools_api_platform_mcp_servers__name__versions__version__tools_get: {
+    discover_api_platform_mcp_servers__name__versions__version__discover_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5122,9 +8921,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["McpDiscovery"];
                 };
             };
             /** @description Validation Error */
@@ -5138,69 +8935,19 @@ export interface operations {
             };
         };
     };
-    reference_model_catalog_api_platform_model_catalog_get: {
-        parameters: {
-            query?: {
-                provider?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelCatalogResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    models_api_platform_models_get: {
+    publish_api_platform_mcp_servers__name__versions__version__publish_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
+            path: {
+                name: string;
+                version: number;
             };
-        };
-    };
-    new_model_api_platform_models_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ModelInput"];
+                "application/json": components["schemas"]["McpPublish"];
             };
         };
         responses: {
@@ -5226,18 +8973,17 @@ export interface operations {
             };
         };
     };
-    model_discovery_api_platform_models_discover_post: {
+    tool_details_api_platform_mcp_servers__name__versions__version__tools_get: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                name: string;
+                version: number;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelDiscoveryInput"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -5245,7 +8991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ModelDiscoveryResult"];
+                    "application/json": components["schemas"]["McpDiscovery"];
                 };
             };
             /** @description Validation Error */
@@ -5259,7 +9005,124 @@ export interface operations {
             };
         };
     };
-    save_model_api_platform_models__name__post: {
+    run_api_platform_pi_model_tests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PiPlaygroundRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiPlaygroundView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_api_platform_pi_model_tests__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiPlaygroundView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_api_platform_pi_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiModelDirectory"];
+                };
+            };
+        };
+    };
+    new_model_api_platform_pi_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PiModelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PiModelVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_model_api_platform_pi_models__name__put: {
         parameters: {
             query?: never;
             header?: never;
@@ -5270,7 +9133,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ModelInput"];
+                "application/json": components["schemas"]["PiModelInput"];
             };
         };
         responses: {
@@ -5280,9 +9143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PiModelVersion"];
                 };
             };
             /** @description Validation Error */
@@ -5296,69 +9157,7 @@ export interface operations {
             };
         };
     };
-    delete_model_api_platform_models__name__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    default_model_api_platform_models__name__default_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    providers_api_platform_providers_get: {
+    review_fees_api_platform_pi_review_fees_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5375,7 +9174,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    }[];
+                    };
                 };
             };
         };
@@ -5385,7 +9184,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "models" | "mcp-servers";
+                kind: "mcp-servers";
                 name: string;
                 version: number;
             };
@@ -5420,7 +9219,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "models" | "mcp-servers";
+                kind: "mcp-servers";
                 name: string;
                 version: number;
             };
@@ -5641,39 +9440,6 @@ export interface operations {
             };
         };
     };
-    ctf_prompt_api_settings_ctf_prompts__role__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role: "lead" | "teammate";
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     ctf_workers_api_settings_ctf_workers_get: {
         parameters: {
             query?: never;
@@ -5692,43 +9458,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    update_ctf_worker_api_settings_ctf_workers__role__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role: "lead" | "teammate";
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CtfWorkerUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5803,6 +9532,28 @@ export interface operations {
             };
         };
     };
+    tools_api_settings_tool_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     workers_api_settings_workers_get: {
         parameters: {
             query?: never;
@@ -5858,6 +9609,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_creation_capabilities_api_task_creation_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskCreationCapabilities"];
                 };
             };
         };
@@ -6020,6 +9791,72 @@ export interface operations {
             path: {
                 group_id: string;
                 file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivateVpnSourceView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete: {
+        parameters: {
+            query?: {
+                source_id?: string | null;
+            };
+            header?: never;
+            path: {
+                group_id: string;
             };
             cookie?: never;
         };
@@ -6611,7 +10448,10 @@ export interface operations {
     };
     get_agent_session_api_tasks__task_id__agents__agent_id__session_get: {
         parameters: {
-            query?: never;
+            query?: {
+                journal?: boolean;
+                run_number?: number | null;
+            };
             header?: never;
             path: {
                 task_id: string;
@@ -6655,7 +10495,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SessionBody"];
+                "application/json": components["schemas"]["SessionBody"] | components["schemas"]["BoardJournalProjection"];
             };
         };
         responses: {
@@ -6668,6 +10508,40 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_agent_journal_api_tasks__task_id__agents__agent_id__session_journal_get: {
+        parameters: {
+            query?: {
+                run_number?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -7425,6 +11299,701 @@ export interface operations {
             };
         };
     };
+    announcements_api_tasks__task_id__ctf_knowledge_announcements_get: {
+        parameters: {
+            query?: {
+                after_revision?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Announcement"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_announcement_api_tasks__task_id__ctf_knowledge_announcements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnouncementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Announcement"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    challenges_api_tasks__task_id__ctf_knowledge_challenges_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_challenge_api_tasks__task_id__ctf_knowledge_challenges_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BoardChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capture_platform_result_api_tasks__task_id__ctf_knowledge_platform_results_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagCaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_api_tasks__task_id__ctf_knowledge_submissions__submission_id__dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagDispatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receipt_api_tasks__task_id__ctf_knowledge_submissions__submission_id__receipt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagReceiptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unknown_api_tasks__task_id__ctf_knowledge_submissions__submission_id__unknown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                submission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagUnknownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tools_api_tasks__task_id__ctf_knowledge_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_api_tasks__task_id__ctf_knowledge_tools__operation__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                operation: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    board_api_tasks__task_id__ctf_knowledge__challenge_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_fact_api_tasks__task_id__ctf_knowledge__challenge_id__facts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChallengeFactRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeWrite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    flag_board_api_tasks__task_id__ctf_knowledge__challenge_id__flags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagBoard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagCandidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagCandidate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    flag_value_api_tasks__task_id__ctf_knowledge__challenge_id__flags_candidates__candidate_id__value_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagValueDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_flag_api_tasks__task_id__ctf_knowledge__challenge_id__flags_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlagSubmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlagSubmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_intent_api_tasks__task_id__ctf_knowledge__challenge_id__intents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChallengeIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeWrite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_object_api_tasks__task_id__ctf_knowledge__challenge_id__objects__object_id__get: {
+        parameters: {
+            query?: {
+                depth?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+                object_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChallengeKnowledgeObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_api_tasks__task_id__ctf_knowledge__challenge_id__search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                k?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_api_tasks__task_id__ctf_knowledge__challenge_id__snapshot_get: {
+        parameters: {
+            query?: {
+                max_lines?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     member_operation_api_tasks__task_id__ctf_members__member_id___operation__post: {
         parameters: {
             query?: never;
@@ -7484,6 +12053,627 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerLaunch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_action_api_tasks__task_id__ctf_runtime_runner_bootstrap_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_budget_increase_api_tasks__task_id__ctf_runtime_runner_bootstrap_budget_increase_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeBudgetIncreaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeBudgetIncreaseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_bootstrap_api_tasks__task_id__ctf_runtime_runner_bootstrap_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerClaim"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_pause_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_pause_api_tasks__task_id__ctf_runtime_runner_bootstrap_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativePauseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_recovery_status_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeRecoveryStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_recovery_api_tasks__task_id__ctf_runtime_runner_bootstrap_recovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeRecoveryIntent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_resume_api_tasks__task_id__ctf_runtime_runner_bootstrap_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativePauseStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    credentials_api_tasks__task_id__ctf_runtime_runner_gateway_bindings__binding_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewayCredentialsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_binding_api_tasks__task_id__ctf_runtime_runner_management_bindings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerBindingRegistration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__attach_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_prompt_api_tasks__task_id__ctf_runtime_runner_management_bindings__binding_id__prompt_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerPromptPublication"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_api_tasks__task_id__ctf_runtime_runner_management_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerCommandSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerRegistration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_renew_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_owner_api_tasks__task_id__ctf_runtime_runner_management_owners_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerOwnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -7713,6 +12903,39 @@ export interface operations {
             };
         };
     };
+    review_costs_api_tasks__task_id__gateway_model_review_costs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_intent_api_tasks__task_id__intents_post: {
         parameters: {
             query?: {
@@ -7895,6 +13118,39 @@ export interface operations {
             };
         };
     };
+    task_fees_api_tasks__task_id__pi_fees_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     purge_task_api_tasks__task_id__purge_post: {
         parameters: {
             query?: never;
@@ -7983,6 +13239,1635 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acquire_api_tasks__task_id__runner_control_bindings__binding_id__acquire_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionLeaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionLeaseReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    background_helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers_status_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_status_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_background_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__accepted_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperAccepted"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    launch_helper_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__launch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperLaunch"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_result_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperResult"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    helper_terminal_api_tasks__task_id__runner_control_bindings__binding_id__helpers__invocation_id__terminal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelperTerminal"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HelperStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_journal_api_tasks__task_id__runner_control_bindings__binding_id__journal_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JournalConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prompt_api_tasks__task_id__runner_control_bindings__binding_id__prompt_get: {
+        parameters: {
+            query?: {
+                known_revision?: number;
+                known_board_version?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedPrompt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admit_tool_api_tasks__task_id__runner_control_bindings__binding_id__tools_admit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPermit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_result_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolResultConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tool_unknown_api_tasks__task_id__runner_control_bindings__binding_id__tools__invocation_id__unknown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                binding_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolUnknownSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPermit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_api_tasks__task_id__runner_control_commands_get: {
+        parameters: {
+            query?: {
+                after_seq?: number;
+                runner_id?: string;
+                pod_uid?: string;
+                epoch?: number;
+                wait_seconds?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerPoll"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_api_tasks__task_id__runner_control_commands__request_id__receipts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandReceipt"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationAck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_claim_api_tasks__task_id__runner_vpn_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_desired_api_tasks__task_id__runner_vpn_desired_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_lease_api_tasks__task_id__runner_vpn_lease_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_egress_observe_api_tasks__task_id__runner_vpn_observe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    view_shared_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_get: {
+        parameters: {
+            query?: {
+                journals?: boolean;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_action_api_tasks__task_id__runtime_runner_bootstrap_actions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_bootstrap_api_tasks__task_id__runtime_runner_bootstrap_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeRunnerClaim"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_admit_api_tasks__task_id__sandbox_host_admit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_event_api_tasks__task_id__sandbox_host_calls__invocation_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_evidence_receipt_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_evidence_api_tasks__task_id__sandbox_host_calls__invocation_id__evidence_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_result_api_tasks__task_id__sandbox_host_calls__invocation_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                invocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_catalog_api_tasks__task_id__sandbox_host_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_claim_api_tasks__task_id__sandbox_host_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_plan_api_tasks__task_id__sandbox_host_inputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_claim_api_tasks__task_id__sandbox_host_inputs_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputClaimResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_confirm_api_tasks__task_id__sandbox_host_inputs_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeInputPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    input_content_api_tasks__task_id__sandbox_host_inputs__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_scopes_api_tasks__task_id__sandbox_host_network_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_bytes_api_tasks__task_id__sandbox_host_network__source_id__bytes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_observe_api_tasks__task_id__sandbox_host_network__source_id__observe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_permit_api_tasks__task_id__sandbox_host_network__source_id__permit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_seal_api_tasks__task_id__sandbox_host_network__source_id__seal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    host_scopes_api_tasks__task_id__sandbox_host_scopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scope_claim_api_tasks__task_id__sandbox_host_scopes__command_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scope_event_api_tasks__task_id__sandbox_host_scopes__command_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_desired_api_tasks__task_id__sandbox_host_vpn_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_link_api_tasks__task_id__sandbox_host_vpn_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vpn_sandbox_preflight_api_tasks__task_id__sandbox_host_vpn_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    command_records_api_tasks__task_id__sandbox_commands_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+                before?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxCommandPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    command_record_api_tasks__task_id__sandbox_commands__command_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxCommandDetail"];
                 };
             };
             /** @description Validation Error */

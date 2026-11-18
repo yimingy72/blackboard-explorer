@@ -1,0 +1,244 @@
+"""One administrator-published native CTF creation environment."""
+
+import hashlib
+import hmac
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Literal
+
+from bbx_contracts.models import ContractModel
+from bbx_contracts.native_gateway import native_usd_amount
+from bbx_contracts.runner import Digest
+from bbx_contracts.runner_bootstrap import (
+    BINDING_CAPTURE_CONFIG_FIELDS,
+    BlackboardCreationCapability,
+    NativeCtfEnvironment,
+    TaskCreationCapabilities,
+    management_document_digest,
+)
+from bbx_contracts.runner_inputs import INPUT_PROFILE, NativeSharedInputLimits
+from bbx_contracts.runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    VPN_PROFILES,
+    NativeVpnCapability,
+    vpn_deployment,
+)
+from fastapi import HTTPException
+from pydantic import Field
+
+from bbx_blackboard.settings import Settings
+
+LIMIT = 256 * 1024
+
+
+ORIGINAL_KALI = (
+    "bbx-exec-env-kali@sha256:c79ded7b50e9a7ea2433e9740c48417ce08601948196ec497ad403c779da58ae"
+)
+
+
+class AcceptanceReference(ContractModel):
+    file: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    sha256: Digest
+
+
+class CaptureAcceptance(ContractModel):
+    schema_version: Literal[3]
+    pi_model_protocol: Literal["pi-messages-v1"]
+    mcp_transport: Literal["direct-v2"]
+    runner_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
+    sandbox_host_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
+    runtime_artifact_sha256: Digest
+    runtime_config_digest: Digest
+    base_source: Literal["original", "reconstructed"]
+    base_tool_image: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$")
+    recipe_sha256: Digest | None = None
+    traffic_sandbox_image: str
+    public_create_and_archive: Literal[True]
+    inputs_profile: Literal["shared-inputs-v1"] | None = None
+    inputs_host_image: str | None = None
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1", "openvpn-task-ipv4-tcp-v1"] | None = None
+    vpn_egress_image: str | None = None
+    vpn_sandbox_image: str | None = None
+    vpn_host_image: str | None = None
+    vpn_roundtrip_and_disconnect: Literal[True] | None = None
+    task_network_default_and_vpn: Literal[True] | None = None
+
+
+class NativeCtfPublication(ContractModel):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    revision: int = Field(ge=1, strict=True)
+    label: str = Field(min_length=1, max_length=100)
+    release: Literal["verified", "test_only"]
+    ctf_profile_version: int = Field(ge=1, strict=True)
+    budget_currency: Literal["USD"] = "USD"
+    runtime_resource_config: dict[str, Any]
+    acceptance: AcceptanceReference | None = None
+    inputs_profile: Literal["shared-inputs-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    vpn_profile: Literal["openvpn-ipv4-tcp-v1", "openvpn-task-ipv4-tcp-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    def public(self, stamp: str) -> NativeCtfEnvironment:
+        vpn = (
+            vpn_deployment(self.runtime_resource_config["vpn"])
+            if self.vpn_profile in VPN_PROFILES
+            else None
+        )
+        return NativeCtfEnvironment(
+            id=self.id,
+            revision=self.revision,
+            publication_stamp=stamp,
+            label=self.label,
+            vpn=NativeVpnCapability(profile=vpn.profile, id=vpn.id, label=vpn.label)
+            if vpn
+            else None,
+            shared_inputs=NativeSharedInputLimits()
+            if self.inputs_profile == INPUT_PROFILE
+            else None,
+        )
+
+    def frozen(self) -> dict:
+        return {
+            "id": self.id,
+            "revision": self.revision,
+            "runtime_config_digest": management_document_digest(self.runtime_resource_config),
+            **({"inputs_profile": self.inputs_profile} if self.inputs_profile else {}),
+            **({"vpn_profile": self.vpn_profile} if self.vpn_profile else {}),
+        }
+
+    def validate_budget(self, usd: Decimal) -> None:
+        try:
+            native_usd_amount(usd)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+
+@dataclass(frozen=True)
+class PublicationState:
+    exclusive: bool = False
+    publication: NativeCtfPublication | None = None
+    stamp: str = ""
+
+    def capabilities(
+        self, *, blackboard: BlackboardCreationCapability, native_available: bool = True
+    ) -> TaskCreationCapabilities:
+        return TaskCreationCapabilities(
+            mode="native-ctf" if self.exclusive else "legacy",
+            blackboard=blackboard,
+            native_ctf=self.publication.public(self.stamp)
+            if native_available and self.publication
+            else None,
+        )
+
+
+def _bounded_file(path: Path) -> bytes:
+    with path.open("rb") as file:
+        data = file.read(LIMIT + 1)
+    if len(data) > LIMIT:
+        raise ValueError("Native publication exceeds its size bound")
+    return data
+
+
+def load_publication(settings: Settings, *, allow_test_only: bool = False) -> PublicationState:
+    """Invalid explicit config stays exclusive and unavailable; it never falls back to legacy."""
+    path = settings.native_ctf_publication_file
+    if path is None:
+        return PublicationState()
+    from bbx_blackboard.native_runner_bootstrap import NativeRunnerBootstrap
+
+    try:
+        publication = NativeCtfPublication.model_validate_json(_bounded_file(path))
+        vpn = publication.runtime_resource_config.get("vpn")
+        if (vpn is not None) != (publication.vpn_profile in VPN_PROFILES):
+            raise ValueError("VPN deployment and publication must be enabled together")
+        if vpn is not None:
+            if vpn_deployment(vpn).profile != publication.vpn_profile:
+                raise ValueError("VPN deployment and publication profiles differ")
+        if publication.release == "test_only":
+            if not allow_test_only or publication.acceptance is not None:
+                raise ValueError("Fixture publications are not accepted by the application")
+        else:
+            ref = publication.acceptance
+            if ref is None:
+                raise ValueError("Original image publication requires acceptance evidence")
+            raw = _bounded_file(path.parent / ref.file)
+            if hashlib.sha256(raw).hexdigest() != ref.sha256:
+                raise ValueError("Original image acceptance evidence changed")
+            accepted = CaptureAcceptance.model_validate_json(raw)
+            original_digest = ORIGINAL_KALI.rsplit("@", 1)[-1]
+            uses_original = accepted.base_tool_image.rsplit("@", 1)[-1] == original_digest
+            if (
+                accepted.runner_image != publication.runtime_resource_config.get("runner_image")
+                or accepted.sandbox_host_image
+                != publication.runtime_resource_config.get("sandbox_host_image")
+                or accepted.runtime_artifact_sha256
+                != publication.runtime_resource_config.get("runtime_artifact_sha256")
+                or accepted.runtime_config_digest
+                != management_document_digest(publication.runtime_resource_config)
+                or (accepted.base_source == "original" and not uses_original)
+                or (
+                    accepted.base_source == "reconstructed"
+                    and (uses_original or accepted.recipe_sha256 is None)
+                )
+                or accepted.traffic_sandbox_image
+                != publication.runtime_resource_config.get("traffic_sandbox_image")
+                or accepted.base_tool_image.rsplit("@", 1)[-1]
+                == accepted.traffic_sandbox_image.rsplit("@", 1)[-1]
+                or accepted.inputs_profile != publication.inputs_profile
+                or accepted.vpn_profile != publication.vpn_profile
+                or (
+                    publication.vpn_profile == VPN_DYNAMIC_PROFILE
+                    and accepted.task_network_default_and_vpn is not True
+                )
+                or (
+                    vpn is not None
+                    and (
+                        accepted.vpn_egress_image != vpn.get("egress_image")
+                        or accepted.vpn_sandbox_image != vpn.get("sandbox_image")
+                        or accepted.vpn_host_image
+                        != publication.runtime_resource_config.get("sandbox_host_image")
+                        or accepted.vpn_roundtrip_and_disconnect is not True
+                    )
+                )
+                or (
+                    publication.inputs_profile == INPUT_PROFILE
+                    and accepted.inputs_host_image
+                    != publication.runtime_resource_config.get("sandbox_host_image")
+                )
+            ):
+                raise ValueError("Original image acceptance does not match this deployment")
+        config = publication.runtime_resource_config
+        if {
+            "retirement_single_apiserver",
+            "mcp_transport",
+            "board_network",
+            "execution_contract",
+            "mcp_gateway_url",
+            "runner_gateway_url",
+            "native_mcp_gateway_url",
+            "native_gateway_data_url",
+        } & config.keys():
+            raise ValueError("Expected the exact direct Runtime claim configuration")
+        if not BINDING_CAPTURE_CONFIG_FIELDS <= config.keys():
+            raise ValueError("Published native CTF requires binding capture")
+        NativeRunnerBootstrap._configuration(config)
+        if any(
+            config[key].endswith("/") for key in ("runner_blackboard_url", "runner_model_proxy_url")
+        ):
+            raise ValueError("Expected canonical Runtime control origins")
+        management_document_digest(config)
+    except (OSError, TypeError, ValueError, HTTPException):
+        return PublicationState(exclusive=True)
+    # Keep low-entropy private targets out of an offline guessing oracle; this is not auth.
+    stamp = hmac.digest(
+        settings.agent_token_secret.get_secret_value().encode(),
+        (
+            "native-ctf-publication:"
+            + management_document_digest(publication.model_dump(mode="json"))
+        ).encode(),
+        "sha256",
+    ).hex()
+    return PublicationState(exclusive=True, publication=publication, stamp=stamp)

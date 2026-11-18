@@ -1,0 +1,23 @@
+{
+  "name": "bbx-pi-seam",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.21.0" },
+  "scripts": {
+    "test": "node scripts/prepare-plugin-fixture.mjs && node --test --test-concurrency=1 test/*.test.mjs",
+    "build:patched": "node scripts/build-patched-plugin.mjs",
+    "test:daemon": "npm run build:patched && node --test --test-concurrency=1 test/daemon/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0"
+  },
+  "devDependencies": {
+    "jiti": "2.7.0",
+    "pi-subagents": "0.85.0",
+    "pi-subagents-source": "https://codeload.github.com/nicobailon/pi-subagents/tar.gz/b6647222bd2e849021054292927ef39fea0793ed",
+    "typebox": "1.3.27",
+    "typescript": "5.9.3"
+  }
+}

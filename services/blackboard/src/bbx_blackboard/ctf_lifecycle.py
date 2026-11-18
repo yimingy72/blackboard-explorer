@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid5
 
+from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import insert, select, update
@@ -115,6 +116,18 @@ class CtfLifecycleMixin:
     async def record_cleanup(self, tid):
         async with self.repo.engine.begin() as conn:
             task = await self._terminal(conn, tid)
+            if business_contract(task) == BOARD_CONTRACT:
+                native_resources = (
+                    await conn.execute(
+                        select(s.task_runner_resources.c.state).where(
+                            s.task_runner_resources.c.task_id == tid
+                        )
+                    )
+                ).scalar_one_or_none()
+                check(
+                    native_resources is None or native_resources == "stopped",
+                    "Original native Task resource exit is not confirmed",
+                )
             check(bool(task["workspace_uri"]), "Archive must be registered before cleanup")
             check(await self.objects.exists(task["workspace_uri"]), "Archive missing")
             control = dict(task["ctf_control"])
@@ -148,6 +161,7 @@ class CtfLifecycleMixin:
         )
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            check(business_contract(task) != BOARD_CONTRACT, "V1 Runner task resume is not enabled")
             previous = (
                 (
                     await conn.execute(
@@ -261,6 +275,7 @@ class CtfLifecycleMixin:
                 "context_blocked_members",
                 "turn_retries",
                 "turn_retry_delays",
+                "failure_hold",
             ):
                 control.pop(key, None)
             control.update(phase="provisioning", epoch=control.get("epoch", 0) + 1)

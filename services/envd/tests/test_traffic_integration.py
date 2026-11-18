@@ -1,4 +1,4 @@
-"""Local synthetic traffic only; build bbx-traffic-envd:latest before running."""
+"""Local synthetic traffic only; build bbx-exec-env:latest before running."""
 
 import asyncio
 import hashlib
@@ -101,7 +101,7 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
     os.environ["TESTCONTAINERS_RYUK_DISABLED"] = "true"
     task_id = str(uuid.uuid4())
     container = (
-        DockerContainer(os.environ.get("BBX_TRAFFIC_TEST_IMAGE", "bbx-traffic-envd:latest"))
+        DockerContainer(os.environ.get("BBX_TRAFFIC_TEST_IMAGE", "bbx-exec-env:latest"))
         .with_name("bbx-traffic-test-" + uuid.uuid4().hex[:8])
         .with_env("ENVD_TOKEN", TOKEN)
         .with_env("ENVD_TASK_ID", task_id)
@@ -126,7 +126,7 @@ async def test_local_https_stream_sudo_agents_and_all_raw_protocols():
         network.name = "bbx-traffic-network-" + uuid.uuid4().hex[:8]
         resources.enter_context(network)
         resources.enter_context(
-            DockerContainer("bbx-traffic-envd:latest")
+            DockerContainer("bbx-exec-env:latest")
             .with_name("bbx-traffic-target-" + uuid.uuid4().hex[:8])
             .with_network(network)
             .with_network_aliases("synthetic-target")

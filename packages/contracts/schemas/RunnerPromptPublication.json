@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "expected_epoch": {
+      "minimum": 1,
+      "title": "Expected Epoch",
+      "type": "integer"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "instructions": {
+      "maxLength": 131072,
+      "title": "Instructions",
+      "type": "string"
+    }
+  },
+  "required": [
+    "expected_epoch",
+    "expected_revision",
+    "instructions"
+  ],
+  "title": "RunnerPromptPublication",
+  "type": "object"
+}

@@ -7,7 +7,6 @@ from uuid import UUID
 
 import httpx
 import pytest
-from agent_framework import Agent, FunctionInvocationContext, tool
 from bbx_contracts.ctf import CtfSolution
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
@@ -15,6 +14,7 @@ from bbx_runtime.ctf.failures import CtfToolFailure, propagate_tool_failure
 from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.telemetry import ToolArgumentFeedbackMiddleware, ToolObservationMiddleware
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, FunctionInvocationContext, tool
 from bbx_runtime.session import CheckpointHistoryProvider, ToolResultCheckpointMiddleware
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import TURN, MemoryCtf

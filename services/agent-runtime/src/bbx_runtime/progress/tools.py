@@ -4,11 +4,11 @@ import html
 import json
 from typing import Any
 
-from agent_framework import tool
-from bbx_contracts.progress import ProgressNode
+from bbx_contracts.progress import ProgressNode, progress_tool_schemas
 from pydantic import ValidationError
 
 from bbx_runtime.clients.blackboard import RemoteError
+from bbx_runtime.pi import tool
 from bbx_runtime.progress.client import ProgressClient
 from bbx_runtime.progress.session import ProgressSessionClient
 from bbx_runtime.session import SessionCheckpoint
@@ -138,4 +138,7 @@ def progress_tools(
         get_progress_tree,
         update_progress_tree,
     ]
+    schemas = progress_tool_schemas()
+    for item in tools:
+        item.input_schema = schemas[item.name]
     return [item for item in tools if item.name in enabled]

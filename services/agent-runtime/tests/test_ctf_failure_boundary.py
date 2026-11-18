@@ -5,11 +5,11 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import MiddlewareFailure
 from bbx_runtime.clients.blackboard import RemoteError
 from bbx_runtime.ctf.execution import UnknownCommandOutcome
 from bbx_runtime.ctf.failures import CtfToolFailure, propagate_tool_failure, tool_failure_cause
 from bbx_runtime.ctf.runner import CtfRunner
+from bbx_runtime.pi import MiddlewareFailure
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_provider_boundary import DispatchService
 
@@ -83,8 +83,7 @@ async def test_runner_unwraps_tool_failure_without_repeating_or_changing_error_c
         assert caught.value is original
         assert not service.finished
     assert len(calls) == 1
-    # MAF's local-history sentinel triggers cleanup too, never another tool batch.
+    # Pi exits at the failed platform boundary without an extra model request.
     cleanup_options = client.received_options[provider_calls_at_failure[0] :]
-    assert len(cleanup_options) == 1
-    assert cleanup_options[0]["tool_choice"] == "none"
+    assert cleanup_options == []
     assert not any(observation["kind"] == "model_error" for observation in service.observations)

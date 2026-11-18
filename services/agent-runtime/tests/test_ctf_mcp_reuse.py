@@ -8,9 +8,9 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from agent_framework import MCPStreamableHTTPTool
 from bbx_runtime.ctf.platform import PlatformAdapter, PlatformCatalogCache
 from bbx_runtime.ctf.runner import CtfRunner
+from bbx_runtime.pi import MCPStreamableHTTPTool
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
@@ -335,12 +335,13 @@ async def test_native_schema_validation_and_list_changed_do_not_expand_fixed_wra
     server = await service.get_mcp_server("fake", 3)
     await second.request(server, {}, "status", {})
     connection = connections[-1]
-    await connection.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
-    for _ in range(30):
-        await asyncio.sleep(0.005)
-        if remote.methods["tools/list"] >= 4:
-            break
-    assert remote.methods["tools/list"] == 4
+    assert connection.session is not None
+    reads = remote.methods["tools/list"]
+    await connection.session._received_notification(
+        types.ServerNotification(types.ToolListChangedNotification())
+    )
+    await asyncio.sleep(0)
+    assert remote.methods["tools/list"] == reads
     assert {item.name for item in tools} == {"platform_fake_submit", "platform_fake_status"}
     assert connection.functions == []
     assert remote.methods["tools/call"] == 2

@@ -1,0 +1,349 @@
+{
+  "$defs": {
+    "FlagResult": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "duplicate",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "correct_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correct Count"
+        },
+        "total_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Count"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "external_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Ref"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "FlagResult",
+      "type": "object"
+    },
+    "FlagSource": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Server Name",
+          "type": "string"
+        },
+        "server_version": {
+          "minimum": 1,
+          "title": "Server Version",
+          "type": "integer"
+        },
+        "tool_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "server_version",
+        "tool_name"
+      ],
+      "title": "FlagSource",
+      "type": "object"
+    },
+    "KnowledgeAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 0,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "owner_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Id"
+        },
+        "scope_revision": {
+          "minimum": 1,
+          "title": "Scope Revision",
+          "type": "integer"
+        },
+        "assignment_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assignment Id"
+        }
+      },
+      "required": [
+        "agent_id",
+        "generation",
+        "turn_id",
+        "epoch",
+        "scope_revision"
+      ],
+      "title": "KnowledgeAssignment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "candidate_id": {
+      "format": "uuid",
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "verification_round": {
+      "title": "Verification Round",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/FlagSource"
+    },
+    "target_ref": {
+      "additionalProperties": true,
+      "title": "Target Ref",
+      "type": "object"
+    },
+    "request_digest": {
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "author_id": {
+      "title": "Author Id",
+      "type": "string"
+    },
+    "assignment_ref": {
+      "$ref": "#/$defs/KnowledgeAssignment"
+    },
+    "status": {
+      "enum": [
+        "prepared",
+        "dispatched",
+        "accepted",
+        "rejected",
+        "duplicate",
+        "unknown",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "platform_call_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform Call Id"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FlagResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "response_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Uri"
+    },
+    "response_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Sha256"
+    },
+    "upstream_response_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Upstream Response Uri"
+    },
+    "upstream_response_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Upstream Response Sha256"
+    },
+    "progress_applied": {
+      "default": false,
+      "title": "Progress Applied",
+      "type": "boolean"
+    },
+    "late": {
+      "default": false,
+      "title": "Late",
+      "type": "boolean"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_version": {
+      "title": "Created Version",
+      "type": "integer"
+    },
+    "updated_version": {
+      "title": "Updated Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "operation_id",
+    "task_id",
+    "challenge_id",
+    "candidate_id",
+    "verification_round",
+    "source",
+    "target_ref",
+    "request_digest",
+    "author_id",
+    "assignment_ref",
+    "status",
+    "created_at",
+    "created_version",
+    "updated_version"
+  ],
+  "title": "FlagSubmission",
+  "type": "object"
+}

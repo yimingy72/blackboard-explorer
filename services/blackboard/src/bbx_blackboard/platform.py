@@ -2,39 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
-import json
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-import httpx
-from bbx_contracts.billing import supports_deepseek_schedule
-from bbx_contracts.model_limits import effective_max_input_tokens, effective_max_output_tokens
-from bbx_contracts.models import AgentProfile, ModelConfig, Price
-from bbx_contracts.providers import PROVIDERS
+from bbx_contracts.models import AgentProfile
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, HTTPException, Query, Request, Response
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
-from sqlalchemy import insert, select, text, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.auth import require_service, require_user_or_service
-from bbx_blackboard.model_discovery import (
-    ModelCatalogResult,
-    ModelDiscoveryResult,
-    discover_models,
-    model_catalog,
-)
-from bbx_blackboard.store.schema import app_settings
 from bbx_blackboard.store.schema import platform_configs as table
 
-Kind = Literal["models", "mcp-servers"]
+Kind = Literal["mcp-servers"]
+StoredKind = Literal["mcp-servers", "pi-models"]
 
 
 def config_lock(kind: str, name: str) -> int:
@@ -50,98 +35,6 @@ def check_url(value: str) -> str:
     if url.query or url.fragment:
         raise ValueError("连接地址不能包含查询参数或片段；认证信息请使用密钥字段")
     return value.rstrip("/")
-
-
-class ModelInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    label: str = Field(min_length=1, max_length=100)
-    provider: str
-    model: str = Field(min_length=1, max_length=200)
-    base_url: str = ""
-    reasoning_effort: str = Field(default="none", min_length=1)
-    supports_vision: bool | None = None
-    context_window: int | None = Field(default=1_000_000, strict=True, ge=1)
-    max_input_tokens: int | None = Field(default=None, strict=True, ge=1)
-    max_output_tokens: int | None = Field(default=None, strict=True, ge=1)
-    price: Price
-    provider_options: dict[str, str] = Field(default_factory=dict)
-    credentials: dict[str, SecretStr] = Field(default_factory=dict)
-    credential_source: Literal["stored", "none"] = "stored"
-    api_key: SecretStr | None = None
-    enabled: bool = True
-
-    @model_validator(mode="after")
-    def check_model(self) -> ModelInput:
-        if self.context_window is None:
-            self.context_window = 1_000_000
-        spec = cast(dict[str, Any] | None, PROVIDERS.get(self.provider))
-        if spec is None:
-            raise ValueError("不支持此 Provider，请从平台目录选择")
-        if self.price.currency != "CNY" or not self.price.is_complete():
-            raise ValueError("平台模型须填写完整人民币 CNY 价格表，包括 off_peak")
-        default_url = str(spec.get("default_base_url") or "")
-        if default_url == "provider-default" and not spec.get("base_url_required"):
-            if self.base_url not in {"", "provider-default"}:
-                raise ValueError("此服务端点由区域和项目确定，不接受自定义 API 地址")
-            self.base_url = "provider-default"
-        else:
-            self.base_url = check_url(self.base_url or default_url)
-        if self.price.billing_mode == "deepseek_schedule" and not supports_deepseek_schedule(
-            self.base_url, self.model
-        ):
-            raise ValueError("峰谷计费仅支持官方 DeepSeek 端点和已知模型")
-        allowed = {item["name"] for item in spec["options_fields"]}
-        if not set(self.provider_options) <= allowed:
-            raise ValueError("存在当前 Provider 不支持的连接选项")
-        for item in spec["options_fields"]:
-            if item.get("required") and not self.provider_options.get(item["name"], "").strip():
-                raise ValueError(f"缺少连接选项：{item['name']}")
-            value = self.provider_options.get(item["name"])
-            if (
-                item["name"] in self.provider_options
-                and item.get("options")
-                and value not in {choice["value"] for choice in item["options"]}
-            ):
-                raise ValueError(f"不支持的连接选项值：{item['label']}")
-        allowed_credentials = {item["name"] for item in spec["credential_fields"]}
-        if not set(self.credentials) <= allowed_credentials:
-            raise ValueError("存在当前 Provider 不支持的凭据字段")
-        ModelConfig.model_validate(
-            self.model_dump(
-                exclude={"label", "credentials", "credential_source", "api_key", "enabled"}
-            )
-        )
-        return self
-
-
-class ModelDiscoveryInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    provider: str
-    base_url: str = ""
-    provider_options: dict[str, str] = Field(default_factory=dict)
-    credentials: dict[str, SecretStr] = Field(default_factory=dict)
-    saved_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
-    saved_version: int | None = Field(default=None, strict=True, ge=1)
-
-    @model_validator(mode="after")
-    def check_connection(self) -> ModelDiscoveryInput:
-        spec = PROVIDERS.get(self.provider)
-        if spec is None:
-            raise ValueError("不支持此 Provider，请从平台目录选择")
-        default = spec["default_base_url"]
-        if default == "provider-default" and not spec["base_url_required"]:
-            if self.base_url not in {"", "provider-default"}:
-                raise ValueError("此服务端点由区域和项目确定，不接受自定义 API 地址")
-            self.base_url = "provider-default"
-        else:
-            self.base_url = check_url(self.base_url or default)
-        if not set(self.provider_options) <= {item["name"] for item in spec["options_fields"]}:
-            raise ValueError("存在当前 Provider 不支持的连接选项")
-        if not set(self.credentials) <= {item["name"] for item in spec["credential_fields"]}:
-            raise ValueError("存在当前 Provider 不支持的凭据字段")
-        if self.saved_version is not None and self.saved_name is None:
-            raise ValueError("指定已保存版本时须同时指定模型名称")
-        return self
 
 
 class McpInput(BaseModel):
@@ -167,27 +60,15 @@ class PlatformStore:
     def public(self, row: dict[str, Any]) -> dict[str, Any]:
         common = {key: row[key] for key in ("name", "version", "label", "enabled")}
         common["has_secret"] = bool(row["secret_ciphertext"])
-        if row["kind"] == "models":
-            model = ModelConfig.model_validate(row["config"])
-            return {
-                **common,
-                "config": {
-                    **row["config"],
-                    "platform_id": row["name"],
-                    "platform_version": row["version"],
-                },
-                "credential_source": row["credential_source"],
-                "configured_credentials": sorted(self._decrypt_model_credentials(row)),
-                "effective_limits": {
-                    "context_window": model.context_window,
-                    "max_input_tokens": effective_max_input_tokens(model),
-                    "max_output_tokens": effective_max_output_tokens(model),
-                },
-            }
         return {**common, **row["config"]}
 
     async def get(
-        self, kind: Kind, name: str, version: int | None = None, *, include_deleted: bool = False
+        self,
+        kind: StoredKind,
+        name: str,
+        version: int | None = None,
+        *,
+        include_deleted: bool = False,
     ) -> dict[str, Any]:
         query = select(table).where(table.c.kind == kind, table.c.name == name)
         if not include_deleted:
@@ -214,20 +95,16 @@ class PlatformStore:
                 )
             ).mappings()
             result = [self.public(dict(row)) for row in rows]
-        if kind == "models":
-            default_name = await self.default_model_name()
-            for item in result:
-                item["is_default"] = item["name"] == default_name
         return result
 
     async def save(
         self,
         kind: Kind,
         name: str,
-        body: ModelInput | McpInput,
+        body: McpInput,
         actor: str,
         *,
-        bootstrap: bool = False,
+        p6b: bool = False,
     ) -> dict[str, Any]:
         import re
 
@@ -252,56 +129,29 @@ class PlatformStore:
                 .first()
             )
             if previous and previous["deleted"]:
-                raise HTTPException(409, "此模型已删除，请刷新列表或新增模型")
+                raise HTTPException(409, "此 MCP 服务已删除，请刷新列表或新增服务")
             ciphertext = previous["secret_ciphertext"] if previous else None
-            if isinstance(body, ModelInput):
-                spec = cast(dict[str, Any], PROVIDERS[body.provider])
-                values = (
-                    self._decrypt_model_credentials(dict(previous))
-                    if previous
-                    and previous["config"].get("provider") == body.provider
-                    and previous["config"].get("base_url", "").rstrip("/") == body.base_url
-                    and previous["config"].get("provider_options", {}) == body.provider_options
-                    else {}
-                )
-                values.update(
-                    {
-                        key: value.get_secret_value()
-                        for key, value in body.credentials.items()
-                        if value.get_secret_value()
-                    }
-                )
-                if body.api_key and body.api_key.get_secret_value():
-                    values["api_key"] = body.api_key.get_secret_value()
-                required = [
-                    item["name"] for item in spec["credential_fields"] if item.get("required")
-                ]
+            source = "stored"
+            secret = body.secret.get_secret_value() if body.secret else None
+            config = body.model_dump(
+                mode="json", exclude={"label", "secret", "clear_secret", "enabled"}
+            )
+            if p6b:
+                config["catalog_version"] = "p6b"
+            if body.clear_secret:
+                ciphertext, secret = None, None
+            if ciphertext and not secret and previous:
+                from bbx_blackboard.pi_registry import normalized_url
+
+                old = previous["config"]
                 if (
-                    not bootstrap
-                    and not spec["allow_no_auth"]
-                    and any(not values.get(key) for key in required)
+                    normalized_url(old["url"])[1] != normalized_url(body.url)[1]
+                    or old["auth_header"].lower() != body.auth_header.lower()
+                    or old["auth_scheme"] != body.auth_scheme
                 ):
-                    raise HTTPException(
-                        422, "请填写所选 Provider 所需的全部平台凭据；已有字段留空可保留"
-                    )
-                if values and any(not values.get(key) for key in required):
-                    raise HTTPException(422, "凭据不完整，请补齐所选 Provider 的必填字段")
-                source = "stored" if values or not spec["allow_no_auth"] else "none"
-                ciphertext = self._encrypt_credentials(values) if values else None
-                config = body.model_dump(
-                    mode="json",
-                    exclude={"label", "api_key", "credentials", "credential_source", "enabled"},
-                )
-            else:
-                source = "stored"
-                secret = body.secret.get_secret_value() if body.secret else None
-                config = body.model_dump(
-                    mode="json", exclude={"label", "secret", "clear_secret", "enabled"}
-                )
-                if body.clear_secret:
-                    ciphertext, secret = None, None
-                if secret:
-                    ciphertext = self.cipher.encrypt(secret.encode()).decode()
+                    raise HTTPException(422, "更换上游或认证方式时，请重新填写或清除旧密钥")
+            if secret:
+                ciphertext = self.cipher.encrypt(secret.encode()).decode()
             row = (
                 (
                     await conn.execute(
@@ -325,33 +175,9 @@ class PlatformStore:
             )
         return self.public(dict(row))
 
-    def _encrypt_credentials(self, values: dict[str, str]) -> str:
-        return self.cipher.encrypt(
-            json.dumps({"bbx_credentials_v": 1, "values": values}).encode()
-        ).decode()
-
-    def _decrypt_model_credentials(self, row: dict[str, Any]) -> dict[str, str]:
-        if not row.get("secret_ciphertext"):
-            return {}
-        plain = self.cipher.decrypt(row["secret_ciphertext"].encode()).decode()
-        try:
-            value = json.loads(plain)
-            if isinstance(value, dict) and value.get("bbx_credentials_v") == 1:
-                return value["values"]
-        except (ValueError, TypeError):
-            pass
-        return {"api_key": plain}
-
-    async def credentials(self, kind: Kind, name: str, version: int) -> dict[str, Any]:
+    async def credentials(self, kind: StoredKind, name: str, version: int) -> dict[str, Any]:
         # Existing tasks and resumed conversations still use their pinned credentials.
         row = await self.get(kind, name, version, include_deleted=True)
-        if kind == "models":
-            values = self._decrypt_model_credentials(row)
-            return {
-                "secret": values.get("api_key"),
-                "credentials": values,
-                "credential_source": "stored" if values else "none",
-            }
         secret = (
             self.cipher.decrypt(row["secret_ciphertext"].encode()).decode()
             if row["secret_ciphertext"]
@@ -359,142 +185,12 @@ class PlatformStore:
         )
         return {"secret": secret, "credential_source": row["credential_source"]}
 
-    async def import_environment_key(self, key: str) -> int:
-        if not key:
-            return 0
-        async with self.engine.begin() as conn:
-            result = await conn.execute(
-                update(table)
-                .where(
-                    table.c.kind == "models",
-                    table.c.secret_ciphertext.is_(None),
-                    (table.c.credential_source == "environment")
-                    | (table.c.name == "deepseek-default"),
-                )
-                .values(
-                    secret_ciphertext=self._encrypt_credentials({"api_key": key}),
-                    credential_source="stored",
-                )
-            )
-            return result.rowcount
-
-    async def default_model_name(self) -> str:
-        async with self.engine.connect() as conn:
-            value = (
-                await conn.execute(
-                    select(app_settings.c.value).where(app_settings.c.key == "default_model")
-                )
-            ).scalar_one_or_none()
-        return value["name"] if value else "deepseek-default"
-
-    async def set_default_model(self, name: str) -> None:
-        async with self.engine.begin() as conn:
-            await conn.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"), {"key": config_lock("models", name)}
-            )
-            enabled = (
-                await conn.execute(
-                    select(table.c.enabled)
-                    .where(
-                        table.c.kind == "models", table.c.name == name, table.c.deleted.is_(False)
-                    )
-                    .order_by(table.c.version.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if enabled is None:
-                raise HTTPException(404, "平台配置不存在")
-            if not enabled:
-                raise HTTPException(422, "默认模型必须启用")
-            await conn.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": config_lock("settings", "default_model")},
-            )
-            await conn.execute(
-                pg_insert(app_settings)
-                .values(key="default_model", value={"name": name})
-                .on_conflict_do_update(index_elements=["key"], set_={"value": {"name": name}})
-            )
-
-    async def delete_model(self, name: str) -> None:
-        async with self.engine.begin() as conn:
-            await conn.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"), {"key": config_lock("models", name)}
-            )
-            deleted = (
-                await conn.execute(
-                    select(table.c.deleted)
-                    .where(table.c.kind == "models", table.c.name == name)
-                    .order_by(table.c.version.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if deleted is None:
-                raise HTTPException(404, "平台配置不存在")
-            if deleted:
-                return
-            await conn.execute(
-                update(table)
-                .where(table.c.kind == "models", table.c.name == name)
-                .values(deleted=True)
-            )
-            await conn.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": config_lock("settings", "default_model")},
-            )
-            default = (
-                await conn.execute(
-                    select(app_settings.c.value).where(app_settings.c.key == "default_model")
-                )
-            ).scalar_one_or_none()
-            if (default["name"] if default else "deepseek-default") == name:
-                await conn.execute(
-                    pg_insert(app_settings)
-                    .values(key="default_model", value={"name": ""})
-                    .on_conflict_do_update(index_elements=["key"], set_={"value": {"name": ""}})
-                )
-
-    async def ensure_default_model(self, model: ModelConfig) -> ModelConfig:
-        try:
-            row = self.public(await self.get("models", "deepseek-default", 1, include_deleted=True))
-        except HTTPException as error:
-            if error.status_code != 404:
-                raise
-            row = await self.save(
-                "models",
-                "deepseek-default",
-                ModelInput(
-                    label="DeepSeek · 默认连接",
-                    credential_source="stored",
-                    **model.model_dump(exclude={"platform_id", "platform_version"}),
-                ),
-                "system",
-                bootstrap=True,
-            )
-        return ModelConfig.model_validate(row["config"])
-
-    async def normalize_profile(
-        self, profile: AgentProfile, *, allow_deleted_models: bool = False
-    ) -> AgentProfile:
-        content = profile.model_dump(mode="json")
-        for role in ("explore", "derive", "close"):
-            model = getattr(profile.models, role)
-            if model.platform_id is not None:
-                row = await self.get(
-                    "models",
-                    model.platform_id,
-                    model.platform_version,
-                    include_deleted=allow_deleted_models,
-                )
-                if not row["enabled"]:
-                    raise HTTPException(422, "不能选择已停用的平台模型版本")
-                content["models"][role] = self.public(row)["config"]
+    async def validate_profile_tools(self, profile: AgentProfile) -> None:
         for tools in profile.worker_tools.values():
             for binding in tools.mcp_servers:
                 row = await self.get("mcp-servers", binding.name, binding.version)
                 if not row["enabled"]:
                     raise HTTPException(422, "不能选择已停用的 MCP 服务版本")
-        return AgentProfile.model_validate(content)
 
 
 def store(request: Request) -> PlatformStore:
@@ -504,153 +200,42 @@ def store(request: Request) -> PlatformStore:
 router = APIRouter(prefix="/api/platform", tags=["platform"])
 
 
-@router.get("/models")
-async def models(request: Request) -> list[dict[str, Any]]:
-    require_user_or_service(request)
-    return await store(request).list("models")
-
-
-@router.get("/providers")
-async def providers(request: Request) -> list[dict[str, Any]]:
-    require_user_or_service(request)
-    return [dict(item) for item in PROVIDERS.values()]
-
-
-@router.get("/model-catalog", response_model=ModelCatalogResult, response_model_exclude_none=True)
-async def reference_model_catalog(
-    request: Request, provider: str | None = Query(default=None, max_length=200)
-) -> ModelCatalogResult:
-    require_user_or_service(request)
-    return await model_catalog(provider)
-
-
-@router.post("/models")
-async def new_model(request: Request, body: ModelInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("models", f"model-{uuid4().hex[:16]}", body, identity.name)
-
-
-@router.post(
-    "/models/discover", response_model=ModelDiscoveryResult, response_model_exclude_none=True
-)
-async def model_discovery(
-    request: Request, response: Response, body: ModelDiscoveryInput
-) -> ModelDiscoveryResult:
-    require_user_or_service(request)
-    response.headers["Cache-Control"] = "no-store"
-    values = {}
-    if body.saved_name:
-        platform = store(request)
-        row = await platform.get("models", body.saved_name, body.saved_version)
-        previous = row["config"]
-        # Saved secrets must never follow an edited endpoint or provider identity.
-        if (
-            previous.get("provider") == body.provider
-            and previous.get("base_url", "").rstrip("/") == body.base_url
-            and previous.get("provider_options", {}) == body.provider_options
-        ):
-            values = platform._decrypt_model_credentials(row)
-    values.update(
-        {
-            key: value.get_secret_value()
-            for key, value in body.credentials.items()
-            if value.get_secret_value()
-        }
-    )
-    return await discover_models(body.provider, body.base_url, values)
-
-
-@router.post("/models/{name}/default")
-async def default_model(request: Request, name: str) -> dict[str, str]:
-    require_user_or_service(request)
-    await store(request).set_default_model(name)
-    return {"default_model_id": name}
-
-
-class ImportKey(BaseModel):
-    api_key: SecretStr
-
-
-@router.post("/import-environment-key")
-async def import_key(request: Request, body: ImportKey) -> dict[str, int]:
-    require_service(request)
-    return {
-        "imported": await store(request).import_environment_key(body.api_key.get_secret_value())
-    }
-
-
-@router.post("/models/{name}")
-async def save_model(request: Request, name: str, body: ModelInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("models", name, body, identity.name)
-
-
-@router.delete("/models/{name}", status_code=204)
-async def delete_model(request: Request, name: str) -> Response:
-    require_user_or_service(request)
-    await store(request).delete_model(name)
-    return Response(status_code=204)
-
-
 @router.get("/mcp-servers")
 async def mcp_servers(request: Request) -> list[dict[str, Any]]:
+    from bbx_blackboard.mcp_catalog import catalog
+
     require_user_or_service(request)
-    return await store(request).list("mcp-servers")
+    return await catalog(request)
+
+
+async def checked_save(request: Request, name: str, body: McpInput) -> dict[str, Any]:
+    from bbx_blackboard.mcp_catalog import AUTH_HEADERS, public_address, require_operator
+    from bbx_blackboard.pi_registry import normalized_url
+
+    require_operator(request)
+    if body.auth_header.lower() not in AUTH_HEADERS or (body.secret and body.clear_secret):
+        raise HTTPException(422, "请选择受支持的认证方式和密钥操作")
+    if body.secret and len(body.secret.get_secret_value()) > 8192:
+        raise HTTPException(422, "MCP 密钥超过长度上限")
+    try:
+        url, _ = normalized_url(body.url)
+        await public_address(url)
+    except (ValueError, OSError):
+        raise HTTPException(422, "MCP Server 须为可解析到公网的 HTTPS 地址") from None
+    body = body.model_copy(update={"url": url})
+    return await store(request).save(
+        "mcp-servers", name, body, require_user_or_service(request).name, p6b=True
+    )
 
 
 @router.post("/mcp-servers")
 async def new_mcp(request: Request, body: McpInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("mcp-servers", f"mcp-{uuid4().hex[:16]}", body, identity.name)
+    return await checked_save(request, f"mcp-{uuid4().hex[:16]}", body)
 
 
 @router.post("/mcp-servers/{name}")
 async def save_mcp(request: Request, name: str, body: McpInput) -> dict[str, Any]:
-    identity = require_user_or_service(request)
-    return await store(request).save("mcp-servers", name, body, identity.name)
-
-
-@router.get("/mcp-servers/{name}/versions/{version}/tools")
-async def list_mcp_tools(request: Request, name: str, version: int) -> dict[str, Any]:
-    require_user_or_service(request)
-    platform = store(request)
-    row = await platform.get("mcp-servers", name, version)
-    config = row["config"]
-    credential = await platform.credentials("mcp-servers", name, version)
-    headers = {}
-    if secret := credential["secret"]:
-        headers[config["auth_header"]] = f"{config['auth_scheme']} {secret}".strip()
-    try:
-        async with (
-            asyncio.timeout(20),
-            httpx.AsyncClient(headers=headers, timeout=15, trust_env=False) as client,
-        ):
-            async with streamable_http_client(config["url"], http_client=client) as (
-                read,
-                write,
-                _,
-            ):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools = []
-                    cursor = None
-                    seen = set()
-                    while True:
-                        result = await session.list_tools(cursor=cursor)
-                        tools.extend(
-                            {"name": tool.name, "description": tool.description or ""}
-                            for tool in result.tools
-                        )
-                        cursor = result.nextCursor
-                        if not cursor:
-                            return {"tools": tools}
-                        if cursor in seen:
-                            raise ValueError("Repeated MCP cursor")
-                        seen.add(cursor)
-    except Exception as error:
-        raise HTTPException(
-            502, f"MCP 连接失败（{type(error).__name__}），请检查地址与认证配置"
-        ) from None
+    return await checked_save(request, name, body)
 
 
 @router.get("/{kind}/{name}/versions/{version}/credentials")
@@ -659,10 +244,27 @@ async def credentials(
 ) -> dict[str, Any]:
     require_service(request)
     response.headers["Cache-Control"] = "no-store"
-    return await store(request).credentials(kind, name, version)
+    platform = store(request)
+    config = (await platform.get(kind, name, version, include_deleted=True))["config"]
+    if config.get("catalog_version") == "p6b" or config.get("published"):
+        raise HTTPException(403, "Managed MCP credentials require a dedicated Runtime identity")
+    return await platform.credentials(kind, name, version)
 
 
 @router.get("/{kind}/{name}/versions/{version}")
 async def config_version(request: Request, kind: Kind, name: str, version: int) -> dict[str, Any]:
     require_user_or_service(request)
-    return store(request).public(await store(request).get(kind, name, version))
+    import re
+
+    from bbx_blackboard.mcp_catalog import operator, view
+
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name) or version < 1:
+        raise HTTPException(404, "平台配置不存在")
+    row = await store(request).get(kind, name, version)
+    if (
+        row["config"].get("catalog_version") == "p6b"
+        and not row["config"].get("published")
+        and not operator(request)
+    ):
+        raise HTTPException(403, "MCP discovery drafts are operator-only")
+    return view(row)

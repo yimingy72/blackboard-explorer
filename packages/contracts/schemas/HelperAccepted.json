@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "child_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Child Id",
+      "type": "string"
+    },
+    "binding_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "payload_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Payload Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "child_id",
+    "binding_id",
+    "payload_digest"
+  ],
+  "title": "HelperAccepted",
+  "type": "object"
+}

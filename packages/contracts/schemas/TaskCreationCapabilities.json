@@ -1,0 +1,178 @@
+{
+  "$defs": {
+    "BlackboardCreationCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "title": "BlackboardCreationCapability",
+      "type": "object"
+    },
+    "NativeCtfEnvironment": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "publication_stamp": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Publication Stamp",
+          "type": "string"
+        },
+        "external_mcp": {
+          "default": false,
+          "title": "External Mcp",
+          "type": "boolean"
+        },
+        "label": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "shared_inputs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeSharedInputLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vpn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeVpnCapability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "publication_stamp",
+        "label"
+      ],
+      "title": "NativeCtfEnvironment",
+      "type": "object"
+    },
+    "NativeSharedInputLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "const": "shared-inputs-v1",
+          "default": "shared-inputs-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "max_file_bytes": {
+          "default": 16777216,
+          "title": "Max File Bytes",
+          "type": "integer"
+        },
+        "max_total_bytes": {
+          "default": 25165824,
+          "title": "Max Total Bytes",
+          "type": "integer"
+        },
+        "max_files": {
+          "default": 20,
+          "title": "Max Files",
+          "type": "integer"
+        }
+      },
+      "title": "NativeSharedInputLimits",
+      "type": "object"
+    },
+    "NativeVpnCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": [
+            "openvpn-ipv4-tcp-v1",
+            "openvpn-task-ipv4-tcp-v1"
+          ],
+          "title": "Profile",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "id",
+        "label"
+      ],
+      "title": "NativeVpnCapability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "enum": [
+        "legacy",
+        "native-ctf"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "blackboard": {
+      "$ref": "#/$defs/BlackboardCreationCapability"
+    },
+    "native_ctf": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NativeCtfEnvironment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "mode",
+    "blackboard"
+  ],
+  "title": "TaskCreationCapabilities",
+  "type": "object"
+}

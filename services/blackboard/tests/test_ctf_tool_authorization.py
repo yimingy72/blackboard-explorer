@@ -132,9 +132,14 @@ async def test_review_authority_does_not_grant_execution_or_spend_execution_budg
     assert result["purpose"] == "review"
     with pytest.raises(HTTPException, match="Execution turn required"):
         await setup.service.authorize_member(setup.tid, "lead", 2, setup.turn["id"])
-    # Authority must be read again after a terminal task resumes.
+    # A finished original member can be reviewed while the Task is running.
     setup.task["status"] = "running"
-    with pytest.raises(HTTPException, match="Review task resumed"):
+    assert (await setup.service.authorize_tool(setup.tid, "lead", 2, setup.turn["id"]))[
+        "purpose"
+    ] == "review"
+    # Restoring the member's active execution authority closes that review.
+    setup.member["lifecycle"] = "active"
+    with pytest.raises(HTTPException, match="review scope changed"):
         await setup.service.authorize_tool(setup.tid, "lead", 2, setup.turn["id"])
 
 
@@ -169,7 +174,14 @@ def tool_app(monkeypatch, *, purpose="execution", enabled=True):
     }
     app.state.profile_store = SimpleNamespace(get=AsyncMock(return_value=profile))
     monkeypatch.setattr(api, "_task", AsyncMock(return_value=task))
-    token = issue_agent_token(config, tid, "lead", generation=2, turn_id=turn_id)
+    token = issue_agent_token(
+        config,
+        tid,
+        "lead",
+        generation=2,
+        turn_id=turn_id,
+        purpose="review" if purpose == "review" else "solver",
+    )
     return SimpleNamespace(
         tid=tid,
         turn_id=turn_id,
@@ -207,7 +219,10 @@ async def test_asgi_review_retains_its_original_tool_whitelist(monkeypatch, oper
             f"/api/tasks/{setup.tid}/ctf/tools/{operation}", headers=setup.headers, json={}
         )
     assert response.status_code == (200 if operation == "list_challenges" else 403), response.text
-    setup.service.authorize_tool.assert_awaited_once()
+    if operation == "list_challenges":
+        setup.service.authorize_tool.assert_awaited_once()
+    else:
+        setup.service.authorize_tool.assert_not_awaited()
     setup.app.state.profile_store.get.assert_not_awaited()
     setup.service.list_members.assert_not_awaited()
     setup.service.post_message.assert_not_awaited()

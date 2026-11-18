@@ -11,7 +11,15 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from bbx_contracts.billing import add_usage
-from bbx_contracts.ctf import CtfConclusion
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_LEGACY,
+    business_manifest,
+)
+from bbx_contracts.challenge_board import (
+    business_contract as task_contract,
+)
+from bbx_contracts.ctf import CtfConclusion, execution_agent_id
 from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
@@ -21,12 +29,19 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bbx_blackboard.conversations import Conversations
 from bbx_blackboard.ctf_board import CtfBoardMixin
+from bbx_blackboard.ctf_failures import CtfFailureMixin
 from bbx_blackboard.ctf_lifecycle import CtfLifecycleMixin
 from bbx_blackboard.ctf_platform import CtfPlatformMixin
 from bbx_blackboard.ctf_readback import CtfReadbackMixin
 from bbx_blackboard.ctf_review import CtfReviewMixin
 from bbx_blackboard.domain.rules import event
-from bbx_blackboard.input_groups import InputGroups, check_mutable, check_owner
+from bbx_blackboard.gateway_tasks import ctf_review_allowed, ctf_review_generation
+from bbx_blackboard.input_groups import (
+    InputGroups,
+    check_mutable,
+    check_owner,
+    discard_private_source,
+)
 from bbx_blackboard.store import Repository
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import now, patch, row
@@ -188,7 +203,12 @@ def initial_input_parts(fields: dict[str, Any]) -> list[str]:
 
 
 class CtfService(
-    CtfLifecycleMixin, CtfReviewMixin, CtfPlatformMixin, CtfBoardMixin, CtfReadbackMixin
+    CtfLifecycleMixin,
+    CtfReviewMixin,
+    CtfPlatformMixin,
+    CtfBoardMixin,
+    CtfReadbackMixin,
+    CtfFailureMixin,
 ):
     def __init__(self, engine: AsyncEngine, objects=None) -> None:
         self.objects = objects
@@ -355,7 +375,7 @@ class CtfService(
         require(turn["status"] == "running", "CTF turn is not running")
         if turn["purpose"] == "review":
             task = await row(conn, s.tasks, tid)
-            require(task["status"] in {"finished", "failed", "stopped"}, "Review task resumed")
+            require(ctf_review_allowed(task, member), "The original review scope changed")
         else:
             require(member["lifecycle"] == "active", "Inactive execution member")
         return member, turn
@@ -445,13 +465,20 @@ class CtfService(
             member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
             context = {"task": task, "member": member, "purpose": turn["purpose"]}
             if allow_review and turn["purpose"] == "review":
-                self._authorize_review(task, turn)
+                self._authorize_review(task, member, turn)
                 return context
             require(turn["purpose"] == "execution", "Execution turn required")
             require(
                 member["run_state"] != "stopping" and not member.get("pending_operation"),
                 "Member is stopping",
             )
+            if task["ctf_control"]["phase"] == "running" and task["ctf_control"].get(
+                "failure_hold"
+            ):
+                raise HTTPException(
+                    409,
+                    {"code": "ctf_admission_paused", "message": "Execution safety is unconfirmed"},
+                )
             cost = Decimal(str(reservation_cost))
             require(cost.is_finite() and cost >= 0, "Invalid budget reservation")
             reservations = _reservations(task)
@@ -555,15 +582,40 @@ class CtfService(
         profile_version=1,
         input_group_id=None,
         input_file_ids=None,
+        public_input_ids=None,
         input_owner=None,
         create_request_hash=None,
+        business_contract=BOARD_LEGACY,
+        native_queue=None,
+        native_inputs_profile=None,
+        native_vpn_profile=None,
+        native_vpn_source_id=None,
+        pi_model=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
+        from bbx_contracts.runner_inputs import INPUT_PROFILE
+
+        from bbx_blackboard.native_inputs import freeze_native_inputs
 
         spec = CtfTaskSpec.model_validate(spec)
+        native_workers = (
+            business_contract == BOARD_CONTRACT and spec.ctf_options.dispatch_mode == "automatic"
+        )
+        if native_workers:
+            require(
+                1 <= spec.ctf_options.max_teammates <= 20, "Native Tasks allow 1 to 20 Worker seats"
+            )
+        require(
+            business_contract in {BOARD_LEGACY, BOARD_CONTRACT}, "Unsupported business contract"
+        )
+        if native_queue is not None:
+            require(
+                native_workers and input_group_id is not None,
+                "Native creation needs an owned input group",
+            )
         data = spec.model_dump(mode="json")
         tid = input_group_id or uuid4()
-        fields = dict(
+        fields: dict[str, Any] = dict(
             name=data.get("name"),
             goal=data["goal"],
             initial_attachments=[],
@@ -585,6 +637,20 @@ class CtfService(
                 "completion_requirements": data.get("completion_requirements"),
             },
         )
+        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
+
+        if native_queue is not None and native_vpn_profile == VPN_DYNAMIC_PROFILE:
+            fields["ctf_control"]["vpn_profile"] = native_vpn_profile
+        if business_contract == BOARD_CONTRACT:
+            fields["ctf_control"].update(
+                business_contract=BOARD_CONTRACT,
+                business_tools=business_manifest(
+                    automatic=native_workers,
+                    vpn=native_queue is not None and bool(native_vpn_profile),
+                    task_network=native_queue is not None
+                    and native_vpn_profile == VPN_DYNAMIC_PROFILE,
+                ),
+            )
         async with self.repo.engine.begin() as conn:
             if input_group_id is not None:
                 group = await InputGroups.row(conn, input_group_id, lock=True)
@@ -600,25 +666,73 @@ class CtfService(
                         existing["mode"] == "ctf" and not existing["deleting"],
                         "Input task unavailable",
                     )
+                    require(
+                        task_contract(existing) == business_contract,
+                        "Task business contract conflict",
+                    )
                     return tid
                 check_mutable(group, input_owner or "")
                 files = group["files"]
+                if native_queue is not None:
+                    if native_inputs_profile != INPUT_PROFILE:
+                        require(
+                            not files and not input_file_ids and not public_input_ids,
+                            "Published native CTF creation does not support attachments",
+                        )
+                    elif files and input_file_ids is None:
+                        raise HTTPException(422, "Select the initial files shared with the Task")
                 if input_file_ids is not None:
                     selected = {str(file_id) for file_id in input_file_ids}
                     require(selected <= {item["id"] for item in files}, "Input file missing")
                     files = [item for item in files if item["id"] in selected]
+                if native_queue is not None and files:
+                    if {item["id"] for item in files} != {
+                        str(file_id) for file_id in public_input_ids or ()
+                    }:
+                        raise HTTPException(422, "All selected native inputs must be Task-shared")
+                    try:
+                        freeze_native_inputs(tid, files)
+                    except ValueError as error:
+                        raise HTTPException(
+                            422, "Invalid native shared attachment manifest"
+                        ) from error
+                    fields["ctf_control"]["initial_attachment_state"] = "pending"
                 require(self.objects is not None or not files, "Object storage is unavailable")
                 for item in files:
                     assert self.objects is not None
                     require(await self.objects.exists(item["uri"]), "Input object missing")
                 fields["initial_attachments"] = files
+                if public_input_ids is not None:
+                    public_ids = {str(file_id) for file_id in public_input_ids}
+                    require(public_ids <= {item["id"] for item in files}, "Public input missing")
+                    fields["ctf_control"]["public_input_ids"] = sorted(public_ids)
                 await conn.execute(
                     update(s.task_input_groups)
                     .where(s.task_input_groups.c.id == tid)
                     .values(files=files, create_request_hash=create_request_hash)
                 )
             await conn.execute(insert(s.tasks).values(id=tid, **fields))
+            if pi_model is not None:
+                from bbx_blackboard.pi_ledger import freeze_pi_model
+
+                await freeze_pi_model(conn, tid, *pi_model)
+            if native_vpn_source_id is not None:
+                if native_vpn_profile != VPN_DYNAMIC_PROFILE or input_group_id is None:
+                    raise HTTPException(422, "Private VPN source is not supported by this Task")
+                matched = await conn.execute(
+                    update(s.native_vpn_assets)
+                    .where(
+                        s.native_vpn_assets.c.id == native_vpn_source_id,
+                        s.native_vpn_assets.c.group_id == input_group_id,
+                        s.native_vpn_assets.c.task_id.is_(None),
+                    )
+                    .values(task_id=tid)
+                    .returning(s.native_vpn_assets.c.id)
+                )
+                if matched.scalar_one_or_none() is None:
+                    raise HTTPException(422, "Private VPN source is not available for this Task")
             if input_group_id is not None:
+                await discard_private_source(conn, input_group_id)
                 await conn.execute(
                     update(s.task_input_groups)
                     .where(s.task_input_groups.c.id == tid)
@@ -638,8 +752,37 @@ class CtfService(
                 ],
             )
             await self._member(conn, tid, "lead", "Lead", str(uuid4()), "lead")
-            for body in initial_input_parts(fields):
+            if native_workers:
+                for index in range(1, spec.ctf_options.max_teammates + 1):
+                    await self._member(
+                        conn,
+                        tid,
+                        f"member-{index}",
+                        f"Worker {index}",
+                        str(uuid5(NAMESPACE_URL, f"native-worker-seat:{tid}:{index}")),
+                        "teammate",
+                    )
+            initial_parts = initial_input_parts(fields)
+            if native_queue is not None and native_vpn_profile == VPN_DYNAMIC_PROFILE:
+                network_instruction = (
+                    "Platform execution guidance: choose the Task network before the first "
+                    "solver command, based on the Task instructions. "
+                    "If no VPN is required, call network_use_default with no arguments. "
+                    "If VPN is required, call vpn_configure with the private source ID or the "
+                    "plain HTTPS configuration URL and a TCP preflight address. "
+                    "The probe does not limit later solver destinations within the Task network. "
+                    "Never pass credentials or signed URLs in tool arguments."
+                )
+                if native_vpn_source_id is not None:
+                    network_instruction += (
+                        " The private configuration source_id for this Task is "
+                        f"{native_vpn_source_id}."
+                    )
+                initial_parts[0] = network_instruction + "\n\n" + initial_parts[0]
+            for body in initial_parts:
                 await self._message(conn, tid, "user", "lead", body, str(uuid4()), "instruction")
+            if native_queue is not None:
+                await native_queue(conn, tid)
         return tid
 
     async def _member(self, conn, tid, aid, name, request_id, role):
@@ -670,6 +813,10 @@ class CtfService(
     async def start(self, tid):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY,
+                "Registered v1 Runner binding/readiness/lease is required",
+            )
             require(task["status"] in {"created", "provisioning", "running"}, "Task cannot start")
             if task["status"] != "running":
                 await patch(
@@ -691,6 +838,9 @@ class CtfService(
         """Persist a provisioning failure instead of retrying it forever."""
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY, "Legacy startup cannot fail a versioned Task"
+            )
             if task["status"] in {"finished", "failed", "stopped"}:
                 return task
             require(task["status"] in {"created", "provisioning"}, "Task already started")
@@ -1012,17 +1162,24 @@ class CtfService(
                 ("turns", s.ctf_turns),
                 ("messages", s.ctf_messages),
             ):
+                timestamp = table.c.started_at if key == "turns" else table.c.created_at
                 result[key] = [
                     dict(r)
                     for r in (
-                        await conn.execute(select(table).where(table.c.task_id == tid))
+                        await conn.execute(
+                            select(table)
+                            .where(table.c.task_id == tid)
+                            .order_by(timestamp, table.c.id)
+                        )
                     ).mappings()
                 ]
             result["challenges"] = [
                 item["data"]
                 for item in (
                     await conn.execute(
-                        select(s.ctf_challenges).where(s.ctf_challenges.c.task_id == tid)
+                        select(s.ctf_challenges)
+                        .where(s.ctf_challenges.c.task_id == tid)
+                        .order_by(s.ctf_challenges.c.id)
                     )
                 ).mappings()
             ]
@@ -1195,11 +1352,27 @@ class CtfService(
         generation=None,
         turn_id=None,
         challenge_id=None,
+        review_model=None,
+        review_origin=None,
+        request_user=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
-            if actor == "user" and task["status"] in {"finished", "failed", "stopped"}:
-                return await self._message(
+            member = await row(conn, s.ctf_members, tid, recipient_id) if actor == "user" else None
+            if member is not None and ctf_review_allowed(task, member):
+                original_generation = await ctf_review_generation(conn, tid, member)
+                require(
+                    review_model is not None
+                    and request_user is not None
+                    and review_origin
+                    == {
+                        "generation": original_generation,
+                        "run_number": task["run_number"],
+                    },
+                    "The original review identity changed",
+                )
+                assert review_model is not None
+                result = await self._message(
                     conn,
                     tid,
                     actor,
@@ -1210,6 +1383,22 @@ class CtfService(
                     purpose="review",
                     challenge_id=challenge_id,
                 )
+                current = await row(conn, s.ctf_messages, tid, str(message_id))
+                if current["review_model"] is None:
+                    await patch(
+                        conn,
+                        s.ctf_messages,
+                        tid,
+                        {
+                            "review_model": review_model.model_dump(mode="json"),
+                            "request_run_number": task["run_number"],
+                            "request_agent_generation": original_generation,
+                            "request_user": request_user,
+                        },
+                        str(message_id),
+                    )
+                return result
+            require(review_origin is None, "Review cannot become execution")
             await self._actor(conn, tid, actor, generation, turn_id)
             phase = task["ctf_control"]["phase"]
             require(
@@ -1256,6 +1445,235 @@ class CtfService(
                         turn["id"],
                     )
             return result
+
+    async def _saved_commands(self, conn, tid, agent_id):
+        saved = (
+            (
+                await conn.execute(
+                    select(
+                        s.agent_sessions.c.session["state"]["ctf_commands"].label("commands"),
+                        s.agent_sessions.c.revision,
+                    ).where(
+                        s.agent_sessions.c.task_id == tid,
+                        s.agent_sessions.c.agent_id == agent_id,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if saved is None:
+            return {}, 0
+        commands = saved["commands"]
+        require(commands is None or isinstance(commands, dict), "Invalid saved command ledger")
+        return commands or {}, saved["revision"]
+
+    @staticmethod
+    def _known_async_result(entry, tid, agent_id, turn_id, generation):
+        if not isinstance(entry, dict):
+            return False
+        identity = entry.get("identity")
+        return (
+            entry.get("mode") == "async"
+            and entry.get("turn_id") == str(turn_id)
+            and entry.get("state") == "finished"
+            and entry.get("terminal_status") in ("completed", "timed_out", "cancelled", "failed")
+            and isinstance(entry.get("result"), str)
+            and isinstance(entry.get("command_id"), str)
+            and bool(entry["command_id"])
+            and isinstance(identity, dict)
+            and identity.get("task_id") == str(tid)
+            and identity.get("member_id") == agent_id
+            and identity.get("agent_id") == execution_agent_id(agent_id)
+            and type(identity.get("generation")) is int
+            and identity["generation"] == generation
+            and generation > 0
+            and isinstance(identity.get("boot_id"), str)
+            and bool(identity["boot_id"])
+        )
+
+    @staticmethod
+    def _command_notice_id(tid, agent_id, turn_id, generation, command_id):
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                f"ctf-command-result:{tid}:{agent_id}:{turn_id}:{generation}:{command_id}",
+            )
+        )
+
+    async def read_command_result(
+        self,
+        tid,
+        agent_id,
+        turn_id,
+        generation,
+        command_id,
+        offset=0,
+        limit=2000,
+    ):
+        if (
+            not isinstance(command_id, str)
+            or not 1 <= len(command_id) <= 200
+            or type(offset) is not int
+            or offset < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 16000
+        ):
+            raise HTTPException(422, "Invalid command result page")
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            self._authorize_review(task, member, turn)
+            commands, _ = await self._saved_commands(conn, tid, agent_id)
+            entries = [
+                entry
+                for entry in commands.values()
+                if isinstance(entry, dict)
+                and entry.get("mode") == "async"
+                and entry.get("command_id") == command_id
+            ]
+            if len(entries) != 1:
+                raise HTTPException(404, "Saved command result not found")
+            entry = entries[0]
+            identity = entry.get("identity") or {}
+            if (
+                not isinstance(identity, dict)
+                or identity.get("task_id") != str(tid)
+                or identity.get("member_id") != agent_id
+                or identity.get("agent_id") != execution_agent_id(agent_id)
+            ):
+                raise HTTPException(404, "Saved command result not found")
+            if not self._known_async_result(
+                entry,
+                tid,
+                agent_id,
+                entry.get("turn_id"),
+                identity.get("generation"),
+            ):
+                return {
+                    "command_id": command_id,
+                    "state": "unknown",
+                    "message": "Saved outcome is unconfirmed; review does not resume execution.",
+                }
+            result = entry["result"]
+            end = min(len(result), offset + limit)
+            return {
+                "command_id": command_id,
+                "state": entry["terminal_status"],
+                "result": result[offset:end],
+                "next_offset": end if end < len(result) else None,
+            }
+
+    async def notify_command_result(self, tid, agent_id, turn_id, generation, command_id):
+        try:
+            command_id = str(UUID(str(command_id)))
+            turn_id = str(UUID(str(turn_id)))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(422, "Valid command and turn IDs are required") from exc
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or type(generation) is not int
+            or generation < 1
+        ):
+            raise HTTPException(422, "Valid command execution identity is required")
+        async with self.repo.engine.begin() as conn:
+            task = await self._task(conn, tid)
+            commands, revision = await self._saved_commands(conn, tid, agent_id)
+            entries = [
+                entry
+                for key, entry in commands.items()
+                if key.startswith(f"{turn_id}:")
+                and isinstance(entry, dict)
+                and entry.get("command_id") == command_id
+            ]
+            require(len(entries) == 1, "Command result is absent or ambiguous in confirmed Session")
+            entry = entries[0]
+            require(
+                self._known_async_result(entry, tid, agent_id, turn_id, generation),
+                "Command result is not a confirmed terminal result",
+            )
+            require(
+                entry.get("delivery") == "notification", "Command result was delivered by its tool"
+            )
+            message_id = self._command_notice_id(tid, agent_id, turn_id, generation, command_id)
+            body = json.dumps(
+                {
+                    "command_id": command_id,
+                    "terminal_status": entry["terminal_status"],
+                    "result_ref": {"tool": "read_command_result", "command_id": command_id},
+                }
+            )
+            existing = (
+                (
+                    await conn.execute(
+                        select(s.ctf_messages).where(
+                            s.ctf_messages.c.task_id == tid,
+                            s.ctf_messages.c.id == message_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing is not None:
+                require(
+                    all(
+                        existing[key] == value
+                        for key, value in {
+                            "sender_kind": "system",
+                            "sender_id": "system",
+                            "recipient_id": agent_id,
+                            "kind": "notification",
+                            "notification_purpose": "command_result",
+                            "purpose": "execution",
+                            "source_turn_id": None,
+                            "body": body,
+                        }.items()
+                    ),
+                    "Command notification identity conflict",
+                )
+                return {"id": message_id, "recipient_id": agent_id}
+            unavailable = {
+                "code": "ctf_command_notice_unavailable",
+                "message": "No prior notice exists; its original turn cannot receive a new one",
+            }
+            try:
+                member, turn = await self._fence(conn, tid, agent_id, generation, turn_id)
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                raise HTTPException(409, unavailable) from exc
+            require(turn["purpose"] == "execution", "Command result requires execution turn")
+            require(
+                revision > 0 and revision == turn["checkpoint_revision"],
+                "Command result requires a confirmed turn checkpoint",
+            )
+            binding = member.get("execution") or {}
+            require(
+                binding.get("boot_id") == entry["identity"]["boot_id"]
+                and binding.get("generation") == generation,
+                "Command execution binding changed",
+            )
+            if (
+                task["ctf_control"]["phase"] != "running"
+                or task["status"] != "running"
+                or member["run_state"] == "stopping"
+                or member.get("pending_operation")
+                or binding.get("drained") is True
+            ):
+                raise HTTPException(409, unavailable)
+            await self._message(
+                conn,
+                tid,
+                "system",
+                agent_id,
+                body,
+                message_id,
+                "notification",
+                notification_purpose="command_result",
+            )
+            return {"id": message_id, "recipient_id": agent_id}
 
     async def enqueue_continuation(self, tid, agent_id, turn_id, generation):
         """Queue one bounded continuation after an application context boundary."""
@@ -1339,11 +1757,14 @@ class CtfService(
     async def claim_turn(self, tid, agent_id, runtime_instance, expected_turn_id=None):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            if task_contract(task) != BOARD_LEGACY:
+                return None
             member = await row(conn, s.ctf_members, tid, agent_id)
             if expected_turn_id is not None and member["current_turn_id"] != str(expected_turn_id):
                 return None
             if (
                 task["ctf_control"]["phase"] != "running"
+                or task["ctf_control"].get("failure_hold")
                 or member["lifecycle"] != "active"
                 or member["run_state"] == "stopping"
                 or task["ctf_control"].get("replacement", {}).get("phase", "ready") != "ready"
@@ -1466,6 +1887,17 @@ class CtfService(
                             s.ctf_messages.c.recipient_id == agent_id,
                             s.ctf_messages.c.status.in_(["queued", "leased"]),
                             s.ctf_messages.c.purpose == turn["purpose"],
+                            *(
+                                (
+                                    s.ctf_messages.c.id.in_(turn["assignment_message_ids"]),
+                                    s.ctf_messages.c.review_model == turn["review_model"],
+                                    s.ctf_messages.c.request_run_number == task["run_number"],
+                                    s.ctf_messages.c.request_agent_generation
+                                    == turn["review_origin_generation"],
+                                )
+                                if turn["purpose"] == "review"
+                                else ()
+                            ),
                             s.ctf_messages.c.kind != "review_result",
                             s.ctf_messages.c.deferred.is_(False),
                         )
@@ -1834,6 +2266,13 @@ class CtfService(
                             ["turn_recovery", "context_continuation"]
                         )
                     )
+                    | (
+                        (messages.sender_id == "system")
+                        & (messages.kind == "notification")
+                        & messages.notification_purpose.in_(
+                            ["challenge_progress", "challenge_verification", "command_result"]
+                        )
+                    )
                 )
             )
             query = (
@@ -1884,8 +2323,47 @@ class CtfService(
                 )
                 .order_by(messages.recipient_sequence)
             )
-            proofs = (await conn.execute(query)).mappings().all()
-            return {"proofs": [dict(proof) for proof in proofs]}
+            proofs = [dict(proof) for proof in (await conn.execute(query)).mappings()]
+            if any(proof["notification_purpose"] == "command_result" for proof in proofs):
+                commands, _ = await self._saved_commands(conn, tid, agent_id)
+                verified = []
+                for proof in proofs:
+                    if proof["notification_purpose"] == "command_result":
+                        matches = []
+                        for key, entry in commands.items():
+                            if not isinstance(entry, dict):
+                                continue
+                            origin = entry.get("turn_id")
+                            identity = entry.get("identity") or {}
+                            origin_generation = (
+                                identity.get("generation") if isinstance(identity, dict) else None
+                            )
+                            if (
+                                isinstance(origin, str)
+                                and key.startswith(f"{origin}:")
+                                and type(origin_generation) is int
+                                and 0 < origin_generation <= proof["turn_generation"]
+                                and self._known_async_result(
+                                    entry, tid, agent_id, origin, origin_generation
+                                )
+                                and entry.get("delivery") == "notification"
+                                and entry.get("completion_notified") is True
+                                and self._command_notice_id(
+                                    tid, agent_id, origin, origin_generation, entry["command_id"]
+                                )
+                                == proof["id"]
+                            ):
+                                matches.append(entry)
+                        if len(matches) != 1:
+                            continue
+                        proof.update(
+                            command_id=matches[0]["command_id"],
+                            command_turn_id=matches[0]["turn_id"],
+                            command_generation=matches[0]["identity"]["generation"],
+                        )
+                    verified.append(proof)
+                proofs = verified
+            return {"proofs": proofs}
 
     async def _settle_turn_reservations(self, conn, tid, turn_id):
         turn = await row(conn, s.ctf_turns, tid, str(turn_id))
@@ -2059,6 +2537,12 @@ class CtfService(
         if duplicate:
             require(str(duplicate[0]) == str(turn_id), "Usage request belongs to another turn")
             return turn["usage"]
+        from bbx_blackboard.pi_ledger import task_pi_model
+
+        if await task_pi_model(conn, tid) is not None or (turn.get("review_model") or {}).get(
+            "pi_model"
+        ):
+            usage = {key: value for key, value in usage.items() if key != "cost"}
         total = add_usage(turn["usage"], usage)
         control = dict(task["ctf_control"])
         reservations = _reservations(task)
@@ -2178,6 +2662,31 @@ class CtfService(
         if turn["status"] != "running":
             await self._retire_checkpoint_barrier(conn, tid, turn)
             return turn
+        if turn["purpose"] == "execution" and end_reason == "completed":
+            commands, _ = await self._saved_commands(conn, tid, member["id"])
+            if any(
+                key.startswith(f"{turn['id']}:")
+                and isinstance(entry, dict)
+                and entry.get("mode") == "async"
+                and (
+                    not self._known_async_result(
+                        entry, tid, member["id"], turn["id"], turn["generation"]
+                    )
+                    or entry.get("delivery") not in ("tool_result", "notification")
+                    or (
+                        entry.get("delivery") == "notification"
+                        and entry.get("completion_notified") is not True
+                    )
+                )
+                for key, entry in commands.items()
+            ):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "ctf_command_pending",
+                        "message": "Async command execution or result delivery is still pending",
+                    },
+                )
         await self._settle_turn_reservations(conn, tid, turn["id"])
         if turn["purpose"] == "review":
             result = await self._settle_review(conn, tid, member, turn, end_reason, answer)
@@ -2472,7 +2981,11 @@ class CtfService(
 
     async def finish_turn(self, tid, agent_id, turn_id, generation, end_reason, answer=""):
         async with self.repo.engine.begin() as conn:
-            await self._task(conn, tid)
+            task = await self._task(conn, tid)
+            if agent_id in task["ctf_control"].get("native_worker_active", {}):
+                raise HTTPException(
+                    409, "Native Worker settlement requires its original close proof"
+                )
             turn = await row(conn, s.ctf_turns, tid, str(turn_id))
             require(
                 turn["agent_id"] == agent_id and turn["generation"] == generation,
@@ -2508,20 +3021,135 @@ class CtfService(
             }
 
     async def request_finish(
-        self, tid, actor, request_id, conclusion, generation=None, turn_id=None
+        self,
+        tid,
+        actor,
+        request_id,
+        conclusion,
+        generation=None,
+        turn_id=None,
+        *,
+        runtime_context=None,
     ):
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            if runtime_context is not None:
+                from bbx_blackboard.gateway_auth import validate_runtime_context
+
+                await validate_runtime_context(conn, tid, runtime_context)
             await self._actor(conn, tid, actor, generation, turn_id)
             require(actor in {"lead", "user", "system", "service"}, "Only Lead can finish")
             control = task["ctf_control"]
+            native_preparing = False
+            native_resources = None
+            if task_contract(task) != BOARD_LEGACY:
+                native_resources = (
+                    (
+                        await conn.execute(
+                            select(s.task_runner_resources).where(
+                                s.task_runner_resources.c.task_id == tid
+                            )
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if native_resources is not None:
+                    if native_resources["desired"] != "stopped":
+                        await conn.execute(
+                            update(s.task_runner_resources)
+                            .where(s.task_runner_resources.c.task_id == tid)
+                            .values(
+                                desired="stopped", revision=s.task_runner_resources.c.revision + 1
+                            )
+                        )
+                    control = {**control, "native_stop_requested": True}
+                    native_preparing = task["status"] in {"created", "provisioning"} and bool(
+                        native_resources["data"].get("lead_turn_id")
+                    )
+            if (
+                task_contract(task) != BOARD_LEGACY
+                and task["status"]
+                in {
+                    "created",
+                    "provisioning",
+                }
+                and not native_preparing
+            ):
+                require(
+                    actor in {"user", "system", "service"},
+                    "Only task control can stop an unstarted Task",
+                )
+                require(
+                    conclusion.get("end_reason") == "user_stop"
+                    or (
+                        actor in {"system", "service"}
+                        and conclusion.get("end_reason") == "budget_exhausted"
+                        and native_resources is not None
+                        and native_resources["hard_deadline"] <= now()
+                    ),
+                    "Unstarted Task only accepts explicit cancellation",
+                )
+                active = await conn.execute(
+                    select(s.ctf_turns.c.id)
+                    .where(s.ctf_turns.c.task_id == tid, s.ctf_turns.c.status == "running")
+                    .limit(1)
+                )
+                require(active.first() is None, "Unstarted Task has an active Runner")
+                stored = {
+                    **CtfConclusion.model_validate(conclusion).model_dump(mode="json"),
+                    "requested_by": actor,
+                    "run_number": task["run_number"],
+                    "requested_at": now().isoformat(),
+                }
+                await patch(
+                    conn,
+                    s.tasks,
+                    tid,
+                    {
+                        "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
+                        "ctf_control": {
+                            **control,
+                            "phase": "closed",
+                            "epoch": control["epoch"] + 1,
+                        },
+                        "ctf_conclusion": stored,
+                        "finished_at": now(),
+                    },
+                )
+                await self._emit(
+                    conn,
+                    tid,
+                    "conclusion.finalized",
+                    actor,
+                    {
+                        "conclusion": stored,
+                        "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
+                    },
+                )
+                return {
+                    "operation_id": str(request_id),
+                    "phase": "closed",
+                    "status": "stopped" if stored["end_reason"] == "user_stop" else "finished",
+                }
             if control["phase"] in {"closing", "closed"}:
+                if task_contract(task) != BOARD_LEGACY:
+                    return {
+                        "operation_id": control.get("closing_request_id", str(request_id)),
+                        "phase": control["phase"],
+                        "status": task["status"]
+                        if task["status"] in {"finished", "failed", "stopped"}
+                        else "closing",
+                    }
                 require(
                     control.get("closing_request_id") == str(request_id),
                     "Closing already requested",
                 )
                 return {"operation_id": str(request_id), "phase": control["phase"]}
-            require(control["phase"] == "running", "Task is not running")
+            require(
+                control["phase"] == "running" or native_preparing,
+                "Task is not running",
+            )
             require(
                 not conclusion.get("verification_refs"),
                 "Verification requires a trusted platform adapter",
@@ -2717,6 +3345,9 @@ class CtfService(
         """Fence abandoned writers only after the coordinator has confirmed drain."""
         async with self.repo.engine.begin() as conn:
             task = await self._task(conn, tid)
+            require(
+                task_contract(task) == BOARD_LEGACY, "Legacy recovery cannot fence a versioned Task"
+            )
             interrupted = []
             members = (
                 (await conn.execute(select(s.ctf_members).where(s.ctf_members.c.task_id == tid)))

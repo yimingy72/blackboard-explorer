@@ -9,19 +9,20 @@ from email.utils import format_datetime, parsedate_to_datetime
 from typing import Any
 
 import httpx2
-from agent_framework import Message
-from agent_framework.exceptions import (
-    ChatClientContentFilterException,
-    ChatClientException,
-    ChatClientInvalidAuthException,
-    ChatClientInvalidRequestException,
-)
 from openai import (
     APIConnectionError,
     APIError,
     APIStatusError,
     APITimeoutError,
     ContentFilterFinishReasonError,
+)
+
+from bbx_runtime.pi import Message
+from bbx_runtime.pi.exceptions import (
+    ChatClientContentFilterException,
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
 )
 
 OPENAI_PROVIDERS = {
@@ -56,6 +57,9 @@ class ModelStreamError(RuntimeError):
         finish_reason: str | None = None,
         provider_response_id: str | None = None,
         terminal_usage: Mapping[str, Any] | None = None,
+        http_status: int | None = None,
+        request_id: str | None = None,
+        retry_after: str | None = None,
     ) -> None:
         self.category = category
         self.event_type = (
@@ -66,6 +70,11 @@ class ModelStreamError(RuntimeError):
         self.finish_reason = finish_reason if finish_reason in _FINISH_REASONS else None
         self.provider_response_id = _bounded_identifier(provider_response_id, _REQUEST_ID)
         self.terminal_usage = validated_terminal_usage(terminal_usage)
+        self.http_status = (
+            http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        )
+        self.request_id = _bounded_identifier(request_id, _REQUEST_ID)
+        self.retry_after = _retry_after(retry_after)
         super().__init__("Model stream did not complete successfully")
 
 
@@ -175,7 +184,7 @@ def _retry_after(value: Any) -> str | None:
 
 
 def _exceptions(error: BaseException) -> list[BaseException]:
-    """MAF wraps provider errors in causes, contexts, and exception args."""
+    """Provider failures can be wrapped in causes, contexts and exception args."""
     pending: list[BaseException] = [error]
     seen: set[int] = set()
     found: list[BaseException] = []
@@ -227,6 +236,11 @@ def model_error_metadata(
         retry_after = _retry_after(status_error.response.headers.get("retry-after"))
 
     stream_error = next((item for item in chain if isinstance(item, ModelStreamError)), None)
+    if stream_error is not None:
+        status = status or stream_error.http_status
+        request_id = request_id or stream_error.request_id
+        retry_after = retry_after or stream_error.retry_after
+        code = code or stream_error.provider_code
     transport_error = next((item for item in chain if isinstance(item, _TRANSPORT_TYPES)), None)
     transport_type = (
         next(

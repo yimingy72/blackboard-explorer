@@ -16,7 +16,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 RUN sed -i 's|http://mirrors.aliyun.com/|https://mirrors.aliyun.com/|g' /etc/apt/sources.list.d/ubuntu.sources \
     && sed 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources > /tmp/bbx-tools.sources \
     && apt-get -o Dir::Etc::sourcelist=/tmp/bbx-tools.sources -o Dir::Etc::sourceparts=- update \
-    && apt-get install -y --no-install-recommends sudo iproute2 openvpn \
+    && apt-get install -y --no-install-recommends sudo iproute2 openvpn wireguard-tools \
     && rm -rf /var/lib/apt/lists/* /tmp/bbx-tools.sources
 
 RUN groupadd bbx-agents \

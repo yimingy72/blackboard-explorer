@@ -109,7 +109,9 @@ async def test_message_list_reads_only_session_presence_and_origin(origin, statu
             yield SimpleNamespace(execute=execute)
 
     service = Conversations(cast(AsyncEngine, Engine()))
-    service._task_agent = AsyncMock(return_value=({}, {"status": status}))
+    service._task_agent = AsyncMock(
+        return_value=({"run_number": 1}, {"status": status, "started_at": None, "derive_round": 1})
+    )
     service._session = AsyncMock(side_effect=AssertionError("Full Session must not be loaded"))
     result = await service.list_messages(uuid4(), "agent-1", status="queued")
     assert result == {

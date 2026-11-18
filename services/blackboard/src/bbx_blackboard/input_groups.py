@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import anyio
 from bbx_contracts.models import InitialAttachment
+from bbx_contracts.runner_inputs import INPUT_FILE_LIMIT, INPUT_PROFILE, INPUT_TOTAL_LIMIT
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -82,6 +83,17 @@ def check_mutable(row: dict[str, Any], owner: str) -> None:
         raise HTTPException(410, "附件组已取消或过期，请重新上传")
 
 
+async def discard_private_source(
+    conn: AsyncConnection, group_id: UUID, source_id: UUID | None = None
+) -> None:
+    """Delete only draft assets; the caller holds the input group lock."""
+    table = s.native_vpn_assets
+    query = delete(table).where(table.c.group_id == group_id, table.c.task_id.is_(None))
+    if source_id is not None:
+        query = query.where(table.c.id == source_id)
+    await conn.execute(query)
+
+
 class InputGroupView(BaseModel):
     id: UUID
     expires_at: datetime
@@ -135,11 +147,20 @@ class InputGroups:
         return dict(task)
 
     async def upload(
-        self, group_id: UUID, owner: str, filename: str, content: BinaryIO, size: int, sha: str
+        self,
+        group_id: UUID,
+        owner: str,
+        filename: str,
+        content: BinaryIO,
+        size: int,
+        sha: str,
+        *,
+        file_limit=FILE_LIMIT,
+        total_limit=TOTAL_LIMIT,
     ) -> InitialAttachment:
         check_filename(filename)
-        if size > FILE_LIMIT:
-            raise HTTPException(413, "单个附件不能超过 50 MiB")
+        if size > file_limit:
+            raise HTTPException(413, f"单个附件不能超过 {file_limit // (1024 * 1024)} MiB")
         fid = uuid4()
         attachment = InitialAttachment(
             id=fid,
@@ -153,8 +174,10 @@ class InputGroups:
             row = await self.row(conn, group_id, lock=True)
             check_mutable(row, owner)
             files = row["files"]
-            if len(files) >= FILE_COUNT or sum(item["size"] for item in files) + size > TOTAL_LIMIT:
-                raise HTTPException(413, "最多 20 个附件，合计不能超过 200 MiB")
+            if len(files) >= FILE_COUNT or sum(item["size"] for item in files) + size > total_limit:
+                raise HTTPException(
+                    413, f"最多 20 个附件，合计不能超过 {total_limit // (1024 * 1024)} MiB"
+                )
             pending = asyncio.create_task(
                 self.objects.put(attachment.uri, content, length=size, part_size=FILE_LIMIT)
             )
@@ -300,7 +323,9 @@ async def readable(request: Request, group_id: UUID) -> dict[str, Any]:
     async with store.engine.connect() as conn:
         task = (
             await conn.execute(
-                select(s.tasks.c.deleting, s.tasks.c.mode).where(s.tasks.c.id == task_id)
+                select(s.tasks.c.deleting, s.tasks.c.mode, s.tasks.c.ctf_control).where(
+                    s.tasks.c.id == task_id
+                )
             )
         ).one_or_none()
     if task is None or task.deleting:
@@ -308,6 +333,8 @@ async def readable(request: Request, group_id: UUID) -> dict[str, Any]:
     if identity.kind == "agent":
         if identity.mode != task.mode:
             raise HTTPException(409, "mode_mismatch")
+        if (task.ctf_control or {}).get("initial_attachment_state"):
+            raise HTTPException(403, "Native shared inputs are not exposed by attachment-group API")
         if task.mode == "ctf":
             if identity.generation is None or identity.agent_id is None:
                 raise HTTPException(403, "CTF token required")
@@ -336,6 +363,79 @@ async def get_group(request: Request, group_id: UUID) -> dict[str, Any]:
     return await readable(request, group_id)
 
 
+class PrivateVpnSourceView(BaseModel):
+    source_id: UUID
+
+
+@router.put("/{group_id}/private-vpn-source", response_model=PrivateVpnSourceView)
+async def upload_private_vpn_source(request: Request, group_id: UUID) -> PrivateVpnSourceView:
+    from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_SOURCE_LIMIT
+
+    identity = require_user_or_service(request)
+    publication = request.app.state.native_ctf_publication.publication
+    if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
+        raise HTTPException(404, "Private VPN configuration upload is not published")
+    store = groups(request)
+    owner = owner_key(identity)
+    check_mutable(await store.get(group_id), owner)
+    content = bytearray()
+    try:
+        async with asyncio.timeout(10):
+            async for chunk in request.stream():
+                if len(content) + len(chunk) > VPN_SOURCE_LIMIT:
+                    raise HTTPException(413, "VPN configuration exceeds the upload limit")
+                content.extend(chunk)
+    except TimeoutError:
+        raise HTTPException(408, "VPN configuration upload timed out") from None
+    if not content:
+        raise HTTPException(422, "Private attachment cannot be empty")
+    raw = bytes(content)
+    bootstrap = request.app.state.native_runner_bootstrap
+    if bootstrap is None:
+        raise HTTPException(503, "Private VPN configuration is unavailable")
+    digest = hashlib.sha256(raw).hexdigest()
+    cipher = bootstrap.vpn.asset_cipher
+    async with store.engine.begin() as conn:
+        check_mutable(await store.row(conn, group_id, lock=True), owner)
+        existing = (
+            (
+                await conn.execute(
+                    select(s.native_vpn_assets).where(s.native_vpn_assets.c.group_id == group_id)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if existing and existing["digest"] == digest:
+            return PrivateVpnSourceView(source_id=existing["id"])
+        if existing:
+            await conn.execute(
+                delete(s.native_vpn_assets).where(s.native_vpn_assets.c.id == existing["id"])
+            )
+        source_id = uuid4()
+        await conn.execute(
+            insert(s.native_vpn_assets).values(
+                id=source_id,
+                group_id=group_id,
+                digest=digest,
+                ciphertext=cipher.encrypt(raw).decode(),
+            )
+        )
+    return PrivateVpnSourceView(source_id=source_id)
+
+
+@router.delete("/{group_id}/private-vpn-source")
+async def remove_private_vpn_source(
+    request: Request, group_id: UUID, source_id: UUID | None = None
+) -> dict[str, bool]:
+    identity = require_user_or_service(request)
+    store = groups(request)
+    async with store.engine.begin() as conn:
+        check_mutable(await store.row(conn, group_id, lock=True), owner_key(identity))
+        await discard_private_source(conn, group_id, source_id)
+    return {"deleted": True}
+
+
 @router.post(
     "/{group_id}/files",
     response_model=InitialAttachment,
@@ -355,21 +455,35 @@ async def upload_file(
     store = groups(request)
     check_filename(filename)
     check_mutable(await store.get(group_id), owner_key(identity))
+    publication = request.app.state.native_ctf_publication.publication
+    shared = publication is not None and publication.inputs_profile == INPUT_PROFILE
+    file_limit = INPUT_FILE_LIMIT if shared else FILE_LIMIT
+    limit_options = (
+        {"file_limit": INPUT_FILE_LIMIT, "total_limit": INPUT_TOTAL_LIMIT} if shared else {}
+    )
     size, digest = 0, hashlib.sha256()
     with TemporaryFile() as content:
         try:
             async with asyncio.timeout(UPLOAD_SECONDS):
                 async for chunk in request.stream():
                     size += len(chunk)
-                    if size > FILE_LIMIT:
-                        raise HTTPException(413, "单个附件不能超过 50 MiB")
+                    if size > file_limit:
+                        raise HTTPException(
+                            413, f"单个附件不能超过 {file_limit // (1024 * 1024)} MiB"
+                        )
                     digest.update(chunk)
                     await anyio.to_thread.run_sync(content.write, chunk)
                 await anyio.to_thread.run_sync(content.seek, 0)
         except TimeoutError:
             raise HTTPException(408, "附件上传超时，请重新上传") from None
         return await store.upload(
-            group_id, owner_key(identity), filename, content, size, digest.hexdigest()
+            group_id,
+            owner_key(identity),
+            filename,
+            content,
+            size,
+            digest.hexdigest(),
+            **limit_options,
         )
 
 

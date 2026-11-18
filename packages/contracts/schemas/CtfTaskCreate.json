@@ -3,6 +3,22 @@
     "CtfBudget": {
       "additionalProperties": false,
       "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "enum": [
+                "USD",
+                "CNY"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
         "max_cost": {
           "anyOf": [
             {
@@ -49,9 +65,136 @@
           "minimum": 1,
           "title": "Context Threshold",
           "type": "integer"
+        },
+        "dispatch_mode": {
+          "default": "manual",
+          "enum": [
+            "manual",
+            "automatic"
+          ],
+          "title": "Dispatch Mode",
+          "type": "string"
+        },
+        "first_plan_max_calls": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "First Plan Max Calls",
+          "type": "integer"
+        },
+        "first_plan_timeout_seconds": {
+          "default": 60,
+          "maximum": 300,
+          "minimum": 10,
+          "title": "First Plan Timeout Seconds",
+          "type": "integer"
         }
       },
       "title": "CtfOptions",
+      "type": "object"
+    },
+    "NativeCtfEnvironmentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "publication_stamp": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Publication Stamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "publication_stamp"
+      ],
+      "title": "NativeCtfEnvironmentRef",
+      "type": "object"
+    },
+    "NativeMcpGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "allowed_tools": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Allowed Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "allowed_tools"
+      ],
+      "title": "NativeMcpGrant",
+      "type": "object"
+    },
+    "NativeMcpGrants": {
+      "additionalProperties": false,
+      "properties": {
+        "lead": {
+          "items": {
+            "$ref": "#/$defs/NativeMcpGrant"
+          },
+          "maxItems": 8,
+          "title": "Lead",
+          "type": "array"
+        },
+        "teammate": {
+          "items": {
+            "$ref": "#/$defs/NativeMcpGrant"
+          },
+          "maxItems": 8,
+          "title": "Teammate",
+          "type": "array"
+        }
+      },
+      "title": "NativeMcpGrants",
+      "type": "object"
+    },
+    "PiModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_revision": {
+          "minimum": 1,
+          "title": "Model Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model_id",
+        "model_revision"
+      ],
+      "title": "PiModelRef",
       "type": "object"
     }
   },
@@ -124,6 +267,52 @@
       "title": "Egress Allowlist",
       "type": "array"
     },
+    "native_mcp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NativeMcpGrants"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "pi_model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PiModelRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "native_environment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NativeCtfEnvironmentRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "native_vpn_source_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Vpn Source Id"
+    },
     "input_group_id": {
       "anyOf": [
         {
@@ -153,6 +342,23 @@
       ],
       "default": null,
       "title": "Input File Ids"
+    },
+    "public_input_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Input Ids"
     },
     "model_id": {
       "anyOf": [
@@ -196,7 +402,14 @@
     "reasoning_effort": {
       "anyOf": [
         {
-          "minLength": 1,
+          "enum": [
+            "off",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
           "type": "string"
         },
         {
@@ -204,6 +417,7 @@
         }
       ],
       "default": null,
+      "description": "任务思考强度；省略或 null 沿用已发布配置",
       "title": "Reasoning Effort"
     }
   },

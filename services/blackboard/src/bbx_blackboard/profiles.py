@@ -14,7 +14,6 @@ from fastapi import HTTPException
 from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from bbx_blackboard.platform import PlatformStore
 from bbx_blackboard.store import schema as s
 
 
@@ -23,6 +22,14 @@ def _content(profile: AgentProfile | CtfAgentProfile) -> dict[str, Any]:
     if isinstance(profile, CtfAgentProfile):
         data.pop("mode")
         data["prompts"] = {"mode": "ctf", "platform_tools": data.pop("platform_tools", [])}
+        data.pop("role_run_options", None)
+        run_options = {
+            role: options.model_dump(mode="json", exclude_none=True)
+            for role, options in profile.role_run_options.items()
+            if options.model_dump(exclude_none=True)
+        }
+        if run_options:
+            data["prompts"]["role_run_options"] = run_options
         model = data.pop("model")
         data["models"] = {"lead": model, "teammate": model}
         data["params"] = data.pop("options")
@@ -35,6 +42,7 @@ def ctf_profile(row: dict[str, Any]) -> CtfAgentProfile:
     return CtfAgentProfile.model_validate(
         {
             "model": row["models"]["lead"],
+            "role_run_options": row["prompts"].get("role_run_options", {}),
             "platform_tools": row["prompts"].get("platform_tools", []),
             "options": row["params"],
             **{
@@ -57,7 +65,7 @@ def require_ctf_tool_capabilities(
     missing = ctf_tool_capability_issues(profile, roles)
     if missing:
         detail = "; ".join(f"{role}: {', '.join(tools)}" for role, tools in missing.items())
-        raise HTTPException(422, f"请在 CTF 配置启用必要的详情/全文读取工具：{detail}")
+        raise HTTPException(422, f"请在 CTF 配置启用必要的配套工具：{detail}")
 
 
 def _digest(content: dict[str, Any]) -> str:
@@ -174,20 +182,12 @@ class ProfileStore:
         profile, _ = load_profile(directory)
         return await self._ensure_bundled_profile("default", profile)
 
-    async def ensure_bundled(self, directory: Path, platform: PlatformStore | None = None) -> None:
+    async def ensure_bundled(self, directory: Path) -> None:
         default, _ = load_profile(directory)
         single, _ = load_profile(directory.parent / "single")
-        model = default.models.explore
-        if platform is not None:
-            model = await platform.ensure_default_model(default.models.explore)
-            for profile in (default, single):
-                for role in ("explore", "derive", "close"):
-                    setattr(profile.models, role, model.model_copy(deep=True))
         await self._ensure_bundled_profile("default", default)
         await self._ensure_bundled_profile("single", single)
         ctf_directory = directory.parent / "ctf"
         if ctf_directory.is_dir():
             ctf = load_ctf_profile(ctf_directory)
-            if platform is not None:
-                ctf.model = model.model_copy(deep=True)
             await self._ensure_bundled_profile("ctf", ctf)

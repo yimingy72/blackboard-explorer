@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "bbx.task-runner.v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "attempt_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "dispatch_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "title": "Dispatch Id",
+      "type": "string"
+    },
+    "http_status": {
+      "anyOf": [
+        {
+          "maximum": 599,
+          "minimum": 100,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Http Status"
+    },
+    "phase": {
+      "enum": [
+        "response_ended",
+        "disconnected",
+        "not_sent"
+      ],
+      "title": "Phase",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "attempt_id",
+    "dispatch_id",
+    "phase"
+  ],
+  "title": "NativeTransportObservation",
+  "type": "object"
+}

@@ -3,7 +3,6 @@
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from agent_framework import tool
 from bbx_contracts.ctf import (
     CTF_BOARD_RESULT_MAX_BYTES,
     CtfAssignmentInstruction,
@@ -19,6 +18,7 @@ from pydantic import Field
 
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.tool_results import ToolJsonResult, json_tool_result
+from bbx_runtime.pi import tool
 
 
 def build_board_tools(
@@ -70,6 +70,20 @@ def build_board_tools(
         """Read one challenge's complete description, requirements and current revision."""
         return await json_tool_result(
             service.tool(task_id, token, "get_challenge", challenge_id=challenge_id)
+        )
+
+    @tool
+    async def get_record(challenge_id: str, record_id: str) -> ToolJsonResult:
+        """Read an exact shared record named by a notification or evidence reference.
+
+        Use the given challenge_id and record_id directly, without listing the board
+        or the challenge's history first. Long results remain available through
+        read_saved_tool_result; never rerun the original command to retrieve evidence.
+        """
+        return await json_tool_result(
+            service.tool(
+                task_id, token, "get_record", challenge_id=challenge_id, record_id=record_id
+            )
         )
 
     @tool
@@ -237,7 +251,8 @@ def build_board_tools(
         """Append an immutable observation using registered artifact IDs, not file paths.
 
         Only Lead, the challenge owner or registered collaborators may append records.
-        Read get_challenge first. If unassigned, ask Lead to add you to collaborator_ids,
+        Use an existing valid assignment directly; refresh get_challenge only when
+        ownership is unclear or rejected. If unassigned, ask Lead to add you to collaborator_ids,
         or send_message the existing owner to relay your findings.
         record_candidate requires the same assignment and cannot bypass this permission.
         Add short progress for meaningful approaches, effective or failed attempts,
@@ -317,6 +332,7 @@ def build_board_tools(
     return [
         list_challenges,
         get_challenge,
+        get_record,
         create_challenge,
         update_challenge,
         list_records,

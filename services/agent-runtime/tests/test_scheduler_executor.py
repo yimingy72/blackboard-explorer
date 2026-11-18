@@ -3,26 +3,20 @@
 import asyncio
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 from bbx_runtime.clients import BlackboardClient, RemoteError
-from bbx_runtime.execenv import ExecEnvHandle, ExecEnvManager
-from bbx_runtime.recovery import ModelRecoveryGate
-from bbx_runtime.runner import AgentRunner, RunResult
 from bbx_runtime.scheduler.actions import (
-    Conclude,
     EnterClosing,
     Fail,
-    SpawnClose,
     SpawnDerive,
     SpawnExplore,
     SystemClose,
 )
-from bbx_runtime.scheduler.executor import ActionExecutor
-from bbx_runtime.settings import Settings
+from bbx_runtime.scheduler.executor import ActionExecutor, BoardRunner
+
+STARTED_AT = "2026-10-17T12:01:00Z"
 
 
 class WaitingRunner:
@@ -31,7 +25,10 @@ class WaitingRunner:
         self.cancel_reason: str | None = None
         self.kwargs: dict = {}
 
-    async def run_agent(self, *_args, **kwargs) -> RunResult:
+    async def stop_agent(self, *_args, **_kwargs) -> None:
+        pass
+
+    async def run_agent(self, *_args, **kwargs) -> None:
         self.kwargs = kwargs
         self.started.set()
         try:
@@ -52,7 +49,7 @@ def setup_executor():
         history.append(("transition", f"{status}:{reason}"))
 
     service = SimpleNamespace(
-        register_agent=AsyncMock(return_value={"agent_id": "agent-1", "token": "issued"}),
+        register_agent=AsyncMock(return_value={"agent_id": "agent-1", "started_at": STARTED_AT}),
         claim_for=AsyncMock(return_value=[]),
         finish_agent=AsyncMock(return_value=[]),
         state=AsyncMock(
@@ -67,38 +64,64 @@ def setup_executor():
         transition=AsyncMock(side_effect=transition),
         system_close=AsyncMock(return_value=[]),
     )
-    manager = SimpleNamespace(create_user=AsyncMock(return_value={}))
     runner = WaitingRunner()
-    handle = ExecEnvHandle(
-        task_id=uuid4(), container_id="envd", name="envd", base_url="http://envd", token="test"
-    )
-    executor = ActionExecutor(
-        "task",
-        cast(BlackboardClient, service),
-        cast(ExecEnvManager, manager),
-        cast(AgentRunner, runner),
-        handle,
-    )
-    return executor, service, manager, runner, history
+    executor = ActionExecutor("task", cast(BlackboardClient, service), board_runner=runner)
+    return executor, service, runner, history
 
 
 async def test_stale_round_cancel_cannot_cancel_reactivated_derive():
-    executor, _, _, _, _ = setup_executor()
+    executor, _, _, _ = setup_executor()
     running = asyncio.create_task(asyncio.Event().wait())
     executor.tasks["agent-1"] = running  # type: ignore[assignment]
     executor.task_rounds["agent-1"] = 2
+    executor.task_executions["agent-1"] = STARTED_AT
     assert await executor.cancel("agent-1", "heartbeat", expected_derive_round=1) is False
     assert not running.done()
     assert await executor.cancel("agent-1", "heartbeat", expected_derive_round=2) is True
 
 
+async def test_board_runner_cancels_by_original_identity_without_finishing_locally():
+    _, service, _, _ = setup_executor()
+    started = asyncio.Event()
+
+    async def waiting(*_args, **_kwargs):
+        started.set()
+        await asyncio.Future()
+
+    board = SimpleNamespace(run_agent=AsyncMock(side_effect=waiting), stop_agent=AsyncMock())
+    service.register_agent.return_value = {
+        "agent_id": "agent-1",
+        "started_at": "2026-10-17T12:01:00Z",
+    }
+    executor = ActionExecutor(
+        "task", cast(BlackboardClient, service), board_runner=cast(BoardRunner, board)
+    )
+    await executor.execute([SpawnExplore(intent_id="I1")])
+    await asyncio.wait_for(started.wait(), 1)
+    service.claim_for.assert_awaited_once_with("task", "I1", "agent-1")
+    board.run_agent.assert_awaited_once_with(
+        "task", "agent-1", started_at="2026-10-17T12:01:00+00:00", derive_round=None
+    )
+    assert not await executor.cancel(
+        "agent-1", "heartbeat", expected_started_at="2026-10-17T12:00:00Z"
+    )
+    board.stop_agent.assert_not_awaited()
+    await executor.shutdown()
+    board.stop_agent.assert_not_awaited()
+    assert await executor.cancel("agent-1", "heartbeat", expected_started_at="2026-10-17T12:01:00Z")
+    board.stop_agent.assert_awaited_once_with(
+        "task", "agent-1", "heartbeat", started_at="2026-10-17T12:01:00Z", derive_round=None
+    )
+    service.finish_agent.assert_not_awaited()
+
+
 async def test_stale_execution_cancel_cannot_cancel_reactivated_explore():
-    executor, service, _, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     current = "2026-10-17T12:01:00Z"
     service.register_agent.return_value["started_at"] = current
     await executor.execute([SpawnExplore(intent_id="I1")])
     await asyncio.wait_for(runner.started.wait(), 2)
-    assert runner.kwargs["expected_started_at"] == current
+    assert runner.kwargs["started_at"] == "2026-10-17T12:01:00+00:00"
     assert not await executor.cancel(
         "agent-1", "heartbeat", expected_started_at="2026-10-17T12:00:00Z"
     )
@@ -106,64 +129,22 @@ async def test_stale_execution_cancel_cannot_cancel_reactivated_explore():
     assert await executor.cancel("agent-1", "heartbeat", expected_started_at=current)
 
 
-async def test_spawn_claims_before_user_creation_and_cancel_forwards_reason():
-    executor, service, manager, runner, _ = setup_executor()
-    await executor.execute([SpawnExplore(intent_id="I1")])
-    await asyncio.wait_for(runner.started.wait(), 2)
-    service.register_agent.assert_awaited_once_with(
-        "task", "explore", is_seed=False, intent_id="I1", close_mode=None
-    )
-    service.claim_for.assert_awaited_once_with("task", "I1", "agent-1")
-    manager.create_user.assert_awaited_once()
-    assert runner.kwargs["agent_token"] == "issued"
-    assert "agent-1" in executor.tasks
-    assert await executor.cancel("agent-1", "heartbeat")
-    assert runner.cancel_reason == "heartbeat"
-    assert executor.tasks == {}
-
-
-@pytest.mark.parametrize("reason", ["heartbeat", "runtime_restart"])
-async def test_cancel_immediately_after_dispatch_finishes_registered_claim(reason):
-    executor, service, manager, _runner, _ = setup_executor()
-    entered = asyncio.Event()
-
-    async def wait_for_state(_task_id):
-        entered.set()
-        await asyncio.Event().wait()
-
-    service.state.side_effect = wait_for_state
-    executor.runner = AgentRunner(
-        Settings.model_construct(),
-        cast(BlackboardClient, service),
-        Mock(),
-        cast(ExecEnvManager, manager),
-    )
-    await executor.execute([SpawnExplore(intent_id="I1")])
-    assert await executor.cancel("agent-1", reason)
-    assert entered.is_set()
-    service.claim_for.assert_awaited_once_with("task", "I1", "agent-1")
-    service.finish_agent.assert_awaited_once_with(
-        "task",
-        "agent-1",
-        {"accepted": True, "data": {"note": "运行被取消，系统结束交接"}},
-        reason,
-    )
-    assert executor.tasks == {}
-
-
 async def test_lost_claim_finishes_registration_without_starting_agent():
-    executor, service, manager, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     service.claim_for.side_effect = RemoteError(422, "already claimed")
     await executor.execute([SpawnExplore(intent_id="I1")])
     service.finish_agent.assert_awaited_once_with(
-        "task", "agent-1", {"accepted": False, "reason": "claim_lost"}, "normal"
+        "task",
+        "agent-1",
+        {"accepted": False, "reason": "claim_lost"},
+        "normal",
+        expected_started_at=STARTED_AT,
     )
-    manager.create_user.assert_not_awaited()
     assert not runner.started.is_set() and executor.tasks == {}
 
 
 async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
-    executor, service, _manager, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     service.register_agent.side_effect = RemoteError(422, "Derive phase changed", "stale_derive")
     await executor.execute([SpawnDerive(parallel=True)])
     service.register_agent.assert_awaited_once_with(
@@ -193,7 +174,7 @@ async def test_derive_registration_carries_phase_and_skips_only_stale_phase():
 
 
 async def test_review_registration_carries_required_review_flag():
-    executor, service, _manager, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     service.register_agent.side_effect = RemoteError(422, "Review phase changed", "stale_derive")
     await executor.execute([SpawnDerive(review=True)])
     service.register_agent.assert_awaited_once_with(
@@ -210,13 +191,12 @@ async def test_review_registration_carries_required_review_flag():
 
 @pytest.mark.parametrize("action", [SpawnDerive(), SpawnExplore(seed=True)])
 async def test_review_busy_registration_waits_for_next_tick(action):
-    executor, service, manager, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     service.register_agent.side_effect = RemoteError(
         409, "Review in progress", "agent_review_active"
     )
     await executor.execute([action])
     assert not runner.started.is_set() and executor.tasks == {}
-    manager.create_user.assert_not_awaited()
     service.register_agent.side_effect = None
     await executor.execute([action])
     await runner.started.wait()
@@ -225,14 +205,14 @@ async def test_review_busy_registration_waits_for_next_tick(action):
 
 
 async def test_unrelated_registration_conflict_still_propagates():
-    executor, service, _, _, _ = setup_executor()
+    executor, service, _, _ = setup_executor()
     service.register_agent.side_effect = RemoteError(409, "Other conflict", "different_conflict")
     with pytest.raises(RemoteError):
         await executor.execute([SpawnDerive()])
 
 
 async def test_closing_transitions_then_concludes_and_failure_concludes_then_transitions():
-    executor, _service, _manager, _runner, history = setup_executor()
+    executor, _service, _runner, history = setup_executor()
     await executor.execute([EnterClosing("accepted")])
     assert history == [
         ("transition", "closing:accepted"),
@@ -247,7 +227,7 @@ async def test_closing_transitions_then_concludes_and_failure_concludes_then_tra
 
 
 async def test_stale_acceptance_skips_conclude_and_retries_on_next_decision():
-    executor, service, _manager, _runner, history = setup_executor()
+    executor, service, _runner, history = setup_executor()
     service.transition.side_effect = RemoteError(422, "Board changed", "stale_acceptance")
     await executor.execute([EnterClosing("accepted"), SpawnExplore(seed=True)])
     service.transition.assert_awaited_once_with("task", "closing", "accepted")
@@ -264,7 +244,7 @@ async def test_stale_acceptance_skips_conclude_and_retries_on_next_decision():
     ("reason", "code"), [("accepted", "invalid"), ("terminated", "stale_acceptance")]
 )
 async def test_other_transition_errors_still_propagate(reason: str, code: str):
-    executor, service, _manager, _runner, _history = setup_executor()
+    executor, service, _runner, _history = setup_executor()
     service.transition.side_effect = RemoteError(422, "Other validation error", code)
     with pytest.raises(RemoteError):
         await executor.execute([EnterClosing(reason)])
@@ -272,13 +252,13 @@ async def test_other_transition_errors_still_propagate(reason: str, code: str):
 
 
 async def test_request_stop_finishes_registered_agent_before_launch():
-    executor, service, manager, runner, _ = setup_executor()
+    executor, service, runner, _ = setup_executor()
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def register(*_args, **_kwargs):
         entered.set()
         await release.wait()
-        return {"agent_id": "agent-1", "token": "issued"}
+        return {"agent_id": "agent-1", "started_at": STARTED_AT}
 
     service.register_agent.side_effect = register
     executing = asyncio.create_task(executor.execute([SpawnExplore(seed=True)]))
@@ -291,34 +271,13 @@ async def test_request_stop_finishes_registered_agent_before_launch():
         "agent-1",
         {"accepted": False, "reason": "runtime_stop_before_launch"},
         "runtime_restart",
+        expected_started_at=STARTED_AT,
     )
-    manager.create_user.assert_not_awaited()
-    assert not runner.started.is_set() and executor.tasks == {}
-
-
-async def test_request_stop_while_creating_user_releases_claim_without_launch():
-    executor, service, manager, runner, _ = setup_executor()
-    entered, release = asyncio.Event(), asyncio.Event()
-
-    async def create_user(*_args):
-        entered.set()
-        await release.wait()
-        return {}
-
-    manager.create_user.side_effect = create_user
-    executing = asyncio.create_task(executor.execute([SpawnExplore(intent_id="I1")]))
-    await asyncio.wait_for(entered.wait(), 2)
-    executor.request_stop("runtime_restart")
-    release.set()
-    await asyncio.wait_for(executing, 2)
-    service.claim_for.assert_awaited_once()
-    service.finish_agent.assert_awaited_once()
-    assert service.finish_agent.call_args.args[-1] == "runtime_restart"
     assert not runner.started.is_set() and executor.tasks == {}
 
 
 async def test_request_stop_skips_remaining_actions():
-    executor, service, _manager, _runner, _ = setup_executor()
+    executor, service, _runner, _ = setup_executor()
 
     async def close(*_args):
         executor.request_stop("runtime_restart")
@@ -328,67 +287,3 @@ async def test_request_stop_skips_remaining_actions():
     await executor.execute([SystemClose("I1"), SpawnExplore(seed=True)])
     service.system_close.assert_awaited_once_with("task", "I1")
     service.register_agent.assert_not_awaited()
-
-
-def pause_model_dispatch(executor, runner):
-    real = AgentRunner(Settings.model_construct(), executor.service, None, executor.manager)  # type: ignore[arg-type]
-    gate = ModelRecoveryGate()
-    real._recovery_gates[("task", "pinned-model")] = gate
-    runner.dispatch_paused = real.dispatch_paused
-    runner.mark_final_dispatch = real.mark_final_dispatch
-    return gate, real
-
-
-async def test_model_cooldown_keeps_control_actions_and_limits_final_to_one_registration(
-    monkeypatch,
-):
-    now = [0.0]
-    monkeypatch.setattr("bbx_runtime.recovery.monotonic", lambda: now[0])
-    executor, service, _, runner, history = setup_executor()
-    gate, real = pause_model_dispatch(executor, runner)
-    permit = await gate.acquire(AsyncMock())
-    gate.started(permit)
-    episode = gate.failed(permit, {"category": "connection", "transient": True})
-    assert episode is not None
-    episode.probes = 2
-    await executor.execute(
-        [
-            SpawnExplore(seed=True),
-            SpawnDerive(),
-            SpawnClose("judge"),
-            Conclude("agent-1", "limit"),
-            SystemClose("I1"),
-            EnterClosing("terminated"),
-        ]
-    )
-    service.register_agent.assert_not_awaited()
-    service.system_close.assert_awaited_once_with("task", "I1")
-    assert ("transition", "closing:terminated") in history
-    assert ("conclude", "agent-1:limit") in history
-    await executor.execute([SpawnClose("final")])
-    await asyncio.wait_for(runner.started.wait(), 1)
-    await executor.cancel("agent-1", "heartbeat")
-    assert episode.final_dispatched and real.dispatch_paused("task", final=True)
-    for _ in range(10):
-        await executor.execute([SpawnClose("final")])
-    assert service.register_agent.await_count == 1
-    now[0] = 120
-    await executor.execute([SpawnClose("final")])
-    assert service.register_agent.await_count == 2
-    await executor.shutdown()
-
-
-async def test_final_recovery_registration_failure_does_not_consume_dispatch_exception():
-    executor, service, _, runner, _ = setup_executor()
-    gate, real = pause_model_dispatch(executor, runner)
-    permit = await gate.acquire(AsyncMock())
-    gate.started(permit)
-    gate.failed(permit, {"category": "connection", "transient": True})
-    service.register_agent.side_effect = httpx.ReadError("control connection dropped")
-    with pytest.raises(httpx.ReadError):
-        await executor.execute([SpawnClose("final")])
-    assert not real.dispatch_paused("task", final=True)
-    service.register_agent.side_effect = None
-    await executor.execute([SpawnClose("final")])
-    assert real.dispatch_paused("task", final=True)
-    await executor.shutdown()

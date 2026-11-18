@@ -1,0 +1,138 @@
+{
+  "$defs": {
+    "KnowledgeAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 0,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "owner_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner Id"
+        },
+        "scope_revision": {
+          "minimum": 1,
+          "title": "Scope Revision",
+          "type": "integer"
+        },
+        "assignment_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assignment Id"
+        }
+      },
+      "required": [
+        "agent_id",
+        "generation",
+        "turn_id",
+        "epoch",
+        "scope_revision"
+      ],
+      "title": "KnowledgeAssignment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "verification_round": {
+      "title": "Verification Round",
+      "type": "string"
+    },
+    "value_digest": {
+      "title": "Value Digest",
+      "type": "string"
+    },
+    "author_id": {
+      "title": "Author Id",
+      "type": "string"
+    },
+    "assignment_ref": {
+      "$ref": "#/$defs/KnowledgeAssignment"
+    },
+    "evidence_refs": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "fact_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fact Refs",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_version": {
+      "title": "Created Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "task_id",
+    "challenge_id",
+    "verification_round",
+    "value_digest",
+    "author_id",
+    "assignment_ref",
+    "created_at",
+    "created_version"
+  ],
+  "title": "FlagCandidate",
+  "type": "object"
+}

@@ -1,3 +1,4 @@
+import { fixtureToolCatalog } from './settings-fixture';
 import { taskListResponse } from './task-list-fixture';
 import type { Page, Route } from '@playwright/test';
 import { createHash } from 'node:crypto';
@@ -187,9 +188,9 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     credential_source: 'stored', has_secret: true, configured_credentials: ['api_key'], enabled: true, is_default: true }];
   const mcpServers = [
     { name: 'reference', version: 1, label: '资料检索', url: 'https://mcp.example.invalid/mcp',
-      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true },
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: true, enabled: true, published: true, published_version: 1 as number | null, published_roles: ['explore'] },
     { name: 'analysis', version: 1, label: '分析工具', url: 'https://analysis.example.invalid/mcp',
-      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: false, enabled: true },
+      auth_header: 'Authorization', auth_scheme: 'Bearer', has_secret: false, enabled: true, published: true, published_version: 1 as number | null, published_roles: ['explore'] },
   ];
   const task = {
     id: TASK_ID, goal: GOAL, status: 'finished', acceptance_state: { A1: { status: 'met' } },
@@ -229,6 +230,8 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
     const method = request.method();
     if (path === '/api/login' && method === 'POST') return json(route, { username: 'tester' });
     if (path === '/api/logout' && method === 'POST') return json(route, { ok: true });
+    if (path === '/api/platform/pi-models' && method === 'GET') return json(route, { enabled: false, can_manage: false, models: [] });
+    if (path === '/api/task-creation-capabilities' && method === 'GET') return json(route, { mode: 'legacy', native_ctf: null });
     if (/^\/api\/tasks\/[^/]+\/progress\/settings$/.test(path) && method === 'PUT') {
       const body = request.postDataJSON() as { enabled: boolean; max_cost: string };
       return json(route, { enabled: body.enabled, status: 'idle', overview: '', nodes: [], revision: 0, source_version: 0, desired_source_version: 0, published_version: 0, run_number: 1, updated_at: null, error: null, budget: { max_cost: body.max_cost, spent: '0', reserved: '0', unknown: '0' } });
@@ -323,6 +326,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       profiles.set(version, body);
       return json(route, profileDocument(version, body));
     }
+    if (path === '/api/settings/tool-catalog' && method === 'GET') return json(route, fixtureToolCatalog);
     if (path === '/api/settings/workers' && method === 'GET') return json(route, { revision, profile: settingsProfile });
     const workerMatch = /^\/api\/settings\/workers\/(explore|derive|close)$/.exec(path);
     if (workerMatch && method === 'PUT') {
@@ -353,6 +357,7 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       { id: 'foundry_local', supports_reasoning_effort: false, label: 'Local', options_fields: [], credential_fields: [], allow_no_auth: true, default_base_url: 'http://host.docker.internal:8000/v1', base_url_required: true },
     ]);
     if (path === '/api/platform/models' && method === 'GET') return json(route, platformModels);
+    if (path === '/api/platform/mcp-servers/capabilities' && method === 'GET') return json(route, { can_manage: true, external_roles: ['explore', 'lead', 'teammate'] });
     if (path === '/api/platform/mcp-servers' && method === 'GET') return json(route, mcpServers);
     const modelMatch = /^\/api\/platform\/models\/([^/]+)$/.exec(path);
     if (modelMatch && method === 'DELETE') {
@@ -394,12 +399,13 @@ export async function installMockApi(page: Page, options: { largeGraph?: boolean
       const saved = { name, version, label: String(body.label), url: String(body.url),
         auth_header: String(body.auth_header), auth_scheme: String(body.auth_scheme),
         has_secret: Boolean(body.secret) || index >= 0 && mcpServers[index].has_secret && !body.clear_secret,
-        enabled: Boolean(body.enabled) };
+        enabled: Boolean(body.enabled), published: false, published_version: index < 0 ? null : mcpServers[index].published_version,
+        published_roles: index < 0 ? [] : mcpServers[index].published_roles };
       if (index < 0) mcpServers.push(saved); else mcpServers[index] = saved;
       return json(route, saved);
     }
     if (/^\/api\/platform\/mcp-servers\/[^/]+\/versions\/\d+\/tools$/.test(path) && method === 'GET') {
-      return json(route, { tools: [{ name: 'search_docs', description: '搜索文档' }, { name: 'read_docs', description: '读取文档' }] });
+      return json(route, { status: 'ready', published: true, roles: ['explore'], tools: [{ name: 'search_docs', description: '搜索文档' }, { name: 'read_docs', description: '读取文档' }] });
     }
     unexpected.push(`${method} ${path}`);
     return json(route, { detail: `Unexpected mock request: ${method} ${path}` }, 501);

@@ -10,23 +10,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from agent_framework import (
-    Agent,
-    AgentSession,
-    ChatContext,
-    ChatMiddleware,
-    ChatResponseUpdate,
-    Content,
-    Message,
-    tool,
-)
-from agent_framework.amazon import BedrockChatClient
-from agent_framework.anthropic import AnthropicClient
-from agent_framework.foundry import FoundryChatClient
-from agent_framework.gemini import GeminiChatClient
-from agent_framework.mistral import MistralChatClient
-from agent_framework.ollama import OllamaChatClient
-from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 from bbx_runtime.clients import BlackboardClient, RemoteError
 from bbx_runtime.context import RunContext
 from bbx_runtime.image_view import (
@@ -35,6 +18,16 @@ from bbx_runtime.image_view import (
     append_pending_images,
     finish_pending_images,
     make_view_image_tool,
+)
+from bbx_runtime.pi import (
+    Agent,
+    AgentSession,
+    ChatContext,
+    ChatMiddleware,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    tool,
 )
 from bbx_runtime.session import CheckpointHistoryProvider, SessionCheckpoint
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
@@ -154,8 +147,6 @@ async def test_view_image_rejects_foreign_uri_invalid_format_and_unsupported_cli
     assert not objects.data
     assert "无效" in await invoke(ctx, f"evidence/{'2' * 36}/agent-1/file.png")
     assert "无效" in await invoke(ctx, "https://example.com/image.png")
-    ctx.profile.models.explore.provider = "bedrock"
-    assert "丢弃图片" in await invoke(ctx, "/workspace/image.png")
     ctx.profile.models.explore.provider = "gemini"
     ctx.profile.models.explore.supports_vision = False
     assert "明确不支持" in await invoke(ctx, "/workspace/image.png")
@@ -437,34 +428,18 @@ async def test_maf_tool_loop_keeps_image_in_all_following_calls() -> None:
     assert restored_uris == image_uris[1]
 
 
-def test_installed_maf_request_converters_keep_image_bytes() -> None:
+def test_pi_conversation_keeps_native_image_bytes() -> None:
+    import base64
+
+    from bbx_runtime.pi.data import pi_messages
+
     image = png()
     message = Message(
         role="user", contents=[Content.from_text("look"), Content.from_data(image, "image/png")]
     )
-    chat = OpenAIChatCompletionClient(model="test", api_key="fake")
-    converted_chat = chat._prepare_message_for_openai(message)
-    assert converted_chat[-1]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,")
-    responses = OpenAIChatClient(model="test", api_key="fake")
-    converted_responses = responses._prepare_message_for_openai(message)
-    assert converted_responses[0]["content"][1]["type"] == "input_image"
-    foundry = FoundryChatClient.__new__(FoundryChatClient)
-    converted_foundry = foundry._prepare_message_for_openai(message)
-    assert converted_foundry[0]["content"][1]["type"] == "input_image"
-    gemini = GeminiChatClient(model="test", api_key="fake")
-    _, converted_gemini = gemini._prepare_gemini_messages([message])
-    parts = converted_gemini[0].parts
-    assert parts is not None
-    inline = parts[-1].inline_data
-    assert inline is not None and inline.data == image
-    anthropic = AnthropicClient.__new__(AnthropicClient)
-    converted_anthropic = anthropic._prepare_message_for_anthropic(message)
-    assert converted_anthropic["content"][1]["source"]["type"] == "base64"
-    mistral = MistralChatClient.__new__(MistralChatClient)
-    converted_mistral = mistral._format_user_message(message)
-    assert converted_mistral["content"][1]["type"] == "image_url"
-    ollama = OllamaChatClient.__new__(OllamaChatClient)
-    converted_ollama = ollama._format_user_message(message)
-    assert converted_ollama[0]["images"]
-    bedrock = BedrockChatClient.__new__(BedrockChatClient)
-    assert bedrock._convert_content_to_bedrock_block(message.contents[1]) is None
+    before = message.to_dict()
+    native = pi_messages([message])[0]
+    assert native["content"][1]["type"] == "image"
+    assert native["content"][1]["mimeType"] == "image/png"
+    assert base64.b64decode(native["content"][1]["data"]) == image
+    assert message.to_dict() == before

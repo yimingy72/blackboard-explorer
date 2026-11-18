@@ -1,8 +1,8 @@
-"""Installed-MAF behavior checks that run without Docker or a model service."""
+"""Legacy boundary scenarios exercised through native Pi, without model APIs."""
 
 import asyncio
 
-from agent_framework import (
+from bbx_runtime.pi import (
     Agent,
     ChatMiddleware,
     FunctionMiddleware,
@@ -38,7 +38,7 @@ async def test_03_chat_middleware_list_order_is_outer_to_inner():
     assert order == ["first:before", "second:before", "second:after", "first:after"]
 
 
-async def test_04_enqueued_message_is_not_retained_after_a_tool_round_trip():
+async def test_04_enqueued_message_is_retained_after_a_tool_round_trip():
     class InjectOnce(ChatMiddleware):
         def __init__(self) -> None:
             self.done = False
@@ -65,7 +65,7 @@ async def test_04_enqueued_message_is_not_retained_after_a_tool_round_trip():
     assert (await agent.run("start", session=agent.create_session())).text == "done"
     assert len(client.received_messages) == 2
     assert any("[board delta] F2" in message.text for message in client.received_messages[0])
-    assert not any("[board delta] F2" in message.text for message in client.received_messages[1])
+    assert any("[board delta] F2" in message.text for message in client.received_messages[1])
 
 
 async def test_05_pending_injection_after_final_response_causes_one_more_model_call():
@@ -121,7 +121,7 @@ async def test_06_function_middleware_can_replace_a_result_without_stopping_agen
     assert not executed
 
 
-async def test_07_max_iterations_disables_tools_then_requests_final_response():
+async def test_07_max_iterations_is_a_hard_bound_without_a_synthetic_final_request():
     calls = 0
 
     @tool
@@ -134,11 +134,13 @@ async def test_07_max_iterations_disables_tools_then_requests_final_response():
         [ScriptStep(calls=(ScriptToolCall("step"),)), ScriptStep(text="final")],
         max_iterations=1,
     )
-    assert (await Agent(client=client, tools=[step]).run("start")).text == "final"
+    import pytest
+    from bbx_runtime.pi.bridge import PiBridgeError
+
+    with pytest.raises(PiBridgeError):
+        await Agent(client=client, tools=[step]).run("start")
     assert calls == 1
-    assert len(client.received_messages) == 2
-    assert client.received_options[0].get("tool_choice") == "auto"
-    assert client.received_options[1].get("tool_choice") == "none"
+    assert len(client.received_messages) == 1
 
 
 async def test_09_five_parallel_calls_share_one_atomic_grace_budget():

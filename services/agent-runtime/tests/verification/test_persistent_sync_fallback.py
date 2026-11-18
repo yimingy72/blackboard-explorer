@@ -1,6 +1,6 @@
 """Check public Message/Content mutation as a persistent board-sync fallback."""
 
-from agent_framework import Agent, ChatMiddleware, tool
+from bbx_runtime.pi import Agent, ChatMiddleware, tool
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 
 

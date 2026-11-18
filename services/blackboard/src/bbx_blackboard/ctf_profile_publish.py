@@ -84,6 +84,10 @@ def publication_plan(
             else None
         )
         summary["profiles"][name] = {
+            "role_run_options": {
+                role: options.model_dump(exclude_none=True)
+                for role, options in profile.role_run_options.items()
+            },
             "missing_readback_tools": ctf_tool_capability_issues(profile),
             "before_version": rows[name]["version"],
             "version": rows[name]["version"] + int(before != after),

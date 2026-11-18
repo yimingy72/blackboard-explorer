@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
-from agent_framework import Content, Message
 from bbx_contracts.ctf import (
     CtfDeferredMessagesReadRequest,
     CtfSavedToolResultReadRequest,
@@ -13,6 +12,7 @@ from bbx_contracts.ctf import (
 )
 from bbx_runtime.ctf.context import estimate_text_tokens, stable_tool_previews
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Content, Message
 
 
 def test_five_deferred_previews_remain_complete_at_maximum_preview_allowance():

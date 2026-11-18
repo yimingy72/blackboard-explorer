@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_framework import ChatContext, ChatMiddleware, FunctionTool, Message, tool
 from bbx_contracts.ctf import execution_agent_id
 
 from bbx_runtime.clients import RemoteError
@@ -25,6 +24,7 @@ from bbx_runtime.image_view import (
     stage_image,
     vision_refusal,
 )
+from bbx_runtime.pi import ChatContext, ChatMiddleware, FunctionTool, Message, tool
 
 
 def make_view_image_tool(

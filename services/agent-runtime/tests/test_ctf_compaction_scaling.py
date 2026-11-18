@@ -6,11 +6,11 @@ from copy import copy
 from random import Random
 
 import pytest
-from agent_framework import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
 from bbx_runtime.ctf import context as sizing
 from bbx_runtime.ctf import middleware
 from bbx_runtime.ctf.context import estimate_message_lengths, estimate_messages_tokens
 from bbx_runtime.ctf.middleware import TurnBoundary
+from bbx_runtime.pi import GROUP_ANNOTATION_KEY, Content, Message, annotate_message_groups
 from test_ctf_context import history, provider, result, text
 
 

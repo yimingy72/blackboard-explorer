@@ -1,0 +1,7 @@
+{
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.12",
+  "venvPath": "../../../services/sandbox-execution",
+  "venv": ".venv",
+  "include": ["common.py", "prepare.py", "load_images.py", "probe.py", "tests"]
+}

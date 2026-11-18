@@ -4,10 +4,10 @@ from copy import deepcopy
 from typing import Any, cast
 
 import pytest
-from agent_framework import Content, Message
 from bbx_runtime.ctf.context import estimate_messages_tokens, input_token_limit
 from bbx_runtime.ctf.middleware import CtfHistoryProvider, TurnBoundary
 from bbx_runtime.ctf.session import load_checkpoint
+from bbx_runtime.pi import Content, Message
 from test_ctf_context import result, text
 from test_ctf_leaf_context import almost_full_history, loaded, saved_provider
 from test_ctf_runtime import TURN
@@ -177,7 +177,7 @@ def test_threshold_output_reserve_and_safety_margin_remain_hard_budget():
 
 
 async def test_block_retains_latest_single_provider_usage_instead_of_turn_average():
-    from agent_framework import tool
+    from bbx_runtime.pi import tool
     from bbx_runtime.testing.scripted_client import (
         ScriptedChatClient,
         ScriptStep,
@@ -356,7 +356,7 @@ async def test_native_latest_provider_usage_matches_billing_cache_input(
     from test_ctf_provider_boundary import DispatchService, native
 
     class ReportedUsage(ScriptUsage):
-        def as_maf(self) -> Any:
+        def as_platform(self) -> Any:
             details = {
                 "cache_creation_input_token_count": 20,
                 "cache_read_input_token_count": 30,

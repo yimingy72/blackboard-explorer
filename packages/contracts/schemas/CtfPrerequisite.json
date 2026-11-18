@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "gate",
+        "work_completed"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "ref": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "ref"
+  ],
+  "title": "CtfPrerequisite",
+  "type": "object"
+}

@@ -7,10 +7,14 @@ from typing import Any, cast
 
 import httpx2
 import pytest
-from agent_framework.exceptions import ChatClientException
 from bbx_runtime.ctf.coordinator import CtfCoordinator, failure_diagnostic
-from bbx_runtime.model_errors import is_transient_model_error, model_error_metadata
-from bbx_runtime.models import CompleteResponsesClient
+from bbx_runtime.model_errors import (
+    ModelStreamError,
+    is_transient_model_error,
+    model_error_metadata,
+)
+from bbx_runtime.pi.exceptions import ChatClientException
+from bbx_runtime.testing.pi_client import responses_client
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep
 from openai import APIError, APIStatusError, AsyncOpenAI
 from test_ctf_coordination import Runtime
@@ -241,7 +245,7 @@ async def test_native_sse_recovery_preserves_tools_unknown_cost_and_other_member
                 http_client=http,
             ) as sdk:
                 instance = runner(
-                    service, CompleteResponsesClient(model="offline", async_client=sdk), monkeypatch
+                    service, responses_client(model="offline", async_client=sdk), monkeypatch
                 )
                 instance.envd = SimpleNamespace(execute=execute)
                 recovered = asyncio.create_task(instance.run("task", MEMBER, TURN))
@@ -263,8 +267,8 @@ async def test_native_sse_recovery_preserves_tools_unknown_cost_and_other_member
         )
         assert diagnostic["category"] in {"server_error", "rate_limit"}
         assert diagnostic["provider_code"] == code
-        assert diagnostic["exception_type"] == "ChatClientException"
-        assert diagnostic["cause_type"] == "APIError"
+        assert diagnostic["exception_type"] == "ModelStreamError"
+        assert diagnostic["cause_type"] is None
         resumed = ScriptedChatClient(
             [ScriptStep(text="continue", expect_contains="confirmed command output")]
         )
@@ -310,10 +314,10 @@ async def test_native_sse_permanent_or_unknown_error_never_replays_partial_tools
             api_key="test-only", base_url="https://model.invalid", max_retries=4, http_client=http
         ) as sdk:
             instance = runner(
-                service, CompleteResponsesClient(model="offline", async_client=sdk), monkeypatch
+                service, responses_client(model="offline", async_client=sdk), monkeypatch
             )
             instance.envd = SimpleNamespace(execute=execute)
-            with pytest.raises(ChatClientException) as caught:
+            with pytest.raises((ChatClientException, ModelStreamError)) as caught:
                 await instance.run("task", MEMBER, TURN)
     assert len(requests) == 1
     assert not executed

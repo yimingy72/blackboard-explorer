@@ -1,0 +1,131 @@
+--- a/src/shared/required-child-extensions.ts
++++ b/src/shared/required-child-extensions.ts
+@@ -1,5 +1,15 @@
+ import * as fs from "node:fs";
+ import * as path from "node:path";
++
++import type { AgentSession } from "@earendil-works/pi-coding-agent";
++
++export interface RequiredChildSessionHostContext {
++	session: AgentSession;
++	run: { runId?: string; agent?: string; childIndex?: number };
++}
++
++/** A trusted host setup, awaited before session_start or the first child prompt. */
++export type RequiredChildSessionHost = (context: RequiredChildSessionHostContext) => void | Promise<void>;
+ 
+ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+ const MAX_REQUIRED_EXTENSIONS = 32;
+@@ -11,6 +21,8 @@
+ 	id: string;
+ 	/** Existing importable module path. Snapshotted to its canonical absolute path. */
+ 	path: string;
++	/** Require this module to export installChildSessionHost; failures reject the launch. */
++	sessionHost?: true;
+ }
+ 
+ export interface RegisterRequiredChildExtensionsInput {
+@@ -31,9 +43,11 @@
+ 	const paths = new Set<string>();
+ 	return Object.freeze(value.map((entry, index) => {
+ 		// The flag comes from registration, so only serialized snapshots (not registration input) may carry it.
+-		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && (canonicalizeFiles || key !== "requireForAllRunners"))) throw new Error(`${label} entry ${index} requires only id and path.`);
++		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && key !== "sessionHost" && (canonicalizeFiles || key !== "requireForAllRunners"))) throw new Error(`${label} entry ${index} requires id, path and an optional sessionHost flag.`);
+ 		const id = "id" in entry ? entry.id : undefined;
+ 		const rawPath = "path" in entry ? entry.path : undefined;
++		const sessionHost = "sessionHost" in entry ? entry.sessionHost : undefined;
++		if (sessionHost !== undefined && sessionHost !== true) throw new Error(`${label} sessionHost must be true when present.`);
+ 		const requireForAllRunners = "requireForAllRunners" in entry ? entry.requireForAllRunners : undefined;
+ 		if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error(`${label} entry ${index} requires a safe id of at most 128 characters.`);
+ 		if (ids.has(id)) throw new Error(`${label} id '${id}' is duplicated.`);
+@@ -51,7 +65,7 @@
+ 		if (paths.has(extensionPath)) throw new Error(`${label} path '${extensionPath}' is duplicated.`);
+ 		ids.add(id);
+ 		paths.add(extensionPath);
+-		return Object.freeze(requireForAllRunners ? { id, path: extensionPath, requireForAllRunners } : { id, path: extensionPath });
++		return Object.freeze({ id, path: extensionPath, ...(sessionHost ? { sessionHost: true as const } : {}), ...(requireForAllRunners ? { requireForAllRunners } : {}) });
+ 	}));
+ }
+ 
+@@ -76,6 +90,7 @@
+ 	if (typeof input.sessionId !== "string" || !input.sessionId || input.sessionId.trim() !== input.sessionId || input.sessionId.length > 256 || input.sessionId.includes("\0")) throw new Error("Required child extension registration requires a non-empty trimmed sessionId of at most 256 characters without NUL.");
+ 	if (input.requireForAllRunners !== undefined && typeof input.requireForAllRunners !== "boolean") throw new Error("Required child extension registration requireForAllRunners must be a boolean.");
+ 	const canonical = snapshotRequiredChildExtensions(input.extensions, "Required child extensions", true);
++	if (canonical.some((entry) => entry.sessionHost) && !input.requireForAllRunners) throw new Error("A required child session host must require all runners.");
+ 	const frozen = input.requireForAllRunners ? Object.freeze(canonical.map((entry) => Object.freeze({ ...entry, requireForAllRunners: true as const }))) : canonical;
+ 	const store = registry();
+ 	if (store.bySession.has(input.sessionId)) throw new Error(`Required child extensions are already registered for session '${input.sessionId}'; dispose them first.`);
+--- a/src/api/required-child-extensions.ts
++++ b/src/api/required-child-extensions.ts
+@@ -3,4 +3,6 @@
+ 	type RegisterRequiredChildExtensionsInput,
+ 	type RequiredChildExtension,
+ 	type RequiredChildExtensionRegistration,
++	type RequiredChildSessionHost,
++	type RequiredChildSessionHostContext,
+ } from "../shared/required-child-extensions.ts";
+--- a/src/runs/shared/child-session.ts
++++ b/src/runs/shared/child-session.ts
+@@ -8,6 +8,7 @@
+  * `createAgentSession` from a pi package module.
+  */
+ import * as fs from "node:fs";
++import { createJiti } from "jiti";
+ import * as path from "node:path";
+ import { pathToFileURL } from "node:url";
+ import type { AgentMessage } from "@earendil-works/pi-agent-core";
+@@ -20,7 +21,7 @@
+ import { resolvePackageSubpath } from "../background/runner-aliases.ts";
+ import { PI_CODING_AGENT_PACKAGE, resolveHostPiPackageRoot } from "./pi-spawn.ts";
+ import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
+-import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
++import type { RequiredChildExtensionSnapshot, RequiredChildSessionHost } from "../../shared/required-child-extensions.ts";
+ import type { PlacementMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
+ 
+ export interface ChildSessionEvent {
+@@ -505,6 +506,11 @@
+ 	return {
+ 		async create(launch) {
+ 			const disposalsAtStart = disposals;
++			const assertLaunchCurrent = () => {
++				if (disposals !== disposalsAtStart) throw new Error("The child session factory was disposed during startup.");
++				if (launch.signal?.aborted) throw new Error("The child launch was cancelled during startup.");
++			};
++			assertLaunchCurrent();
+ 			const pi = await loadPiCodingAgent();
+ 			const builtinMcpTools = launch.builtinMcpTools ?? [];
+ 			let readinessTool: ToolDefinition | undefined;
+@@ -646,6 +652,24 @@
+ 					settingsManager,
+ 					sessionStartEvent: { type: "session_start", reason: "startup" },
+ 				});
++				// Host-owned modules run before session_start: ordinary extension hooks may swallow failures.
++				try {
++					assertLaunchCurrent();
++					for (const required of launch.requiredExtensions ?? []) {
++						if (!required.sessionHost) continue;
++						if (!required.requireForAllRunners) throw new Error(`Child session host '${required.id}' must require all runners.`);
++						const module = await createJiti(import.meta.url, { moduleCache: false, fsCache: false }).import(required.path) as Record<string, unknown>;
++						assertLaunchCurrent();
++						if (typeof module.installChildSessionHost !== "function") throw new Error(`Required child session host '${required.id}' has no installChildSessionHost export.`);
++						await (module.installChildSessionHost as RequiredChildSessionHost)({ session, run: {
++							runId: launch.runtime.runId, agent: launch.runtime.agent, childIndex: launch.runtime.childIndex,
++						} });
++						assertLaunchCurrent();
++					}
++				} catch (error) {
++					await shutdownSession(session);
++					throw error;
++				}
+ 				pinChildCacheRetention(session.agent);
+ 				// Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
+ 				const requiredStartupErrors: string[] = [];
+@@ -704,6 +728,8 @@
+ 				mcpWaits.set(cancel, ready);
+ 				try { await ready; } finally { mcpWaits.delete(cancel); }
+ 			}
++			try { assertLaunchCurrent(); }
++			catch (error) { await shutdown(); throw error; }
+ 			const child: ChildSession = {
+ 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
+ 				prompt: (text) => session.prompt(text),

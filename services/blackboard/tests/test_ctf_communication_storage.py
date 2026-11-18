@@ -175,7 +175,7 @@ def message(storage, **changes):
     }
 
 
-async def test_session_narrow_revision_query_retains_cas_storage_safety_and_default_response(
+async def test_session_narrow_checkpoint_query_retains_cas_storage_safety_and_default_response(
     storage,
 ):
     service = storage.service
@@ -207,7 +207,11 @@ async def test_session_narrow_revision_query_retains_cas_storage_safety_and_defa
                 )
     assert (await service.sessions.get_session(storage.tid, "lead"))["session"] == saved["session"]
     queries = [query for query in storage.queries if getattr(query, "is_select", False)]
-    narrow = [query for query in queries if list(query.selected_columns.keys()) == ["revision"]]
+    narrow = [
+        query
+        for query in queries
+        if list(query.selected_columns.keys()) == ["revision", "external_mcp_pending"]
+    ]
     assert len(narrow) == 5
 
 
@@ -389,6 +393,18 @@ def test_observation_index_targets_the_exact_lookup():
         },
         {"sender_kind": "system", "notification_purpose": "turn_recovery"},
         {"sender_kind": "system", "notification_purpose": "context_continuation"},
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "challenge_progress",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "challenge_verification",
+        },
     ],
 )
 async def test_recovery_proofs_only_return_bounded_metadata_from_completed_old_turn(
@@ -419,6 +435,23 @@ async def test_recovery_proofs_only_return_bounded_metadata_from_completed_old_t
         {"sender_kind": "system", "notification_purpose": "unknown"},
         {"sender_kind": "system", "kind": "turn_finished", "notification_purpose": None},
         {"kind": "message"},
+        {
+            "sender_kind": "user",
+            "kind": "notification",
+            "notification_purpose": "challenge_progress",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "foreign",
+            "kind": "notification",
+            "notification_purpose": "challenge_verification",
+        },
+        {
+            "sender_kind": "system",
+            "sender_id": "system",
+            "kind": "notification",
+            "notification_purpose": "command_result",
+        },
         {"purpose": "review"},
         {"status": "leased"},
         {"session_revision": 0},

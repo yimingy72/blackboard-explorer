@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "reasoning_effort": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reasoning Effort"
+    },
+    "max_output_tokens": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Output Tokens"
+    }
+  },
+  "title": "CtfRoleRunOptions",
+  "type": "object"
+}

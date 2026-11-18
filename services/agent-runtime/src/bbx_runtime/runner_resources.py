@@ -1,0 +1,3731 @@
+"""Trusted native resource I/O; Blackboard owns dispatch, identities and cleanup decisions."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import ipaddress
+import json
+import logging
+import re
+import secrets
+import ssl
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+from uuid import UUID
+
+import httpx
+from bbx_contracts.legacy_network import LegacyNetworkPolicy, read_gateway_credentials
+from bbx_contracts.runner import runner_json_text
+from bbx_contracts.runner_bootstrap import (
+    BINDING_CAPTURE_CONFIG_FIELDS,
+    board_network_policy,
+    explicit_board_journal_restart,
+    validate_binding_capture_deployment,
+)
+from bbx_contracts.runner_inputs import INPUT_PROFILE
+from bbx_contracts.runner_vpn import (
+    VPN_DYNAMIC_PROFILE,
+    VPN_PROFILE,
+    NativeTaskRoutePolicy,
+    NativeTaskVpnNetwork,
+    NativeTaskVpnProfile,
+    NativeVpnProfile,
+    NativeVpnScope,
+    vpn_deployment,
+)
+from bbx_sandbox_execution.connect import read_execution_context
+from opensandbox import Sandbox, SandboxManager
+from opensandbox.adapters.factory import AdapterFactory
+from opensandbox.config import ConnectionConfig
+from opensandbox.constants import DEFAULT_EXECD_PORT
+from opensandbox.models.sandboxes import PVC, SandboxFilter, SandboxImageSpec, Volume
+from opensandbox.transport import RetryPolicy
+
+CLEANUP_GRACE_SECONDS = 120
+SANDBOX_HOST_PROFILE = "node-sandbox-host-v1"
+TRAFFIC_PROFILE = "binding-pcap-v1"
+TRAFFIC_CONFIG_FIELDS = BINDING_CAPTURE_CONFIG_FIELDS
+SANDBOX_HOST_SECRET = "bbx-sandbox-host"
+SANDBOX_HOST_MOUNT = "/var/run/bbx-sandbox-host"
+SANDBOX_HOST_PORT = 8766
+PLATFORM_CONTROL_PORT = "8443"
+PLATFORM_RUNTIME_ACCOUNT = "bbx-runtime"
+PLATFORM_TASK_ROLE = "bbx-platform-task-resources"
+PLATFORM_SANDBOX_ACCOUNT = "bbx-p9-sandbox-server"
+PLATFORM_SANDBOX_ROLE = "bbx-platform-sandbox-resources"
+PLATFORM_NAMESPACE_LABEL = "bbx.dev/kubernetes-platform"
+VPN_EGRESS = "vpn-egress"
+VPN_SECRET = "bbx-vpn-egress"
+VPN_MOUNT = "/var/run/bbx-vpn/config"
+VPN_STATE = "/var/run/bbx-vpn/state"
+VPN_WG_PORT = 51820
+VPN_PEER_POLICY = "bbx-vpn-peer"
+DEFAULT_NETWORK_POLICY = "bbx-binding-direct"
+SANDBOX_SELECTOR = "batch-sandbox.sandbox.opensandbox.io/name"
+NETWORK_DIGEST_ANNOTATION = "bbx.dev/vpn-network-sha256"
+GENERATION_LABEL = "bbx.dev/resource-generation"
+JOURNAL_LOCK = ".bbx-writer.lock"
+JOURNAL_SCRIPT = "/opt/bbx-runner/src/recovery-journal.mjs"
+JOURNAL_VERIFIER = "journal-verifier"
+JOURNAL_LOCK_ID = re.compile(r"[0-9]{1,20}:[0-9]{1,20}")
+
+
+class ResourceUnknown(RuntimeError):
+    """No replay or cleanup claim can be inferred from this local observation."""
+
+
+class RunnerResources:
+    def __init__(self, config: dict):
+        self.config = dict(config)
+        profile = config.get("runner_profile")
+        if profile not in {None, SANDBOX_HOST_PROFILE}:
+            raise ValueError("Unknown trusted Runner resource profile")
+        self.sandbox_host = profile == SANDBOX_HOST_PROFILE
+        lock = config.get("journal_writer_lock", False)
+        if type(lock) is not bool or (lock and not self.sandbox_host):
+            raise ValueError("Journal writer locking requires the trusted Sandbox host profile")
+        self.journal_writer_lock = lock
+        self.board_network = board_network_policy(config)
+        raw_vpn = config.get("vpn")
+        self.vpn = vpn_deployment(raw_vpn) if raw_vpn else None
+        if self.vpn and not self.sandbox_host:
+            raise ValueError("The Task VPN requires its original trusted Sandbox Host")
+        for key in (
+            "source_id",
+            "kubeconfig",
+            "context",
+            "cluster_uid",
+            "runner_image",
+            "sandbox_image",
+            "environment_revision",
+            "sandbox_server_url",
+            "storage_class",
+            "system_namespace",
+        ):
+            if not self.config.get(key):
+                raise ValueError("The trusted resource deployment is incomplete")
+        images = ["runner_image", "sandbox_image"]
+        if self.sandbox_host:
+            images.append("sandbox_host_image")
+            network = self.config.get("sandbox_network")
+            if not isinstance(network, dict) or set(network) != {
+                "namespace",
+                "network_identity",
+                "ipv4",
+            }:
+                raise ValueError("A frozen Sandbox Assignment network is required")
+            self._name(network["namespace"])
+            self._name(network["network_identity"])
+            ipaddress.IPv4Address(network["ipv4"])
+            if self.config.get("sandbox_host_execd_origin"):
+                self._execd_origin(self.config["sandbox_host_execd_origin"])
+        if self.board_network or TRAFFIC_CONFIG_FIELDS & self.config.keys():
+            validate_binding_capture_deployment(self.config)
+            images.append("traffic_sandbox_image")
+        for key in images:
+            if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.config.get(key, "")):
+                raise ValueError("Resource images must use trusted immutable digests")
+        url = urlsplit(self.config["sandbox_server_url"])
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or url.path not in {"", "/"}
+        ):
+            raise ValueError("A fixed native Sandbox Server origin is required")
+        self.server = url
+        self._name(self.config["system_namespace"])
+        self.platform_namespace = self.config.get("kubernetes_platform_namespace")
+        if self.platform_namespace is not None:
+            self._name(self.platform_namespace)
+            if (
+                self.platform_namespace == self.config["system_namespace"]
+                or self.config.get("runner_control_egress")
+                or any(
+                    self.config.get(key)
+                    != f"https://{service}.{self.platform_namespace}.svc.cluster.local"
+                    for key, service in (
+                        ("runner_blackboard_url", "blackboard-control"),
+                        ("runner_model_proxy_url", "runtime-control"),
+                    )
+                )
+            ):
+                raise ValueError("In-cluster Runner control must use only the platform services")
+
+    async def _kubectl(
+        self, *args: str, body: dict | None = None, expected_denial: tuple[str, str] | None = None
+    ) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "kubectl",
+            "--kubeconfig",
+            self.config["kubeconfig"],
+            "--context",
+            self.config["context"],
+            *args,
+            stdin=asyncio.subprocess.PIPE if body is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            out, err = await asyncio.wait_for(
+                process.communicate(None if body is None else json.dumps(body).encode()), timeout=25
+            )
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
+        if expected_denial is not None:
+            policy, message = expected_denial
+            if (
+                process.returncode
+                and f"ValidatingAdmissionPolicy '{policy}'".encode() in err
+                and f"with binding '{policy}' denied request: {message}".encode() in err
+                and b"resulted in error" not in err
+            ):
+                return "denied-by-original-retirement-policy"
+            raise ResourceUnknown("The original retirement admission fence is not confirmed")
+        if process.returncode or len(out) > 16 * 1024 * 1024:
+            raise ResourceUnknown("The native resource operation is unresolved")
+        return out.decode()
+
+    async def _cluster(self):
+        value = json.loads(await self._kubectl("get", "namespace", "kube-system", "-o", "json"))
+        if value["metadata"]["uid"] != self.config["cluster_uid"]:
+            raise ResourceUnknown("The configured Kubernetes cluster identity changed")
+
+    @staticmethod
+    def _name(value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value
+        ):
+            raise ResourceUnknown("Invalid trusted resource name")
+        return value
+
+    def _scope(self, operation):
+        proof = operation.get("observation") or operation
+        for key in ("source_id", "cluster_uid"):
+            if key in proof and proof[key] != self.config[key]:
+                raise ResourceUnknown("The original native resource source changed")
+        tid, oid = str(UUID(operation["task_id"])), str(UUID(operation["operation_id"]))
+        namespace = self._name(operation["namespace"])
+        return namespace, {
+            "bbx.dev/managed-by": "runner-resources",
+            "bbx.dev/task-id": tid,
+            "bbx.dev/operation-id": oid,
+        }
+
+    @staticmethod
+    def _execd_origin(value):
+        if not isinstance(value, str) or not value or any(c.isspace() for c in value):
+            raise ResourceUnknown("A fixed native execd ingress authority is required")
+        parsed = urlsplit("http://" + value)
+        if (
+            not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ResourceUnknown("The native execd ingress authority is invalid")
+        return parsed.netloc
+
+    async def _get(self, kind, name, namespace=None):
+        if not isinstance(name, str) or len(name) > 253:
+            raise ResourceUnknown("Invalid trusted object name")
+        for label in name.split("."):
+            self._name(label)
+        args = ["get", kind, name, "--ignore-not-found", "-o", "json"]
+        if namespace:
+            args += ["-n", self._name(namespace)]
+        raw = await self._kubectl(*args)
+        return json.loads(raw) if raw.strip() else None
+
+    def _owned(self, value, labels, uid=None):
+        meta = value.get("metadata", {}) if value else {}
+        if (
+            not value
+            or any(meta.get("labels", {}).get(k) != v for k, v in labels.items())
+            or meta.get("annotations", {}).get("bbx.dev/source-id") != self.config["source_id"]
+            or (uid is not None and meta.get("uid") != uid)
+        ):
+            raise ResourceUnknown("The native resource ownership or UID changed")
+        return value
+
+    async def _ensure(self, doc, labels, uid=None):
+        meta = doc["metadata"]
+        existing = await self._get(doc["kind"], meta["name"], meta.get("namespace"))
+        if existing is None:
+            if uid is not None:
+                raise ResourceUnknown("An originally bound resource is missing")
+            await self._kubectl("create", "-f", "-", body=doc)
+            existing = await self._get(doc["kind"], meta["name"], meta.get("namespace"))
+        existing = self._owned(existing, labels, uid)
+        if doc["kind"] in {"ResourceQuota", "CiliumNetworkPolicy"} and existing.get(
+            "spec"
+        ) != doc.get("spec"):
+            raise ResourceUnknown("The Task quota or network policy changed")
+        if doc["kind"] == "ServiceAccount" and (
+            existing.get("automountServiceAccountToken") is not False or existing.get("secrets")
+        ):
+            raise ResourceUnknown("The Runner service account changed")
+        return existing
+
+    def _document(self, kind, name, labels, namespace=None, **fields):
+        return {
+            "apiVersion": "v1",
+            "kind": kind,
+            "metadata": {
+                "name": name,
+                **({"namespace": namespace} if namespace else {}),
+                "labels": labels,
+                "annotations": {"bbx.dev/source-id": self.config["source_id"]},
+            },
+            **fields,
+        }
+
+    async def _ensure_platform_binding(self, namespace, labels):
+        if self.platform_namespace is None:
+            return
+        for account, home, name in (
+            (PLATFORM_RUNTIME_ACCOUNT, self.platform_namespace, PLATFORM_TASK_ROLE),
+            (PLATFORM_SANDBOX_ACCOUNT, self.config["system_namespace"], PLATFORM_SANDBOX_ROLE),
+        ):
+            role = {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": name}
+            subjects = [{"kind": "ServiceAccount", "name": account, "namespace": home}]
+            binding = self._document(
+                "RoleBinding", account, labels, namespace, roleRef=role, subjects=subjects
+            )
+            binding["apiVersion"] = "rbac.authorization.k8s.io/v1"
+            actual = await self._ensure(binding, labels)
+            if actual.get("roleRef") != role or actual.get("subjects") != subjects:
+                raise ResourceUnknown("The Task-local control authorization changed")
+
+    def _platform_control_egress(self):
+        if self.platform_namespace is None:
+            return []
+        namespace = {"k8s:io.kubernetes.pod.namespace": self.platform_namespace}
+        return [
+            {
+                "toEndpoints": [
+                    {"matchLabels": {**namespace, "k8s:app.kubernetes.io/name": name}}
+                    for name in ("blackboard", "runtime")
+                ],
+                "toPorts": [{"ports": [{"port": PLATFORM_CONTROL_PORT, "protocol": "TCP"}]}],
+            }
+        ]
+
+    def _connection(self, tenant_key, execd_token=None):
+        if not isinstance(tenant_key, str) or not tenant_key.strip():
+            raise ResourceUnknown("The original Task tenant key is unavailable")
+        verify = ssl.create_default_context(cafile=self.config.get("ca_file"))
+        return ConnectionConfig(
+            domain=self.server.netloc,
+            protocol=self.server.scheme,
+            api_key=tenant_key,
+            headers={"X-EXECD-ACCESS-TOKEN": execd_token} if execd_token else {},
+            disable_metrics=True,
+            request_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(max_retries=0, wake_retry_enabled=False),
+            transport=httpx.AsyncHTTPTransport(verify=verify, retries=0),
+        )
+
+    @staticmethod
+    async def _close_sdk(value, connection):
+        await value.close()
+        if connection.transport is not None:
+            await connection.transport.aclose()
+
+    async def _sandbox_id(self, tenant_key, metadata):
+        connection = self._connection(tenant_key)
+        manager = await SandboxManager.create(connection_config=connection)
+        try:
+            found = await manager.list_sandbox_infos(
+                SandboxFilter(metadata=metadata, page_size=2, page=1)
+            )
+            if len(found.sandbox_infos) > 1 or found.pagination.has_next_page:
+                raise ResourceUnknown("The original Sandbox create is ambiguous")
+            return found.sandbox_infos[0].id if found.sandbox_infos else None
+        except ResourceUnknown:
+            raise
+        except Exception:
+            raise ResourceUnknown("The native Sandbox metadata lookup is unresolved") from None
+        finally:
+            await self._close_sdk(manager, connection)
+
+    @staticmethod
+    def _sandbox_metadata(operation, labels):
+        operation_id = operation.get("data", {}).get("sandbox_create_op_id")
+        return {
+            "bbx-task-id": labels["bbx.dev/task-id"],
+            "bbx-create-op": str(UUID(operation_id or operation["operation_id"])),
+        }
+
+    def traffic_enabled(self, operation):
+        enabled = operation.get("data", {}).get("traffic_profile") == TRAFFIC_PROFILE
+        if enabled and not TRAFFIC_CONFIG_FIELDS <= self.config.keys():
+            raise ResourceUnknown("The trusted Assignment traffic deployment is unavailable")
+        return enabled
+
+    def vpn_enabled(self, operation):
+        profile = operation.get("data", {}).get("vpn_profile")
+        enabled = profile in {VPN_PROFILE, VPN_DYNAMIC_PROFILE}
+        if enabled and (
+            not self.vpn or self.vpn.profile != profile or not self.traffic_enabled(operation)
+        ):
+            raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+        return enabled
+
+    def board_network_for(self, operation):
+        board = self.board_network
+        is_board = operation.get("data", {}).get("execution_contract") == "exploration-board-v1"
+        if is_board != (board is not None):
+            raise ResourceUnknown("The trusted Blackboard network deployment changed")
+        if board is not None and (
+            operation["data"].get("native_network")
+            != ("default" if board["mode"] == "default" else "vpn")
+            or (board["mode"] != "default" and not self.vpn_enabled(operation))
+            or not self.traffic_enabled(operation)
+        ):
+            raise ResourceUnknown("The trusted Blackboard route is unavailable")
+        return board
+
+    def board_direct(self, operation):
+        board = self.board_network_for(operation)
+        return board if board and board["mode"] == "default" else None
+
+    def _forced_board(self):
+        return self.board_network is not None and self.board_network["mode"] != "default"
+
+    def _uses_route_policy(self, operation):
+        return self.board_direct(operation) or (
+            self.vpn_enabled(operation) and isinstance(self.vpn, NativeTaskVpnProfile)
+        )
+
+    async def _vpn_peer_rule(self, namespace):
+        if not isinstance(self.vpn, NativeVpnProfile):
+            raise ResourceUnknown("The original Task VPN profile is missing")
+        peer, remote_namespace = self.vpn.peer, self.vpn.peer_namespace
+        ports = [{"ports": [{"port": str(peer.port), "protocol": "UDP"}]}]
+        if remote_namespace is None:
+            return {"toCIDR": [peer.ipv4 + "/32"], "toPorts": ports}
+        if remote_namespace in {
+            namespace,
+            "default",
+            "kube-system",
+            self.config["system_namespace"],
+        }:
+            raise ResourceUnknown("The isolated VPN peer namespace overlaps control resources")
+        pods = json.loads(
+            await self._kubectl(
+                "get",
+                "pods",
+                "-n",
+                remote_namespace,
+                "-l",
+                "bbx.dev/vpn-peer=allowed",
+                "-o",
+                "json",
+            )
+        )["items"]
+        matched = [pod for pod in pods if pod.get("status", {}).get("podIP") == peer.ipv4]
+        if (
+            len(matched) != 1
+            or matched[0]["spec"].get("hostNetwork")
+            or matched[0]["metadata"].get("deletionTimestamp")
+            or not any(
+                c["type"] == "Ready" and c["status"] == "True"
+                for c in matched[0].get("status", {}).get("conditions", [])
+            )
+        ):
+            raise ResourceUnknown("The original isolated VPN peer is unavailable")
+        return {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": remote_namespace,
+                        "k8s:bbx.dev/vpn-peer": "allowed",
+                    }
+                }
+            ],
+            "toPorts": ports,
+        }
+
+    async def ensure_vpn_peer_policy(self, operation):
+        if not self.vpn_enabled(operation) or not isinstance(self.vpn, NativeTaskVpnProfile):
+            raise ResourceUnknown("Original dynamic VPN deployment is unavailable")
+        state = operation["data"]["vpn"]
+        network = NativeTaskVpnNetwork.model_validate(state["network"])
+        peer, port = network.peer.ipv4, network.peer.port
+        digest = network.network_digest
+        vpn_operation_id = str(UUID(state["operation_id"]))
+        address = ipaddress.IPv4Address(peer)
+        if not any(address in ipaddress.ip_network(cidr) for cidr in self.vpn.peer_cidrs) or any(
+            address in ipaddress.ip_network(cidr) for cidr in self.vpn.deny_cidrs
+        ):
+            raise ResourceUnknown("Original VPN peer is outside the trusted boundary")
+        namespace, labels, pod = await self._original_host_runner(operation)
+        cluster = await self._verify_route_boundary(
+            operation, network.route_policy, self.vpn.target_cidrs
+        )
+        if not any(
+            address in ipaddress.IPv4Network(cidr) for cidr in network.route_policy.deny_cidrs
+        ):
+            raise ResourceUnknown("Original VPN peer is not excluded from solver forwarding")
+        if any(address in prefix for prefix in cluster):
+            raise ResourceUnknown("Original VPN peer overlaps Kubernetes control addresses")
+        generation = str(operation["data"].get("resource_generation", 1))
+        board = self.board_network_for(operation)
+        protocol = "TCP" if board and board["mode"] == "socks5" else "UDP"
+        runner = pod["metadata"]
+        if runner["labels"].get(GENERATION_LABEL) != generation or peer in {
+            operation["observation"]["runner"]["pod_ip"],
+            operation["observation"]["sandbox"]["pod_ip"],
+            pod["status"].get("hostIP"),
+        }:
+            raise ResourceUnknown("Original VPN peer overlaps its resource or generation changed")
+        owner = {"apiVersion": "v1", "kind": "Pod", "name": runner["name"], "uid": runner["uid"]}
+        doc = self._document(
+            "CiliumNetworkPolicy",
+            VPN_PEER_POLICY,
+            {**labels, GENERATION_LABEL: generation},
+            namespace,
+            spec={
+                "endpointSelector": {
+                    "matchLabels": {
+                        "bbx.dev/component": "runner",
+                        "bbx.dev/operation-id": labels["bbx.dev/operation-id"],
+                        GENERATION_LABEL: generation,
+                    },
+                },
+                "egress": [
+                    {
+                        "toCIDR": [peer + "/32"],
+                        "toPorts": [{"ports": [{"port": str(port), "protocol": protocol}]}],
+                    }
+                ],
+            },
+        )
+        return {
+            "vpn_operation_id": vpn_operation_id,
+            **await self._install_network_policy(doc, pod, owner, digest),
+        }
+
+    async def _cluster_routes(self):
+        nodes, services = await asyncio.gather(
+            self._kubectl("get", "nodes", "-o", "json"),
+            self._kubectl("get", "servicecidrs", "-o", "json"),
+        )
+        node_items = json.loads(nodes)["items"]
+        service_items = json.loads(services)["items"]
+        pod_prefixes = [item["spec"].get("podCIDRs", []) for item in node_items]
+        service_prefixes = [cidr for item in service_items for cidr in item["spec"]["cidrs"]]
+        if (
+            not pod_prefixes
+            or any(
+                not any(ipaddress.ip_network(cidr).version == 4 for cidr in group)
+                for group in pod_prefixes
+            )
+            or not any(ipaddress.ip_network(cidr).version == 4 for cidr in service_prefixes)
+        ):
+            raise ResourceUnknown("The original Kubernetes address boundary is unavailable")
+        values = {
+            *(cidr for group in pod_prefixes for cidr in group),
+            *(
+                entry["address"]
+                for item in node_items
+                for entry in item["status"].get("addresses", [])
+                if entry["type"] in {"InternalIP", "ExternalIP"}
+            ),
+            *service_prefixes,
+        }
+        return [network for cidr in values if (network := ipaddress.ip_network(cidr)).version == 4]
+
+    async def verify_vpn_source_boundary(self, operation):
+        if not self.vpn_enabled(operation) or not isinstance(self.vpn, NativeTaskVpnProfile):
+            raise ResourceUnknown("Original VPN source boundary is unavailable")
+        await self._cluster()
+        denied = [ipaddress.IPv4Network(cidr) for cidr in self.vpn.deny_cidrs]
+        if any(
+            not any(prefix.subnet_of(parent) for parent in denied)
+            for prefix in await self._cluster_routes()
+        ):
+            raise ResourceUnknown("The published VPN source boundary omits Kubernetes addresses")
+
+    async def _verify_route_boundary(self, operation, policy, allowed):
+        board = self.board_direct(operation)
+        if board is None and not isinstance(self.vpn, NativeTaskVpnProfile):
+            raise ResourceUnknown("Original dynamic network boundary is unavailable")
+        configured_deny = (
+            board["deny_cidrs"]
+            if board
+            else self.vpn.deny_cidrs
+            if isinstance(self.vpn, NativeTaskVpnProfile)
+            else []
+        )
+        wanted = [ipaddress.IPv4Network(cidr) for cidr in allowed]
+        observed = operation["observation"]
+        denied = [ipaddress.IPv4Network(cidr) for cidr in policy.deny_cidrs]
+        cluster = await self._cluster_routes()
+        required = [
+            *cluster,
+            *(
+                ipaddress.IPv4Network(cidr)
+                for cidr in (
+                    *configured_deny,
+                    observed["sandbox"]["pod_ip"],
+                    observed["runner"]["pod_ip"],
+                    *(
+                        cidr
+                        for control in self.config.get("runner_control_egress", [])
+                        for cidr in control["cidrs"]
+                        if ipaddress.ip_network(cidr).version == 4
+                    ),
+                )
+            ),
+        ]
+        if any(
+            not any(ipaddress.IPv4Network(cidr).subnet_of(parent) for parent in wanted)
+            for cidr in policy.allow_cidrs
+        ) or any(not any(prefix.subnet_of(parent) for parent in denied) for prefix in required):
+            raise ResourceUnknown("Original Task routes do not exclude the control boundary")
+        return cluster
+
+    async def ensure_default_network_policy(self, operation):
+        board = self.board_direct(operation)
+        if board is None and (
+            not self.vpn_enabled(operation) or not isinstance(self.vpn, NativeTaskVpnProfile)
+        ):
+            raise ResourceUnknown("Original default Task network deployment is unavailable")
+        data = operation["data"]
+        policy = NativeTaskRoutePolicy.model_validate(data["route_policy"])
+        digest = data["network_digest"]
+        if data["native_network"] != "default" or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ResourceUnknown("Original default Task network was not selected")
+        namespace, labels, _ = await self._original_host_runner(operation)
+        allowed = (
+            board["allow_cidrs"]
+            if board
+            else self.vpn.default_cidrs
+            if isinstance(self.vpn, NativeTaskVpnProfile)
+            else []
+        )
+        await self._verify_route_boundary(operation, policy, allowed)
+        dns_rule = []
+        if board:
+            resolver = ipaddress.IPv4Address(board["dns_ipv4"])
+            if (
+                data.get("dns_ipv4") != str(resolver)
+                or not any(resolver in ipaddress.IPv4Network(cidr) for cidr in policy.allow_cidrs)
+                or any(resolver in ipaddress.IPv4Network(cidr) for cidr in policy.deny_cidrs)
+            ):
+                raise ResourceUnknown("The original Blackboard resolver changed")
+            dns_rule.append(
+                {
+                    "toCIDR": [f"{resolver}/32"],
+                    "toPorts": [{"ports": [{"port": "53", "protocol": "UDP"}]}],
+                }
+            )
+        ref = operation["observation"]["sandbox"]
+        pod = await self._get("pod", ref["pod_name"], namespace)
+        if (
+            not pod
+            or not self._same_process(self._pod_projection(pod), ref)
+            or pod["metadata"].get("deletionTimestamp")
+            or pod["status"].get("podIP") != ref["pod_ip"]
+            or pod["metadata"].get("labels", {}).get(SANDBOX_SELECTOR) != ref["id"]
+            or not any(
+                owner.get("uid") == ref["cr_uid"]
+                for owner in pod["metadata"].get("ownerReferences", [])
+            )
+        ):
+            raise ResourceUnknown("Original default Task Sandbox identity changed")
+        self._sandbox_spec(pod, operation)
+        generation = str(data.get("resource_generation", 1))
+        owner = {"apiVersion": "v1", "kind": "Pod", "name": ref["pod_name"], "uid": ref["pod_uid"]}
+        doc = self._document(
+            "CiliumNetworkPolicy",
+            DEFAULT_NETWORK_POLICY,
+            {**labels, GENERATION_LABEL: generation},
+            namespace,
+            spec={
+                "endpointSelector": {"matchLabels": {SANDBOX_SELECTOR: ref["id"]}},
+                "egress": [
+                    {
+                        "toCIDR": policy.allow_cidrs,
+                        "toPorts": [
+                            {"ports": [{"port": "1", "endPort": 65535, "protocol": "TCP"}]}
+                        ],
+                    },
+                    *dns_rule,
+                ],
+                "egressDeny": [{"toCIDR": policy.deny_cidrs}],
+            },
+        )
+        return await self._install_network_policy(doc, pod, owner, digest)
+
+    async def _install_network_policy(self, doc, pod, owner, digest):
+        doc["apiVersion"] = "cilium.io/v2"
+        doc["metadata"]["ownerReferences"] = [owner]
+        doc["metadata"]["annotations"][NETWORK_DIGEST_ANNOTATION] = digest
+        policy = await self._ensure(doc, doc["metadata"]["labels"])
+        meta = policy["metadata"]
+        if (
+            meta.get("ownerReferences") != [owner]
+            or meta.get("deletionTimestamp")
+            or meta["annotations"].get(NETWORK_DIGEST_ANNOTATION) != digest
+        ):
+            raise ResourceUnknown("Original Task network policy identity changed")
+        # Read back the CNI endpoint for the same Pod before admitting the one claim.
+        # The application-level Sandbox canary, not this observation, proves end-to-end readiness.
+        until = time.monotonic() + 15
+        while True:
+            endpoint = await self._get("ciliumendpoint", owner["name"], meta["namespace"])
+            status = (endpoint or {}).get("status", {})
+            if (
+                endpoint
+                and any(
+                    ref.get("uid") == owner["uid"]
+                    for ref in endpoint["metadata"].get("ownerReferences", [])
+                )
+                and status.get("state") == "ready"
+                and any(
+                    item.get("ipv4") == pod["status"]["podIP"]
+                    for item in status.get("networking", {}).get("addressing", [])
+                )
+            ):
+                break
+            if time.monotonic() >= until:
+                raise ResourceUnknown("Original Task Cilium endpoint is unavailable")
+            await asyncio.sleep(0.3)
+        return {
+            "network_digest": digest,
+            "policy_name": meta["name"],
+            "policy_uid": str(UUID(meta["uid"])),
+        }
+
+    def _sandbox_image(self, operation):
+        if self.vpn_enabled(operation):
+            if self.vpn is None:
+                raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+            return self.vpn.sandbox_image
+        return self.config[
+            "traffic_sandbox_image" if self.traffic_enabled(operation) else "sandbox_image"
+        ]
+
+    async def _traffic_policy(self, namespace):
+        target_namespace = self.config["traffic_target_namespace"]
+        if target_namespace in {
+            namespace,
+            "kube-system",
+            "default",
+            "kube-public",
+            "kube-node-lease",
+        }:
+            raise ResourceUnknown("Assignment traffic targets require an isolated namespace")
+        targets = self.config["traffic_targets"]
+        selected = json.loads(
+            await self._kubectl(
+                "get",
+                "pods",
+                "-n",
+                target_namespace,
+                "-l",
+                "bbx.dev/traffic-target=allowed",
+                "-o",
+                "json",
+            )
+        )["items"]
+        for item in targets:
+            matched = [
+                pod for pod in selected if pod.get("status", {}).get("podIP") == item["ipv4"]
+            ]
+            if (
+                len(matched) != 1
+                or matched[0]["spec"].get("hostNetwork")
+                or matched[0]["metadata"].get("deletionTimestamp")
+                or not any(
+                    c["type"] == "Ready" and c["status"] == "True"
+                    for c in matched[0].get("status", {}).get("conditions", [])
+                )
+            ):
+                raise ResourceUnknown(
+                    "An original isolated Assignment traffic target is unavailable"
+                )
+        return {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": target_namespace,
+                        "k8s:bbx.dev/traffic-target": "allowed",
+                    }
+                }
+            ],
+            "toPorts": [
+                {
+                    "ports": [
+                        {"port": str(port), "protocol": "TCP"}
+                        for port in sorted({t["port"] for t in targets})
+                    ]
+                }
+            ],
+        }
+
+    async def _wait_pod(self, namespace, cr_uid, old_uid=None):
+        deadline = time.monotonic() + 150
+        while time.monotonic() < deadline:
+            pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+                "items"
+            ]
+            found = [
+                p
+                for p in pods
+                if any(r.get("uid") == cr_uid for r in p["metadata"].get("ownerReferences", []))
+            ]
+            if len(found) > 1:
+                raise ResourceUnknown("The native Sandbox has multiple Pods")
+            if found:
+                pod = found[0]
+                if old_uid and pod["metadata"]["uid"] != old_uid:
+                    raise ResourceUnknown("The original Sandbox Pod was replaced")
+                if any(
+                    c["type"] == "Ready" and c["status"] == "True"
+                    for c in pod.get("status", {}).get("conditions", [])
+                ):
+                    return pod
+            await asyncio.sleep(0.25)
+        raise ResourceUnknown("The native Sandbox Pod readiness is unresolved")
+
+    async def ensure_task_resources(
+        self,
+        operation,
+        tenant_key,
+        *,
+        admit_sandbox_create: Callable[[], Awaitable[bool]],
+        checkpoint: Callable[[dict], Awaitable[None]],
+    ):
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        observed = operation.get("observation") or {}
+        generation = operation.get("data", {}).get("resource_generation", 1)
+        journal_identity = (
+            {"resource_generation": generation, "journal_subdir": f"epoch-{generation}"}
+            if self.journal_writer_lock
+            else {}
+        )
+        if observed and (
+            observed.get("task_id") != labels["bbx.dev/task-id"]
+            or observed.get("operation_id") != labels["bbx.dev/operation-id"]
+            or observed.get("namespace") != namespace
+        ):
+            raise ResourceUnknown("The original resource operation changed")
+        deadline = datetime.fromisoformat(operation["hard_deadline"].replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            raise ResourceUnknown("The Task deadline requires an explicit timezone")
+        remaining = (deadline - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            raise ResourceUnknown("The Task resource deadline has expired")
+        ns_labels = dict(labels)
+        if self.platform_namespace is not None:
+            ns_labels[PLATFORM_NAMESPACE_LABEL] = self.platform_namespace
+        ns = await self._ensure(
+            self._document("Namespace", namespace, ns_labels),
+            ns_labels,
+            observed.get("namespace_uid"),
+        )
+        await self._ensure_platform_binding(namespace, labels)
+        await self._ensure(
+            self._document(
+                "ServiceAccount",
+                "bbx-runner",
+                labels,
+                namespace,
+                automountServiceAccountToken=False,
+            ),
+            labels,
+        )
+        await self._ensure(
+            self._document(
+                "ResourceQuota",
+                "bbx-task",
+                labels,
+                namespace,
+                spec={
+                    "hard": {
+                        "pods": "3" if operation["data"].get("board_workspace_source") else "2",
+                        "persistentvolumeclaims": "2",
+                        "requests.storage": "192Mi",
+                        "requests.cpu": "1",
+                        "requests.memory": "2Gi",
+                        "limits.cpu": "2",
+                        "limits.memory": "2Gi",
+                    }
+                },
+            ),
+            labels,
+        )
+        policy = self._document(
+            "CiliumNetworkPolicy",
+            "bbx-task",
+            labels,
+            namespace,
+            spec={
+                "endpointSelector": {},
+                "ingress": [
+                    {
+                        "fromEndpoints": [
+                            {"matchLabels": {"k8s:io.kubernetes.pod.namespace": n}}
+                            for n in [
+                                namespace,
+                                self.config["system_namespace"],
+                            ]
+                        ]
+                    }
+                ],
+                "egress": [
+                    {
+                        "toEndpoints": [
+                            {"matchLabels": {"k8s:io.kubernetes.pod.namespace": namespace}}
+                        ]
+                    },
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                                    "k8s:k8s-app": "kube-dns",
+                                }
+                            }
+                        ],
+                        "toPorts": [
+                            {
+                                "ports": [
+                                    {"port": "53", "protocol": "UDP"},
+                                    {"port": "53", "protocol": "TCP"},
+                                ]
+                            }
+                        ],
+                    },
+                ],
+                "egressDeny": [{"toEntities": ["host", "remote-node", "kube-apiserver"]}],
+            },
+        )
+        vpn = self.vpn_enabled(operation)
+        board = self.board_direct(operation)
+        if vpn:
+            link = [{"ports": [{"port": str(VPN_WG_PORT), "protocol": "UDP"}]}]
+            same, system = policy["spec"]["ingress"][0]["fromEndpoints"]
+            policy["spec"]["ingress"] = [
+                {"fromEndpoints": [same], "toPorts": link},
+                {"fromEndpoints": [system]},
+            ]
+            policy["spec"]["egress"][0]["toPorts"] = link
+        policy["apiVersion"] = "cilium.io/v2"
+        await self._ensure(policy, labels)
+        if self.traffic_enabled(operation) and not vpn and not board:
+            target = self._document(
+                "CiliumNetworkPolicy",
+                "bbx-binding-traffic",
+                labels,
+                namespace,
+                spec={
+                    # Runner and recovery verifier have explicit component labels.
+                    # The official Sandbox has no component label, checked on observation.
+                    "endpointSelector": {
+                        "matchExpressions": [
+                            {"key": "bbx.dev/component", "operator": "DoesNotExist"}
+                        ]
+                    },
+                    "egress": [await self._traffic_policy(namespace)],
+                },
+            )
+            target["apiVersion"] = "cilium.io/v2"
+            await self._ensure(target, labels)
+        allowed = self.config.get("runner_control_egress", [])
+        runner_policy = self._document(
+            "CiliumNetworkPolicy",
+            "bbx-runner-control",
+            labels,
+            namespace,
+            spec={
+                "endpointSelector": {"matchLabels": {"bbx.dev/component": "runner"}},
+                "egress": self._platform_control_egress()
+                + [
+                    {
+                        "toCIDR": entry["cidrs"],
+                        "toPorts": [
+                            {
+                                "ports": [
+                                    {"port": str(port), "protocol": "TCP"}
+                                    for port in entry["ports"]
+                                ]
+                            }
+                        ],
+                    }
+                    for entry in allowed
+                ],
+            },
+        )
+        runner_policy["apiVersion"] = "cilium.io/v2"
+        if vpn and isinstance(self.vpn, NativeVpnProfile):
+            runner_policy["spec"]["egress"].append(await self._vpn_peer_rule(namespace))
+        if self.sandbox_host:
+            targets = [
+                (
+                    {
+                        "k8s:app.kubernetes.io/component": "ingress-gateway",
+                        "k8s:app.kubernetes.io/part-of": "opensandbox",
+                    },
+                    "28888",
+                )
+            ]
+            for target, port in targets:
+                runner_policy["spec"]["egress"].append(
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    "k8s:io.kubernetes.pod.namespace": self.config[
+                                        "system_namespace"
+                                    ],
+                                    **target,
+                                }
+                            }
+                        ],
+                        "toPorts": [{"ports": [{"port": port, "protocol": "TCP"}]}],
+                    }
+                )
+        await self._ensure(runner_policy, labels)
+        refs = {}
+        for name, size in [("journal", "128Mi"), ("workspace", "64Mi")]:
+            claim = await self._ensure(
+                self._document(
+                    "PersistentVolumeClaim",
+                    "bbx-" + name,
+                    labels,
+                    namespace,
+                    spec={
+                        "accessModes": ["ReadWriteOnce"],
+                        "storageClassName": self.config["storage_class"],
+                        "resources": {"requests": {"storage": size}},
+                    },
+                ),
+                labels,
+                observed.get(name + "_pvc", {}).get("uid"),
+            )
+            if (
+                claim["spec"].get("storageClassName") != self.config["storage_class"]
+                or claim["metadata"].get("ownerReferences")
+                or claim["spec"].get("accessModes") != ["ReadWriteOnce"]
+                or claim["spec"].get("volumeMode", "Filesystem") != "Filesystem"
+                or claim["spec"].get("resources", {}).get("requests", {}).get("storage") != size
+                or any(claim["spec"].get(k) for k in ("dataSource", "dataSourceRef", "selector"))
+            ):
+                raise ResourceUnknown("The retained PVC contract changed")
+            refs[name + "_pvc"] = {
+                "name": claim["metadata"]["name"],
+                "uid": claim["metadata"]["uid"],
+            }
+        fresh_journal = self.journal_writer_lock and explicit_board_journal_restart(
+            {**operation, "observation": {**observed, **refs}}
+        )
+        if fresh_journal:
+            journal_identity["journal_fresh"] = True
+        secret = await self._ensure(
+            self._document(
+                "Secret",
+                "bbx-execd",
+                labels,
+                namespace,
+                type="Opaque",
+                stringData={"token": secrets.token_urlsafe(32)},
+            ),
+            labels,
+            observed.get("execd_secret", {}).get("uid"),
+        )
+        token = base64.b64decode(secret["data"]["token"]).decode()
+        if not token or secret.get("type") != "Opaque" or set(secret.get("data", {})) != {"token"}:
+            raise ResourceUnknown("The original execd identity is absent")
+        metadata = self._sandbox_metadata(operation, labels)
+        sid = await self._sandbox_id(tenant_key, metadata)
+        if observed.get("sandbox") and sid != observed["sandbox"]["id"]:
+            raise ResourceUnknown("The original Sandbox is absent or changed")
+        connection = self._connection(tenant_key, token)
+        sandbox = None
+        partial = {
+            "source_id": self.config["source_id"],
+            "cluster_uid": self.config["cluster_uid"],
+            "namespace": namespace,
+            "namespace_uid": ns["metadata"]["uid"],
+            **journal_identity,
+            **refs,
+            "task_id": labels["bbx.dev/task-id"],
+            "operation_id": labels["bbx.dev/operation-id"],
+            "execd_secret": {"name": "bbx-execd", "uid": secret["metadata"]["uid"]},
+        }
+        try:
+            if not sid:
+                if not await admit_sandbox_create():
+                    raise ResourceUnknown("The original Sandbox create cannot be replayed")
+                remaining = (deadline - datetime.now(UTC)).total_seconds()
+                if remaining <= 0:
+                    raise ResourceUnknown("The Task deadline expired before native creation")
+                created = (
+                    await AdapterFactory(connection)
+                    .create_sandbox_service()
+                    .create_sandbox(
+                        spec=SandboxImageSpec(image=self._sandbox_image(operation)),
+                        env={},
+                        extensions={},
+                        network_policy=None,
+                        timeout=timedelta(seconds=max(1, int(remaining)) + CLEANUP_GRACE_SECONDS),
+                        secure_access=True,
+                        metadata=metadata,
+                        entrypoint=["/usr/bin/tail", "-f", "/dev/null"],
+                        resource={"cpu": "500m", "memory": "768Mi"},
+                        resource_requests={"cpu": "50m", "memory": "128Mi"},
+                        volumes=[
+                            Volume(
+                                name="bbx-workspace",
+                                mountPath="/workspace",
+                                pvc=PVC(
+                                    claimName="bbx-workspace",
+                                    createIfNotExists=False,
+                                    deleteOnSandboxTermination=False,
+                                ),
+                            )
+                        ],
+                    )
+                )
+                sid = created.id
+            await checkpoint({**partial, "sandbox": {"id": sid}})
+            sandbox = await Sandbox.connect(
+                sid, connection_config=connection, connect_timeout=timedelta(seconds=150)
+            )
+        except ResourceUnknown:
+            raise
+        except Exception:
+            raise ResourceUnknown("The native Sandbox create or readiness is unresolved") from None
+        finally:
+            if sandbox is not None:
+                await sandbox.close()
+            if connection.transport is not None:
+                await connection.transport.aclose()
+        cr = await self._get("batchsandbox", sid, namespace)
+        if not cr or any(cr["metadata"].get("labels", {}).get(k) != v for k, v in metadata.items()):
+            raise ResourceUnknown("The native Sandbox identity did not match")
+        if (
+            observed.get("sandbox", {}).get("cr_uid")
+            and cr["metadata"]["uid"] != observed["sandbox"]["cr_uid"]
+        ):
+            raise ResourceUnknown("The original Sandbox CR was replaced")
+        pod = await self._wait_pod(
+            namespace, cr["metadata"]["uid"], observed.get("sandbox", {}).get("pod_uid")
+        )
+        environment_revision = self._sandbox_spec(pod, operation)
+        mount = await self._ensure(
+            self._document(
+                "Secret",
+                "bbx-runner",
+                labels,
+                namespace,
+                type="Opaque",
+                stringData={
+                    "ca.pem": Path(self.config["ca_file"]).read_text()
+                    if self.config.get("ca_file")
+                    else ""
+                },
+            ),
+            labels,
+            observed.get("runner_secret", {}).get("uid"),
+        )
+        self._runner_secret(mount)
+        expected_ca = Path(self.config["ca_file"]).read_text() if self.config.get("ca_file") else ""
+        if base64.b64decode(mount.get("data", {}).get("ca.pem", "")).decode() != expected_ca:
+            raise ResourceUnknown("The Runner startup trust anchor changed")
+        if self.sandbox_host:
+            host_mount = await self._ensure(
+                self._document(
+                    "Secret",
+                    SANDBOX_HOST_SECRET,
+                    labels,
+                    namespace,
+                    type="Opaque",
+                    stringData={"ca.pem": expected_ca},
+                ),
+                labels,
+                observed.get("sandbox_host_secret", {}).get("uid"),
+            )
+            self._host_secret(host_mount)
+            if (
+                base64.b64decode(host_mount.get("data", {}).get("ca.pem", "")).decode()
+                != expected_ca
+            ):
+                raise ResourceUnknown("The Sandbox host startup trust anchor changed")
+            refs["sandbox_host_secret"] = {
+                "name": SANDBOX_HOST_SECRET,
+                "uid": host_mount["metadata"]["uid"],
+            }
+        if vpn:
+            egress = await self._ensure(
+                self._document(
+                    "Secret",
+                    VPN_SECRET,
+                    labels,
+                    namespace,
+                    type="Opaque",
+                    stringData={"ca.pem": expected_ca},
+                ),
+                labels,
+                observed.get("vpn_egress_secret", {}).get("uid"),
+            )
+            self._check_egress_secret(egress)
+            refs["vpn_egress_secret"] = {"name": VPN_SECRET, "uid": egress["metadata"]["uid"]}
+        if self.journal_writer_lock and generation > 1 and not fresh_journal:
+            storage = await self._recovery_storage(namespace, labels, refs)
+            if storage != observed.get("journal_storage"):
+                raise ResourceUnknown("The original journal Node or bound PV changed")
+            journal_identity["journal_storage"] = storage
+            pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+                "items"
+            ]
+            if any(
+                value["metadata"]["uid"] != pod["metadata"]["uid"]
+                and value["metadata"]["name"] != "bbx-runner"
+                for value in pods
+            ):
+                raise ResourceUnknown("Unexpected Pod before opening the replacement writer")
+        lock_id = observed.get("journal_lock_id")
+        runner_doc = self._runner_document(
+            namespace, labels, generation, lock_id, with_vpn=vpn, fresh_journal=fresh_journal
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(runner_doc["spec"], sort_keys=True).encode()
+        ).hexdigest()
+        runner_doc["metadata"]["annotations"]["bbx.dev/spec-sha256"] = fingerprint
+        runner = await self._ensure(
+            runner_doc,
+            runner_doc["metadata"]["labels"],
+            observed.get("runner", {}).get("pod_uid"),
+        )
+        if (
+            runner["metadata"]["annotations"].get("bbx.dev/spec-sha256") != fingerprint
+            or runner["spec"]["containers"][0]["image"] != self.config["runner_image"]
+        ):
+            raise ResourceUnknown("The Runner Pod template changed")
+        self._runner_spec(runner, runner_doc["spec"])
+        runner_uid = runner["metadata"]["uid"]
+        until = time.monotonic() + 120
+        while True:
+            initialized = not runner_doc["spec"].get("initContainers") or any(
+                status.get("name") == "journal-initial"
+                and status.get("state", {}).get("terminated", {}).get("exitCode") == 0
+                for status in runner.get("status", {}).get("initContainerStatuses", [])
+            )
+            if initialized:
+                projection = self._pod_projection(runner, with_host=self.sandbox_host, with_vpn=vpn)
+                if projection["terminated"] or projection.get("observation") == "unknown":
+                    raise ResourceUnknown("An original Runner container exited before readiness")
+                if (
+                    projection.get("container_id")
+                    and (
+                        not self.sandbox_host
+                        or (projection.get("host_container_id") and projection.get("pod_ip"))
+                    )
+                    and (not vpn or projection.get("egress_container_id"))
+                ):
+                    if not self.journal_writer_lock:
+                        break
+                    output = await self._kubectl(
+                        "logs", "bbx-runner", "-n", namespace, "-c", "runner", "--tail=50"
+                    )
+                    identity = re.findall(
+                        r'^\{"journal_lock_id":"([0-9]+:[0-9]+)"\}$', output, re.M
+                    )
+                    if len(identity) == 1 and JOURNAL_LOCK_ID.fullmatch(identity[0]):
+                        if lock_id and identity[0] != lock_id:
+                            raise ResourceUnknown("The original journal lock inode changed")
+                        current = self._owned(
+                            await self._get("pod", "bbx-runner", namespace),
+                            {**labels, "bbx.dev/component": "runner"},
+                            runner_uid,
+                        )
+                        if not self._same_process(
+                            self._pod_projection(
+                                current, with_host=self.sandbox_host, with_vpn=vpn
+                            ),
+                            projection,
+                        ):
+                            raise ResourceUnknown("The journal lock holder changed")
+                        journal_identity["journal_lock_id"] = identity[0]
+                        break
+            elif runner.get("status", {}).get("phase") in {"Failed", "Succeeded"}:
+                raise ResourceUnknown("The original journal initialization did not succeed")
+            if time.monotonic() >= until:
+                raise ResourceUnknown("The original Runner container has not started")
+            await asyncio.sleep(0.25)
+            runner = self._owned(
+                await self._get("pod", "bbx-runner", namespace),
+                {**labels, "bbx.dev/component": "runner"},
+                runner_uid,
+            )
+            self._runner_spec(runner, runner_doc["spec"])
+        if self.journal_writer_lock and (generation == 1 or fresh_journal):
+            storage = await self._recovery_storage(namespace, labels, refs)
+            if observed.get("journal_storage") not in (None, storage):
+                raise ResourceUnknown("The original journal Node or bound PV changed")
+            journal_identity["journal_storage"] = storage
+        return {
+            "source_id": self.config["source_id"],
+            "cluster_uid": self.config["cluster_uid"],
+            "namespace": namespace,
+            "namespace_uid": ns["metadata"]["uid"],
+            **journal_identity,
+            **refs,
+            "task_id": labels["bbx.dev/task-id"],
+            "operation_id": labels["bbx.dev/operation-id"],
+            "execd_secret": {"name": "bbx-execd", "uid": secret["metadata"]["uid"]},
+            "runner_secret": {"name": "bbx-runner", "uid": mount["metadata"]["uid"]},
+            "sandbox": {
+                "id": sid,
+                "cr_uid": cr["metadata"]["uid"],
+                "pod_name": pod["metadata"]["name"],
+                "pod_uid": pod["metadata"]["uid"],
+                "environment_revision": environment_revision,
+                "container_id": self._pod_projection(pod).get("container_id"),
+                **(
+                    {"pod_ip": str(ipaddress.IPv4Address(pod["status"]["podIP"]))}
+                    if vpn or board
+                    else {}
+                ),
+            },
+            "runner": {
+                **projection,
+                **({"journal_writer_lock": True} if self.journal_writer_lock else {}),
+            },
+        }
+
+    @staticmethod
+    def _workspace_input_mount(pod, main):
+        mounts = main.get("volumeMounts", [])
+        selected = [mount for mount in mounts if mount.get("mountPath") == "/workspace"]
+        if len(selected) != 1 or any(
+            mount.get("mountPath", "").startswith("/workspace/") for mount in mounts
+        ):
+            raise ResourceUnknown("Original workspace mount is not exclusive")
+        mount = selected[0]
+        matching = [
+            volume
+            for volume in pod["spec"].get("volumes", [])
+            if volume.get("name") == mount.get("name")
+        ]
+        if (
+            len(matching) != 1
+            or mount.get("readOnly")
+            or mount.get("subPath")
+            or mount.get("subPathExpr")
+            or mount.get("mountPropagation")
+            or matching[0].get("persistentVolumeClaim")
+            not in (
+                {"claimName": "bbx-workspace"},
+                {"claimName": "bbx-workspace", "readOnly": False},
+            )
+        ):
+            raise ResourceUnknown(
+                "Original attachment destination is not the approved workspace PVC"
+            )
+
+    def _sandbox_spec(self, pod, operation):
+        self._pod_projection(pod)
+        main = next(c for c in pod["spec"]["containers"] if c["name"] == "sandbox")
+        env = {entry["name"]: entry for entry in main.get("env", [])}
+        if (
+            main["image"] != self._sandbox_image(operation)
+            or (self.vpn_enabled(operation) and pod["spec"].get("restartPolicy") != "Never")
+            or (
+                self.traffic_enabled(operation)
+                and "bbx.dev/component" in pod["metadata"].get("labels", {})
+            )
+            or len(env) != len(main.get("env", []))
+            or env.get("BBX_ENVIRONMENT_REVISION", {}).get("value")
+            != self.config["environment_revision"]
+            or env.get("BBX_POD_UID", {}).get("valueFrom", {}).get("fieldRef", {}).get("fieldPath")
+            != "metadata.uid"
+            or env.get("BBX_POD_UID", {})
+            .get("valueFrom", {})
+            .get("fieldRef", {})
+            .get("apiVersion", "v1")
+            != "v1"
+            or env.get("EXECD_ACCESS_TOKEN", {})
+            .get("valueFrom", {})
+            .get("secretKeyRef", {})
+            .get("name")
+            != "bbx-execd"
+            or env.get("EXECD_ACCESS_TOKEN", {})
+            .get("valueFrom", {})
+            .get("secretKeyRef", {})
+            .get("key")
+            != "token"
+            or any(
+                volume.get("persistentVolumeClaim", {}).get("claimName") == "bbx-journal"
+                for volume in pod["spec"].get("volumes", [])
+            )
+        ):
+            raise ResourceUnknown("The native Sandbox deployment identity changed")
+        if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE:
+            self._workspace_input_mount(pod, main)
+        return env["BBX_ENVIRONMENT_REVISION"]["value"]
+
+    def _runner_document(
+        self, namespace, labels, generation=1, lock_id=None, *, with_vpn=False, fresh_journal=False
+    ):
+        document = self._document(
+            "Pod",
+            "bbx-runner",
+            {**labels, "bbx.dev/component": "runner"},
+            namespace,
+            spec={
+                "restartPolicy": "Never",
+                "serviceAccountName": "bbx-runner",
+                "automountServiceAccountToken": False,
+                "terminationGracePeriodSeconds": 15,
+                "securityContext": {
+                    "runAsUser": 1000,
+                    "runAsGroup": 1000,
+                    "fsGroup": 1000,
+                    "runAsNonRoot": True,
+                },
+                "containers": [
+                    {
+                        "name": "runner",
+                        "image": self.config["runner_image"],
+                        "imagePullPolicy": "IfNotPresent",
+                        "env": [
+                            {
+                                "name": "BBX_POD_UID",
+                                "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}},
+                            },
+                            {"name": "NODE_EXTRA_CA_CERTS", "value": "/var/run/bbx/ca.pem"},
+                            *(
+                                [{"name": "BBX_PROTECTED_BOARD_START", "value": "1"}]
+                                if with_vpn and self._forced_board()
+                                else []
+                            ),
+                        ],
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "128Mi"},
+                            "limits": {"cpu": "500m", "memory": "768Mi"},
+                        },
+                        "securityContext": {
+                            "allowPrivilegeEscalation": False,
+                            "readOnlyRootFilesystem": True,
+                            "capabilities": {"drop": ["ALL"]},
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "volumeMounts": [
+                            {"name": "identity", "mountPath": "/var/run/bbx", "readOnly": True},
+                            {"name": "journal", "mountPath": "/journal"},
+                            {"name": "start", "mountPath": "/run/bbx-start"},
+                        ],
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "identity",
+                        "secret": {"secretName": "bbx-runner", "defaultMode": 0o440},
+                    },
+                    {"name": "journal", "persistentVolumeClaim": {"claimName": "bbx-journal"}},
+                    {"name": "start", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}},
+                ],
+            },
+        )
+
+        if self.journal_writer_lock:
+            if (
+                type(generation) is not int
+                or not 1 <= generation <= 999999999
+                or (fresh_journal and (self.board_network is None or generation == 1))
+                or (
+                    generation > 1
+                    and not fresh_journal
+                    and not JOURNAL_LOCK_ID.fullmatch(lock_id or "")
+                )
+            ):
+                raise ResourceUnknown("The journal resource generation or original lock is absent")
+            spec = document["spec"]
+            runner = spec["containers"][0]
+            runner["command"] = [
+                "node",
+                JOURNAL_SCRIPT,
+                "run",
+                *([lock_id] if generation > 1 and not fresh_journal else []),
+            ]
+            runner["volumeMounts"][1]["subPath"] = f"epoch-{generation}"
+            runner["volumeMounts"].append(
+                {
+                    "name": "journal",
+                    "mountPath": "/run/bbx-journal-lock",
+                    "subPath": JOURNAL_LOCK,
+                    "readOnly": True,
+                }
+            )
+            if generation == 1 or fresh_journal:
+                initialize = ["node", JOURNAL_SCRIPT, "initial"]
+                if fresh_journal:
+                    # The explicit new run has a distinct volume and original resources remain
+                    # untouched. Reuse the SDK journal's existing creation and lock helpers.
+                    initialize = [
+                        "node",
+                        "--input-type=module",
+                        "-e",
+                        "import { prepareJournalDirectory, withWriterLock } "
+                        f"from '{JOURNAL_SCRIPT}';"
+                        "await prepareJournalDirectory('/journal-root', 'epoch-1', true);"
+                        f"await withWriterLock('/journal-root/{JOURNAL_LOCK}', null, "
+                        "() => prepareJournalDirectory('/journal-root', process.argv[1]));",
+                        f"epoch-{generation}",
+                    ]
+                spec["initContainers"] = [
+                    self._journal_container(
+                        "journal-initial",
+                        initialize,
+                        [{"name": "journal", "mountPath": "/journal-root"}],
+                    )
+                ]
+        if self.sandbox_host:
+            spec = document["spec"]
+            spec["shareProcessNamespace"] = False
+            spec["containers"].append(
+                {
+                    "name": "sandbox-host",
+                    "image": self.config["sandbox_host_image"],
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["python", "-m", "bbx_runtime.sandbox_mcp"],
+                    "args": ["--config", SANDBOX_HOST_MOUNT + "/host.json"],
+                    "env": [
+                        {
+                            "name": "BBX_POD_UID",
+                            "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}},
+                        },
+                        {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
+                    ],
+                    "ports": [{"containerPort": SANDBOX_HOST_PORT, "protocol": "TCP"}],
+                    "resources": {
+                        "requests": {"cpu": "25m", "memory": "64Mi"},
+                        "limits": {"cpu": "200m", "memory": "192Mi"},
+                    },
+                    "securityContext": {
+                        **spec["containers"][0]["securityContext"],
+                        "runAsUser": 1001,
+                        "runAsGroup": 1001,
+                    },
+                    "volumeMounts": [
+                        {"name": "sandbox-host", "mountPath": SANDBOX_HOST_MOUNT, "readOnly": True}
+                    ],
+                }
+            )
+            spec["volumes"].append(
+                {
+                    "name": "sandbox-host",
+                    "secret": {"secretName": SANDBOX_HOST_SECRET, "defaultMode": 0o440},
+                }
+            )
+        if with_vpn:
+            if self.vpn is None:
+                raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+            if isinstance(self.vpn, NativeTaskVpnProfile):
+                document["metadata"]["labels"][GENERATION_LABEL] = str(generation)
+            spec = document["spec"]
+            tun = (
+                {}
+                if self.board_network and self.board_network["mode"] == "socks5"
+                else {"devic.es/tun": "1"}
+            )
+            spec["securityContext"]["sysctls"] = [{"name": "net.ipv4.ip_forward", "value": "1"}]
+            spec["containers"].append(
+                {
+                    "name": VPN_EGRESS,
+                    "image": self.vpn.egress_image,
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": [
+                        "/usr/bin/env",
+                        "-i",
+                        "/usr/bin/python3",
+                        "-I",
+                        "-S",
+                        "/opt/bbx/control/task-vpn.py",
+                    ],
+                    "args": ["egress"],
+                    "resources": {
+                        "requests": {"cpu": "25m", "memory": "64Mi", **tun},
+                        "limits": {"cpu": "200m", "memory": "128Mi", **tun},
+                    },
+                    "securityContext": {
+                        "runAsUser": 0,
+                        "runAsGroup": 0,
+                        "runAsNonRoot": False,
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"], "add": ["NET_ADMIN"]},
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                    },
+                    "volumeMounts": [
+                        {"name": VPN_EGRESS, "mountPath": VPN_MOUNT, "readOnly": True},
+                        {"name": "vpn-state", "mountPath": VPN_STATE},
+                    ],
+                }
+            )
+            spec["volumes"] += [
+                {"name": VPN_EGRESS, "secret": {"secretName": VPN_SECRET, "defaultMode": 0o400}},
+                {"name": "vpn-state", "emptyDir": {"medium": "Memory", "sizeLimit": "8Mi"}},
+            ]
+        return document
+
+    def _journal_container(self, name, command, mounts):
+        return {
+            "name": name,
+            "image": self.config["runner_image"],
+            "imagePullPolicy": "IfNotPresent",
+            "command": command,
+            "resources": {
+                "requests": {"cpu": "25m", "memory": "64Mi"},
+                "limits": {"cpu": "200m", "memory": "256Mi"},
+            },
+            "securityContext": {
+                "allowPrivilegeEscalation": False,
+                "readOnlyRootFilesystem": True,
+                "capabilities": {"drop": ["ALL"]},
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
+            "volumeMounts": mounts,
+        }
+
+    @staticmethod
+    def _runner_secret(secret):
+        if secret.get("type") != "Opaque" or not set(secret.get("data", {})) <= {
+            "runner-bootstrap.json",
+            "credentials.json",
+            "ca.pem",
+        }:
+            raise ResourceUnknown("The Runner Secret contains undeclared material")
+
+    @staticmethod
+    def _host_secret(secret):
+        data = secret.get("data", {})
+        if (
+            secret.get("type") != "Opaque"
+            or "ca.pem" not in data
+            or not set(data) <= {"ca.pem", "host.json"}
+        ):
+            raise ResourceUnknown("The Sandbox host Secret contains undeclared material")
+
+    @staticmethod
+    def _vpn_secret(secret, *, dynamic=False, forced=False):
+        data = secret.get("data", {})
+        published = {"ca.pem", "config.json"}
+        if not dynamic:
+            published |= {"ca.crt", "tls.crt", "tls.key"}
+        if forced:
+            published.add("credentials.json")
+        if secret.get("type") != "Opaque" or set(data) not in ({"ca.pem"}, published):
+            raise ResourceUnknown("The original VPN egress Secret changed")
+
+    def _check_egress_secret(self, secret):
+        self._vpn_secret(
+            secret, dynamic=isinstance(self.vpn, NativeTaskVpnProfile), forced=self._forced_board()
+        )
+
+    @staticmethod
+    def _runner_spec(pod, expected):
+        spec = pod["spec"]
+        if (
+            pod["metadata"].get("ownerReferences")
+            or len(spec.get("containers", [])) != len(expected["containers"])
+            or len(spec.get("initContainers", [])) != len(expected.get("initContainers", []))
+            or any(
+                spec.get(k)
+                for k in (
+                    "ephemeralContainers",
+                    "hostNetwork",
+                    "hostPID",
+                    "hostIPC",
+                    "shareProcessNamespace",
+                    "hostAliases",
+                )
+            )
+            or any(
+                spec.get(k) != expected[k]
+                for k in (
+                    "restartPolicy",
+                    "serviceAccountName",
+                    "automountServiceAccountToken",
+                    "securityContext",
+                    "volumes",
+                )
+            )
+        ):
+            raise ResourceUnknown("The original Runner Pod isolation or mounts changed")
+        for actual, desired in zip(
+            spec["containers"] + spec.get("initContainers", []),
+            expected["containers"] + expected.get("initContainers", []),
+            strict=True,
+        ):
+            env = json.loads(json.dumps(actual.get("env", [])))
+            for entry in env:
+                if "fieldRef" in entry.get("valueFrom", {}):
+                    if entry["valueFrom"]["fieldRef"].pop("apiVersion", "v1") != "v1":
+                        raise ResourceUnknown("The Runner Downward API changed")
+            if env != desired.get("env", []) or any(
+                actual.get(k) != desired.get(k)
+                for k in (
+                    "name",
+                    "image",
+                    "imagePullPolicy",
+                    "resources",
+                    "securityContext",
+                    "volumeMounts",
+                    "command",
+                    "args",
+                    "envFrom",
+                    "ports",
+                    "workingDir",
+                    "lifecycle",
+                    "startupProbe",
+                    "readinessProbe",
+                    "livenessProbe",
+                    "stdin",
+                    "tty",
+                )
+            ):
+                raise ResourceUnknown("The original Runner container contract changed")
+
+    @staticmethod
+    def _pod_projection(pod, *, with_host=False, with_vpn=False):
+        spec = pod.get("spec", {})
+        containers = spec.get("containers", [])
+        names = [c["name"] for c in containers]
+        states = pod.get("status", {}).get("containerStatuses", [])
+        by_name = {state.get("name"): state for state in states}
+        if (
+            (
+                names
+                != (
+                    ["runner", "sandbox-host", VPN_EGRESS]
+                    if with_vpn
+                    else ["runner", "sandbox-host"]
+                )
+                if with_host
+                else len(names) != 1 or with_vpn
+            )
+            or spec.get("ephemeralContainers")
+            or pod.get("status", {}).get("ephemeralContainerStatuses")
+            or len(by_name) != len(states)
+            or not set(by_name) <= set(names)
+            or any(c.get("restartPolicy") == "Always" for c in spec.get("initContainers", []))
+            or any(
+                "running" in st.get("state", {}) or "waiting" in st.get("state", {})
+                for st in pod.get("status", {}).get("initContainerStatuses", [])
+            )
+        ):
+            raise ResourceUnknown("The native Pod has an unapproved container scope")
+        primary = by_name.get(names[0], {})
+        host = by_name.get("sandbox-host", {}) if with_host else {}
+        primary_ended = "terminated" in primary.get("state", {})
+        host_ended = "terminated" in host.get("state", {})
+        vpn = by_name.get(VPN_EGRESS, {}) if with_vpn else {}
+        vpn_ended = "terminated" in vpn.get("state", {})
+        ended = primary_ended and (not with_host or host_ended) and (not with_vpn or vpn_ended)
+        return {
+            "pod_name": pod["metadata"]["name"],
+            "pod_uid": pod["metadata"]["uid"],
+            "phase": pod.get("status", {}).get("phase", "Pending"),
+            "terminated": ended,
+            "container_name": names[0],
+            **(
+                {"resource_version": pod["metadata"]["resourceVersion"]}
+                if pod["metadata"].get("resourceVersion")
+                else {}
+            ),
+            **({"container_id": primary["containerID"]} if primary.get("containerID") else {}),
+            **({"exit_code": primary["state"]["terminated"]["exitCode"]} if primary_ended else {}),
+            **({"host_container_id": host["containerID"]} if host.get("containerID") else {}),
+            **({"host_terminated": host_ended} if with_host else {}),
+            **({"egress_container_id": vpn["containerID"]} if vpn.get("containerID") else {}),
+            **({"egress_terminated": vpn_ended} if with_vpn else {}),
+            **(
+                {"pod_ip": pod["status"]["podIP"]}
+                if with_host and pod.get("status", {}).get("podIP")
+                else {}
+            ),
+            **(
+                {"observation": "unknown"}
+                if (
+                    (with_host and primary_ended != host_ended)
+                    or (with_vpn and primary_ended != vpn_ended)
+                )
+                else {}
+            ),
+        }
+
+    @staticmethod
+    def _same_process(projection, reference):
+        return all(
+            projection.get(key) == reference.get(key)
+            for key in ("pod_uid", "container_id", "host_container_id", "egress_container_id")
+        )
+
+    @staticmethod
+    def _scoped_credentials(value, task_id):
+        if not isinstance(value, dict) or any(
+            not isinstance(item, dict)
+            or item.get("audience")
+            not in {"runner-control", "model", "business-mcp", "sandbox-mcp"}
+            or item.get("task_id") != task_id
+            for item in value.values()
+        ):
+            raise ResourceUnknown("Only Task-scoped Runner credentials can be mounted")
+        return value
+
+    async def _original_host_runner(self, operation):
+        if not self.sandbox_host:
+            raise ResourceUnknown("The original Runner has no Sandbox host profile")
+        observed = operation["observation"]
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        pod = self._owned(
+            await self._get("pod", "bbx-runner", namespace),
+            {**labels, "bbx.dev/component": "runner"},
+            observed["runner"]["pod_uid"],
+        )
+        self._runner_spec(
+            pod,
+            self._runner_document(
+                namespace,
+                labels,
+                observed.get("resource_generation", 1),
+                observed.get("journal_lock_id"),
+                with_vpn=self.vpn_enabled(operation),
+                fresh_journal=observed.get("journal_fresh") is True,
+            )["spec"],
+        )
+        actual = self._pod_projection(pod, with_host=True, with_vpn=self.vpn_enabled(operation))
+        if (
+            pod["metadata"].get("deletionTimestamp")
+            or not self._same_process(actual, observed["runner"])
+            or not actual.get("host_container_id")
+            or not actual.get("pod_ip")
+            or any(
+                "running" not in state.get("state", {})
+                for state in pod["status"]["containerStatuses"]
+            )
+            or actual.get("pod_ip") != observed["runner"].get("pod_ip")
+            or actual["terminated"]
+            or actual.get("observation") == "unknown"
+        ):
+            raise ResourceUnknown("The original Sandbox host process is not live")
+        return namespace, labels, pod
+
+    async def read_board_terminal(self, operation, agent_id, receipt):
+        original = operation["observation"]["runner"]
+        if (
+            receipt["fence"]["task_id"] != operation["task_id"]
+            or receipt["fence"]["pod_uid"] != original["pod_uid"]
+        ):
+            raise ResourceUnknown("Blackboard terminal does not belong to the original Runner")
+        namespace, _, pod = await self._original_host_runner(operation)
+        raw = await self._kubectl(
+            "-n",
+            namespace,
+            "exec",
+            pod["metadata"]["name"],
+            "-c",
+            "runner",
+            "--",
+            "node",
+            JOURNAL_SCRIPT,
+            "board-terminal",
+            runner_json_text({"agent_id": agent_id, "receipt": receipt}),
+        )
+        await self._original_host_runner(operation)
+        try:
+            text = json.loads(raw)["text"]
+            if not isinstance(text, str) or len(text.encode()) > 131072:
+                raise ValueError("Invalid terminal text")
+        except (KeyError, TypeError, ValueError):
+            raise ResourceUnknown("Blackboard terminal journal evidence is unavailable") from None
+        return text
+
+    async def read_board_journal(self, operation, agent_id, receipt, output):
+        original = operation["observation"]["runner"]
+        size = receipt["cursor"]["offset"]
+        if (
+            not 0 < size <= 64 * 1024 * 1024
+            or receipt["fence"]["task_id"] != operation["task_id"]
+            or receipt["fence"]["pod_uid"] != original["pod_uid"]
+        ):
+            raise ResourceUnknown("The original Blackboard journal is outside the export bound")
+        namespace, _, pod = await self._original_host_runner(operation)
+        result = await self._copy_board_journal(
+            namespace, pod["metadata"]["name"], "runner", agent_id, receipt, output
+        )
+        await self._original_host_runner(operation)
+        return result
+
+    async def _copy_board_journal(self, namespace, pod_name, container, agent_id, receipt, output):
+        size = receipt["cursor"]["offset"]
+        if not 0 < size <= 64 * 1024 * 1024:
+            raise ResourceUnknown("The original Blackboard journal is outside the export bound")
+        command = await asyncio.create_subprocess_exec(
+            "kubectl",
+            "--kubeconfig",
+            self.config["kubeconfig"],
+            "--context",
+            self.config["context"],
+            "-n",
+            namespace,
+            "exec",
+            pod_name,
+            "-c",
+            container,
+            "--",
+            "node",
+            JOURNAL_SCRIPT,
+            "board-journal",
+            runner_json_text({"agent_id": agent_id, "receipt": receipt}),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        digest = hashlib.sha256()
+        total = 0
+        assert command.stdout is not None
+        try:
+            async with asyncio.timeout(60):
+                while chunk := await command.stdout.read(65536):
+                    total += len(chunk)
+                    if total > size:
+                        raise ResourceUnknown(
+                            "Original Blackboard journal exceeded its confirmed cursor"
+                        )
+                    digest.update(chunk)
+                    output.write(chunk)
+                if await command.wait() or total != size:
+                    raise ResourceUnknown("Original Blackboard journal prefix was not confirmed")
+        finally:
+            if command.returncode is None:
+                command.kill()
+                await command.wait()
+        return total, digest.hexdigest()
+
+    async def publish_vpn_mount(self, operation, material, blackboard_url):
+        if not self.vpn_enabled(operation) or self.vpn is None:
+            raise ResourceUnknown("The trusted Task VPN deployment is unavailable")
+        namespace, labels, _ = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        scope = NativeVpnScope.model_validate(material["scope"]).model_dump(mode="json")
+        expected = {
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "resource_generation": operation["data"].get("resource_generation", 1),
+            "runner_pod_uid": observed["runner"]["pod_uid"],
+            "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
+            "sandbox_container_id": observed["sandbox"]["container_id"],
+            "runner_pod_ipv4": observed["runner"]["pod_ip"],
+            "sandbox_pod_ipv4": observed["sandbox"]["pod_ip"],
+            "egress_container_id": observed["runner"]["egress_container_id"],
+        }
+        if any(scope[key] != value for key, value in expected.items()) or (
+            not isinstance(material.get("report_key"), str) or not material["report_key"]
+        ):
+            raise ResourceUnknown("Original VPN egress credential scope changed")
+        secret = self._owned(
+            await self._get("secret", VPN_SECRET, namespace),
+            labels,
+            observed["vpn_egress_secret"]["uid"],
+        )
+        self._check_egress_secret(secret)
+        document = {
+            "scope": scope,
+            "report_key": material["report_key"],
+            "blackboard_url": blackboard_url,
+            "hard_deadline": operation["hard_deadline"],
+        }
+        if not document["blackboard_url"]:
+            raise ResourceUnknown("Original trusted VPN control origin is missing")
+        desired = {"ca.pem": secret["data"]["ca.pem"]}
+        if isinstance(self.vpn, NativeTaskVpnProfile):
+            document.update(profile=VPN_DYNAMIC_PROFILE, deny_cidrs=self.vpn.deny_cidrs)
+            if self._forced_board():
+                assert self.board_network is not None
+                board = LegacyNetworkPolicy.model_validate(self.board_network["legacy_policy"])
+                assert board.gateway is not None
+                try:
+                    credentials = await asyncio.to_thread(read_gateway_credentials, board.gateway)
+                except (OSError, ValueError):
+                    raise ResourceUnknown("Original protected credentials are invalid") from None
+                document["board_mode"] = board.mode
+                desired["credentials.json"] = base64.b64encode(
+                    json.dumps(credentials, separators=(",", ":")).encode()
+                ).decode()
+        else:
+            desired.update(await self._original_vpn_credentials(self.vpn))
+            document.update(
+                peer=self.vpn.peer.model_dump(mode="json"),
+                tun_ipv4=self.vpn.tun_ipv4,
+                targets=self.config["traffic_targets"],
+            )
+        desired["config.json"] = base64.b64encode(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        ).decode()
+        if "config.json" in secret["data"]:
+            if secret["data"] != desired:
+                raise ResourceUnknown("Original VPN startup material cannot change")
+            return
+        secret["data"] = desired
+        await self._kubectl("replace", "-f", "-", body=secret)
+
+    async def _original_vpn_credentials(self, profile: NativeVpnProfile):
+        credential = profile.credential
+        source = await self._get("secret", credential.name, credential.namespace)
+        fields = {"ca.crt", "tls.crt", "tls.key"}
+        if (
+            not source
+            or source["metadata"]["uid"] != str(credential.uid)
+            or source["metadata"].get("deletionTimestamp")
+            or source.get("immutable") is not True
+            or source.get("type") not in {"Opaque", "kubernetes.io/tls"}
+            or set(source.get("data", {})) != fields
+        ):
+            raise ResourceUnknown("Original approved VPN credential identity changed")
+        try:
+            raw = {
+                key: base64.b64decode(value, validate=True) for key, value in source["data"].items()
+            }
+        except (ValueError, TypeError):
+            raise ResourceUnknown("Original approved VPN credential encoding is invalid") from None
+        if (
+            any(not item or len(item) > 64 * 1024 for item in raw.values())
+            or hashlib.sha256(raw["tls.crt"]).hexdigest() != credential.cert_sha256
+        ):
+            raise ResourceUnknown("Original approved VPN certificate changed")
+        return source["data"]
+
+    async def sandbox_host_context(self, operation, tenant_key):
+        namespace, labels, runner = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        original = observed["sandbox"]
+        pod = await self._get("pod", original["pod_name"], namespace)
+        if (
+            not pod
+            or pod["metadata"].get("deletionTimestamp")
+            or not any(
+                owner.get("uid") == original["cr_uid"]
+                for owner in pod["metadata"].get("ownerReferences", [])
+            )
+            or not self._same_process(self._pod_projection(pod), original)
+            or self._pod_projection(pod)["terminated"]
+            or self._sandbox_spec(pod, operation) != original["environment_revision"]
+        ):
+            raise ResourceUnknown("The original Sandbox Pod identity changed")
+        if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE:
+            ref = observed.get("workspace_pvc", {})
+            if ref.get("name") != "bbx-workspace" or not ref.get("uid"):
+                raise ResourceUnknown("Original attachment workspace PVC is unconfirmed")
+            claim = self._owned(
+                await self._get("pvc", "bbx-workspace", namespace), labels, ref["uid"]
+            )
+            if (
+                claim["metadata"].get("deletionTimestamp")
+                or claim.get("status", {}).get("phase") != "Bound"
+                or not claim.get("spec", {}).get("volumeName")
+            ):
+                raise ResourceUnknown("Original attachment workspace PVC is not live and bound")
+        secret = self._owned(
+            await self._get("secret", "bbx-execd", namespace),
+            labels,
+            observed["execd_secret"]["uid"],
+        )
+        if secret.get("type") != "Opaque" or set(secret.get("data", {})) != {"token"}:
+            raise ResourceUnknown("The original execd identity is unavailable")
+        token = base64.b64decode(secret["data"]["token"], validate=True).decode()
+        if not token.strip():
+            raise ResourceUnknown("The original execd identity is unavailable")
+        connection = self._connection(tenant_key, token)
+        sandbox = None
+        try:
+            sandbox = await Sandbox.connect(
+                original["id"], connection_config=connection, connect_timeout=timedelta(seconds=30)
+            )
+            endpoint = await sandbox.get_endpoint(DEFAULT_EXECD_PORT)
+            context = await read_execution_context(sandbox)
+        except Exception:
+            raise ResourceUnknown(
+                "The original native execd endpoint or context is unresolved"
+            ) from None
+        finally:
+            if sandbox is not None:
+                await sandbox.close()
+            if connection.transport is not None:
+                await connection.transport.aclose()
+        headers = endpoint.headers
+        if (
+            set(headers) != {"OpenSandbox-Ingress-To", "OpenSandbox-Secure-Access"}
+            or headers["OpenSandbox-Ingress-To"] != f"{original['id']}-{DEFAULT_EXECD_PORT}"
+            or not headers["OpenSandbox-Secure-Access"].strip()
+            or context["pod_uid"] != original["pod_uid"]
+            or context["environment_revision"] != original["environment_revision"]
+        ):
+            raise ResourceUnknown("The original native execd route or execution identity changed")
+        origin = self._execd_origin(endpoint.endpoint)
+        # Runtime and its sidecar may reach the same ingress through different addresses.
+        if self.config.get("sandbox_host_execd_origin"):
+            origin = self._execd_origin(self.config["sandbox_host_execd_origin"])
+        address = str(ipaddress.IPv4Address(runner["status"]["podIP"]))
+        return {
+            "sandbox_id": original["id"],
+            "sandbox_pod_uid": original["pod_uid"],
+            "environment_revision": original["environment_revision"],
+            "execution_context_id": context["execution_context_id"],
+            "execd_endpoint": origin,
+            "execd_headers": headers,
+            "execd_token": token,
+            "host_url": f"http://{address}:{SANDBOX_HOST_PORT}",
+        }
+
+    async def publish_sandbox_host(self, operation, configuration):
+        namespace, labels, _ = await self._original_host_runner(operation)
+        observed = operation["observation"]
+        expected = {
+            "version": 1,
+            "mcp_transport": "direct-v2",
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "runner_pod_uid": observed["runner"]["pod_uid"],
+            "sandbox_id": observed["sandbox"]["id"],
+            "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
+            "environment_revision": observed["sandbox"]["environment_revision"],
+            "network": self.config["sandbox_network"],
+            **(
+                {
+                    "board_network": {
+                        "mode": board["mode"],
+                        **({"dns_ipv4": board["dns_ipv4"]} if board["mode"] == "default" else {}),
+                    }
+                }
+                if (board := self.board_network_for(operation))
+                else {}
+            ),
+            **(
+                {"traffic_targets": self.config["traffic_targets"]}
+                if self.traffic_enabled(operation)
+                else {}
+            ),
+            **(
+                {"inputs_profile": INPUT_PROFILE}
+                if operation.get("data", {}).get("inputs_profile") == INPUT_PROFILE
+                else {}
+            ),
+            **(
+                {"vpn_profile": operation["data"]["vpn_profile"]}
+                if self.vpn_enabled(operation)
+                else {}
+            ),
+            "ca_file": SANDBOX_HOST_MOUNT + "/ca.pem",
+        }
+        fields = set(expected) | {
+            "execution_context_id",
+            "blackboard_url",
+            "inbound_key",
+            "report_key",
+            "execd_endpoint",
+            "execd_headers",
+            "execd_token",
+            "hard_deadline",
+        }
+        if (
+            set(configuration) != fields
+            or any(configuration[k] != value for k, value in expected.items())
+            or configuration["inbound_key"] == configuration["report_key"]
+            or not re.fullmatch(r"[a-f0-9]{64}", configuration["execution_context_id"])
+        ):
+            raise ResourceUnknown("The Sandbox host mount does not match the original Task")
+        secret = self._owned(
+            await self._get("secret", SANDBOX_HOST_SECRET, namespace),
+            labels,
+            observed["sandbox_host_secret"]["uid"],
+        )
+        self._host_secret(secret)
+        existing = secret["data"].get("host.json")
+        if existing:
+            if json.loads(base64.b64decode(existing)) != configuration:
+                raise ResourceUnknown("The original Sandbox host startup material cannot change")
+            return
+        secret["data"]["host.json"] = base64.b64encode(
+            json.dumps(configuration, ensure_ascii=False, separators=(",", ":")).encode()
+        ).decode()
+        await self._kubectl("replace", "-f", "-", body=secret)
+
+    async def wait_sandbox_host_ready(self, operation, configuration):
+        try:
+            async with (
+                asyncio.timeout(120),
+                httpx.AsyncClient(timeout=3, trust_env=False) as client,
+            ):
+                while True:
+                    namespace, _, pod = await self._original_host_runner(operation)
+                    process = await asyncio.create_subprocess_exec(
+                        "kubectl",
+                        "--kubeconfig",
+                        self.config["kubeconfig"],
+                        "--context",
+                        self.config["context"],
+                        "-n",
+                        namespace,
+                        "port-forward",
+                        "pod/" + pod["metadata"]["name"],
+                        f":{SANDBOX_HOST_PORT}",
+                        "--address",
+                        "127.0.0.1",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    try:
+                        assert process.stdout is not None
+                        while True:
+                            line = await process.stdout.readline()
+                            if not line:
+                                raise ResourceUnknown(
+                                    "The original Sandbox host readiness forward failed"
+                                )
+                            match = re.fullmatch(
+                                rb"Forwarding from 127\.0\.0\.1:(\d+) -> 8766\s*", line
+                            )
+                            if match:
+                                port = int(match[1])
+                                break
+                        while process.returncode is None:
+                            try:
+                                response = await client.get(
+                                    f"http://127.0.0.1:{port}/ready",
+                                    headers={"x-bbx-sandbox-inbound": configuration["inbound_key"]},
+                                )
+                            except httpx.RequestError:
+                                await asyncio.sleep(0.2)
+                                continue
+                            if response.status_code == 200:
+                                value = response.json()
+                                if (
+                                    not isinstance(value, dict)
+                                    or value.get("ready") is not True
+                                    or any(
+                                        value.get(k) != configuration[k]
+                                        for k in (
+                                            "task_id",
+                                            "operation_id",
+                                            "runner_pod_uid",
+                                            "sandbox_id",
+                                            "sandbox_pod_uid",
+                                            "execution_context_id",
+                                        )
+                                    )
+                                ):
+                                    raise ResourceUnknown(
+                                        "Sandbox host readiness belongs to a different identity"
+                                    )
+                                await self._original_host_runner(operation)
+                                return
+                            if response.status_code < 500:
+                                raise ResourceUnknown(
+                                    "The original Sandbox host readiness authority was refused"
+                                )
+                            await asyncio.sleep(0.2)
+                    finally:
+                        if process.returncode is None:
+                            with suppress(ProcessLookupError):
+                                process.kill()
+                        await process.wait()
+                    # kubectl can lose an announced forward while the sidecar is still binding.
+                    # Retry only the readiness read, after verifying the original Pod again.
+                    await asyncio.sleep(0.2)
+        except (TimeoutError, ValueError):
+            raise ResourceUnknown("The original Sandbox host readiness is unresolved") from None
+
+    async def publish_mount(
+        self, observation, bootstrap, credentials, *, control_only=False, retain_binding_ids=()
+    ):
+        namespace, labels = self._scope(observation)
+        await self._cluster()
+        pod = self._owned(
+            await self._get("pod", observation["runner"]["pod_name"], namespace),
+            {**labels, "bbx.dev/component": "runner"},
+            observation["runner"]["pod_uid"],
+        )
+        with_vpn = bool(observation["runner"].get("egress_container_id"))
+        projection = self._pod_projection(pod, with_host=self.sandbox_host, with_vpn=with_vpn)
+        if (
+            projection["terminated"]
+            or projection.get("observation") == "unknown"
+            or not self._same_process(projection, observation["runner"])
+            or (self.sandbox_host and not projection.get("host_container_id"))
+            or bootstrap["fence"]["pod_uid"] != pod["metadata"]["uid"]
+            or bootstrap["fence"]["task_id"] != labels["bbx.dev/task-id"]
+        ):
+            raise ResourceUnknown("The Runner mount is not bound to the original live Pod")
+        self._runner_spec(
+            pod,
+            self._runner_document(
+                namespace,
+                labels,
+                observation.get("resource_generation", 1),
+                observation.get("journal_lock_id"),
+                with_vpn=with_vpn,
+                fresh_journal=observation.get("journal_fresh") is True,
+            )["spec"],
+        )
+        if self.sandbox_host:
+            host = self._owned(
+                await self._get("secret", SANDBOX_HOST_SECRET, namespace),
+                labels,
+                observation["sandbox_host_secret"]["uid"],
+            )
+            self._host_secret(host)
+            if "host.json" not in host["data"]:
+                raise ResourceUnknown("The original Sandbox host has no frozen startup material")
+        secret = self._owned(
+            await self._get("secret", "bbx-runner", namespace),
+            labels,
+            observation["runner_secret"]["uid"],
+        )
+        self._runner_secret(secret)
+        self._scoped_credentials(credentials, labels["bbx.dev/task-id"])
+        config_json = json.dumps(bootstrap, ensure_ascii=False, separators=(",", ":"))
+        prior = secret.get("data", {}).get("runner-bootstrap.json")
+        if prior and json.loads(base64.b64decode(prior)) != bootstrap:
+            raise ResourceUnknown("The original Pod bootstrap cannot be changed")
+        if control_only:
+            reference = bootstrap.get("control_credential_ref")
+            if (
+                set(credentials) != {reference}
+                or credentials[reference].get("audience") != "runner-control"
+                or "ca.pem" not in secret["data"]
+            ):
+                raise ResourceUnknown("Control renewal cannot publish new execution credentials")
+            try:
+                existing = self._scoped_credentials(
+                    json.loads(base64.b64decode(secret["data"]["credentials.json"]))
+                    if "credentials.json" in secret["data"]
+                    else {},
+                    labels["bbx.dev/task-id"],
+                )
+            except (KeyError, ValueError, UnicodeError):
+                raise ResourceUnknown("The original credential mount is unavailable") from None
+            existing[reference] = credentials[reference]
+            if not prior:
+                secret["data"]["runner-bootstrap.json"] = base64.b64encode(
+                    config_json.encode()
+                ).decode()
+            secret["data"]["credentials.json"] = base64.b64encode(
+                json.dumps(existing, ensure_ascii=False, separators=(",", ":")).encode()
+            ).decode()
+            await self._kubectl("replace", "-f", "-", body=secret)
+            return
+        if retain_binding_ids:
+            if not isinstance(retain_binding_ids, (list, tuple)) or any(
+                not isinstance(bid, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", bid)
+                for bid in retain_binding_ids
+            ):
+                raise ResourceUnknown("Invalid retained Runner binding identities")
+            try:
+                existing = self._scoped_credentials(
+                    json.loads(base64.b64decode(secret["data"]["credentials.json"], validate=True))
+                    if "credentials.json" in secret.get("data", {})
+                    else {},
+                    labels["bbx.dev/task-id"],
+                )
+            except (KeyError, ValueError, UnicodeError):
+                raise ResourceUnknown("The original credential mount is unavailable") from None
+            credentials = dict(credentials)
+            for bid in retain_binding_ids:
+                for audience in ("model", "business-mcp", "sandbox-mcp"):
+                    if audience in {"business-mcp", "sandbox-mcp"}:
+                        ref = f"native-mcp-{bid}-{audience.removesuffix('-mcp')}"
+                    else:
+                        ref = f"native-{audience}-{bid}"
+                    if ref in credentials:
+                        raise ResourceUnknown("A draining credential cannot be issued again")
+                    previous = existing.get(ref)
+                    if previous is None:
+                        continue
+                    if (
+                        previous.get("binding_id") != bid
+                        or previous.get("audience") != audience
+                        or type(previous.get("expires_at")) is not int
+                        or not isinstance(previous.get("token"), str)
+                        or not previous["token"]
+                    ):
+                        raise ResourceUnknown("The original draining credential identity changed")
+                    if previous["expires_at"] > time.time():
+                        credentials[ref] = previous
+        ca = Path(self.config["ca_file"]).read_text() if self.config.get("ca_file") else ""
+        secret["data"] = {
+            key: base64.b64encode(value.encode()).decode()
+            for key, value in {
+                "runner-bootstrap.json": base64.b64decode(prior).decode() if prior else config_json,
+                "credentials.json": json.dumps(
+                    credentials, ensure_ascii=False, separators=(",", ":")
+                ),
+                "ca.pem": ca,
+            }.items()
+        }
+        await self._kubectl("replace", "-f", "-", body=secret)
+
+    async def recover(self, operation, tenant_key):
+        """Discover only the original operation; never create or replay resource mutations."""
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        prior = operation.get("observation") or {}
+        claimed = operation.get("sandbox_create_claimed", True)
+        result = {
+            **prior,
+            "source_id": self.config["source_id"],
+            "cluster_uid": self.config["cluster_uid"],
+            "task_id": labels["bbx.dev/task-id"],
+            "operation_id": labels["bbx.dev/operation-id"],
+            "namespace": namespace,
+            "not_started": False,
+            "pvcs_retained": True,
+        }
+        ns = await self._get("namespace", namespace)
+        had_execution = bool(
+            prior.get("sandbox", {}).get("id") or prior.get("runner", {}).get("pod_uid")
+        )
+        if not ns:
+            if prior.get("namespace_uid") or claimed is not False or had_execution:
+                raise ResourceUnknown("The original namespace or create result is unresolved")
+            return {**result, "not_started": True}
+        self._owned(ns, labels, prior.get("namespace_uid"))
+        result["namespace_uid"] = ns["metadata"]["uid"]
+        vpn = self.vpn_enabled(operation)
+        retained = ("journal_pvc", "workspace_pvc", "execd_secret", "runner_secret")
+        if vpn:
+            retained += ("vpn_egress_secret",)
+        if self.sandbox_host:
+            retained += ("sandbox_host_secret",)
+        for key in retained:
+            name = {
+                "journal_pvc": "bbx-journal",
+                "workspace_pvc": "bbx-workspace",
+                "execd_secret": "bbx-execd",
+                "runner_secret": "bbx-runner",
+                "sandbox_host_secret": SANDBOX_HOST_SECRET,
+                "vpn_egress_secret": VPN_SECRET,
+            }[key]
+            value = await self._get("pvc" if key.endswith("_pvc") else "secret", name, namespace)
+            if not value:
+                if prior.get(key, {}).get("uid"):
+                    result["pvcs_retained"] = False
+                continue
+            self._owned(value, labels, prior.get(key, {}).get("uid"))
+            if key.endswith("_pvc"):
+                size = "128Mi" if key == "journal_pvc" else "64Mi"
+                if (
+                    value["spec"].get("storageClassName") != self.config["storage_class"]
+                    or value["spec"].get("accessModes") != ["ReadWriteOnce"]
+                    or value["spec"].get("volumeMode", "Filesystem") != "Filesystem"
+                    or value["spec"].get("resources", {}).get("requests", {}).get("storage") != size
+                    or value["metadata"].get("ownerReferences")
+                    or any(
+                        value["spec"].get(k) for k in ("dataSource", "dataSourceRef", "selector")
+                    )
+                ):
+                    raise ResourceUnknown("The retained PVC contract changed")
+            elif key == "runner_secret":
+                self._runner_secret(value)
+            elif key == "sandbox_host_secret":
+                self._host_secret(value)
+            elif key == "vpn_egress_secret":
+                self._check_egress_secret(value)
+            elif (
+                value.get("type") != "Opaque"
+                or set(value.get("data", {})) != {"token"}
+                or not base64.b64decode(value["data"]["token"]).strip()
+            ):
+                raise ResourceUnknown("The original execd Secret changed")
+            result[key] = {"name": name, "uid": value["metadata"]["uid"]}
+        metadata = self._sandbox_metadata(operation, labels)
+        sid = prior.get("sandbox", {}).get("id") or await self._sandbox_id(tenant_key, metadata)
+        pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+            "items"
+        ]
+        if sid:
+            result["sandbox"] = {**prior.get("sandbox", {}), "id": sid}
+            cr = await self._get("batchsandbox", sid, namespace)
+            if cr:
+                if any(
+                    cr["metadata"].get("labels", {}).get(k) != v for k, v in metadata.items()
+                ) or (
+                    prior.get("sandbox", {}).get("cr_uid")
+                    and cr["metadata"]["uid"] != prior["sandbox"]["cr_uid"]
+                ):
+                    raise ResourceUnknown("The original Sandbox CR identity changed")
+                result["sandbox"]["cr_uid"] = cr["metadata"]["uid"]
+                children = [
+                    pod
+                    for pod in pods
+                    if any(
+                        owner.get("uid") == cr["metadata"]["uid"]
+                        for owner in pod["metadata"].get("ownerReferences", [])
+                    )
+                ]
+                if len(children) > 1:
+                    raise ResourceUnknown("The original Sandbox Pod is ambiguous")
+                if children:
+                    pod = children[0]
+                    revision = self._sandbox_spec(pod, operation)
+                    projection = self._pod_projection(pod)
+                    for key in ("pod_uid", "container_id"):
+                        if prior.get("sandbox", {}).get(key) and prior["sandbox"][
+                            key
+                        ] != projection.get(key):
+                            raise ResourceUnknown("The original Sandbox process identity changed")
+                    if vpn or self.board_direct(operation):
+                        pod_ip = str(ipaddress.IPv4Address(pod["status"]["podIP"]))
+                        if prior.get("sandbox", {}).get("pod_ip", pod_ip) != pod_ip:
+                            raise ResourceUnknown("Original VPN Sandbox Pod address changed")
+                        projection["pod_ip"] = pod_ip
+                    result["sandbox"].update(**projection, environment_revision=revision)
+        runner = await self._get("pod", "bbx-runner", namespace)
+        if runner:
+            self._owned(
+                runner,
+                {**labels, "bbx.dev/component": "runner"},
+                prior.get("runner", {}).get("pod_uid"),
+            )
+            self._runner_spec(
+                runner,
+                self._runner_document(
+                    namespace,
+                    labels,
+                    prior.get("resource_generation", 1),
+                    prior.get("journal_lock_id"),
+                    with_vpn=vpn,
+                    fresh_journal=prior.get("journal_fresh") is True,
+                )["spec"],
+            )
+            projection = self._pod_projection(runner, with_host=self.sandbox_host, with_vpn=vpn)
+            if any(
+                prior.get("runner", {}).get(key) and prior["runner"][key] != projection.get(key)
+                for key in ("container_id", "host_container_id", "egress_container_id", "pod_ip")
+            ):
+                raise ResourceUnknown("The original Runner container identity changed")
+            result["runner"] = projection
+        known_pods = {result.get(key, {}).get("pod_uid") for key in ("runner", "sandbox")}
+        if any(pod["metadata"]["uid"] not in known_pods for pod in pods):
+            raise ResourceUnknown("An unapproved execution Pod exists in the Task namespace")
+        any_execution = bool(sid or runner or pods or had_execution)
+        if claimed is False and not any_execution:
+            result["not_started"] = True
+        return result
+
+    async def observe(self, observation):
+        namespace, labels = self._scope(observation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observation["namespace_uid"])
+        result = dict(observation)
+        for key in ("journal_pvc", "workspace_pvc"):
+            self._owned(
+                await self._get("pvc", observation[key]["name"], namespace),
+                labels,
+                observation[key]["uid"],
+            )
+        for key in ("runner", "sandbox"):
+            ref = observation.get(key, {})
+            if not ref.get("pod_name") or not ref.get("pod_uid"):
+                result[key] = {**ref, "terminated": False, "observation": "unknown"}
+                continue
+            pod = await self._get("pod", ref["pod_name"], namespace)
+            projection = (
+                self._pod_projection(
+                    pod,
+                    with_host=self.sandbox_host and key == "runner",
+                    with_vpn=bool(ref.get("egress_container_id")),
+                )
+                if pod
+                else {}
+            )
+            if not pod or not self._same_process(projection, ref):
+                result[key] = {**ref, "terminated": False, "observation": "unknown"}
+            else:
+                if key == "runner":
+                    self._runner_spec(
+                        pod,
+                        self._runner_document(
+                            namespace,
+                            labels,
+                            observation.get("resource_generation", 1),
+                            observation.get("journal_lock_id"),
+                            with_vpn=bool(ref.get("egress_container_id")),
+                            fresh_journal=observation.get("journal_fresh") is True,
+                        )["spec"],
+                    )
+                if (
+                    key == "sandbox"
+                    and ref.get("pod_ip")
+                    and pod["status"].get("podIP") != ref["pod_ip"]
+                ):
+                    raise ResourceUnknown("Original VPN Sandbox Pod address changed")
+                result[key] = {**ref, **projection}
+        return result
+
+    async def _terminated_watch(self, reference, namespace):
+        container_id = reference.get("container_id")
+        start_revision = reference.get("watch_revision") or reference.get("resource_version")
+        if not container_id or not start_revision or not reference.get("container_name"):
+            return False
+        meta = {
+            "name": self._name(reference["pod_name"]),
+            "uid": reference["pod_uid"],
+            "resourceVersion": start_revision,
+        }
+        query = urlencode(
+            {
+                "watch": "true",
+                "resourceVersion": meta["resourceVersion"],
+                "fieldSelector": "metadata.name=" + meta["name"],
+                "timeoutSeconds": "25",
+            }
+        )
+        uri = f"/api/v1/namespaces/{namespace}/pods?{query}"
+        process = await asyncio.create_subprocess_exec(
+            "kubectl",
+            "--kubeconfig",
+            self.config["kubeconfig"],
+            "--context",
+            self.config["context"],
+            "get",
+            "--raw",
+            uri,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=1024 * 1024,
+        )
+        failure = "watch_eof"
+        confirmed = False
+        try:
+            async with asyncio.timeout(30):
+                assert process.stdout is not None
+                while line := await process.stdout.readline():
+                    event = json.loads(line)
+                    if event.get("type") == "BOOKMARK":
+                        continue
+                    if event.get("type") == "ERROR":
+                        failure = (
+                            "watch_expired"
+                            if event.get("object", {}).get("code") == 410
+                            else "watch_error"
+                        )
+                        break
+                    current = event.get("object", {})
+                    if current.get("metadata", {}).get("uid") != meta["uid"]:
+                        failure = "watch_uid_changed"
+                        break
+                    projection = self._pod_projection(
+                        current,
+                        with_host=bool(reference.get("host_container_id")),
+                        with_vpn=bool(reference.get("egress_container_id")),
+                    )
+                    if projection["container_name"] != reference["container_name"] or any(
+                        projection.get(k) not in {None, reference.get(k)}
+                        for k in ("container_id", "host_container_id", "egress_container_id")
+                    ):
+                        failure = "watch_container_changed"
+                        break
+                    if projection["terminated"] and self._same_process(projection, reference):
+                        confirmed = True
+                        break
+        except TimeoutError:
+            failure = "watch_timeout"
+        except (ValueError, ResourceUnknown):
+            failure = "watch_invalid_scope"
+        finally:
+            if process.returncode is None:
+                process.kill()
+            await process.communicate()
+        if not confirmed:
+            logging.getLogger(__name__).warning("Native Pod exit remains unresolved (%s)", failure)
+        return confirmed
+
+    async def _pod_stop_snapshot(self, name, namespace):
+        # A live Pod's own resourceVersion may predate the watch cache. A consistent,
+        # field-selected LIST proves that same Pod at a current collection revision.
+        # Use the API document, not kubectl's synthesized List (which drops its revision).
+        query = urlencode({"fieldSelector": "metadata.name=" + self._name(name)})
+        uri = f"/api/v1/namespaces/{self._name(namespace)}/pods?{query}"
+        selected = json.loads(await self._kubectl("get", "--raw", uri))
+        if selected.get("kind") != "PodList":
+            raise ResourceUnknown("The original Pod stop snapshot is unavailable")
+        pods = selected["items"]
+        revision = selected.get("metadata", {}).get("resourceVersion")
+        if len(pods) > 1 or (pods and (not isinstance(revision, str) or not revision)):
+            raise ResourceUnknown("The original Pod stop snapshot is unconfirmed")
+        if pods and pods[0]["metadata"]["name"] != name:
+            raise ResourceUnknown("The original Pod stop snapshot changed")
+        return (pods[0], revision) if pods else (None, None)
+
+    async def stop(self, observation, tenant_key):
+        namespace, labels = self._scope(observation)
+        await self._cluster()
+        namespace_object = self._owned(
+            await self._get("namespace", namespace), labels, observation["namespace_uid"]
+        )
+        result = {"runner_terminated": False, "sandbox_terminated": False, "pvcs_retained": False}
+        watches = {}
+        try:
+            runner_delete = False
+            for key in ("runner", "sandbox"):
+                ref = observation.get(key, {})
+                if not ref.get("pod_name") or not ref.get("pod_uid") or not ref.get("container_id"):
+                    continue
+                if key == "runner" and self.sandbox_host and not ref.get("host_container_id"):
+                    continue
+                pod, revision = await self._pod_stop_snapshot(ref["pod_name"], namespace)
+                if pod:
+                    if pod["metadata"]["uid"] != ref["pod_uid"]:
+                        raise ResourceUnknown("The original Pod identity changed")
+                    projection = self._pod_projection(
+                        pod,
+                        with_host=self.sandbox_host and key == "runner",
+                        with_vpn=bool(ref.get("egress_container_id")),
+                    )
+                    if not self._same_process(projection, ref):
+                        raise ResourceUnknown("The original container identity changed")
+                    if projection["terminated"]:
+                        result[key + "_terminated"] = True
+                        continue
+                    watch_reference = {**ref, **projection, "watch_revision": revision}
+                    runner_delete = runner_delete or key == "runner"
+                else:
+                    # A prior cursor selects history; only an actual exit event proves termination.
+                    watch_reference = {
+                        **ref,
+                        "container_name": ref.get("container_name", key),
+                        "resource_version": ref.get("resource_version")
+                        or namespace_object["metadata"]["resourceVersion"],
+                    }
+                watches[key] = asyncio.create_task(
+                    self._terminated_watch(watch_reference, namespace)
+                )
+            await asyncio.sleep(0)
+            if runner_delete:
+                await self._kubectl(
+                    "delete",
+                    "--raw",
+                    f"/api/v1/namespaces/{namespace}/pods/{observation['runner']['pod_name']}",
+                    "-f",
+                    "-",
+                    body={
+                        "apiVersion": "v1",
+                        "kind": "DeleteOptions",
+                        "preconditions": {"uid": observation["runner"]["pod_uid"]},
+                        "gracePeriodSeconds": 15,
+                    },
+                )
+            sandbox_ref = observation.get("sandbox", {})
+            cr = (
+                await self._get("batchsandbox", sandbox_ref["id"], namespace)
+                if sandbox_ref.get("id")
+                else None
+            )
+            if cr and cr["metadata"]["uid"] != sandbox_ref.get("cr_uid"):
+                raise ResourceUnknown("The original logical Sandbox CR identity changed")
+            if cr:
+                connection = self._connection(tenant_key)
+                manager = await SandboxManager.create(connection_config=connection)
+                try:
+                    try:
+                        await manager.kill_sandbox(observation["sandbox"]["id"])
+                    except Exception:
+                        # The original exit watch and native CR readback decide uncertain kill ACKs.
+                        pass
+                finally:
+                    await self._close_sdk(manager, connection)
+            for key, watch in watches.items():
+                result[key + "_terminated"] = await watch
+            if original_egress := observation.get("runner", {}).get("egress_container_id"):
+                result["egress_container_id"] = original_egress
+                result["egress_terminated"] = result["runner_terminated"]
+            if sandbox_ref.get("id") and result["sandbox_terminated"]:
+                if not sandbox_ref.get("cr_uid"):
+                    raise ResourceUnknown("The original logical Sandbox UID was not bound")
+                until = time.monotonic() + 30
+                while True:
+                    cr = await self._get("batchsandbox", sandbox_ref["id"], namespace)
+                    if cr and cr["metadata"]["uid"] != sandbox_ref.get("cr_uid"):
+                        raise ResourceUnknown("The original logical Sandbox was replaced")
+                    pods = json.loads(
+                        await self._kubectl("get", "pods", "-n", namespace, "-o", "json")
+                    )["items"]
+                    for pod in pods:
+                        if any(
+                            owner.get("uid") == sandbox_ref.get("cr_uid")
+                            for owner in pod["metadata"].get("ownerReferences", [])
+                        ):
+                            projection = self._pod_projection(pod)
+                            if (
+                                projection["pod_uid"] != sandbox_ref.get("pod_uid")
+                                or projection.get("container_id") != sandbox_ref.get("container_id")
+                                or not projection["terminated"]
+                            ):
+                                raise ResourceUnknown(
+                                    "The logical Sandbox still has another execution"
+                                )
+                    if cr is None:
+                        break
+                    if time.monotonic() >= until:
+                        raise ResourceUnknown("The logical Sandbox deletion has not converged")
+                    await asyncio.sleep(0.2)
+            for key in ("journal_pvc", "workspace_pvc"):
+                if not observation.get(key):
+                    continue
+                self._owned(
+                    await self._get("pvc", observation[key]["name"], namespace),
+                    labels,
+                    observation[key]["uid"],
+                )
+            result["pvcs_retained"] = True
+            return result
+        finally:
+            for watch in watches.values():
+                if not watch.done():
+                    watch.cancel()
+            await asyncio.gather(*watches.values(), return_exceptions=True)
+
+    async def recovery_volumes(self, operation):
+        observed = operation["observation"]
+        if (
+            not self.journal_writer_lock
+            or observed.get("runner", {}).get("journal_writer_lock") is not True
+            or not JOURNAL_LOCK_ID.fullmatch(observed.get("journal_lock_id") or "")
+        ):
+            raise ResourceUnknown(
+                "The original Runner did not hold a supported journal writer lock"
+            )
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        storage = await self._recovery_storage(namespace, labels, observed)
+        if storage != observed.get("journal_storage"):
+            raise ResourceUnknown("The original local volume or Node UID changed")
+        return storage["node"]
+
+    async def _recovery_storage(self, namespace, labels, observed):
+        storage = await self._get("storageclass", self.config["storage_class"])
+        nodes = json.loads(await self._kubectl("get", "nodes", "-o", "json"))["items"]
+        if (
+            not storage
+            or storage["provisioner"] != "rancher.io/local-path"
+            or len(nodes) != 1
+            or not any(
+                item["type"] == "Ready" and item["status"] == "True"
+                for item in nodes[0].get("status", {}).get("conditions", [])
+            )
+        ):
+            raise ResourceUnknown("Recovery requires the original single-node local-path topology")
+        node = nodes[0]["metadata"]
+        hostname = node["labels"].get("kubernetes.io/hostname")
+        if not hostname:
+            raise ResourceUnknown("The original local-volume node is unidentified")
+        paths = set()
+        identities = {"node": node["name"], "node_uid": node["uid"]}
+        for key in ("journal_pvc", "workspace_pvc"):
+            claim = observed[key]
+            pvc = self._owned(
+                await self._get("pvc", claim["name"], namespace), labels, claim["uid"]
+            )
+            pv = await self._get("pv", pvc["spec"].get("volumeName") or "unbound")
+            spec = (pv or {}).get("spec", {})
+            ref = spec.get("claimRef", {})
+            path = spec.get("hostPath", spec.get("local", {})).get("path")
+            if (
+                pvc["status"].get("phase") != "Bound"
+                or spec.get("storageClassName") != storage["metadata"]["name"]
+                or any(
+                    ref.get(field) != expected
+                    for field, expected in {
+                        "namespace": namespace,
+                        "name": claim["name"],
+                        "uid": claim["uid"],
+                    }.items()
+                )
+                or spec.get("nodeAffinity", {}).get("required", {}).get("nodeSelectorTerms")
+                != [
+                    {
+                        "matchExpressions": [
+                            {
+                                "key": "kubernetes.io/hostname",
+                                "operator": "In",
+                                "values": [hostname],
+                            }
+                        ]
+                    }
+                ]
+                or not isinstance(path, str)
+                or not path.startswith("/")
+                or path in paths
+            ):
+                raise ResourceUnknown("The original bound local volume identity is unconfirmed")
+            assert pv is not None
+            identities[key.replace("pvc", "pv_uid")] = pv["metadata"]["uid"]
+            paths.add(path)
+        return identities
+
+    async def _remove_recovery_object(self, kind, namespace, name, uid):
+        current = await self._get(kind, name, namespace)
+        if current is None:
+            return
+        if current["metadata"]["uid"] != uid:
+            raise ResourceUnknown("The original recovery resource was replaced")
+        prefix = "/apis/cilium.io/v2" if kind == "ciliumnetworkpolicies" else "/api/v1"
+        try:
+            await self._kubectl(
+                "delete",
+                "--raw",
+                f"{prefix}/namespaces/{namespace}/{kind}/{name}",
+                "-f",
+                "-",
+                body={"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": uid}},
+            )
+        except ResourceUnknown:
+            if await self._get(kind, name, namespace) is not None:
+                raise
+        deadline = time.monotonic() + 35
+        while (current := await self._get(kind, name, namespace)) is not None:
+            if current["metadata"]["uid"] != uid or time.monotonic() >= deadline:
+                raise ResourceUnknown("Recovery object removal did not converge")
+            await asyncio.sleep(0.2)
+
+    async def release_recovery(self, operation, *, stopping=False, checkpoint=None):
+        """After durable positive exit, remove only the original names and any owned verifier."""
+        observed, incident = operation["observation"], operation["data"]["recovery"]
+        if not incident.get("exit_proof"):
+            raise ResourceUnknown("Original terminal evidence was not persisted")
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        self._owned(await self._get("namespace", namespace), labels, observed["namespace_uid"])
+        for key in ("journal_pvc", "workspace_pvc"):
+            claim = observed[key]
+            self._owned(await self._get("pvc", claim["name"], namespace), labels, claim["uid"])
+        for key in ("runner", "sandbox"):
+            ref = observed[key]
+            value = await self._get("pod", ref["pod_name"], namespace)
+            if value:
+                projection = self._pod_projection(
+                    value, with_host=key == "runner", with_vpn=bool(ref.get("egress_container_id"))
+                )
+                if not projection["terminated"] or not self._same_process(projection, ref):
+                    raise ResourceUnknown("Original terminal Pod identity changed")
+                await self._remove_recovery_object(
+                    "pods", namespace, ref["pod_name"], ref["pod_uid"]
+                )
+        if await self._get("batchsandbox", observed["sandbox"]["id"], namespace):
+            raise ResourceUnknown("The original logical Sandbox still exists")
+        if self._uses_route_policy(operation):
+            for name in (VPN_PEER_POLICY, DEFAULT_NETWORK_POLICY):
+                policy = await self._get("ciliumnetworkpolicies", name, namespace)
+                if policy:
+                    uid = self._network_policy_for_cleanup(policy, operation, labels)
+                    await self._remove_recovery_object(
+                        "ciliumnetworkpolicies", namespace, name, uid
+                    )
+        for key in ("runner_secret", "sandbox_host_secret", "vpn_egress_secret"):
+            if key == "vpn_egress_secret" and not observed.get(key):
+                continue
+            ref = observed[key]
+            value = await self._get("secret", ref["name"], namespace)
+            if value:
+                self._owned(value, labels, ref["uid"])
+                await self._remove_recovery_object("secrets", namespace, ref["name"], ref["uid"])
+        verifier_labels = self._verifier_labels(labels, incident)
+        verifier = await self._get("pod", "bbx-journal-verify", namespace)
+        if verifier:
+            self._owned(verifier, verifier_labels)
+            if stopping:
+                observed_verifier = self._verifier_receipt(verifier)
+                if not observed_verifier["verifier_terminated"] or checkpoint is None:
+                    raise ResourceUnknown("The original recovery verifier has not exited")
+                await checkpoint(observed_verifier)
+                await self._remove_recovery_object(
+                    "pods", namespace, "bbx-journal-verify", verifier["metadata"]["uid"]
+                )
+                verifier = None
+        elif stopping and incident.get("verifier") and not incident["verifier"].get("terminated"):
+            raise ResourceUnknown("The original recovery verifier exit is unresolved")
+        pods = json.loads(await self._kubectl("get", "pods", "-n", namespace, "-o", "json"))[
+            "items"
+        ]
+        if {p["metadata"]["uid"] for p in pods} != (
+            {verifier["metadata"]["uid"]} if verifier else set()
+        ):
+            raise ResourceUnknown("An unexpected Pod still uses the original Task namespace")
+        if stopping:
+            await self._remove_verifier_policy(namespace, verifier_labels)
+
+    def _network_policy_for_cleanup(self, policy, operation, labels):
+        data = operation["data"]
+        generation = str(data.get("resource_generation", 1))
+        direct = policy["metadata"]["name"] == DEFAULT_NETWORK_POLICY
+        if data.get("native_network") != ("default" if direct else "vpn"):
+            raise ResourceUnknown("The original Task network mode does not own this policy")
+        vpn = data.get("vpn", {})
+        receipt = (data.get("network_policy") if direct else vpn.get("policy")) or {}
+        digest = (
+            data.get("network_digest") if direct else vpn.get("network", {}).get("network_digest")
+        )
+        meta = self._owned(
+            policy, {**labels, GENERATION_LABEL: generation}, receipt.get("policy_uid")
+        )["metadata"]
+        pod = operation["observation"]["sandbox" if direct else "runner"]
+        if (
+            not digest
+            or meta["annotations"].get(NETWORK_DIGEST_ANNOTATION) != digest
+            or meta.get("ownerReferences")
+            != [
+                {
+                    "apiVersion": "v1",
+                    "kind": "Pod",
+                    "name": pod["pod_name"],
+                    "uid": pod["pod_uid"],
+                }
+            ]
+        ):
+            raise ResourceUnknown("The original Task network policy identity is unconfirmed")
+        return meta["uid"]
+
+    @staticmethod
+    def _verifier_labels(labels, incident):
+        return {
+            **labels,
+            "bbx.dev/component": JOURNAL_VERIFIER,
+            "bbx.dev/recovery-id": str(UUID(incident["incident_id"])),
+        }
+
+    async def _remove_verifier_policy(self, namespace, labels):
+        value = await self._get("ciliumnetworkpolicies", "bbx-journal-verify", namespace)
+        if value:
+            self._owned(value, labels)
+            await self._remove_recovery_object(
+                "ciliumnetworkpolicies", namespace, "bbx-journal-verify", value["metadata"]["uid"]
+            )
+
+    @staticmethod
+    def _verifier_receipt(pod):
+        status = pod.get("status", {})
+        init = status.get("initContainerStatuses", [])
+        main = status.get("containerStatuses", [])
+        init = init[0] if len(init) == 1 and init[0]["name"] == "prepare-copy" else {}
+        main = main[0] if len(main) == 1 and main[0]["name"] == "verify" else {}
+        return {
+            "verifier_pod_uid": pod["metadata"]["uid"],
+            "verifier_init_container_id": init.get("containerID"),
+            "verifier_container_id": main.get("containerID"),
+            "verifier_terminated": all(
+                item.get("containerID")
+                and item.get("state", {}).get("terminated", {}).get("containerID")
+                == item["containerID"]
+                for item in (init, main)
+            ),
+        }
+
+    async def verify_recovery_journal(self, operation, prepared, node, *, admit, checkpoint):
+        observed, incident = operation["observation"], operation["data"]["recovery"]
+        manifest = prepared["manifest"]
+        text = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        )
+        if hashlib.sha256(text.encode()).hexdigest() != prepared["manifest_digest"]:
+            raise ResourceUnknown("The recovery manifest bytes do not match the durable digest")
+        namespace, labels = self._scope(operation)
+        labels = self._verifier_labels(labels, incident)
+        generation = manifest["resource_generation"]
+        directory = f"epoch-{generation}"
+        name = "bbx-journal-verify"
+        saved = incident.get("verifier", {})
+        existing = await self._get("pod", name, namespace)
+        if saved.get("terminated") and saved.get("work_copy"):
+            if existing:
+                self._owned(existing, labels, saved["pod_uid"])
+                if not self._verifier_receipt(existing)["verifier_terminated"]:
+                    raise ResourceUnknown("The verified journal Pod exit changed")
+                await self._remove_recovery_object("pods", namespace, name, saved["pod_uid"])
+            await self._remove_verifier_policy(namespace, labels)
+            if await self.recovery_volumes(operation) != node:
+                raise ResourceUnknown("The verified local-volume node changed")
+            await self.release_recovery(operation)
+            return {
+                "manifest_digest": prepared["manifest_digest"],
+                "work_copy": saved["work_copy"],
+                "writer_released": True,
+                "journal_pvc_uid": observed["journal_pvc"]["uid"],
+                "workspace_pvc_uid": observed["workspace_pvc"]["uid"],
+                "verifier_pod_uid": saved["pod_uid"],
+            }
+        if (existing is None and saved) or (existing is not None and not saved):
+            raise ResourceUnknown("The original journal verifier claim cannot be replayed")
+        policy = self._document(
+            "CiliumNetworkPolicy",
+            name,
+            labels,
+            namespace,
+            spec={
+                "endpointSelector": {"matchLabels": {"bbx.dev/component": JOURNAL_VERIFIER}},
+                "ingressDeny": [{"fromEntities": ["all"]}],
+                "egressDeny": [{"toEntities": ["all"]}],
+            },
+        )
+        policy["apiVersion"] = "cilium.io/v2"
+        await self._ensure(policy, labels)
+        root = {"name": "journal", "mountPath": "/journal-root"}
+        doc = self._document(
+            "Pod",
+            name,
+            labels,
+            namespace,
+            spec={
+                "nodeName": node,
+                "restartPolicy": "Never",
+                "serviceAccountName": "bbx-runner",
+                "automountServiceAccountToken": False,
+                "activeDeadlineSeconds": 150,
+                "securityContext": {
+                    "runAsUser": 1000,
+                    "runAsGroup": 1000,
+                    "fsGroup": 1000,
+                    "runAsNonRoot": True,
+                },
+                "initContainers": [
+                    self._journal_container(
+                        "prepare-copy",
+                        ["node", JOURNAL_SCRIPT, "prepare", directory, manifest["journal_lock_id"]],
+                        [root],
+                    )
+                ],
+                "containers": [
+                    self._journal_container(
+                        "verify",
+                        ["node", JOURNAL_SCRIPT, "verify", text],
+                        [
+                            {"name": "journal", "mountPath": "/journal-original", "readOnly": True},
+                            {"name": "journal", "mountPath": "/journal-work", "subPath": directory},
+                        ],
+                    )
+                ],
+                "volumes": [
+                    {
+                        "name": "journal",
+                        "persistentVolumeClaim": {"claimName": observed["journal_pvc"]["name"]},
+                    }
+                ],
+            },
+        )
+        if existing is None and not await admit():
+            raise ResourceUnknown("The journal verifier create is already claimed")
+        pod = (
+            self._owned(existing, labels, saved.get("pod_uid"))
+            if existing
+            else await self._ensure(doc, labels)
+        )
+        uid = pod["metadata"]["uid"]
+        deadline = time.monotonic() + 150
+        previous = None
+        while True:
+            self._runner_spec(pod, doc["spec"])
+            if (
+                pod["spec"].get("nodeName") != node
+                or pod["spec"].get("activeDeadlineSeconds") != 150
+            ):
+                raise ResourceUnknown("The recovery verifier Pod contract changed")
+            receipt = self._verifier_receipt(pod)
+            if receipt != previous and not receipt["verifier_terminated"]:
+                await checkpoint(receipt)
+                previous = receipt
+            if pod.get("status", {}).get("phase") == "Succeeded" and receipt["verifier_terminated"]:
+                if self._pod_projection(pod)["exit_code"] == 0:
+                    break
+            if pod.get("status", {}).get("phase") == "Failed" or time.monotonic() >= deadline:
+                raise ResourceUnknown("Original journal or writer lock could not be confirmed")
+            await asyncio.sleep(0.25)
+            pod = self._owned(await self._get("pod", name, namespace), labels, uid)
+        try:
+            proof = json.loads(await self._kubectl("logs", name, "-n", namespace, "-c", "verify"))
+        except ValueError as error:
+            raise ResourceUnknown("The verifier did not return a journal receipt") from error
+        self._owned(await self._get("pod", name, namespace), labels, uid)
+        if proof.get("manifest_digest") != prepared["manifest_digest"]:
+            raise ResourceUnknown("The verifier did not check the original manifest")
+        await checkpoint({**receipt, "work_copy": proof["work_copy"]})
+        await self._remove_recovery_object("pods", namespace, name, uid)
+        await self._remove_verifier_policy(namespace, labels)
+        if await self.recovery_volumes(operation) != node:
+            raise ResourceUnknown("The verified local-volume node changed")
+        await self.release_recovery(operation)
+        return {
+            **proof,
+            "writer_released": True,
+            "journal_pvc_uid": observed["journal_pvc"]["uid"],
+            "workspace_pvc_uid": observed["workspace_pvc"]["uid"],
+            "verifier_pod_uid": uid,
+        }
+
+    async def _retirement_topology(self):
+        frozen = self.config.get("retirement_single_apiserver") or {}
+        pods = json.loads(
+            await self._kubectl(
+                "get", "pods", "-n", "kube-system", "-l", "component=kube-apiserver", "-o", "json"
+            )
+        )["items"]
+        if len(pods) != 1 or pods[0]["metadata"]["uid"] != frozen.get("pod_uid"):
+            raise ResourceUnknown("Automatic retirement requires the frozen single API server")
+        pod = pods[0]
+        if not any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in pod.get("status", {}).get("conditions", [])
+        ):
+            raise ResourceUnknown("The single API server is not ready")
+        node = await self._get("node", pod["spec"]["nodeName"])
+        endpoints = await self._get("endpoints", "kubernetes", "default")
+        addresses = [
+            a for s in (endpoints or {}).get("subsets", []) for a in s.get("addresses", [])
+        ]
+        if not node or node["metadata"]["uid"] != frozen.get("node_uid") or len(addresses) != 1:
+            raise ResourceUnknown("The original single API server topology changed")
+        return dict(frozen)
+
+    async def _retirement_inventory(self, namespace):
+        groups = json.loads(await self._kubectl("get", "--raw", "/apis"))["groups"]
+        versions = [
+            "/api/" + version
+            for version in json.loads(await self._kubectl("get", "--raw", "/api"))["versions"]
+        ]
+        versions += [
+            "/apis/" + version["groupVersion"] for group in groups for version in group["versions"]
+        ]
+        found = []
+        seen = {}
+        for version in versions:
+            discovery = json.loads(await self._kubectl("get", "--raw", version))
+            for resource in discovery["resources"]:
+                if not resource.get("namespaced") or "/" in resource["name"]:
+                    continue
+                if "list" not in resource.get("verbs", []) and "get" not in resource.get(
+                    "verbs", []
+                ):
+                    if (version, resource["name"]) in {
+                        ("/api/v1", "bindings"),
+                        ("/apis/authorization.k8s.io/v1", "localsubjectaccessreviews"),
+                    }:
+                        continue
+                    raise ResourceUnknown("An unknown namespaced API cannot be inventoried")
+                if "list" not in resource.get("verbs", []):
+                    raise ResourceUnknown("A namespaced resource cannot be inventoried")
+                path = version + "/namespaces/" + namespace + "/" + resource["name"]
+                listing = json.loads(await self._kubectl("get", "--raw", path))
+                if listing.get("metadata", {}).get("continue"):
+                    raise ResourceUnknown("The retirement inventory is incomplete")
+                for value in listing["items"]:
+                    value.setdefault("kind", resource["kind"])
+                    meta = value["metadata"]
+                    identity = (value["kind"], meta["name"], meta.get("namespace"))
+                    if not meta.get("uid"):
+                        raise ResourceUnknown("A namespaced resource has no native UID")
+                    if meta["uid"] in seen:
+                        if seen[meta["uid"]] != identity:
+                            raise ResourceUnknown(
+                                "A native UID has conflicting resource identities"
+                            )
+                        continue
+                    seen[meta["uid"]] = identity
+                    found.append((path + "/" + value["metadata"]["name"], value))
+        return found
+
+    def _retirement_fence(self, operation, labels, namespace_uid):
+        namespace = operation["namespace"]
+        name = "bbx-retire-" + str(UUID(operation["retirement_id"]))
+        message = "BBX retirement " + str(UUID(operation["retirement_id"]))
+        policy = self._document("ValidatingAdmissionPolicy", name, labels)
+        policy["apiVersion"] = "admissionregistration.k8s.io/v1"
+        policy["spec"] = {
+            "failurePolicy": "Fail",
+            "paramKind": {"apiVersion": "v1", "kind": "Namespace"},
+            "matchConstraints": {
+                "matchPolicy": "Equivalent",
+                "objectSelector": {},
+                "resourceRules": [
+                    {
+                        "apiGroups": ["*"],
+                        "apiVersions": ["*"],
+                        "operations": ["CREATE"],
+                        "resources": ["*"],
+                        "scope": "Namespaced",
+                    }
+                ],
+                "namespaceSelector": {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": namespace,
+                        "bbx.dev/managed-by": "runner-resources",
+                        "bbx.dev/retiring": "true",
+                    }
+                },
+            },
+            "validations": [
+                {
+                    "expression": "params.metadata.uid != " + json.dumps(namespace_uid),
+                    "message": message,
+                }
+            ],
+        }
+        binding = self._document("ValidatingAdmissionPolicyBinding", name, labels)
+        binding["apiVersion"] = policy["apiVersion"]
+        binding["spec"] = {
+            "policyName": name,
+            "validationActions": ["Deny"],
+            "paramRef": {"name": namespace, "parameterNotFoundAction": "Deny"},
+        }
+        return policy, binding, message
+
+    async def _retirement_plan(self, operation, manifest):
+        namespace, labels = self._scope(operation)
+        observed = operation["observation"]
+        ns = await self._get("namespace", namespace)
+        if ns is None:
+            if not manifest.get("namespace_delete_started"):
+                raise ResourceUnknown("The original Namespace disappeared before retirement")
+            return manifest
+        self._owned(ns, labels, observed["namespace_uid"])
+        native_ca = await self._get("configmap", "kube-root-ca.crt", "kube-system")
+        inventory = await self._retirement_inventory(namespace)
+        allowed = {
+            ("ServiceAccount", "bbx-runner"),
+            ("ResourceQuota", "bbx-task"),
+            ("CiliumNetworkPolicy", "bbx-task"),
+            ("CiliumNetworkPolicy", "bbx-runner-control"),
+        }
+        if (
+            self.traffic_enabled(operation)
+            and not self.vpn_enabled(operation)
+            and not self.board_direct(operation)
+        ):
+            allowed.add(("CiliumNetworkPolicy", "bbx-binding-traffic"))
+        original = {observed["namespace_uid"]}
+        for value in observed.values():
+            if isinstance(value, dict):
+                original.update(value[k] for k in ("uid", "pod_uid", "cr_uid") if value.get(k))
+        saved = {r["path"]: r for r in manifest.get("resources", [])}
+        original.update(r["uid"] for r in saved.values())
+        resources = list(saved.values())
+        native = []
+        historical_events = {}
+        for entry in operation.get("data", {}).get("recovery_history", []):
+            exit_proof = entry.get("exit_proof", {})
+            if not all(
+                exit_proof.get(key) is True
+                for key in ("runner_terminated", "sandbox_terminated", "pvcs_retained")
+            ):
+                continue
+            scope = entry.get("exit_observation", {})
+            if scope.get("namespace_uid") != observed["namespace_uid"]:
+                continue
+            for container, field, kind in (
+                ("runner", "pod_uid", "Pod"),
+                ("sandbox", "pod_uid", "Pod"),
+                ("sandbox", "cr_uid", "BatchSandbox"),
+            ):
+                if uid := scope.get(container, {}).get(field):
+                    historical_events[uid] = kind
+            verifier = entry.get("verifier", {})
+            if verifier.get("terminated") is True and all(
+                verifier.get(key) for key in ("pod_uid", "init_container_id", "container_id")
+            ):
+                historical_events[verifier["pod_uid"]] = "Pod"
+        for path, value in inventory:
+            meta, kind = value["metadata"], value["kind"]
+            name, uid = meta["name"], meta["uid"]
+            if path in saved:
+                if saved[path]["uid"] != uid:
+                    raise ResourceUnknown("A retired resource name was rebound to another UID")
+            if kind in {"Event", "CiliumEndpoint", "Endpoints", "EndpointSlice"}:
+                native.append((path, value))
+                continue
+            if kind == "ServiceAccount" and name == "default":
+                if (
+                    value.get("secrets")
+                    or value.get("imagePullSecrets")
+                    or meta.get("ownerReferences")
+                ):
+                    raise ResourceUnknown("The default service account has foreign attachments")
+                resources.append(
+                    {"path": path, "uid": uid, "kind": kind, "name": name, "namespace_gc": True}
+                )
+                original.add(uid)
+                continue
+            if kind == "ConfigMap" and name == "kube-root-ca.crt":
+                if value.get("data") != (native_ca or {}).get("data") or value.get("binaryData"):
+                    raise ResourceUnknown("The native root CA ConfigMap changed")
+                resources.append(
+                    {"path": path, "uid": uid, "kind": kind, "name": name, "namespace_gc": True}
+                )
+                original.add(uid)
+                continue
+            expected = None
+            for key in (
+                "journal_pvc",
+                "workspace_pvc",
+                "runner_secret",
+                "execd_secret",
+                "sandbox_host_secret",
+                "vpn_egress_secret",
+            ):
+                ref = observed.get(key, {})
+                if name == ref.get("name") and kind == (
+                    "PersistentVolumeClaim" if key.endswith("pvc") else "Secret"
+                ):
+                    expected = ref["uid"]
+            if kind == "Pod":
+                ref = next(
+                    (
+                        observed[k]
+                        for k in ("runner", "sandbox")
+                        if observed.get(k, {}).get("pod_name") == name
+                    ),
+                    {},
+                )
+                expected = ref.get("pod_uid")
+                projection = self._pod_projection(
+                    value,
+                    with_host=self.sandbox_host and name == "bbx-runner",
+                    with_vpn=bool(ref.get("egress_container_id")),
+                )
+                if (
+                    not expected
+                    or not projection["terminated"]
+                    or not self._same_process(projection, ref)
+                ):
+                    raise ResourceUnknown("Retirement still has an unresolved execution Pod")
+            if (
+                kind == "CiliumNetworkPolicy"
+                and name in {VPN_PEER_POLICY, DEFAULT_NETWORK_POLICY}
+                and self._uses_route_policy(operation)
+            ):
+                expected = self._network_policy_for_cleanup(value, operation, labels)
+            if kind == "BatchSandbox" or (expected is None and (kind, name) not in allowed):
+                raise ResourceUnknown(
+                    "The Task namespace contains a foreign or unresolved resource"
+                )
+            self._owned(value, labels, expected)
+            if kind == "Secret":
+                if name == "bbx-runner":
+                    self._runner_secret(value)
+                elif name == SANDBOX_HOST_SECRET and self.sandbox_host:
+                    self._host_secret(value)
+                elif name == VPN_SECRET and self.vpn_enabled(operation):
+                    self._check_egress_secret(value)
+                elif value.get("type") != "Opaque" or set(value.get("data", {})) != {"token"}:
+                    raise ResourceUnknown("The original execd Secret changed")
+            resources.append({"path": path, "uid": uid, "kind": kind, "name": name})
+            original.add(uid)
+        for path, value in native:
+            meta = value["metadata"]
+            related = value.get("regarding", value.get("involvedObject", {}))
+            owners = meta.get("ownerReferences", [])
+            if not (
+                (
+                    value["kind"] == "Event"
+                    and (
+                        related.get("uid") in original
+                        or (
+                            related.get("uid") in historical_events
+                            and historical_events[related["uid"]] == related.get("kind")
+                        )
+                    )
+                )
+                or (owners and all(o.get("uid") in original for o in owners))
+            ):
+                raise ResourceUnknown("A native metadata object has no original UID reference")
+            resources.append(
+                {
+                    "path": path,
+                    "uid": meta["uid"],
+                    "kind": value["kind"],
+                    "name": meta["name"],
+                    "namespace_gc": True,
+                }
+            )
+        volumes = manifest.get("volumes", [])
+        if not volumes:
+            for key in ("journal_pvc", "workspace_pvc"):
+                ref = observed.get(key)
+                if not ref:
+                    raise ResourceUnknown("Retirement lacks an original retained PVC identity")
+                claim = self._owned(
+                    await self._get("pvc", ref["name"], namespace), labels, ref["uid"]
+                )
+                if claim["spec"].get("storageClassName") != self.config["storage_class"]:
+                    raise ResourceUnknown("The original PVC storage class changed")
+                if not claim["spec"].get("volumeName"):
+                    raise ResourceUnknown(
+                        "An unbound retained PVC has no frozen provisioning history"
+                    )
+                pv = await self._get("pv", claim["spec"].get("volumeName", ""))
+                if (
+                    not pv
+                    or pv["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
+                    or pv["spec"].get("claimRef", {}).get("uid") != ref["uid"]
+                    or pv["spec"]["claimRef"].get("namespace") != namespace
+                    or pv["spec"]["claimRef"].get("name") != ref["name"]
+                    or pv["spec"].get("storageClassName") != self.config["storage_class"]
+                ):
+                    raise ResourceUnknown("The retained PV binding or Delete policy is not proven")
+                volumes.append(
+                    {
+                        "name": pv["metadata"]["name"],
+                        "uid": pv["metadata"]["uid"],
+                        "claim_uid": ref["uid"],
+                        "claim_name": ref["name"],
+                        "claim_namespace": namespace,
+                        "storage_class": self.config["storage_class"],
+                        "reclaim_policy": "Delete",
+                    }
+                )
+        else:
+            for ref in volumes:
+                claims = [observed.get(k, {}) for k in ("journal_pvc", "workspace_pvc")]
+                if (
+                    not any(
+                        c.get("uid") == ref.get("claim_uid")
+                        and c.get("name") == ref.get("claim_name")
+                        for c in claims
+                    )
+                    or ref.get("claim_namespace") != namespace
+                    or ref.get("storage_class") != self.config["storage_class"]
+                    or ref.get("reclaim_policy") != "Delete"
+                ):
+                    raise ResourceUnknown("The frozen PV claim projection changed")
+                if ref.get("unbound"):
+                    raise ResourceUnknown("Unbound retained PVC retirement is not supported")
+                pv = await self._get("pv", ref["name"])
+                if pv and (
+                    pv["metadata"]["uid"] != ref["uid"]
+                    or pv["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
+                    or pv["spec"].get("claimRef", {}).get("uid") != ref["claim_uid"]
+                    or pv["spec"]["claimRef"].get("namespace") != namespace
+                    or pv["spec"]["claimRef"].get("name") != ref["claim_name"]
+                    or pv["spec"].get("storageClassName") != ref["storage_class"]
+                ):
+                    raise ResourceUnknown("The original PV retirement identity changed")
+        if len(volumes) != 2 or {v["claim_uid"] for v in volumes} != {
+            observed[k]["uid"] for k in ("journal_pvc", "workspace_pvc")
+        }:
+            raise ResourceUnknown("The retirement manifest does not cover both original claims")
+        return {
+            **manifest,
+            "task_id": operation["task_id"],
+            "operation_id": operation["operation_id"],
+            "retirement_id": operation["retirement_id"],
+            "namespace": {"name": namespace, "uid": observed["namespace_uid"]},
+            "namespace_uid": observed["namespace_uid"],
+            "source_id": self.config["source_id"],
+            "cluster_uid": self.config["cluster_uid"],
+            "resources": list({ref["path"]: ref for ref in resources}.values()),
+            "volumes": volumes,
+        }
+
+    async def retire(self, operation, *, checkpoint, admit_retire):
+        """Retire only the explicitly authorized original retained resources, never infer exit."""
+        namespace, labels = self._scope(operation)
+        await self._cluster()
+        topology = await self._retirement_topology()
+        manifest = json.loads(json.dumps(operation.get("retirement") or {}))
+        if manifest.get("authority") != topology:
+            raise ResourceUnknown("The original retirement topology authority changed")
+        for key in ("task_id", "operation_id", "retirement_id"):
+            if key in manifest and manifest[key] != operation[key]:
+                raise ResourceUnknown("The original retirement operation changed")
+        if manifest.get("namespace") not in (
+            None,
+            {"name": namespace, "uid": operation["observation"]["namespace_uid"]},
+        ):
+            raise ResourceUnknown("The original retirement Namespace changed")
+        if any(
+            k in manifest and manifest[k] != self.config[k] for k in ("source_id", "cluster_uid")
+        ):
+            raise ResourceUnknown("The persisted retirement resource source changed")
+        manifest = await self._retirement_plan(operation, manifest)
+        policy, binding, message = self._retirement_fence(
+            operation, labels, manifest["namespace_uid"]
+        )
+        expected_fence = {"policy": policy, "binding": binding}
+        if manifest.get("fence") and manifest["fence"] != expected_fence:
+            raise ResourceUnknown("The original retirement admission configuration changed")
+        manifest.update(fence=expected_fence, topology=topology)
+        await checkpoint(manifest)
+
+        async def admit():
+            if not await admit_retire():
+                raise ResourceUnknown("The original retirement authority was revoked")
+
+        async def delete(ref):
+            current = json.loads(await self._kubectl("get", "--raw", ref["path"]))
+            if current["metadata"]["uid"] != ref["uid"]:
+                raise ResourceUnknown("Retirement cannot delete a replacement UID")
+            await admit()
+            await self._kubectl(
+                "delete",
+                "--raw",
+                ref["path"],
+                "-f",
+                "-",
+                body={
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "preconditions": {"uid": ref["uid"]},
+                },
+            )
+
+        ns = await self._get("namespace", namespace)
+        if ns is not None:
+            for key, document in (("policy", policy), ("binding", binding)):
+                resource = (
+                    "validatingadmissionpolicies"
+                    if key == "policy"
+                    else "validatingadmissionpolicybindings"
+                )
+                existing = await self._get(resource, document["metadata"]["name"])
+                ref = manifest.get(key)
+                if existing is None:
+                    if ref:
+                        raise ResourceUnknown("The original retirement fence disappeared")
+                    await admit()
+                    await self._kubectl("create", "-f", "-", body=document)
+                    existing = await self._get(resource, document["metadata"]["name"])
+                existing = self._owned(existing, labels, ref.get("uid") if ref else None)
+                if existing["spec"] != document["spec"]:
+                    raise ResourceUnknown("The original retirement policy changed")
+                manifest[key] = {
+                    "path": "/apis/admissionregistration.k8s.io/v1/"
+                    + resource
+                    + "/"
+                    + document["metadata"]["name"],
+                    "uid": existing["metadata"]["uid"],
+                }
+                await checkpoint(manifest)
+            until = time.monotonic() + 25
+            while True:
+                active = await self._get("validatingadmissionpolicies", policy["metadata"]["name"])
+                self._owned(active, labels, manifest["policy"]["uid"])
+                if active and active.get("status", {}).get("observedGeneration") == active[
+                    "metadata"
+                ].get("generation"):
+                    if active["status"].get("typeChecking", {}).get("expressionWarnings"):
+                        raise ResourceUnknown("The original retirement policy has CEL warnings")
+                    break
+                if time.monotonic() >= until:
+                    raise ResourceUnknown("The original retirement policy is not type checked")
+                await asyncio.sleep(0.1)
+            self._owned(ns, labels, manifest["namespace_uid"])
+            if ns["metadata"].get("labels", {}).get("bbx.dev/retiring") != "true":
+                await admit()
+                ns["metadata"].setdefault("labels", {})["bbx.dev/retiring"] = "true"
+                await self._kubectl("replace", "-f", "-", body=ns)
+            sentinel = self._document(
+                "ConfigMap", "bbx-retirement-sentinel", labels, namespace, data={}
+            )
+            await self._kubectl(
+                "create",
+                "--dry-run=server",
+                "-f",
+                "-",
+                body=sentinel,
+                expected_denial=(policy["metadata"]["name"], message),
+            )
+            manifest = await self._retirement_plan(operation, manifest)
+            await checkpoint(manifest)
+            for ref in manifest["resources"]:
+                if ref.get("namespace_gc"):
+                    continue
+                current = await self._get(ref["kind"], ref["name"], namespace)
+                if current is not None:
+                    await delete(ref)
+            for ref in manifest["volumes"]:
+                until = time.monotonic() + 25
+                while (pv := await self._get("pv", ref["name"])) is not None:
+                    if pv["metadata"]["uid"] != ref["uid"]:
+                        raise ResourceUnknown("The original PV name was rebound")
+                    if time.monotonic() >= until:
+                        raise ResourceUnknown("The original provisioner has not reclaimed the PV")
+                    await asyncio.sleep(0.2)
+            # Reinventory after every original object deletion; CREATE is fenced above.
+            manifest = await self._retirement_plan(operation, manifest)
+            remaining = await self._retirement_inventory(namespace)
+            by_path = {r["path"]: r for r in manifest["resources"]}
+            if any(not by_path.get(path, {}).get("namespace_gc") for path, _ in remaining):
+                raise ResourceUnknown("Original namespaced deletions have not converged")
+            manifest["namespace_delete_started"] = True
+            await checkpoint(manifest)
+            await delete(
+                {"path": "/api/v1/namespaces/" + namespace, "uid": manifest["namespace_uid"]}
+            )
+        until = time.monotonic() + 25
+        while (ns := await self._get("namespace", namespace)) is not None:
+            if ns["metadata"]["uid"] != manifest["namespace_uid"]:
+                raise ResourceUnknown("The retired Namespace name was rebound")
+            if time.monotonic() >= until:
+                raise ResourceUnknown("The original Namespace deletion is unresolved")
+            await asyncio.sleep(0.2)
+        for ref in manifest["volumes"]:
+            if await self._get("pv", ref["name"]) is not None:
+                raise ResourceUnknown("The original retained PV reclamation is unresolved")
+        pvs = json.loads(await self._kubectl("get", "pv", "-o", "json"))["items"]
+        claim_uids = {ref["claim_uid"] for ref in manifest["volumes"]}
+        if any(p["spec"].get("claimRef", {}).get("uid") in claim_uids for p in pvs):
+            raise ResourceUnknown("An original claim still has a provisioned PV")
+        if await self._retirement_inventory(namespace):
+            raise ResourceUnknown("The original Namespace still has orphaned resources")
+        manifest["namespace_absent"] = True
+        for ref in manifest["resources"] + manifest["volumes"]:
+            ref["absent"] = True
+        for key, kind in (
+            ("binding", "validatingadmissionpolicybindings"),
+            ("policy", "validatingadmissionpolicies"),
+        ):
+            ref = manifest.get(key)
+            if not ref:
+                continue
+            current = await self._get(kind, policy["metadata"]["name"])
+            if current is not None:
+                await delete(ref)
+            if await self._get(kind, policy["metadata"]["name"]) is not None:
+                raise ResourceUnknown("The original admission fence cleanup is unresolved")
+            ref["absent"] = True
+        manifest["fence_absent"] = True
+        manifest["retired"] = True
+        await checkpoint(manifest)
+        return {
+            "retired": True,
+            "namespace_uid": manifest["namespace_uid"],
+            "pvc_uids": [
+                operation["observation"][key]["uid"] for key in ("journal_pvc", "workspace_pvc")
+            ],
+            "pv_uids": [ref["uid"] for ref in manifest["volumes"] if ref["uid"]],
+            "storage_erasure_verified": False,
+        }

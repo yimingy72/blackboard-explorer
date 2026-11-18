@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import Agent, Content
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
 from bbx_runtime.ctf.client import CtfClient
 from bbx_runtime.ctf.review import build_review_tools
@@ -16,6 +15,7 @@ from bbx_runtime.ctf.session import load_checkpoint
 from bbx_runtime.ctf.telemetry import ToolObservationMiddleware
 from bbx_runtime.ctf.tool_results import json_tool_result
 from bbx_runtime.ctf.tools import build_tools
+from bbx_runtime.pi import Agent, Content
 from bbx_runtime.session import CheckpointHistoryProvider, ToolResultCheckpointMiddleware
 from bbx_runtime.testing.scripted_client import ScriptedChatClient, ScriptStep, ScriptToolCall
 from test_ctf_runtime import TURN, MemoryCtf
@@ -24,6 +24,22 @@ from test_ctf_runtime import TURN, MemoryCtf
 async def invoke(item, **arguments):
     result = await item.invoke(arguments=arguments)
     return result[0].text
+
+
+@pytest.mark.parametrize(
+    "status,message,code",
+    [
+        (422, "Valid record ID required", "invalid_arguments"),
+        (404, "Challenge record not found", "record_not_found"),
+    ],
+)
+async def test_exact_record_errors_are_recoverable_model_feedback(status, message, code):
+    async def reject():
+        raise RemoteError(status, message)
+
+    result = await json_tool_result(reject())
+    assert isinstance(result, Content) and result.text is not None
+    assert json.loads(result.text)["error"]["code"] == code
 
 
 async def test_native_maf_conflict_refresh_update_and_recover_saved_feedback():
@@ -162,14 +178,11 @@ async def test_unknown_errors_keep_original_exception_and_are_not_echoed_to_mode
         ]
     )
     async with Agent(client=client, tools=tools) as agent:
-        await agent.run("read")
-    results = [
-        content.result
-        for message in client.received_messages[-1]
-        for content in message.contents
-        if content.type == "function_result"
-    ]
-    assert results == ["Error: Function failed."]
+        with pytest.raises(type(error)) as caught:
+            await agent.run("read")
+    assert caught.value is error
+    assert len(client.received_messages) == 1
+    assert "secret-sentinel" not in str(client.received_messages)
 
 
 @pytest.mark.parametrize("message", ["Invalid CTF board request", "Invalid after_version"])

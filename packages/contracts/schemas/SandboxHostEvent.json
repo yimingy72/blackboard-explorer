@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "event": {
+      "title": "Event",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event",
+    "payload"
+  ],
+  "title": "SandboxHostEvent",
+  "type": "object"
+}

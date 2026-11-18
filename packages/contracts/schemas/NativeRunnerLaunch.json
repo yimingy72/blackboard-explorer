@@ -1,0 +1,119 @@
+{
+  "$defs": {
+    "FrozenExchangeRate": {
+      "additionalProperties": false,
+      "properties": {
+        "rate_cny_per_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Rate Cny Per Usd"
+        },
+        "source_ref": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "rounding": {
+          "const": "ROUND_DOWN",
+          "default": "ROUND_DOWN",
+          "title": "Rounding",
+          "type": "string"
+        },
+        "usd_decimal_places": {
+          "const": 9,
+          "default": 9,
+          "title": "Usd Decimal Places",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rate_cny_per_usd",
+        "source_ref",
+        "observed_at"
+      ],
+      "title": "FrozenExchangeRate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "model_alias": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Model Alias",
+      "type": "string"
+    },
+    "exchange_rate": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrozenExchangeRate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "helper_foreground": {
+      "default": false,
+      "title": "Helper Foreground",
+      "type": "boolean"
+    },
+    "helper_background": {
+      "default": false,
+      "title": "Helper Background",
+      "type": "boolean"
+    },
+    "traffic_profile": {
+      "anyOf": [
+        {
+          "const": "binding-pcap-v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Traffic Profile"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
+    }
+  },
+  "required": [
+    "request_id",
+    "model_alias"
+  ],
+  "title": "NativeRunnerLaunch",
+  "type": "object"
+}

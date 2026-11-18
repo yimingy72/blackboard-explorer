@@ -22,7 +22,7 @@ export default function TrafficMessages({ detail }: { detail: TrafficDetail }) {
   const logical = detail.observation?.scope === 'logical_call';
   const attributes = detail.observation?.attributes ?? {};
   return <section className={styles.root} aria-label="流量内容详情">
-    <div className={styles.heading}><span className={styles.icon}>{logical ? <CodeOutlined aria-hidden="true" /> : <FileTextOutlined aria-hidden="true" />}</span><strong>{logical ? '模型 / 工具调用' : `${detail.method ?? detail.protocol.toUpperCase()} ${detail.status_code ?? ''}`}</strong><Tooltip title={logical ? 'MAF 逻辑调用；SDK 内部重试次数未知，不对应单独的网络包。' : '由采集代理保存的完整请求响应摘要。'}><Tag>{logical ? '逻辑调用' : 'HTTP 事务'}</Tag></Tooltip></div>
+    <div className={styles.heading}><span className={styles.icon}>{logical ? <CodeOutlined aria-hidden="true" /> : <FileTextOutlined aria-hidden="true" />}</span><strong>{logical ? '模型 / 工具调用' : `${detail.method ?? detail.protocol.toUpperCase()} ${detail.status_code ?? ''}`}</strong><Tooltip title={logical ? '模型 / 工具逻辑调用；SDK 内部重试次数未知，不对应单独的网络包。' : '由采集代理保存的完整请求响应摘要。'}><Tag>{logical ? '逻辑调用' : 'HTTP 事务'}</Tag></Tooltip></div>
     <code className={styles.address}>{detail.url || detail.summary}</code>
     {detail.observation?.error && <p className={styles.error}>{detail.observation.error}</p>}
     <Collapse size="small" defaultActiveKey={['request', 'response']} items={[

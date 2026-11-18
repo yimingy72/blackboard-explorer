@@ -20,6 +20,29 @@
           "minimum": 1,
           "title": "Context Threshold",
           "type": "integer"
+        },
+        "dispatch_mode": {
+          "default": "manual",
+          "enum": [
+            "manual",
+            "automatic"
+          ],
+          "title": "Dispatch Mode",
+          "type": "string"
+        },
+        "first_plan_max_calls": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "First Plan Max Calls",
+          "type": "integer"
+        },
+        "first_plan_timeout_seconds": {
+          "default": 60,
+          "maximum": 300,
+          "minimum": 10,
+          "title": "First Plan Timeout Seconds",
+          "type": "integer"
         }
       },
       "title": "CtfOptions",
@@ -60,7 +83,8 @@
           "default": "none",
           "enum": [
             "none",
-            "fake_ctf_v1"
+            "fake_ctf_v1",
+            "flag_receipt_v1"
           ],
           "title": "Result Adapter",
           "type": "string"
@@ -98,6 +122,39 @@
         "teammate"
       ],
       "title": "CtfPromptTemplates",
+      "type": "object"
+    },
+    "CtfRoleRunOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Effort"
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Output Tokens"
+        }
+      },
+      "title": "CtfRoleRunOptions",
       "type": "object"
     },
     "ExecResources": {
@@ -428,6 +485,19 @@
     },
     "model": {
       "$ref": "#/$defs/ModelConfig"
+    },
+    "role_run_options": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CtfRoleRunOptions"
+      },
+      "propertyNames": {
+        "enum": [
+          "lead",
+          "teammate"
+        ]
+      },
+      "title": "Role Run Options",
+      "type": "object"
     },
     "options": {
       "$ref": "#/$defs/CtfOptions"

@@ -28,6 +28,19 @@
       "default": null,
       "title": "Agent Id"
     },
+    "source_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
     "display_filter": {
       "default": "",
       "maxLength": 4096,

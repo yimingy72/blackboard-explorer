@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "fact",
+        "intent"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "statement": {
+      "title": "Statement",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "statement"
+  ],
+  "title": "SearchHit",
+  "type": "object"
+}

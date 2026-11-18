@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -10,6 +11,13 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from bbx_contracts.legacy_network import (
+    LEGACY_NETWORK_HEADER,
+    LEGACY_NETWORK_VERSION,
+    LegacyNetworkAbsentReceipt,
+    LegacyNetworkReceipt,
+)
+from bbx_contracts.runner_control import BoardJournalProjection
 from bbx_contracts.tool_errors import solution_validation_details
 from pydantic import BaseModel
 
@@ -73,10 +81,22 @@ class BlackboardClient:
         response = await self._http.request(
             method,
             f"{self.base_url}/api{path}",
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                LEGACY_NETWORK_HEADER: LEGACY_NETWORK_VERSION,
+            },
             **kwargs,
         )
         return await self._check(response)
+
+    async def trusted_pi_model(
+        self, path: str, body: dict[str, Any], sender_token: str, runner_token: str | None = None
+    ) -> Any:
+        headers = {"X-BBX-Pi-Runtime": sender_token}
+        if runner_token is not None:
+            headers["X-BBX-Runner-Model"] = runner_token
+        response = await self._http.post(f"{self.base_url}/api{path}", headers=headers, json=body)
+        return (await self._check(response)).json()
 
     @staticmethod
     async def _check(response: httpx.Response) -> httpx.Response:
@@ -151,6 +171,13 @@ class BlackboardClient:
     @staticmethod
     def _task(task_id: UUID | str) -> str:
         return f"/tasks/{quote(str(task_id), safe='')}"
+
+    async def legacy_execution_network(
+        self, task_id: UUID | str, receipt: LegacyNetworkReceipt | LegacyNetworkAbsentReceipt
+    ) -> dict[str, Any]:
+        return await self._json(
+            "POST", self._task(task_id) + "/execution-network", json=_body(receipt)
+        )
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         tasks: list[dict[str, Any]] = []
@@ -306,20 +333,18 @@ class BlackboardClient:
             "GET", f"/settings/prompts/{quote(role, safe='')}", params={"since": since}
         )
 
-    async def import_environment_key(self, api_key: str) -> dict[str, int]:
-        return await self._json(
-            "POST", "/platform/import-environment-key", json={"api_key": api_key}
-        )
-
-    async def get_model_credentials(self, name: str, version: int) -> dict[str, Any]:
-        return await self._json(
-            "GET", f"/platform/models/{quote(name, safe='')}/versions/{version}/credentials"
-        )
-
     async def get_mcp_server(self, name: str, version: int) -> dict[str, Any]:
         return await self._json(
             "GET", f"/platform/mcp-servers/{quote(name, safe='')}/versions/{version}"
         )
+
+    async def get_mcp_material(self, name: str, version: int, token: str) -> dict[str, Any]:
+        response = await self._http.get(
+            f"{self.base_url}/api/runtime/mcp-servers/"
+            f"{quote(name, safe='')}/versions/{version}/material",
+            headers={"X-BBX-Pi-Runtime": token},
+        )
+        return (await self._check(response)).json()
 
     async def get_mcp_credentials(self, name: str, version: int) -> dict[str, Any]:
         return await self._json(
@@ -331,6 +356,51 @@ class BlackboardClient:
 
     async def get_agent_session(self, task_id: UUID | str, agent_id: str) -> dict[str, Any]:
         return await self._json("GET", f"{self._agent(task_id, agent_id)}/session")
+
+    async def get_board_review_journal(
+        self, task_id: str, agent_id: str, run_number: int
+    ) -> bytes | None:
+        path = f"{self._agent(task_id, agent_id)}/session"
+        try:
+            value = await self._json(
+                "GET", path, params={"journal": True, "run_number": run_number}
+            )
+        except RemoteError as error:
+            if error.status == 404:
+                return None
+            raise
+        proof = BoardJournalProjection.model_validate(value["runner_session"])
+        expected = f"traces/{task_id}/{agent_id}/{proof.binding_id}/{proof.cursor.hash}.jsonl"
+        if (
+            proof.run_number != run_number
+            or proof.transcript_uri != expected
+            or proof.size != proof.cursor.offset
+        ):
+            raise ValueError("Original Blackboard review journal identity changed")
+        raw = bytearray()
+        async with self._http.stream(
+            "GET",
+            f"{self.base_url}/api{path}/journal",
+            params={"run_number": run_number},
+            headers={"Authorization": f"Bearer {self.token}"},
+            follow_redirects=False,
+        ) as response:
+            if not response.is_success:
+                raise RemoteError(
+                    response.status_code, "Original Blackboard review journal unavailable"
+                )
+            async for chunk in response.aiter_bytes():
+                if len(raw) + len(chunk) > proof.size:
+                    raise ValueError("Original Blackboard review journal length changed")
+                raw.extend(chunk)
+        if len(raw) != proof.size or hashlib.sha256(raw).hexdigest() != proof.sha256:
+            raise ValueError("Original Blackboard review journal digest changed")
+        return bytes(raw)
+
+    async def record_board_journal(
+        self, task_id: UUID | str, agent_id: str, proof: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._json("PUT", f"{self._agent(task_id, agent_id)}/session", json=proof)
 
     async def put_agent_session(
         self,
@@ -540,6 +610,7 @@ class BlackboardClient:
         expected_run_number: int | None = None,
         expected_agent_run_id: str | None = None,
         expected_started_at: datetime | str | None = None,
+        terminal_request_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
@@ -567,6 +638,7 @@ class BlackboardClient:
                     if expected_agent_run_id is not None
                     else {}
                 ),
+                **({"terminal_request_id": terminal_request_id} if terminal_request_id else {}),
             },
         )
 
@@ -578,12 +650,23 @@ class BlackboardClient:
         )
 
     async def record_archive(
-        self, task_id: UUID | str, uri: str, size: int, fallback: str
+        self,
+        task_id: UUID | str,
+        uri: str,
+        size: int,
+        fallback: str,
+        *,
+        runner_archive: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         return await self._json(
             "POST",
             f"{self._task(task_id)}/archive",
-            json={"uri": uri, "size": size, "fallback": fallback},
+            json={
+                "uri": uri,
+                "size": size,
+                "fallback": fallback,
+                **({"runner_archive": runner_archive} if runner_archive else {}),
+            },
         )
 
     async def record_cleanup(self, task_id: UUID | str) -> list[dict[str, Any]]:

@@ -4,12 +4,14 @@ from typing import Any, Literal
 from uuid import UUID
 
 from bbx_contracts import ctf as ctf_models
+from bbx_contracts.challenge_board import BOARD_LEGACY
 from bbx_contracts.ctf import CtfDrainProof, CtfMemberOperationRequest
 from bbx_contracts.tool_errors import validation_issues
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from bbx_blackboard.auth import (
+    CTF_REVIEW_TOOLS,
     issue_agent_token,
     require_agent_writer,
     require_service,
@@ -70,6 +72,15 @@ async def runtime_state(request: Request, task_id: UUID) -> dict[str, Any]:
 async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     identity = require_task_reader(request, task_id)
     data = await service(request).state(task_id)
+    from bbx_blackboard.pi_ledger import task_pi_model
+
+    direct = None
+    if request.app.state.engine is not None:
+        async with request.app.state.engine.connect() as conn:
+            direct = await task_pi_model(conn, task_id)
+    if direct is not None:
+        model = direct[1]
+        data["task"]["pi_model"] = {"model_id": model.id, "model_revision": model.model_revision}
     if identity.kind == "service":
         return data
     public = {
@@ -78,6 +89,14 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     public["members"] = [public_member(member) for member in data.get("members", [])]
     public["task"] = {key: value for key, value in data["task"].items() if key != "ctf_control"}
     public["task"]["ctf_phase"] = data["task"].get("ctf_control", {}).get("phase")
+    if attachment_state := data["task"].get("ctf_control", {}).get("initial_attachment_state"):
+        public["task"]["initial_attachment_state"] = attachment_state
+    bootstrap = request.app.state.native_runner_bootstrap
+    if bootstrap is not None and data["task"].get("ctf_control", {}).get("vpn_profile"):
+        async with bootstrap.repo.engine.connect() as conn:
+            record = await bootstrap._get(conn, task_id)
+        if network := bootstrap.vpn.status_projection(record):
+            public["task"]["native_network"] = network.model_dump(mode="json")
     public["task"]["ctf_cleanup"] = data["task"].get("ctf_control", {}).get("cleanup", {})
     public["task"]["ctf_review_usage"] = data["task"].get("ctf_control", {}).get("review_usage", {})
     if identity.kind == "user":
@@ -94,6 +113,18 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
 @router.post("/runtime/{operation}")
 async def runtime(request: Request, task_id: UUID, operation: str, body: dict[str, Any]) -> Any:
     require_service(request)
+    if getattr(request.state, "native_worker_dispatch", False) and operation != "lookup_artifact":
+        raise HTTPException(409, "Native Workers require the original Runner control path")
+    if operation == "start" and body:
+        raise HTTPException(422, "Legacy start does not accept Runner capability assertions")
+    if getattr(request.state, "business_contract", BOARD_LEGACY) != BOARD_LEGACY and operation in {
+        "reconcile_dispatch",
+        "idle_watchdog",
+        "authorize_platform_call",
+        "begin_platform_call",
+        "record_platform_result",
+    }:
+        raise HTTPException(409, "Legacy business operation is unavailable for this Task contract")
     allowed = {
         "start",
         "fail_start",
@@ -108,6 +139,7 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "checkpoint",
         "checkpoint_failed",
         "record_observation",
+        "notify_command_result",
         "finish_turn",
         "enqueue_continuation",
         "recover",
@@ -118,6 +150,8 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
         "bill_usage",
         "reconcile_usage_outbox",
         "reconcile_budget",
+        "pause_for_failure",
+        "reconcile_member_failures",
         "idle_watchdog",
         "request_finish",
         "record_execution",
@@ -133,6 +167,36 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
     if operation not in allowed:
         raise HTTPException(404, "Unknown CTF runtime operation")
     arguments = dict(body)
+    if operation == "reconcile_member_failures" and arguments:
+        raise HTTPException(422, "Unexpected failure reconciliation arguments")
+    if operation == "pause_for_failure":
+        if set(arguments) - {"failure", "agent_id", "turn_id", "generation"}:
+            raise HTTPException(422, "Unexpected failure arguments")
+        identity = {"agent_id", "turn_id", "generation"} & set(arguments)
+        if identity and identity != {"agent_id", "turn_id", "generation"}:
+            raise HTTPException(422, "Failure requires a complete writer identity")
+        if identity and (
+            not isinstance(arguments["agent_id"], str)
+            or not arguments["agent_id"]
+            or type(arguments["generation"]) is not int
+            or arguments["generation"] < 1
+        ):
+            raise HTTPException(422, "Valid failure writer identity required")
+        try:
+            arguments["failure"] = ctf_models.CtfFailureDiagnostic.model_validate(
+                arguments.get("failure")
+            ).model_dump(mode="json")
+        except ValueError as error:
+            raise HTTPException(422, "Valid failure diagnostic required") from error
+    if operation == "notify_command_result":
+        if (
+            set(arguments) != {"agent_id", "turn_id", "generation", "command_id"}
+            or not isinstance(arguments.get("agent_id"), str)
+            or not arguments["agent_id"]
+            or type(arguments.get("generation")) is not int
+            or arguments["generation"] < 1
+        ):
+            raise HTTPException(422, "Valid command execution identity is required")
     if operation == "recovery_input_proofs":
         try:
             arguments = ctf_models.CtfRecoveryInputProofRequest.model_validate(body).model_dump(
@@ -205,13 +269,16 @@ async def runtime(request: Request, task_id: UUID, operation: str, body: dict[st
             result["agent_id"],
             generation=result["generation"],
             turn_id=result["id"],
+            purpose="review" if operation == "claim_review_turn" else "solver",
         )
     return result
 
 
 @router.post("/tools/{operation}")
 async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, Any]) -> Any:
-    identity = require_agent_writer(request, task_id)
+    identity = require_task_reader(request, task_id)
+    if identity.purpose != "review":
+        identity = require_agent_writer(request, task_id)
     if identity.mode != "ctf" or identity.generation is None or identity.turn_id is None:
         raise HTTPException(403, "CTF execution token required")
     context = await service(request).authorize_tool(
@@ -221,8 +288,28 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
         identity.turn_id,
     )
     if context["purpose"] == "review":
-        if operation not in {"list_challenges", "get_challenge", "list_records", "read_artifact"}:
+        if identity.purpose != "review" or operation not in CTF_REVIEW_TOOLS:
             raise HTTPException(403, "Tool is unavailable during review")
+        if operation == "read_command_result":
+            if "command_id" not in body or set(body) - {"command_id", "offset", "limit"}:
+                raise HTTPException(422, "Unexpected query arguments")
+            return await service(request).read_command_result(
+                task_id,
+                agent_id=identity.agent_id,
+                turn_id=identity.turn_id,
+                generation=identity.generation,
+                **body,
+            )
+        if operation == "read_saved_tool_result":
+            try:
+                arguments = ctf_models.CtfSavedToolResultReadRequest.model_validate(
+                    body
+                ).model_dump(mode="json")
+            except ValueError as error:
+                raise HTTPException(422, "Invalid readback page") from error
+            return await service(request).read_saved_tool_result(
+                task_id, actor=identity.agent_id, **arguments
+            )
         if operation == "read_artifact":
             if set(body) - {"artifact_id", "offset", "limit"}:
                 raise HTTPException(422, "Unexpected artifact arguments")
@@ -234,6 +321,8 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
                 **body,
             )
         return await board_tool(request, task_id, operation, body, identity)
+    if identity.purpose == "review":
+        raise HTTPException(403, "Review capability cannot enter an execution turn")
     task, member = context["task"], context["member"]
     profile = await request.app.state.profile_store.get(
         task["agent_profile"],
@@ -319,6 +408,7 @@ async def tool(request: Request, task_id: UUID, operation: str, body: dict[str, 
     if operation in {
         "list_challenges",
         "get_challenge",
+        "get_record",
         "create_challenge",
         "update_challenge",
         "claim_challenge",
@@ -436,6 +526,14 @@ async def board_tool(
             challenge_id = str(UUID(str(arguments.pop("challenge_id"))))
         except (KeyError, ValueError) as error:
             raise HTTPException(422, "Valid challenge ID required") from error
+    if operation == "get_record":
+        try:
+            record_id = str(UUID(str(arguments.pop("record_id"))))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(422, "Valid record ID required") from error
+        if arguments:
+            raise HTTPException(422, "Unexpected query arguments")
+        return await service(request).get_record(task_id, challenge_id, record_id)
     if operation in {"list_challenges", "get_challenge", "list_records"}:
         if operation == "get_challenge":
             if arguments:

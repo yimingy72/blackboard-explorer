@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "turn_id": {
+      "format": "uuid",
+      "title": "Turn Id",
+      "type": "string"
+    },
+    "epoch": {
+      "minimum": 0,
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "owner_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Id"
+    },
+    "scope_revision": {
+      "minimum": 1,
+      "title": "Scope Revision",
+      "type": "integer"
+    },
+    "assignment_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Assignment Id"
+    }
+  },
+  "required": [
+    "agent_id",
+    "generation",
+    "turn_id",
+    "epoch",
+    "scope_revision"
+  ],
+  "title": "KnowledgeAssignment",
+  "type": "object"
+}

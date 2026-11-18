@@ -163,10 +163,10 @@ async def test_detach_and_recovery_clear_renewal_deadlines():
 async def test_large_history_avoids_serializing_metadata_and_keeps_full_history(monkeypatch):
     from pathlib import Path
 
-    from agent_framework import AgentSession, Content, Message
     from bbx_contracts.ctf import load_ctf_profile
     from bbx_runtime.ctf.context import message_signature
     from bbx_runtime.ctf.middleware import CtfHistoryProvider
+    from bbx_runtime.pi import AgentSession, Content, Message
 
     messages = []
     for index in range(100):

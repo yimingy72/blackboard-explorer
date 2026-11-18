@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "enum": [
+        "openvpn-ipv4-tcp-v1",
+        "openvpn-task-ipv4-tcp-v1"
+      ],
+      "title": "Profile",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "profile",
+    "id",
+    "label"
+  ],
+  "title": "NativeVpnCapability",
+  "type": "object"
+}

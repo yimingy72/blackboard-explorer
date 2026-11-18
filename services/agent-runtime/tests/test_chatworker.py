@@ -1,6 +1,7 @@
 """Archived conversations keep real history and expose read-only tools only."""
 
 import asyncio
+import hashlib
 import json
 import struct
 import zlib
@@ -8,18 +9,19 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-from agent_framework import AgentSession, Content, Message
+from bbx_contracts.models import ModelConfig
 from bbx_contracts.profile import load_profile
 from bbx_runtime.chatworker import ChatWorker, _completed_text
 from bbx_runtime.clients.blackboard import BlackboardClient, RemoteError
+from bbx_runtime.pi import AgentSession, Content, Message
 from bbx_runtime.settings import Settings
+from bbx_runtime.testing.pi_client import gateway_test_snapshot
 from bbx_runtime.testing.scripted_client import (
     ScriptedChatClient,
     ScriptStep,
     ScriptToolCall,
     ScriptUsage,
 )
-from pydantic import SecretStr
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "profiles/default"
 
@@ -46,6 +48,9 @@ class ReviewService:
         return {
             "message": {"id": self.message_id, "content": "What was found?"},
             "claim_token": str(uuid4()),
+            "gateway_model": gateway_test_snapshot(
+                ModelConfig.model_validate(self.profile["models"]["explore"])
+            ),
         }
 
     async def state(self, _task_id):
@@ -53,6 +58,7 @@ class ReviewService:
             "task": {
                 "goal": "Analyze finding",
                 "status": "finished",
+                "run_number": 1,
                 "agent_profile": "default",
                 "agent_profile_version": 1,
                 "acceptance": [],
@@ -70,10 +76,6 @@ class ReviewService:
 
     async def get_profile(self, _name, _version):
         return self.profile
-
-    async def get_model_credentials(self, name, version):
-        assert (name, version) == ("deepseek-default", 1)
-        return {"credential_source": "stored", "secret": None, "credentials": {"api_key": "test"}}
 
     async def get_agent_session(self, _task_id, _agent_id):
         if self.session is None:
@@ -126,10 +128,9 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
             saved = AgentSession.from_dict(kwargs["session"]).state
             raw = saved.get("bbx_review_usage", {}).get(self.message_id)
             if raw:
-                # Rates and cost must be durable in the same snapshot as the response.
-                billed = saved["bbx_review_billed"][self.message_id]
-                assert billed["usage"]["output_tokens"] == raw["output_token_count"]
-                assert all(call["pricing"]["requested_at"] for call in billed["calls"])
+                # The session keeps token usage; dollars come only from AgentGateway.
+                assert raw["output_token_count"] > 0
+                assert self.message_id not in saved.get("bbx_review_billed", {})
             return await super().put_agent_session(*args, **kwargs)
 
     service = AuditedService(native=True)
@@ -146,9 +147,11 @@ async def test_read_only_review_resumes_native_session(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr("bbx_runtime.chatworker.make_client", lambda *_args, **_kwargs: script)
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: script
+    )
     worker = ChatWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test")),
+        Settings.model_construct(),
         cast(BlackboardClient, service),
     )
     await worker.process(service.task_id, service.agent_id, service.message_id)
@@ -186,9 +189,11 @@ async def test_review_view_image_uses_saved_task_evidence_only(monkeypatch):
             ScriptStep(text="I see the image."),
         ]
     )
-    monkeypatch.setattr("bbx_runtime.chatworker.make_client", lambda *_args, **_kwargs: script)
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: script
+    )
     worker = ChatWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test")),
+        Settings.model_construct(),
         cast(BlackboardClient, service),
     )
     await worker.process(service.task_id, service.agent_id, service.message_id)
@@ -204,9 +209,11 @@ async def test_review_view_image_uses_saved_task_evidence_only(monkeypatch):
 async def test_legacy_review_is_marked_and_keeps_its_new_session(monkeypatch):
     service = ReviewService(native=False)
     script = ScriptedChatClient([ScriptStep(text="Only the archived board is available.")])
-    monkeypatch.setattr("bbx_runtime.chatworker.make_client", lambda *_args, **_kwargs: script)
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: script
+    )
     worker = ChatWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test")),
+        Settings.model_construct(),
         cast(BlackboardClient, service),
     )
     await worker.process(service.task_id, service.agent_id, service.message_id)
@@ -226,9 +233,11 @@ async def test_saved_answer_completes_after_retry_without_model(monkeypatch):
         "usage": {},
     }
     service.session = native.to_dict()
-    monkeypatch.setattr("bbx_runtime.chatworker.make_client", lambda *_args, **_kwargs: 1 / 0)
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: 1 / 0
+    )
     worker = ChatWorker(
-        Settings.model_construct(deepseek_api_key=SecretStr("test")),
+        Settings.model_construct(),
         cast(BlackboardClient, service),
     )
     await worker.process(service.task_id, service.agent_id, service.message_id)
@@ -280,3 +289,60 @@ async def test_review_worker_bounds_parallelism_and_serializes_each_agent():
         await worker.stop()
         await work
     assert worker.inflight == {}
+
+
+async def test_original_pi_journal_is_review_data_without_replaying_solver_tools(monkeypatch):
+    class BoardReview(ReviewService):
+        async def state(self, task_id):
+            state = await super().state(task_id)
+            state["task"]["business_contract"] = "exploration-board-v1"
+            return state
+
+        async def get_board_review_journal(self, task_id, agent_id, run_number):
+            assert (task_id, agent_id, run_number) == (self.task_id, self.agent_id, 1)
+            messages = [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "The confirmed historical marker was blue."},
+                        {
+                            "type": "toolCall",
+                            "name": "old_solver_tool",
+                            "arguments": {"opaque": "discard"},
+                        },
+                    ],
+                },
+            ]
+            steer = "Read the original local note (confirmed steering)."
+            records = [
+                {
+                    "type": "custom_message",
+                    "customType": "bbx.input",
+                    "content": steer,
+                    "details": {
+                        "input_id": "input-1",
+                        "request_id": "request-1",
+                        "content_digest": hashlib.sha256(steer.encode()).hexdigest(),
+                    },
+                },
+                {"type": "custom_message", "customType": "unrelated", "content": "omit me"},
+            ]
+            records.extend({"type": "message", "message": item} for item in messages)
+            return b"".join(json.dumps(item).encode() + b"\n" for item in records)
+
+    service = BoardReview(native=False)
+    script = ScriptedChatClient([ScriptStep(text="The original marker was blue.")])
+    monkeypatch.setattr(
+        "bbx_runtime.chatworker.make_task_model_client", lambda *_args, **_kwargs: script
+    )
+    worker = ChatWorker(Settings.model_construct(), cast(BlackboardClient, service))
+    await worker.process(service.task_id, service.agent_id, service.message_id)
+    assert service.completed is not None and service.completed["origin"] == "native"
+    received = script.received_messages[0]
+    assert any("confirmed historical marker was blue" in message.text for message in received)
+    assert any("confirmed steering" in message.text for message in received)
+    assert all("omit me" not in message.text for message in received)
+    assert all(
+        content.type != "function_call" for message in received for content in message.contents
+    )
+    assert all("old_solver_tool" not in message.text for message in received)

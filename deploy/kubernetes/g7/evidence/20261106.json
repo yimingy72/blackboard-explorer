@@ -1,0 +1,67 @@
+{
+  "cluster": "bbx-archv2-g7",
+  "task_count": 2,
+  "checks": {
+    "a_namespace_pod_ready": true,
+    "b_namespace_pod_ready": true,
+    "evicted_active_tenant_resolved_again": true,
+    "cross_tenant_id_not_found": true,
+    "evicted_active_tenant_cleanup_resolved_again": true,
+    "both_workloads_deleted": true
+  },
+  "create_seconds": {
+    "a": 3.99,
+    "b": 2.061
+  },
+  "steady_20_reads": {
+    "api_delta": {
+      "GET": 20,
+      "LIST": 0,
+      "WATCH": 0,
+      "POST": 0,
+      "DELETE": 0
+    },
+    "client_count": 20,
+    "latency_ms_min": 17.031,
+    "latency_ms_max": 46.438,
+    "latency_ms_p50": 22.107,
+    "latency_ms_p95": 41.851
+  },
+  "tenant_resolve_counts": {
+    "bbx-archv2-g7-task-a": 13,
+    "bbx-archv2-g7-task-b": 13
+  },
+  "patch_identity": {
+    "base_commit": "62a64f0b48cdd6b410f36e53c74dc7559c87719a",
+    "base_image": "opensandbox/server@sha256:25bebdcf1cf7724eb923faecbdbbf82d4038c6ab35c736151574726d14006f30",
+    "patch_sha256": "b401a740b89ff2e6cfe8bea0adda1bcc671d55b8ef3639886324c006cf02dade",
+    "files": {
+      "server/opensandbox_server/config.py": "f0ce7bc3abac6a850b141ea73ccd0ca312c5a6a1d9aa28acf8c2795db12572b8",
+      "server/opensandbox_server/main.py": "085b59bfa875c44855351d8c4bb0dd86687c092e3908185d41b8b66638137937",
+      "server/opensandbox_server/services/k8s/client.py": "a087027a5922c1b0fc1cb11cd7b0a48139601b676c47daac3f39e4ebd33b090a",
+      "server/opensandbox_server/tenants/http_provider.py": "e095d4df0d424e56efa227c1ecc7fc12fad701081e801e3d4067507fdedefffb",
+      "server/configuration.md": "410cfa5a714d42e418105ffffd46d00e3345e8c708d15dab6f929b0f5c4a4f57"
+    }
+  },
+  "overlay_image": "sha256:12afc58df70d5b38a23fe51e63756af09a2233638db2147980c8b789d3cc3aa8",
+  "unit_checks": {
+    "groups_passed": 2,
+    "namespace_key_churn": 1000,
+    "batch_informer_start_calls": 0,
+    "informer_entries": 0,
+    "tenant_cache_bound": 32,
+    "default_legacy_preserved": true,
+    "polling_failure_timeout_status": 504
+  },
+  "profile": {
+    "node": "v1.34.0",
+    "cpus": 2,
+    "memory_bytes": 6442450944,
+    "batchsandbox_informer_enabled": false,
+    "cache_max_entries": 1,
+    "max_stale_seconds": 0,
+    "read_qps": 20,
+    "read_burst": 40,
+    "cni": "kindnet; not a G2 network isolation proof"
+  }
+}

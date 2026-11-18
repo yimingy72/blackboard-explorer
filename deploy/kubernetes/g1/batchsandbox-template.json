@@ -1,0 +1,30 @@
+{
+  "apiVersion": "sandbox.opensandbox.io/v1alpha1",
+  "kind": "BatchSandbox",
+  "metadata": {"name": "bbx-archv2-g1-k8s-template"},
+  "spec": {
+    "replicas": 1,
+    "shardPatches": [{"spec": {
+      "terminationGracePeriodSeconds": 5,
+      "automountServiceAccountToken": false,
+      "securityContext": {"sysctls": [{"name": "net.ipv4.ip_forward", "value": "1"}]},
+      "containers": [{
+        "name": "sandbox",
+        "command": ["/opt/bbx/control/launcher", "--kubernetes-bootstrap-cgroup-v2"],
+        "env": [
+          {"name": "EXECD_ACCESS_TOKEN", "value": "", "valueFrom": {"secretKeyRef": {"name": "bbx-archv2-g1-k8s-execd", "key": "token"}}},
+          {"name": "BBX_POD_UID", "value": "", "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}}},
+          {"name": "BBX_ENVIRONMENT_REVISION", "value": "bbx-g1-k8s-environment-1"}
+        ],
+        "securityContext": {
+          "runAsUser": 0,
+          "privileged": false,
+          "seccompProfile": {"type": "Unconfined"},
+          "appArmorProfile": {"type": "Unconfined"},
+          "capabilities": {"drop": ["ALL"], "add": ["SYS_ADMIN", "NET_ADMIN", "NET_RAW", "SETUID", "SETGID", "SETPCAP", "KILL", "CHOWN", "DAC_OVERRIDE", "FOWNER"]}
+        },
+        "volumeMounts": [{"name": "opensandbox-bin", "mountPath": "/opt/opensandbox", "readOnly": true}]
+      }]
+    }}]
+  }
+}

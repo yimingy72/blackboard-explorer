@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import jwt
@@ -13,7 +13,31 @@ from fastapi import HTTPException, Request
 
 from bbx_blackboard.settings import Settings
 
+if TYPE_CHECKING:
+    from bbx_blackboard.gateway_auth import RuntimeBusinessContext
+
 COOKIE_NAME = "bbx_session"
+CTF_REVIEW_TOOLS = frozenset(
+    {
+        "list_challenges",
+        "get_challenge",
+        "get_record",
+        "list_records",
+        "read_artifact",
+        "read_saved_tool_result",
+        "read_command_result",
+    }
+)
+
+
+def ctf_review_tool_request(request: Request, task_id: UUID) -> bool:
+    prefix = f"/api/tasks/{task_id}/ctf/tools/"
+    path = request.url.path
+    return (
+        request.method == "POST"
+        and path.startswith(prefix)
+        and path[len(prefix) :] in CTF_REVIEW_TOOLS
+    )
 
 
 def _equals(left: str, right: str) -> bool:
@@ -37,6 +61,7 @@ class Principal:
     progress_job_id: UUID | None = None
     progress_claim_token: UUID | None = None
     progress_run_number: int | None = None
+    runtime_context: RuntimeBusinessContext | None = None
 
 
 def issue_agent_token(
@@ -47,6 +72,7 @@ def issue_agent_token(
     *,
     generation: int | None = None,
     turn_id: UUID | None = None,
+    purpose: Literal["solver", "review"] = "solver",
 ) -> str:
     return jwt.encode(
         {
@@ -59,6 +85,7 @@ def issue_agent_token(
                 else {}
             ),
             **({"derive_round": derive_round} if derive_round is not None else {}),
+            **({"purpose": purpose} if purpose != "solver" else {}),
             "exp": datetime.now(UTC) + timedelta(days=7),
         },
         settings.agent_token_secret.get_secret_value(),
@@ -154,6 +181,8 @@ def require_task_reader(request: Request, task_id: UUID) -> Principal:
     identity = principal(request)
     if identity.kind == "agent" and identity.task_id != task_id:
         raise HTTPException(403, "Task access denied")
+    if identity.purpose == "review" and not ctf_review_tool_request(request, task_id):
+        raise HTTPException(403, "Review capability cannot access solver APIs")
     if identity.purpose == "progress":
         prefix = f"/api/tasks/{task_id}/progress"
         if not (request.url.path == prefix or request.url.path.startswith(prefix + "/")):

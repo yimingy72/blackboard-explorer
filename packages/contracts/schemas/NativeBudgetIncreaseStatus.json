@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "pause_id": {
+      "format": "uuid",
+      "title": "Pause Id",
+      "type": "string"
+    },
+    "threshold_cny": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Threshold Cny"
+    },
+    "threshold_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Threshold Usd"
+    },
+    "budget_currency": {
+      "anyOf": [
+        {
+          "const": "USD",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Currency"
+    }
+  },
+  "required": [
+    "request_id",
+    "pause_id",
+    "threshold_usd"
+  ],
+  "title": "NativeBudgetIncreaseStatus",
+  "type": "object"
+}

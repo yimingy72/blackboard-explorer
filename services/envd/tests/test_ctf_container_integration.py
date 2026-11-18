@@ -17,12 +17,16 @@ from testcontainers.core.container import DockerContainer
 
 pytestmark = pytest.mark.integration
 TOKEN = "ctf-isolated-container-test-token"
+ENVD_PYTHON = "/opt/envd/venv/bin/python"
 IMAGE = os.environ.get("BBX_CTF_TEST_IMAGE", "bbx-exec-env:latest")
 # A daemon-only crash preserves command processes, unlike restarting a container.
 SUPERVISOR = """
-import pathlib, subprocess
+import pathlib, subprocess, sys
 while True:
-    child = subprocess.Popen(['uvicorn', 'bbx_envd.app:app', '--host', '0.0.0.0', '--port', '8080'])
+    child = subprocess.Popen([
+        sys.executable, '-m', 'uvicorn', 'bbx_envd.app:app',
+        '--host', '0.0.0.0', '--port', '8080',
+    ])
     pathlib.Path('/tmp/ctf-test-envd.pid').write_text(str(child.pid))
     child.wait()
 """
@@ -37,7 +41,7 @@ def running_container(task_id):
         .with_env("ENVD_MODE", "ctf")
         .with_env("ENVD_TASK_ID", task_id)
         .with_exposed_ports(8080)
-        .with_command(["python", "-u", "-c", SUPERVISOR])
+        .with_command([ENVD_PYTHON, "-u", "-c", SUPERVISOR])
         .with_kwargs(nano_cpus=1_000_000_000, mem_limit="1g", pids_limit=128)
     )
     try:
@@ -97,7 +101,7 @@ async def process_group_exists(container, pgid):
         "except ProcessLookupError: sys.exit(1)\n"
     )
     result = await asyncio.to_thread(
-        container.get_wrapped_container().exec_run, ["python", "-c", code, str(pgid)]
+        container.get_wrapped_container().exec_run, [ENVD_PYTHON, "-c", code, str(pgid)]
     )
     assert result.exit_code in {0, 1}, result.output
     return result.exit_code == 0
@@ -174,7 +178,7 @@ async def test_ctf_mcp_boot_dedupe_remote_stop_and_daemon_crash(ctf_container):
             scoped_setup = await asyncio.to_thread(
                 container.get_wrapped_container().exec_run,
                 [
-                    "python",
+                    ENVD_PYTHON,
                     "-c",
                     "from pathlib import Path; "
                     "Path('/workspace/agents/agent-3/private.txt').write_text('private'); "
@@ -224,7 +228,7 @@ async def test_ctf_mcp_boot_dedupe_remote_stop_and_daemon_crash(ctf_container):
             crashed = await asyncio.to_thread(
                 container.get_wrapped_container().exec_run,
                 [
-                    "python",
+                    ENVD_PYTHON,
                     "-c",
                     "import os,pathlib,signal; "
                     "os.kill(int(pathlib.Path('/tmp/ctf-test-envd.pid').read_text()),signal.SIGKILL)",
