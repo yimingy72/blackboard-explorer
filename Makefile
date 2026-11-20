@@ -88,7 +88,15 @@ pi-check:
 	node --check services/agent-runtime/pi/worker.mjs
 	npm --prefix services/agent-runtime/pi test
 
-check: lint typecheck pi-check test
+.PHONY: ctf-install ctf-check
+
+ctf-install:
+	npm --prefix services/ctf-standalone ci --ignore-scripts --no-audit --no-fund
+
+ctf-check:
+	npm --prefix services/ctf-standalone test
+
+check: lint typecheck pi-check test ctf-check
 
 check-all: check test-integration
 
