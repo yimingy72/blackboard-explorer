@@ -2,6 +2,33 @@ import { conversationAction } from './ui';
 import { expect, test } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { CTF_ID, SECOND_ID, installCtfApi } from './ctf-fixtures';
+import { installMockApi, pushMockBoardEvent } from './fixtures';
+
+test('CTF Pi fees update during a run and when a stopped task is reconciled', async ({ page }) => {
+  await installMockApi(page);
+  const mock = await installCtfApi(page);
+  Object.assign(mock.task, { pi_model: { model_id: 'synthetic', model_revision: 1 }, cost_currency: 'USD' });
+  let fee = '0.01';
+  await page.route(`**/api/tasks/${CTF_ID}/pi-fees`, route => route.fulfill({ json: {
+    enabled: true, currency: 'USD', threshold_usd: '10', agents: {},
+    solver: { estimated_usd: fee, unknown_calls: 0 }, progress: { estimated_usd: '0', unknown_calls: 0 },
+  } }));
+  await page.goto(`/tasks/${CTF_ID}`);
+  await expect(page.getByText(/估算.*0\.01/)).toBeVisible();
+  fee = '0.07';
+  await expect(page.getByText(/估算.*0\.07/)).toBeVisible({ timeout: 6000 });
+
+  const notify = (type: string, version: number) => pushMockBoardEvent(page, {
+    task_id: CTF_ID, version, type, actor: 'system', object_id: null, addressed_to: null,
+    created_at: '2026-11-20T00:00:00Z', payload: {},
+  });
+  mock.finish();
+  await notify('task.stopped', 13);
+  await expect(page.locator('header').getByText('已停止', { exact: true })).toBeVisible();
+  fee = '0.09';
+  await notify('cost.reconciled', 14);
+  await expect(page.getByText(/估算.*0\.09/)).toBeVisible();
+});
 
 test('CTF 工作台以画布为主，展示共享求助和独立模拟验证，保留窄屏截图', async ({ page }) => {
   const mock = await installCtfApi(page);

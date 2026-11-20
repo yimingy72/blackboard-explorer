@@ -920,6 +920,7 @@ def create_app(
                         "/workspace",
                         "/workspace/tree",
                         "/workspace/file",
+                        "/pi-fees",
                     }
                     conversation = bool(re.fullmatch(r"/agents/[^/]+/(messages|session)", suffix))
                     traffic = suffix == "/traffic" or suffix.startswith("/traffic/")

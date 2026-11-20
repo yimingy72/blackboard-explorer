@@ -1222,9 +1222,11 @@ class NativeRunnerController:
                         self.jobs.pop(tid)
                         try:
                             job.result()
-                        except (RemoteError, ResourceUnknown):
+                        except (RemoteError, ResourceUnknown, ValueError) as error:
                             logging.getLogger(__name__).warning(
-                                "Native bootstrap awaits trusted reconciliation"
+                                "Native Task %s awaits reconciliation (%s)",
+                                tid,
+                                type(error).__name__,
                             )
                 try:
                     values = await self.service._json(

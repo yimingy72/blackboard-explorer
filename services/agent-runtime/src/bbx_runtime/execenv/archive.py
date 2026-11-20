@@ -59,7 +59,7 @@ def _member(path: str) -> str:
     if parts[0] == ".bbx":
         raise ValueError("Evidence conflicts with archive metadata")
     if parts[0] == "agents" and (
-        len(parts) < 3 or re.fullmatch(r"agent-[0-9]{1,6}", parts[1]) is None
+        len(parts) < 3 or re.fullmatch(r"(?:agent|member)-[0-9]{1,6}", parts[1]) is None
     ):
         raise ValueError("Invalid agent evidence path")
     return str(PurePosixPath(*parts))
@@ -258,11 +258,16 @@ async def build_archive(
             if (
                 len(parts) != 4
                 or parts[:2] != ["evidence", str(task_id)]
-                or parts[3] != filename
                 or PurePosixPath(member).name != filename
             ):
                 raise ValueError("CTF artifact URI belongs to another task or path")
-            UUID(parts[2])
+            if re.fullmatch(r"member-[0-9]{1,6}", parts[2]):
+                if parts[3] != f"{artifact.get('sha256')}.bin":
+                    raise ValueError("CTF file snapshot URI must match its content hash")
+            else:
+                UUID(parts[2])
+                if parts[3] != filename:
+                    raise ValueError("CTF artifact URI has a different filename")
             if type(artifact.get("size")) is not int or artifact["size"] < 0:
                 raise ValueError("CTF artifact size is required")
             if (

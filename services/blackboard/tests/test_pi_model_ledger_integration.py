@@ -153,6 +153,25 @@ def intent(tid, model, aid, started_at, *, logical=None, run_number=1):
     }
 
 
+async def test_ctf_task_owner_can_read_pi_fees(pi_app):
+    app, http, _, model, _, _, _, user = pi_app
+    tid = await app.state.ctf_service.create_task(
+        {
+            "mode": "ctf",
+            "goal": "Read the task fee estimate",
+            "budget": {"currency": "USD", "max_cost": "1", "max_minutes": 5},
+        },
+        pi_model=(app.state.settings.pi_model_authority, PiModelVersion.model_validate(model)),
+    )
+    path = f"/api/tasks/{tid}/pi-fees"
+    assert (await http.get(path)).status_code == 401
+    response = await http.get(path, headers=user)
+    assert response.status_code == 200, response.text
+    fees = response.json()
+    assert fees["enabled"] and fees["currency"] == "USD"
+    assert Decimal(fees["solver"]["estimated_usd"]) == 0 and fees["solver"]["unknown_calls"] == 0
+
+
 async def test_pi_registry_and_concurrent_site_ledger(pi_app):
     app, http, tid, model, agents, auth, started_at, user = pi_app
     digest = "b" * 64
