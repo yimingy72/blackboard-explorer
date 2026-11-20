@@ -237,9 +237,13 @@ class NativeTraffic:
         self.sandbox, self.repo, self.control = sandbox, sandbox.repo, sandbox.gateway.control
 
     @staticmethod
-    def binding(record, bid):
+    def binding(record, bid, assignment_id=None):
         for entry in network_scopes(record).values():
-            if entry["scope"]["binding_id"] == bid and _same_host(record, entry):
+            if (
+                entry["scope"]["binding_id"] == bid
+                and _same_host(record, entry)
+                and (assignment_id is None or entry["scope"]["assignment_id"] == assignment_id)
+            ):
                 return entry
         return None
 
@@ -247,13 +251,16 @@ class NativeTraffic:
         record = await self.sandbox.resource(conn, tid)
         if not opted_in(record):
             return binding, None
-        entry = self.binding(record, runner_binding["id"])
+        pool = runner_binding["business"].get("worker_pool")
+        entry = self.binding(
+            record, runner_binding["id"], binding["assignment_id"] if pool else None
+        )
         allowed = False
         if entry is None:
             active = {
                 source: item
                 for source, item in network_scopes(record).items()
-                if _same_host(record, item)
+                if _same_host(record, item) and (not pool or not scope_done(item))
             }
             if len(active) >= SCOPE_LIMIT:
                 raise HTTPException(409, "Native capture scope capacity reached")
@@ -265,14 +272,26 @@ class NativeTraffic:
                 )
                 + 1
             )
+            if pool:
+                # Archived captures retain their kernel namespace until the Task exits.
+                occupied = {
+                    item["ordinal"]
+                    for item in network_scopes(record).values()
+                    if _same_host(record, item)
+                } | {64}
+                ordinal = next(
+                    (value for value in range(1, SCOPE_LIMIT + 1) if value not in occupied),
+                    SCOPE_LIMIT + 1,
+                )
             if ordinal == 64:  # The original optional worker-a bootstrap reserves this /30.
                 ordinal += 1
             if ordinal > SCOPE_LIMIT:
                 raise HTTPException(409, "Original Sandbox network pool is exhausted")
+            identity = runner_binding["id"] + (":" + binding["assignment_id"] if pool else "")
             source = str(
                 uuid5(
                     NAMESPACE_URL,
-                    f"bbx-capture:{tid}:{context['sandbox_pod_uid']}:{runner_binding['id']}",
+                    f"bbx-capture:{tid}:{context['sandbox_pod_uid']}:{identity}",
                 )
             )
             gateway = ipaddress.IPv4Address("198.19.0.0") + ordinal * 4 + 1
@@ -366,6 +385,18 @@ class NativeTraffic:
             conn, tid, scope["binding_id"], owner, live=True, permit=True
         )
         task = await row(conn, s.tasks, tid)
+        if binding["business"].get("worker_pool"):
+            active = (
+                task["ctf_control"]
+                .get("native_worker_active", {})
+                .get(binding["binding"]["agent_id"])
+            )
+            if (
+                not active
+                or active.get("releasing")
+                or active["assignment_ref"] != scope["assignment_id"]
+            ):
+                raise HTTPException(409, "Original capture Assignment has ended")
         if (task.get("ctf_control") or {}).get("failure_hold") or record["desired"] != "active":
             raise HTTPException(409, "Native network admission is held")
         return owner, binding

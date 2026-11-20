@@ -92,6 +92,7 @@ def registration(owner, aid="lead"):
         "agent_id": aid,
         "model": {
             "id": "fake-model",
+            "model_revision": 2,
             "api": "openai-completions",
             "input": ["text"],
             "reasoning": False,
@@ -367,11 +368,15 @@ async def test_runner_audience_owner_history_expiry_and_closed_legacy_gate(ctf):
             assert len(history) == 2 and not history[0]["current"] and history[1]["current"]
             assert await ctf.claim_turn(tid, "lead", "legacy") is None
             await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(deleting=True))
-        assert (
-            await http.get(
-                control(tid) + "/commands", headers=auth(renewed), params=poll_query(renewed)
-            )
-        ).status_code == 409
+        closing = await http.get(
+            control(tid) + "/commands", headers=auth(renewed), params=poll_query(renewed)
+        )
+        assert closing.status_code == 200
+        assert closing.json()["lease_renewals"] == []
+        assert all(
+            json.loads(item["payload_json"])["kind"] == "close"
+            for item in closing.json()["commands"]
+        )
         with pytest.raises(HTTPException):
             await ctf.start(tid)
 
@@ -428,9 +433,34 @@ async def test_prepare_ack_loss_exact_bytes_journal_cas_and_owner_restore(ctf, t
         acquire_path = control(tid) + f"/bindings/{bid}/acquire"
         async with live_http(app, ack_path) as (base, transport):
             async with node_runner(await node_data(ctf, tid, owner, base), tmp_path) as node:
-                await asyncio.wait_for(transport.entered.wait(), 12)
-                prepared = await wait_record(ctf, s.runner_bindings, tid, bid, status="prepared")
+                try:
+                    await asyncio.wait_for(transport.entered.wait(), 12)
+                except TimeoutError as error:
+                    observed = await node.command("status")
+                    raise AssertionError(f"Runner did not prepare: {observed['output']}") from error
+                try:
+                    prepared = await wait_record(
+                        ctf, s.runner_bindings, tid, bid, status="prepared"
+                    )
+                except TimeoutError as error:
+                    observed = await node.command("status")
+                    raise AssertionError(
+                        f"Runner preparation failed: {observed['output']}"
+                    ) from error
                 sdk = prepared["sdk_session_id"]
+                async with ctf.repo.engine.connect() as conn:
+                    assert (
+                        await conn.scalar(
+                            select(s.events.c.version)
+                            .where(
+                                s.events.c.task_id == tid,
+                                s.events.c.type == "ctf.native_worker.ready",
+                                s.events.c.payload["binding_id"].astext == bid,
+                            )
+                            .limit(1)
+                        )
+                        is not None
+                    )
                 assert sdk and sdk != binding["platform_session_id"]
                 await node.command("kill")
                 transport.release.set()
@@ -616,8 +646,8 @@ async def test_prepare_ack_loss_exact_bytes_journal_cas_and_owner_restore(ctf, t
                     await conn.execute(
                         update(s.tasks).where(s.tasks.c.id == tid).values(status="stopped")
                     )
-                with pytest.raises(HTTPException):
-                    await waiting
+                final = await waiting
+                assert final["commands"] == [] and final["lease_renewals"] == []
 
 
 async def test_input_transaction_monotonic_prompt_and_close_evidence(ctf, monkeypatch):
@@ -952,11 +982,15 @@ async def test_input_transaction_monotonic_prompt_and_close_evidence(ctf, monkey
             )
             assert member["lifecycle"] == "active" and member["run_state"] == "stopping"
             await conn.execute(update(s.tasks).where(s.tasks.c.id == tid).values(status="stopped"))
-        assert (
-            await http.get(
-                control(tid) + "/commands", headers=auth(owner), params=poll_query(owner)
-            )
-        ).status_code == 409
+        closing = await http.get(
+            control(tid) + "/commands", headers=auth(owner), params=poll_query(owner)
+        )
+        assert closing.status_code == 200
+        assert closing.json()["lease_renewals"] == []
+        assert all(
+            json.loads(item["payload_json"])["kind"] == "close"
+            for item in closing.json()["commands"]
+        )
         archive = await Conversations(ctf.repo.engine).export_archive(tid)
         assert archive["runner_control"]["runner_receipts"] and owner["token"] not in json.dumps(
             archive
@@ -969,3 +1003,55 @@ async def test_input_transaction_monotonic_prompt_and_close_evidence(ctf, monkey
                 assert not (
                     await conn.execute(select(table.c.task_id).where(table.c.task_id == tid))
                 ).all()
+
+
+async def test_native_journal_content_is_readable_and_revision_cached(ctf):
+    async with connect(ctf) as (app, http):
+        tid, owner, binding, command = await setup(http, ctf)
+        await acquire(http, tid, owner, binding, command)
+        entry = {
+            "type": "message",
+            "id": "answer",
+            "timestamp": "2026-11-20T01:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Check the supplied evidence"},
+                    {
+                        "type": "toolCall",
+                        "id": "call",
+                        "name": "exec_command",
+                        "arguments": {"command": "pwd"},
+                    },
+                ],
+            },
+        }
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        encoded = line.encode()
+        previous = empty_cursor()
+        current = {
+            "offset": len(encoded),
+            "seq": 1,
+            "hash": hashlib.sha256(bytes.fromhex(previous["hash"]) + encoded).hexdigest(),
+            "leaf_id": "answer",
+            "anchor_offset": 0,
+            "anchor_size": len(encoded),
+            "anchor_hash": hashlib.sha256(encoded).hexdigest(),
+        }
+        body = {**confirmation(owner, binding, previous, current), "entries": line}
+        await confirm(http, tid, owner, binding, body)
+        await confirm(http, tid, owner, binding, body)
+        user = {"Authorization": "Bearer " + issue_user_token(app.state.settings, "operator")}
+        endpoint = f"/api/tasks/{tid}/agents/lead/session"
+        response = await http.get(endpoint, headers=user)
+        assert response.status_code == 200, response.text
+        assert response.json()["native_entries"] == [entry]
+        assert response.json()["transcript_pending"] is False
+        unchanged = await http.get(endpoint, headers=user, params={"after_revision": 1})
+        assert unchanged.json() == {"revision": 1, "not_modified": True}
+        invalid = await http.post(
+            control(tid) + f"/bindings/{binding['binding_id']}/journal/confirm",
+            headers=auth(owner),
+            content=raw({**body, "entries": line.replace("pwd", "whoami")}),
+        )
+        assert invalid.status_code == 422

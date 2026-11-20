@@ -205,7 +205,7 @@ async def test_conversation_endpoints_keep_user_and_service_roles_separate(monke
             assert (task_id, aid, message_id, content) == (tid, "agent-1", mid, "hello")
             return {"id": message_id, "content": content}
 
-        async def get_session(self, task_id, aid):
+        async def get_session(self, task_id, aid, after_revision=None, *, native=False):
             assert (task_id, aid) == (tid, "agent-1")
             return {
                 "session": {},

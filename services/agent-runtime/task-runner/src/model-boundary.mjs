@@ -38,6 +38,7 @@ function pushFailure(stream, model, signal) {
 export function installModelBoundary(session, {
   runtimeUrl, credential, binding, confirm, createStream, prepareContext = async (context) => context,
   assertActive = () => {}, fetch: transport = fetch, nativeModelRevision, nativeProof,
+  recordResponse,
 }) {
   const base = new URL(runtimeUrl.endsWith("/") ? runtimeUrl : `${runtimeUrl}/`);
   if (!(base.protocol === "https:" || (base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)))
@@ -120,7 +121,10 @@ export function installModelBoundary(session, {
               if (event.type === "error") logical.errorMessage = "The trusted Pi model result was not confirmed";
             }
             if (event.type === "error") freezeSession(session);
-            if (event.type === "done" || event.type === "error") terminal = true;
+            if (event.type === "done" || event.type === "error") {
+              terminal = true;
+              if (recordResponse && event.type === "done") await recordResponse({ callId: directCallId, proof, message: logical });
+            }
             stream.push(event);
           }
           const message = await source.result();

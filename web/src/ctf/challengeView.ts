@@ -1,17 +1,21 @@
 import type { CtfChallenge, CtfRecord, CtfSolution } from './types';
 
-export type ChallengeState = 'pending' | 'working' | 'blocked' | 'delivered' | 'solved' | 'cancelled' | 'archived';
-export const challengeStateLabels: Record<ChallengeState, string> = { pending: '待分配', working: '解题中', blocked: '受阻', delivered: '已交付', solved: '已解出', cancelled: '已取消', archived: '已归档' };
+export type ChallengeState = 'pending' | 'queued' | 'interrupted' | 'working' | 'assistance' | 'review' | 'blocked' | 'delivered' | 'solved' | 'cancelled' | 'archived';
+export const challengeStateLabels: Record<ChallengeState, string> = { pending: '待分配', queued: '待领取', interrupted: '已中断', working: '解题中', assistance: '需要援助', review: '待核验', blocked: '受阻', delivered: '已交付', solved: '已解出', cancelled: '已取消', archived: '已归档' };
 export const stageLabels = { approach: '思路', attempt: '尝试', breakthrough: '突破', result: '结果' };
 export const stepResultLabels = { supported: '成立', ruled_out: '排除', inconclusive: '未定' };
 
-export function challengeState(challenge: Pick<CtfChallenge, 'work_status' | 'verification' | 'tombstone'>): ChallengeState {
+export function challengeState(challenge: Pick<CtfChallenge, 'work_status' | 'verification' | 'tombstone' | 'dispatch_status'> & Partial<Pick<CtfChallenge, 'collaboration' | 'collaborator_ids'>>, phase?: string): ChallengeState {
   if (challenge.tombstone) return 'archived';
   if (challenge.work_status === 'cancelled') return 'cancelled';
   if (challenge.work_status === 'completed') {
     const verification = challenge.verification ?? {};
-    return verification.status === 'accepted' && verification.test_only !== true && ['platform', 'user'].includes(String(verification.source)) ? 'solved' : 'delivered';
+    return verification.status === 'accepted' && verification.test_only !== true && ['platform', 'user', 'lead'].includes(String(verification.source)) ? 'solved' : 'delivered';
   }
+  if (challenge.work_status === 'pending' && challenge.dispatch_status === 'ready') return 'queued';
+  if (['in_progress', 'awaiting_review'].includes(challenge.work_status) && phase && ['finished', 'failed', 'stopped'].includes(phase)) return 'interrupted';
+  if (challenge.work_status === 'awaiting_review') return 'review';
+  if (challenge.work_status === 'in_progress' && challenge.collaboration && challenge.collaboration.assistance_target > (challenge.collaborator_ids?.length ?? 0)) return 'assistance';
   return challenge.work_status === 'blocked' ? 'blocked' : challenge.work_status === 'in_progress' ? 'working' : 'pending';
 }
 

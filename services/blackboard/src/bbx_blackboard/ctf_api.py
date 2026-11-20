@@ -4,11 +4,16 @@ from typing import Any, Literal
 from uuid import UUID
 
 from bbx_contracts import ctf as ctf_models
-from bbx_contracts.challenge_board import BOARD_LEGACY
+from bbx_contracts.challenge_board import (
+    BOARD_CONTRACT,
+    BOARD_LEGACY,
+    BoardDispatchChallengeRequest,
+)
 from bbx_contracts.ctf import CtfDrainProof, CtfMemberOperationRequest
 from bbx_contracts.tool_errors import validation_issues
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from bbx_blackboard.auth import (
     CTF_REVIEW_TOOLS,
@@ -19,6 +24,7 @@ from bbx_blackboard.auth import (
     require_user_or_service,
 )
 from bbx_blackboard.ctf_board import SOLUTION_DELIVERY_ERROR
+from bbx_blackboard.store import schema as s
 
 
 def invalid_request(error: ValueError, message: str) -> HTTPException:
@@ -68,6 +74,22 @@ async def runtime_state(request: Request, task_id: UUID) -> dict[str, Any]:
     return await service(request).runtime_state(task_id)
 
 
+@router.post("/challenges/{challenge_id}/dispatch")
+async def dispatch_challenge(
+    request: Request, task_id: UUID, challenge_id: UUID, body: BoardDispatchChallengeRequest
+) -> dict[str, Any]:
+    identity = require_task_reader(request, task_id)
+    if identity.kind != "user":
+        raise HTTPException(403, "User identity required")
+    if body.challenge_id != challenge_id:
+        raise HTTPException(422, "Challenge identity does not match the URL")
+    from bbx_blackboard.task_board import TaskBoardService
+
+    return await TaskBoardService(service(request)).dispatch_challenge(
+        task_id, identity, body.model_dump(mode="json")
+    )
+
+
 @router.get("/state")
 async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     identity = require_task_reader(request, task_id)
@@ -100,6 +122,46 @@ async def state(request: Request, task_id: UUID) -> dict[str, Any]:
     public["task"]["ctf_cleanup"] = data["task"].get("ctf_control", {}).get("cleanup", {})
     public["task"]["ctf_review_usage"] = data["task"].get("ctf_control", {}).get("review_usage", {})
     if identity.kind == "user":
+        if (
+            data["task"].get("ctf_control", {}).get("business_contract") == BOARD_CONTRACT
+            and request.app.state.engine is not None
+        ):
+            knowledge = []
+            async with request.app.state.engine.connect() as conn:
+                for kind, table in (("fact", s.facts), ("intent", s.intents)):
+                    rows = (
+                        await conn.execute(
+                            select(
+                                table.c.id,
+                                table.c.challenge_id,
+                                table.c.statement,
+                                table.c.author,
+                                table.c.version,
+                                s.events.c.created_at,
+                            )
+                            .join(
+                                s.events,
+                                (s.events.c.task_id == table.c.task_id)
+                                & (s.events.c.version == table.c.version),
+                            )
+                            .where(table.c.task_id == task_id, table.c.challenge_id.is_not(None))
+                        )
+                    ).mappings()
+                    knowledge.extend(
+                        {
+                            "id": f"{kind}:{item['id']}",
+                            "knowledge_id": item["id"],
+                            "challenge_id": item["challenge_id"],
+                            "kind": kind,
+                            "body": item["statement"],
+                            "author_id": item["author"],
+                            "created_version": item["version"],
+                            "created_at": item["created_at"].isoformat(),
+                            "artifact_refs": [],
+                        }
+                        for item in rows
+                    )
+            public["records"] = [*public.get("records", []), *knowledge]
         requirements = data["task"].get("ctf_control", {}).get("completion_requirements")
         public["task"]["completion_requirements"] = (
             requirements if isinstance(requirements, str) else None

@@ -13,7 +13,7 @@ import ssl
 import time
 from contextlib import aclosing, asynccontextmanager, suppress
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -29,6 +29,7 @@ from bbx_sandbox_execution.execution import SOLVER_GID, SOLVER_UID, AssignmentBi
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from opensandbox.exceptions import SandboxApiException
+from opensandbox.models.execd import RunCommandOpts
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -64,12 +65,18 @@ def load_configuration(path):
         or config.get("inbound_key") == config.get("report_key")
         or config.get("inputs_profile") not in {None, INPUT_PROFILE}
         or config.get("vpn_profile") not in {None, VPN_PROFILE, VPN_DYNAMIC_PROFILE}
+        or config.get("execution_profile") not in {None, "ctf-direct-v1"}
         or any(
             not isinstance(config.get(key), str) or not config[key]
             for key in ("inbound_key", "report_key", "execd_token")
         )
     ):
         raise ValueError("Original Task Sandbox host mount is invalid")
+    if (
+        config.get("execution_profile") == "ctf-direct-v1"
+        and {"vpn_profile", "board_network", "traffic_targets"} & config.keys()
+    ):
+        raise ValueError("Direct CTF Runtime has no managed network configuration")
     if "board_network" in config:
         board = config["board_network"]
         mode = board.get("mode")
@@ -112,6 +119,7 @@ class SandboxMCP:
         self.vpn_network: dict | None = None
         self.vpn_link: dict | None = None
         self.network_locks: dict[str, asyncio.Lock] = {}
+        self.workspaces: set[tuple[str, str | None]] = set()
         self.acknowledged_networks: set[str] = set()
         self.app = Starlette(
             routes=[Route("/ready", self.health), Mount("/mcp", app=self.handle)],
@@ -175,6 +183,13 @@ class SandboxMCP:
                 async def admit():
                     if datetime.fromisoformat(self.config["hard_deadline"]) <= datetime.now(UTC):
                         return False
+                    workspace = (binding.agent_id, binding.challenge_id)
+                    if (
+                        binding.execution_profile == "ctf-direct"
+                        and workspace not in self.workspaces
+                    ):
+                        await self.prepare_workspace(sandbox, binding)
+                        self.workspaces.add(workspace)
                     if network:
                         source = self.network_scope(network, binding)
                         if network["scope"]["binding_id"] != invocation.binding.binding_id:
@@ -213,9 +228,13 @@ class SandboxMCP:
                     persist=persist,
                     hard_deadline=datetime.fromisoformat(self.config["hard_deadline"]),
                     read_capture=capture_file
-                    if self.config.get("board_network")
-                    and binding.role == "explore"
-                    and name == "read_file"
+                    if name == "read_file"
+                    and (
+                        self.config.get("board_network")
+                        and binding.role == "explore"
+                        or invocation.source_model_call_id is not None
+                        and binding.role == "worker"
+                    )
                     else None,
                 )
                 payload = {
@@ -373,7 +392,17 @@ class SandboxMCP:
             "pod_uid": self.config["sandbox_pod_uid"],
             "environment_revision": self.config["environment_revision"],
             "execution_context_id": self.config["execution_context_id"],
-            **(self.config["network"] if not self.binding_network else {}),
+            **(
+                self.config["network"]
+                if not self.binding_network
+                and self.config.get("execution_profile") != "ctf-direct-v1"
+                else {}
+            ),
+            **(
+                {"execution_profile": "ctf-direct"}
+                if self.config.get("execution_profile") == "ctf-direct-v1"
+                else {}
+            ),
         }
         if any(getattr(binding, key) != value for key, value in expected.items()):
             raise ValueError("Original Task execution binding changed")
@@ -420,6 +449,28 @@ class SandboxMCP:
             raise ValueError("Original Sandbox traffic scope changed")
         return source
 
+    @staticmethod
+    async def prepare_workspace(sandbox, binding):
+        agent_id = binding.parent_agent_id or binding.agent_id
+        directory = "/workspace/agents/" + ("agent-1" if agent_id == "lead" else agent_id)
+        paths = [directory]
+        if binding.challenge_id:
+            shared = f"/workspace/shared/challenges/{binding.challenge_id}"
+            paths.extend(
+                [shared + "/inputs", shared + f"/workers/{agent_id}", shared + "/artifacts"]
+            )
+        result = await sandbox.commands.run(
+            ["/bin/mkdir", "-p", *paths],
+            opts=RunCommandOpts(
+                working_directory="/workspace",
+                uid=SOLVER_UID,
+                gid=SOLVER_GID,
+                timeout=timedelta(seconds=7),
+            ),
+        )
+        if result.complete is None or result.exit_code != 0 or result.error is not None:
+            raise ValueError("Agent workspace creation failed")
+
     async def grant(self, sandbox, item, *, prepare=False):
         scope, binding = item["scope"], AssignmentBinding(**item["binding"])
         source = self.network_scope(item, binding)
@@ -432,6 +483,7 @@ class SandboxMCP:
         ):
             raise ValueError("Original Task VPN link is unavailable")
         if prepare and item.get("prepare_allowed"):
+            await self.prepare_workspace(sandbox, binding)
             await root_network(
                 sandbox,
                 "prepare",

@@ -91,6 +91,11 @@ class NativeRunnerController:
         }
 
     def _operation_resources(self, operation):
+        if operation.get("state") == "stopped" and operation.get("cleanup_resource_config"):
+            config = operation["cleanup_resource_config"]
+            return RunnerResources(
+                {**config, "retirement_single_apiserver": self.retirement_authority}
+            ), config
         if operation["data"].get("execution_contract") == BOARD_CONTRACT:
             if self.board_resources:
                 return self.board_resources, self.board_config
@@ -557,6 +562,13 @@ class NativeRunnerController:
                         "ctf.native_worker.released",
                         "ctf.native_worker.stopped",
                         "ctf.native_worker.cleanup_changed",
+                        "ctf.native_worker.idle",
+                        "ctf.native_worker.ready",
+                        "ctf.native_worker.call_settled",
+                        "fact.posted",
+                        "intent.posted",
+                        "intent.claimed",
+                        "intent.closed",
                     }:
                         wake.set()
             except RemoteError as error:
@@ -593,6 +605,8 @@ class NativeRunnerController:
             except RemoteError as error:
                 if error.status == 404:
                     return
+                if error.status < 500:
+                    raise
                 self.current()
                 await asyncio.sleep(10)
             except Exception as error:
@@ -641,7 +655,20 @@ class NativeRunnerController:
                 await board_loop.stop()
                 await board_work
             try:
-                await asyncio.wait_for(wake.wait(), timeout=3)
+                delay = 3.0
+                if (operation["data"].get("worker_spec") or {}).get("worker_pool"):
+                    delay = 20.0
+                    if deadline := operation["data"].get("worker_next_deadline"):
+                        delay = min(
+                            delay,
+                            max(
+                                0.01,
+                                (
+                                    datetime.fromisoformat(deadline) - datetime.now(UTC)
+                                ).total_seconds(),
+                            ),
+                        )
+                await asyncio.wait_for(wake.wait(), timeout=delay)
             except TimeoutError:
                 pass
             finally:
@@ -1105,22 +1132,23 @@ class NativeRunnerController:
                     "data"
                 ].get("sandbox_host_ready"):
                     await self._prepare_sandbox_host(tid, operation, tenant_key)
-                (
-                    published_vpn_generation,
-                    last_vpn_control,
-                    network_ready,
-                ) = await self._prepare_network(
-                    tid,
-                    operation,
-                    resources,
-                    config,
-                    control_only,
-                    published_vpn_generation,
-                    last_vpn_control,
-                )
-                if not network_ready:
-                    await idle()
-                    continue
+                if operation["data"].get("execution_profile") != "ctf-direct-v1":
+                    (
+                        published_vpn_generation,
+                        last_vpn_control,
+                        network_ready,
+                    ) = await self._prepare_network(
+                        tid,
+                        operation,
+                        resources,
+                        config,
+                        control_only,
+                        published_vpn_generation,
+                        last_vpn_control,
+                    )
+                    if not network_ready:
+                        await idle()
+                        continue
                 now = asyncio.get_running_loop().time()
                 if (
                     not operation["data"].get("credentials_issued")

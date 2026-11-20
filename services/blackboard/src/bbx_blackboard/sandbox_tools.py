@@ -13,6 +13,7 @@ from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.mcp_catalog import SandboxMcpAuthorize
+from bbx_contracts.runner import runner_json_text
 from bbx_contracts.runner_inputs import INPUT_PROFILE
 from bbx_contracts.sandbox_tools import (
     MAX_COMMAND_OUTPUT_BYTES,
@@ -168,6 +169,11 @@ class SandboxTools:
                 else {}
             ),
             **({"vpn_profile": resource["data"]["vpn_profile"]} if vpn_enabled(resource) else {}),
+            **(
+                {"execution_profile": "ctf-direct-v1"}
+                if resource["data"].get("execution_profile") == "ctf-direct-v1"
+                else {}
+            ),
             "blackboard_url": resource["config"]["runner_blackboard_url"],
             "hard_deadline": resource["hard_deadline"].isoformat(),
         }
@@ -243,8 +249,10 @@ class SandboxTools:
             or context["runner_pod_uid"] != original_pod
         ):
             raise HTTPException(403, "Runner owner does not match the original Sandbox host")
-        if entry := self.traffic.binding(resource, runner_binding["id"]):
-            return entry["binding"]
+        direct = resource["data"].get("execution_profile") == "ctf-direct-v1"
+        if not direct and not runner_binding["business"].get("worker_pool"):
+            if entry := self.traffic.binding(resource, runner_binding["id"]):
+                return entry["binding"]
         if runner_binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
             agent_id = runner_binding["binding"]["agent_id"]
             agent = await row(conn, s.agent_runs, tid, agent_id)
@@ -269,12 +277,35 @@ class SandboxTools:
             }
         member = await row(conn, s.ctf_members, tid, runner_binding["binding"]["agent_id"])
         business = runner_binding["business"]
+        active = None
+        if business.get("worker_pool"):
+            from bbx_blackboard.native_worker_pool import work_context
+
+            task = await row(conn, s.tasks, tid)
+            current = work_context(task, member["id"])
+            active = task["ctf_control"].get("native_worker_active", {}).get(member["id"])
+            if (
+                not active
+                or active.get("releasing")
+                or business.get("worker_context", current) != current
+            ):
+                raise HTTPException(409, "Worker Sandbox call has no current Assignment")
+            business = {**business, "challenge_id": active["work_id"]}
+            if not direct and (
+                entry := self.traffic.binding(
+                    resource, runner_binding["id"], active["assignment_ref"]
+                )
+            ):
+                return entry["binding"]
         assignment = runner_binding["binding"].get("assignment_ref") or str(
             uuid5(
                 NAMESPACE_URL,
                 f"sandbox-lead:{tid}:{owner['epoch']}:{runner_binding['binding']['generation']}",
             )
         )
+        if business.get("worker_pool"):
+            assert active is not None
+            assignment = active["assignment_ref"]
         return {
             "task_id": str(tid),
             "agent_id": member["id"],
@@ -292,7 +323,9 @@ class SandboxTools:
             **context["network"],
             "challenge_id": business.get("challenge_id"),
             "parent_agent_id": business.get("parent_agent_id"),
-            "execution_profile": "basic",
+            "execution_profile": "ctf-direct"
+            if resource["data"].get("execution_profile") == "ctf-direct-v1"
+            else "basic",
             "process_accounting": "cgroup-v2",
             "execution_context_id": context["execution_context_id"],
         }
@@ -341,7 +374,10 @@ class SandboxTools:
         binding = await self.binding(conn, tid, runner_binding, owner)
         args = dict(arguments)
         network = None
-        if call["data"]["tool_name"] == "exec_command":
+        if (
+            call["data"]["tool_name"] == "exec_command"
+            and binding["execution_profile"] != "ctf-direct"
+        ):
             binding, network = await self.traffic.allocate(conn, tid, binding, runner_binding)
         data = {
             **call["data"],
@@ -370,7 +406,7 @@ class SandboxTools:
                 "background": args.get("background", False),
                 "cwd": args.get("cwd", "/workspace"),
             }
-            if network:
+            if network or binding["execution_profile"] == "ctf-direct":
                 data["command_options"] = options
             else:
                 await self._record_command(conn, tid, call, runner_binding, binding, options)
@@ -465,7 +501,10 @@ class SandboxTools:
                 return {"saved": True}
             if (
                 event == "unknown"
-                and call["data"].get("network_source_id")
+                and (
+                    call["data"].get("network_source_id")
+                    or resource["data"].get("execution_profile") == "ctf-direct-v1"
+                )
                 and call["data"].get("sdk_admitted") is not True
             ):
                 await self.settle_unsent(conn, tid, call)
@@ -633,16 +672,24 @@ class SandboxTools:
     async def _board_evidence_target(self, conn, tid, invocation_id, key):
         resource, _ = await self.host(conn, tid, key)
         call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
+        pool = bool(call and call["data"].get("business", {}).get("worker_pool"))
         if (
-            resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
+            not pool
+            and resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
             or not call
             or call["provider_key"] != "sandbox"
             or call["state"] != "dispatched"
             or call["data"].get("tool_name") != "read_file"
             or call["data"].get("sdk_admitted") is not True
-            or call["data"].get("sandbox_binding", {}).get("role") != "explore"
+            or call["data"].get("sandbox_binding", {}).get("role")
+            != ("worker" if pool else "explore")
             or call["owner_epoch"] != resource["data"].get("owner_epoch")
-            or not await self._scope_live(conn, tid, call["binding_id"])
+            or not await self._scope_live(
+                conn,
+                tid,
+                call["binding_id"],
+                call["data"].get("sandbox_binding", {}).get("assignment_id"),
+            )
         ):
             raise HTTPException(
                 403, "Evidence upload requires the original scoped Blackboard file read"
@@ -656,13 +703,16 @@ class SandboxTools:
         async with self.repo.engine.connect() as conn:
             resource, _ = await self.host(conn, tid, key)
             call = await self.gateway._call(conn, tid, "tool:" + invocation_id)
+            pool = bool(call and call["data"].get("business", {}).get("worker_pool"))
             if (
-                resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
+                not pool
+                and resource["data"].get("execution_contract") != EXPLORATION_CONTRACT
                 or call is None
                 or call["provider_key"] != "sandbox"
                 or call["data"].get("tool_name") != "read_file"
                 or call["owner_epoch"] != resource["data"].get("owner_epoch")
-                or call["data"].get("sandbox_binding", {}).get("role") != "explore"
+                or call["data"].get("sandbox_binding", {}).get("role")
+                != ("worker" if pool else "explore")
             ):
                 raise HTTPException(403, "Original Blackboard evidence receipt required")
             proof = call["data"].get("file_artifact")
@@ -676,7 +726,9 @@ class SandboxTools:
         ) != "application/octet-stream" or request.headers.getlist("origin"):
             raise HTTPException(403, "Original private binary Sandbox evidence required")
         async with self.repo.engine.connect() as conn:
-            await self._board_evidence_target(conn, tid, invocation_id, key)
+            original, original_path = await self._board_evidence_target(
+                conn, tid, invocation_id, key
+            )
         digest, size = hashlib.sha256(), 0
         with SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as body:
             async for chunk in request.stream():
@@ -686,20 +738,22 @@ class SandboxTools:
                 digest.update(chunk)
                 body.write(chunk)
             checksum = digest.hexdigest()
+            aid = original["data"]["sandbox_binding"]["agent_id"]
+            uri = f"evidence/{tid}/{aid}/{checksum}.bin"
+            body.seek(0)
+            await request.app.state.objects.put(
+                uri, body, length=size, content_type="application/octet-stream"
+            )
             async with self.repo.engine.begin() as conn:
                 await self.repo.lock(conn, tid)
                 call, path = await self._board_evidence_target(conn, tid, invocation_id, key)
-                aid = call["data"]["sandbox_binding"]["agent_id"]
-                uri = f"evidence/{tid}/{aid}/{checksum}.bin"
+                if path != original_path:
+                    raise HTTPException(409, "Original file path changed during capture")
                 proof = {"path": path, "uri": uri, "sha256": checksum, "size": size}
                 existing = call["data"].get("file_artifact")
                 if existing not in (None, proof):
                     raise HTTPException(409, "Original Sandbox file evidence changed")
                 if existing is None:
-                    body.seek(0)
-                    await request.app.state.objects.put(
-                        uri, body, length=size, content_type="application/octet-stream"
-                    )
                     await conn.execute(
                         update(s.runner_calls)
                         .where(
@@ -739,10 +793,56 @@ class SandboxTools:
                     or value.get("command_id") != invocation_id
                 ):
                     raise HTTPException(409, "Original command completion evidence is incomplete")
+            if call["data"]["tool_name"] == "read_file" and call["data"].get("business", {}).get(
+                "worker_pool"
+            ):
+                from bbx_blackboard.native_file_facts import record_file
+
+                arguments = exact_json(
+                    self.gateway.cipher.decrypt(
+                        call["data"]["arguments_ciphertext"].encode()
+                    ).decode()
+                )
+                payload = result.get("structuredContent", {}).get("result", {})
+                proof = call["data"].get("file_artifact")
+                if (
+                    proof
+                    and not result.get("isError")
+                    and all(
+                        (payload.get("artifact") or {}).get(name) == proof[name]
+                        for name in ("uri", "sha256", "size")
+                    )
+                ):
+                    try:
+                        async with conn.begin_nested():
+                            recorded = await record_file(
+                                self.gateway.ctf, conn, tid, call, proof, arguments
+                            )
+                        payload = {**payload, **recorded}
+                        result = {
+                            **result,
+                            "structuredContent": {"result": payload},
+                            "content": [{"type": "text", "text": runner_json_text(payload)}],
+                        }
+                    except (HTTPException, ValueError) as error:
+                        result = {
+                            "isError": True,
+                            "content": [{"type": "text", "text": str(error)}],
+                        }
+                elif "fact" in arguments:
+                    result = {
+                        "isError": True,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "No verified file snapshot; the Fact was not recorded.",
+                            }
+                        ],
+                    }
             await self.gateway._save_tool_result(conn, tid, call, result)
             return {"result": result}
 
-    async def _scope_live(self, conn, tid, binding_id):
+    async def _scope_live(self, conn, tid, binding_id, assignment_id=None):
         try:
             task = await self.gateway.control._task(conn, tid)
             if native_stopping(task):
@@ -755,6 +855,17 @@ class SandboxTools:
             }:
                 return False
             await self.gateway.control._mapping(conn, tid, binding, allow_pending=True)
+            if binding["business"].get("worker_pool"):
+                current = (
+                    task["ctf_control"]
+                    .get("native_worker_active", {})
+                    .get(binding["binding"]["agent_id"])
+                )
+                return bool(
+                    current
+                    and not current.get("releasing")
+                    and (assignment_id is None or current["assignment_ref"] == assignment_id)
+                )
             return True
         except HTTPException as error:
             if error.status_code not in {403, 404, 409}:
@@ -776,8 +887,8 @@ class SandboxTools:
                             ~exited_scopes(resource, records),
                             records.c.data["scope_state"].astext != "sealed",
                         )
-                        .distinct(records.c.binding_id)
-                        .order_by(records.c.binding_id, records.c.sequence)
+                        .distinct(records.c.binding_id, records.c.assignment_id)
+                        .order_by(records.c.binding_id, records.c.assignment_id, records.c.sequence)
                     )
                 )
                 .mappings()
@@ -785,7 +896,9 @@ class SandboxTools:
             )
             result = []
             for record in pending:
-                if not await self._scope_live(conn, tid, record["binding_id"]):
+                if not await self._scope_live(
+                    conn, tid, record["binding_id"], record["assignment_id"]
+                ):
                     result.append(
                         {"command_id": record["id"], "binding": record["data"]["binding"]}
                     )
@@ -793,11 +906,15 @@ class SandboxTools:
                         break
             return result
 
-    async def _scope_patch(self, conn, tid, binding_id, patch):
+    async def _scope_patch(self, conn, tid, binding_id, patch, assignment_id):
         records = s.sandbox_command_records
         await conn.execute(
             update(records)
-            .where(records.c.task_id == tid, records.c.binding_id == binding_id)
+            .where(
+                records.c.task_id == tid,
+                records.c.binding_id == binding_id,
+                records.c.assignment_id == assignment_id,
+            )
             .values(data=records.c.data.op("||")(literal(patch, type_=JSONB)))
         )
 
@@ -809,13 +926,17 @@ class SandboxTools:
             if command["epoch"] < self._host_epoch_floor(resource):
                 raise HTTPException(403, "Sandbox scope belongs to an exited epoch")
             if command["data"].get("scope_state") == "sealed" or await self._scope_live(
-                conn, tid, command["binding_id"]
+                conn, tid, command["binding_id"], command["assignment_id"]
             ):
                 raise HTTPException(409, "Original Assignment does not need a stop")
             first = command["data"]["scope_state"] == "active"
             if first:
                 await self._scope_patch(
-                    conn, tid, command["binding_id"], {"scope_state": "stopping"}
+                    conn,
+                    tid,
+                    command["binding_id"],
+                    {"scope_state": "stopping"},
+                    command["assignment_id"],
                 )
             return {"stop": first}
 
@@ -842,7 +963,11 @@ class SandboxTools:
                 and re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", execution_id)
             ):
                 await self._scope_patch(
-                    conn, tid, command["binding_id"], {"scope_execution_id": execution_id}
+                    conn,
+                    tid,
+                    command["binding_id"],
+                    {"scope_execution_id": execution_id},
+                    command["assignment_id"],
                 )
             elif event == "scope_observed":
                 receipt = payload.get("receipt", {})
@@ -865,6 +990,7 @@ class SandboxTools:
                     tid,
                     command["binding_id"],
                     {"scope_state": "sealed", "scope_id": scope_id},
+                    command["assignment_id"],
                 )
                 await self.gateway.control.native_worker_cleanup_changed(
                     conn, tid, command["binding_id"]
@@ -1050,7 +1176,10 @@ async def host_admit(request: Request, task_id: UUID):
             or call["data"]["authorized_wait_until_ms"] <= int(now().timestamp() * 1000)
         ):
             raise HTTPException(409, "Original Sandbox dispatch has no current SDK admission")
-        if call["data"]["tool_name"] == "exec_command":
+        if (
+            call["data"]["tool_name"] == "exec_command"
+            and current["execution_profile"] != "ctf-direct"
+        ):
             vpn_solver_deadline(resource)
         if opted_in(resource) and call["data"]["tool_name"] == "exec_command":
             entry = service.traffic.binding(resource, runner_binding["id"])
@@ -1065,6 +1194,13 @@ async def host_admit(request: Request, task_id: UUID):
                 or grant.get("authority_until_ms", 0) <= int(now().timestamp() * 1000)
             ):
                 raise HTTPException(409, "Original Sandbox command lacks its current capture grant")
+            await service._record_command(
+                conn, task_id, call, runner_binding, current, call["data"]["command_options"]
+            )
+        elif (
+            current["execution_profile"] == "ctf-direct"
+            and call["data"]["tool_name"] == "exec_command"
+        ):
             await service._record_command(
                 conn, task_id, call, runner_binding, current, call["data"]["command_options"]
             )

@@ -319,7 +319,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
         dispatches = []
         for n, (priority, readiness, external) in enumerate(
             (
-                (3, "no_external_materials", None),
+                (3, "ready", "remote-ready"),
                 (0, "no_external_materials", None),
                 (0, "materials_pending", "external"),
             )
@@ -342,13 +342,25 @@ async def test_native_worker_claim_evidence_and_original_drain(
                 "readiness": readiness,
                 "priority": priority,
             }
-            if external:
-                with pytest.raises(HTTPException, match="self-contained"):
-                    await board.dispatch_challenge(
-                        tid, lead_actor, {**ready, "readiness": "no_external_materials"}
-                    )
-            result = await board.dispatch_challenge(tid, lead_actor, ready)
-            assert await board.dispatch_challenge(tid, lead_actor, ready) == result
+            if n == 0:
+                user = {
+                    "Authorization": "Bearer " + issue_user_token(app.state.settings, "operator")
+                }
+                endpoint = f"/api/tasks/{tid}/ctf/challenges/{challenge['id']}/dispatch"
+                response = await http.post(
+                    endpoint, headers=user, json={**ready, "worker_id": "member-1"}
+                )
+                assert response.status_code == 200, response.text
+                result = response.json()
+                repeated = await http.post(
+                    endpoint, headers=user, json={**ready, "worker_id": "member-1"}
+                )
+                assert repeated.json() == result
+                fees = await http.get(f"/api/tasks/{tid}/pi-fees", headers=user)
+                assert fees.status_code == 200, fees.text
+            else:
+                result = await board.dispatch_challenge(tid, lead_actor, ready)
+                assert await board.dispatch_challenge(tid, lead_actor, ready) == result
             dispatches.append(result["challenge"])
         path = f"/api/tasks/{tid}/ctf/runtime/runner-bootstrap/actions"
 
@@ -828,6 +840,7 @@ async def test_native_worker_claim_evidence_and_original_drain(
             changed, failed = await edit(args, "scope")
             assert not failed, changed
             assert changed["dispatch_status"] == "draining"
+            assert changed["challenge"]["dispatch_status"] == "draining"
             assert (
                 changed["challenge"]["scope_revision"] == 2
                 and changed["challenge"]["owner_id"] == "member-1"

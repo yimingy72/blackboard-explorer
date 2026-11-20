@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, SecretStr, model_validator
 
+from .ctf_collaboration import COLLABORATION_REVISION
 from .models import ContractModel, Event, Fact, Intent, KnowledgeAssignment, PostFactRequest
 from .runner_vpn import NETWORK_USE_DEFAULT, VPN_TOOLS
 
@@ -39,19 +40,22 @@ UPDATE_CHALLENGE_TOOL = "board_update_challenge"
 
 def native_dispatch_enabled(task) -> bool:
     manifest = (task.get("ctf_control") or {}).get("business_tools", {})
-    return manifest.get("revision") in {2, 3} and DISPATCH_TOOL in manifest.get("roles", {}).get(
-        "lead", []
+    return manifest.get("revision") == COLLABORATION_REVISION or (
+        manifest.get("revision") in {2, 3}
+        and DISPATCH_TOOL in manifest.get("roles", {}).get("lead", [])
     )
 
 
 def native_scope_updates_enabled(task) -> bool:
     manifest = (task.get("ctf_control") or {}).get("business_tools", {})
-    return manifest.get("revision") == 3 and UPDATE_CHALLENGE_TOOL in manifest.get("roles", {}).get(
-        "lead", []
+    return manifest.get("revision") in {3, COLLABORATION_REVISION} and (
+        UPDATE_CHALLENGE_TOOL in manifest.get("roles", {}).get("lead", [])
     )
 
 
-def business_manifest(*, automatic=False, vpn=False, task_network=False) -> dict:
+def business_manifest(
+    *, automatic=False, vpn=False, task_network=False, collaboration=False
+) -> dict:
     common = [
         "board_read",
         "board_search",
@@ -62,26 +66,56 @@ def business_manifest(*, automatic=False, vpn=False, task_network=False) -> dict
     ]
     return {
         "contract": BOARD_CONTRACT,
-        "revision": 3 if automatic else 1,
+        "revision": COLLABORATION_REVISION if collaboration else 3 if automatic else 1,
         "transport": "/api/tasks/{task_id}/ctf/knowledge/tools/{operation}",
         "roles": {
             "lead": [
                 *common,
                 "board_publish_announcement",
                 "board_create_challenge",
-                *([DISPATCH_TOOL, UPDATE_CHALLENGE_TOOL] if automatic else []),
+                *(
+                    [UPDATE_CHALLENGE_TOOL, "board_post_fact", "board_review_challenge"]
+                    if collaboration
+                    else [DISPATCH_TOOL, UPDATE_CHALLENGE_TOOL]
+                    if automatic
+                    else []
+                ),
                 *(VPN_TOOLS if vpn else ()),
                 *([NETWORK_USE_DEFAULT] if task_network else []),
                 "board_submit_flag",
                 "board_finish_task",
             ],
-            "teammate": [*common, "board_post_fact", "board_post_intent", "board_record_flag"],
+            "teammate": [
+                *common,
+                "board_post_fact",
+                "board_post_intent",
+                "board_record_flag",
+                *(
+                    [
+                        "board_available_work",
+                        "board_claim_challenge",
+                        "board_request_assistance",
+                        "board_claim_intent",
+                        "board_submit_review",
+                    ]
+                    if collaboration
+                    else []
+                ),
+            ],
         },
     }
 
 
 CHALLENGE_KNOWLEDGE_EVENTS = frozenset(
-    {"fact.posted", "intent.posted", "intent.closed", "fact.disputed", "fact.undisputed"}
+    {
+        "fact.posted",
+        "intent.posted",
+        "intent.claimed",
+        "intent.released",
+        "intent.closed",
+        "fact.disputed",
+        "fact.undisputed",
+    }
 )
 
 
@@ -176,13 +210,16 @@ class BoardDispatchChallengeRequest(ContractModel):
     challenge_id: UUID
     expected_revision: int = Field(ge=1)
     action: Literal["ready", "withdraw"]
-    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    readiness: Literal["ready", "no_external_materials", "materials_pending"] | None = None
     priority: int = Field(default=1, ge=0, le=3, strict=True)
+    worker_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def explicit_readiness(self):
-        if (self.action == "ready") != (self.readiness is not None):
-            raise ValueError("Ready requires an explicit material state; withdraw does not")
+        if self.action == "ready" and self.readiness is None:
+            self.readiness = "ready"
+        if self.action == "withdraw" and self.readiness is not None:
+            raise ValueError("Withdraw does not accept a material state")
         return self
 
 
@@ -200,7 +237,7 @@ class BoardChallengeUpdateRequest(ContractModel):
     title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=16000)
     requirements: str | None = Field(default=None, max_length=16000)
-    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    readiness: Literal["ready", "no_external_materials", "materials_pending"] | None = None
     priority: int = Field(default=1, ge=0, le=3, strict=True)
 
     @model_validator(mode="after")

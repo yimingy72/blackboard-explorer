@@ -60,6 +60,7 @@
       "anyOf": [
         {
           "enum": [
+            "ready",
             "no_external_materials",
             "materials_pending"
           ],

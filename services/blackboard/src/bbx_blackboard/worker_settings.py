@@ -15,12 +15,6 @@ from bbx_contracts.models import (
     WorkerTools,
 )
 from bbx_contracts.progress import PROGRESS_REQUIRED_TOOLS, progress_tool_schemas
-from bbx_contracts.runner_vpn import (
-    NETWORK_USE_DEFAULT,
-    VPN_CONFIGURE,
-    VPN_DISCONNECT,
-    VPN_DYNAMIC_PROFILE,
-)
 from bbx_contracts.sandbox_tools import SANDBOX_TOOLS, sandbox_schemas
 from fastapi import APIRouter, HTTPException, Request
 from jinja2 import TemplateSyntaxError, meta
@@ -163,8 +157,7 @@ async def update_runtime(request: Request, body: RuntimeUpdate) -> dict[str, Any
 def ctf_manifest(publication: NativeCtfPublication) -> dict:
     return business_manifest(
         automatic=True,
-        vpn=publication.vpn_profile is not None,
-        task_network=publication.vpn_profile == VPN_DYNAMIC_PROFILE,
+        collaboration=bool(publication.collaboration_profile),
     )["roles"]
 
 
@@ -236,8 +229,8 @@ def tool_catalog(publication: NativeCtfPublication | None) -> dict:
         "external_mcp": False,
     }
     if publication is not None:
-        ctf = ctf_schemas(dynamic_vpn=publication.vpn_profile == VPN_DYNAMIC_PROFILE)
-        writes = MUTATIONS | {VPN_CONFIGURE, VPN_DISCONNECT, NETWORK_USE_DEFAULT}
+        ctf = ctf_schemas(collaboration=bool(publication.collaboration_profile))
+        writes = MUTATIONS
         for role, names in ctf_manifest(publication).items():
             execution = (
                 role == "teammate"
@@ -276,5 +269,4 @@ async def ctf_workers(request: Request) -> dict[str, Any]:
         "revision": row["version"],
         "prompt_templates": profile.prompt_templates.model_dump(mode="json"),
         "business_tools": ctf_manifest(publication),
-        "task_network": publication.vpn_profile == VPN_DYNAMIC_PROFILE,
     }

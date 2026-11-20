@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "fact_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fact Refs",
+      "type": "array"
+    },
+    "candidate_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Candidate Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "challenge_id",
+    "expected_revision",
+    "summary"
+  ],
+  "title": "SubmitChallengeReview",
+  "type": "object"
+}

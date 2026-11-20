@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import Field
 
+from .ctf_collaboration import FileFactRequest
 from .models import ContractModel
 from .runner import ToolInvocation
 
@@ -37,7 +38,7 @@ def sandbox_schemas():
 
     command_id = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
     path = {"type": "string", "minLength": 1, "maxLength": 4096}
-    return {
+    schemas = {
         "exec_command": object_schema(
             {
                 "command": {"type": "string", "minLength": 1, "maxLength": 65536},
@@ -70,6 +71,13 @@ def sandbox_schemas():
             ["path", "content"],
         ),
     }
+    fact = FileFactRequest.model_json_schema()
+    schemas["read_file"]["$defs"] = fact.pop("$defs", {})
+    schemas["read_file"]["properties"]["fact"] = {
+        **fact,
+        "description": "Peer Worker: record a fact with this immutable file snapshot.",
+    }
+    return schemas
 
 
 class SandboxCommandSummary(ContractModel):

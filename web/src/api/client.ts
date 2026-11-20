@@ -38,7 +38,7 @@ export type SettingsTool = {
 };
 export type SettingsToolCatalog = { roles: Partial<Record<SettingsRole, { tools: SettingsTool[]; external_mcp: boolean }>> };
 export type PublishedCtfSettings = { published: false } | {
-  published: true; revision: number; task_network: boolean;
+  published: true; revision: number;
   prompt_templates: Record<'lead' | 'teammate', string>;
   business_tools: Record<'lead' | 'teammate', string[]>;
 };
@@ -224,14 +224,6 @@ export const api = {
   createInputGroup: () => request<TaskInputGroup>('/task-input-groups', { method: 'POST' }),
   getInputGroup: (id: string) => request<TaskInputGroup>(`/task-input-groups/${encodeURIComponent(id)}`),
   uploadInput: (group: string, file: File, signal?: AbortSignal) => request<InitialAttachment>(`/task-input-groups/${encodeURIComponent(group)}/files?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' }, signal }),
-  uploadPrivateVpnSource: (group: string, file: File, signal?: AbortSignal) => request<{ source_id: string }>(
-    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source`,
-    { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file, signal },
-  ),
-  deletePrivateVpnSource: (group: string, sourceId?: string) => request<{ deleted: boolean }>(
-    `/task-input-groups/${encodeURIComponent(group)}/private-vpn-source${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`,
-    { method: 'DELETE' },
-  ),
   deleteInput: (group: string, id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(group)}/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteInputGroup: (id: string) => request<{ deleted: boolean }>(`/task-input-groups/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }),
   piModels: () => request<PiModelDirectory>('/platform/pi-models'),

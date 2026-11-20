@@ -338,6 +338,17 @@
           ],
           "default": null
         },
+        "claim_assignment_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KnowledgeAssignment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "statement": {
           "description": "要调查的方向",
           "minLength": 1,

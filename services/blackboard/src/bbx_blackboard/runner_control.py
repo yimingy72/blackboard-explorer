@@ -11,6 +11,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from bbx_contracts.board_context import DIGEST_TYPES, VERDICT_TYPES, render_events
 from bbx_contracts.challenge_board import BOARD_CONTRACT, business_contract, native_dispatch_enabled
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.runner import (
     PROTOCOL,
     CommandReceipt,
@@ -79,7 +80,8 @@ async def row(conn, table, tid, oid=None):
 
 
 def decode(model, raw):
-    if len(raw) > 2 * 1024 * 1024:
+    limit = 17 * 1024 * 1024 if model in {JournalConfirmation, CommandReceipt} else 2 * 1024 * 1024
+    if len(raw) > limit:
         raise HTTPException(413, "Runner metadata exceeds its bound")
     try:
         text = raw.decode("utf-8")
@@ -215,6 +217,18 @@ class RunnerControl:
             or turn["purpose"] != business["purpose"]
         ):
             raise HTTPException(403, "Current business turn mapping is unavailable")
+        if business.get("worker_pool"):
+            task = await row(conn, s.tasks, tid)
+            session = task["ctf_control"].get("native_worker_sessions", {}).get(member["id"], {})
+            if (
+                not collaboration_enabled(task)
+                or session.get("binding_id") != value["id"]
+                or session.get("epoch") != value["owner_epoch"]
+                or session.get("turn_id") != turn["id"]
+                or session.get("generation") != member["generation"]
+            ):
+                raise HTTPException(403, "Original Worker pool session changed")
+            return member, turn
         if child_id := business.get("native_child_id"):
             task = await row(conn, s.tasks, tid)
             active = task["ctf_control"].get("native_helpers_active", {}).get(member["id"], {})
@@ -540,13 +554,23 @@ class RunnerControl:
         helper=None,
         helper_foreground=False,
         helper_background=False,
+        pool_worker=False,
     ):
         body, _, sha = decode(RunnerBindingRegistration, raw)
         task = await self._task(conn, tid, live=True)
         owner = await self._current_owner(conn, tid)
         if task["mode"] == "blackboard" or body.board_run is not None:
             raise HTTPException(409, "Ordinary Runner binding requires the Blackboard coordinator")
-        if not helper and body.agent_id != "lead" and native_dispatch_enabled(task):
+        if pool_worker and (
+            not collaboration_enabled(task) or helper or helper_foreground or helper_background
+        ):
+            raise HTTPException(403, "Peer Workers require the collaboration contract")
+        if (
+            not helper
+            and not pool_worker
+            and body.agent_id != "lead"
+            and native_dispatch_enabled(task)
+        ):
             current = task["ctf_control"].get("native_worker_active", {}).get(body.agent_id)
             if not assignment or current != assignment:
                 raise HTTPException(403, "Native Worker binding requires its original Assignment")
@@ -573,7 +597,9 @@ class RunnerControl:
             raise HTTPException(403, "Business turn mapping is not ready")
         if member["role"] not in {"lead", "teammate"}:
             raise HTTPException(403, "Runner role is not ready")
-        if (member["role"] == "teammate") != (body.challenge_id is not None):
+        if pool_worker and (member["role"] != "teammate" or body.challenge_id is not None):
+            raise HTTPException(403, "Worker pool sessions use a stable member identity")
+        if not pool_worker and (member["role"] == "teammate") != (body.challenge_id is not None):
             raise HTTPException(403, "Worker requires its current challenge Assignment")
         commands = s.sandbox_command_records
         unsealed = select(commands.c.id).where(
@@ -708,6 +734,7 @@ class RunnerControl:
             {
                 "binding": binding,
                 **fields,
+                **({"worker_pool": True} if pool_worker else {}),
                 **({"helper_foreground": True} if helper_foreground else {}),
                 **({"helper_background": True} if helper_background else {}),
                 **(
@@ -752,6 +779,7 @@ class RunnerControl:
                 "purpose": "execution",
                 "challenge_id": cid,
                 "scope_revision": scope_revision,
+                **({"worker_pool": True} if pool_worker else {}),
                 **({"native_assignment_id": assignment["assignment_ref"]} if assignment else {}),
                 **(
                     {
@@ -938,6 +966,19 @@ class RunnerControl:
                 task_lead = (
                     binding["binding"]["agent_id"] == "lead" and business["challenge_id"] is None
                 )
+                pool_worker = bool(business.get("worker_pool"))
+                current = None
+                if pool_worker:
+                    from bbx_blackboard.native_worker_pool import work_context
+
+                    current = work_context(
+                        await row(conn, s.tasks, tid), binding["binding"]["agent_id"]
+                    )
+                    if (
+                        payload.worker_context is None
+                        or payload.worker_context.model_dump(mode="json") != current
+                    ):
+                        raise HTTPException(409, "Worker input work context changed")
                 if (
                     message["recipient_id"] != binding["binding"]["agent_id"]
                     or message["purpose"] != business["purpose"]
@@ -948,6 +989,7 @@ class RunnerControl:
                     or message["claim_generation"] not in {None, business["generation"]}
                     or (
                         not task_lead
+                        and not pool_worker
                         and message["challenge_id"] not in {None, business["challenge_id"]}
                     )
                 ):
@@ -959,6 +1001,7 @@ class RunnerControl:
                     "claim_turn_id": business["turn_id"],
                     "claim_generation": business["generation"],
                     "claim_token": message["claim_token"] or str(uuid4()),
+                    **({"worker_context": current} if pool_worker else {}),
                 }
                 await conn.execute(
                     update(s.ctf_messages)
@@ -972,6 +1015,15 @@ class RunnerControl:
                         },
                     )
                 )
+                if pool_worker:
+                    await conn.execute(
+                        update(s.runner_bindings)
+                        .where(
+                            s.runner_bindings.c.task_id == tid,
+                            s.runner_bindings.c.id == binding["id"],
+                        )
+                        .values(business={**business, "worker_idle": None})
+                    )
         owner["next_seq"] += 1
         await conn.execute(
             update(s.runner_owners)
@@ -1587,6 +1639,13 @@ class RunnerControl:
                 ]
                 written = await self.repo.append(conn, tid, events)
                 await self.repo.notify(tid, written[-1]["version"], connection=conn)
+            if value["business"].get("worker_pool"):
+                from bbx_blackboard.ctf import CtfService
+                from bbx_blackboard.native_worker_pool import NativeWorkerPool
+
+                pool = NativeWorkerPool(CtfService(self.repo.engine), self)
+                await pool.record_board_cursor(conn, tid, value, body.entries)
+                await pool.record_idle(conn, tid, value, body)
             return await self._receipt(
                 conn, tid, owner["epoch"], "journal", body.request_id, text, sha, receipt, bid
             )
@@ -2052,6 +2111,51 @@ class RunnerControl:
             )
             if wake:
                 await self.native_worker_cleanup_changed(conn, tid, command["binding_id"])
+            if (
+                value
+                and (value["business"].get("worker_pool") or value["binding"]["agent_id"] == "lead")
+                and command["kind"] == "prepare"
+                and body.status == "prepared"
+            ):
+                if (
+                    value["business"].get("worker_pool")
+                    and body.sdk_idle
+                    and body.cursor is not None
+                ):
+                    from bbx_blackboard.native_worker_pool import work_context
+
+                    current = await row(conn, s.runner_bindings, tid, value["id"])
+                    context = work_context(
+                        await row(conn, s.tasks, tid), value["binding"]["agent_id"]
+                    )
+                    await conn.execute(
+                        update(s.runner_bindings)
+                        .where(
+                            s.runner_bindings.c.task_id == tid,
+                            s.runner_bindings.c.id == value["id"],
+                        )
+                        .values(
+                            business={
+                                **current["business"],
+                                "worker_idle": {"context": context, "seq": body.cursor.seq},
+                                "last_worker_idle_seq": body.cursor.seq,
+                            }
+                        )
+                    )
+                events = await self.repo.append(
+                    conn,
+                    tid,
+                    [
+                        {
+                            "type": "ctf.native_worker.ready",
+                            "actor": "system",
+                            "addressed_to": None,
+                            "object_id": value["id"],
+                            "payload": {"binding_id": value["id"]},
+                        }
+                    ],
+                )
+                await self.repo.notify(tid, events[-1]["version"], connection=conn)
             return result
 
     async def journal_state(self, tid, bid, identity):
@@ -2085,7 +2189,9 @@ class RunnerControl:
             )
             return {"revision": body.expected_revision + 1}
 
-    async def prompt(self, tid, bid, identity, known_revision, known_board_version=None):
+    async def prompt(
+        self, tid, bid, identity, known_revision, known_board_version=None, known_work_revision=None
+    ):
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
             owner = await self._identity(conn, tid, identity, live=True)
@@ -2170,7 +2276,27 @@ class RunnerControl:
                         "content": content,
                         "source_digest": hashlib.sha256(content.encode()).hexdigest(),
                     }
-            if known_revision == value["prompt_revision"] and context is None:
+            worker_context = None
+            if value["business"].get("worker_pool"):
+                from bbx_blackboard.native_worker_pool import work_context
+                from bbx_blackboard.worker_board_updates import prompt_context
+
+                task = await row(conn, s.tasks, tid)
+                worker_context = work_context(task, value["binding"]["agent_id"])
+                context = await prompt_context(
+                    self.repo,
+                    conn,
+                    tid,
+                    task,
+                    value["binding"]["agent_id"],
+                    known_board_version or 0,
+                    known_work_revision or 0,
+                )
+            if (
+                known_revision == value["prompt_revision"]
+                and context is None
+                and worker_context is None
+            ):
                 return None
             result = {
                 "protocol": PROTOCOL,
@@ -2181,4 +2307,6 @@ class RunnerControl:
             }
             if context is not None:
                 result["board_context"] = context
+            if worker_context is not None:
+                result["worker_context"] = worker_context
             return result

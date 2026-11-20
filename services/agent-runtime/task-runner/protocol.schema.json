@@ -527,6 +527,17 @@
           ],
           "title": "Mode",
           "type": "string"
+        },
+        "worker_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -574,6 +585,29 @@
           },
           "title": "Applied Inputs",
           "type": "array"
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entries"
+        },
+        "worker_idle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerIdleProof"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -811,6 +845,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/BoardContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "worker_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerContext"
             },
             {
               "type": "null"
@@ -1247,6 +1292,11 @@
     "SessionSpec": {
       "additionalProperties": false,
       "properties": {
+        "worker_pool": {
+          "default": false,
+          "title": "Worker Pool",
+          "type": "boolean"
+        },
         "binding": {
           "$ref": "#/$defs/RunnerBinding"
         },
@@ -1407,6 +1457,19 @@
         },
         "journal": {
           "$ref": "#/$defs/JournalCursor"
+        },
+        "source_model_call_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Model Call Id"
         }
       },
       "required": [
@@ -1581,6 +1644,71 @@
         "invocation"
       ],
       "title": "ToolUnknownSubmission",
+      "type": "object"
+    },
+    "WorkerContext": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "assignment_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assignment Ref"
+        },
+        "challenge_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Challenge Id"
+        }
+      },
+      "required": [
+        "revision",
+        "assignment_ref",
+        "challenge_id"
+      ],
+      "title": "WorkerContext",
+      "type": "object"
+    },
+    "WorkerIdleProof": {
+      "additionalProperties": false,
+      "properties": {
+        "entry_id": {
+          "minLength": 1,
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "context": {
+          "$ref": "#/$defs/WorkerContext"
+        }
+      },
+      "required": [
+        "entry_id",
+        "seq",
+        "context"
+      ],
+      "title": "WorkerIdleProof",
       "type": "object"
     }
   },

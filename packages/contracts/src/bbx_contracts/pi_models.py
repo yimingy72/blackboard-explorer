@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 
+from .ctf_collaboration import WorkerContext
 from .models import ContractModel
 from .runner import Digest, JournalCursor, RunnerBinding, RunnerFence, RunnerId
 
@@ -179,6 +180,9 @@ class PiCallNativeProof(ContractModel):
     journal: JournalCursor
     profile_revision: Revision
     prompt_revision: Revision
+    worker_context: WorkerContext | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class PiCallPlaygroundProof(ContractModel):

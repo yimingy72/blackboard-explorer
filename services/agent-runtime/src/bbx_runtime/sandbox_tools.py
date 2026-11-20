@@ -251,7 +251,7 @@ async def dispatch(
         "execution_status": {"execution_id"},
         "execution_output": {"execution_id", "cursor"},
         "interrupt_execution": {"execution_id"},
-        "read_file": {"path", "offset", "limit"},
+        "read_file": {"path", "offset", "limit", "fact"},
         "write_file": {"path", "content", "mode"},
     }
     if tool not in allowed or set(args) - allowed[tool]:

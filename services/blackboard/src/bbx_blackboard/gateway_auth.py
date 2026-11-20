@@ -14,10 +14,12 @@ from bbx_contracts.runner import RunnerFence
 from bbx_contracts.runner_bootstrap import native_resume_pending
 from bbx_contracts.runner_control import BoardRunIdentity
 from fastapi import HTTPException, Request
+from sqlalchemy import select
 
 from bbx_blackboard.board_runner_scope import EXPLORATION_CONTRACT, require_board_run
 from bbx_blackboard.runner_auth import RunnerIdentity
 from bbx_blackboard.runner_control import RunnerControl
+from bbx_blackboard.store import schema as s
 
 DIRECT_MCP = {
     "business": ("business-mcp", "bbx-runner-business-v2"),
@@ -211,6 +213,19 @@ async def validate_runtime_context(conn, tid, context):
     task = await control._task(conn, tid, live=True)
     if (task.get("ctf_control") or {}).get("failure_hold") or native_resume_pending(task):
         raise HTTPException(409, "Task admission is paused")
+    if binding["business"].get("worker_pool") and context.invocation_id:
+        from bbx_blackboard.native_worker_pool import work_context
+
+        original = await conn.scalar(
+            select(s.runner_calls.c.data).where(
+                s.runner_calls.c.task_id == tid,
+                s.runner_calls.c.id == "tool:" + context.invocation_id,
+            )
+        )
+        if not original or original["business"].get("worker_context") != work_context(
+            task, binding["binding"]["agent_id"]
+        ):
+            raise HTTPException(409, "Worker business write belongs to an earlier work context")
     return binding
 
 

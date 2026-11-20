@@ -845,7 +845,15 @@ def create_app(
                         and not suffix.startswith("/ctf/knowledge/")
                     ):
                         if identity.kind == "agent" or (
-                            request.method != "GET" and not suffix.startswith("/ctf/runtime/")
+                            request.method != "GET"
+                            and not suffix.startswith("/ctf/runtime/")
+                            and not (
+                                identity.kind == "user"
+                                and request.method == "POST"
+                                and re.fullmatch(
+                                    r"/ctf/challenges/[0-9a-fA-F-]{36}/dispatch", suffix
+                                )
+                            )
                         ):
                             raise HTTPException(
                                 403, "Legacy business entry is unavailable for this Task contract"
@@ -1146,7 +1154,6 @@ def create_app(
                 request_id=body.input_group_id,
                 model_alias=selected.id,
                 budget_currency="USD",
-                traffic_profile="binding-pcap-v1",
             )
             launch_digest = runner_payload_digest(runner_json_text(launch.model_dump(mode="json")))
             frozen_publication = publication.frozen()
@@ -1169,11 +1176,6 @@ def create_app(
 
             native_queue = queue_native
 
-        if isinstance(body, CtfTaskCreate) and body.native_vpn_source_id is not None:
-            from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
-
-            if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
-                raise HTTPException(422, "Private VPN source is not supported by this Task")
         if isinstance(body, CtfTaskCreate):
             assert publication is not None and selected is not None
             profile = await resolve_ctf_creation(request, publication)
@@ -1215,7 +1217,6 @@ def create_app(
                     "profile_version",
                     "reasoning_effort",
                     "native_environment",
-                    "native_vpn_source_id",
                     "native_mcp",
                 }
             )
@@ -1232,8 +1233,9 @@ def create_app(
                         "native_inputs_profile": publication.inputs_profile
                         if publication
                         else None,
-                        "native_vpn_profile": publication.vpn_profile if publication else None,
-                        "native_vpn_source_id": body.native_vpn_source_id,
+                        "native_collaboration": bool(
+                            publication and publication.collaboration_profile
+                        ),
                     }
                     if native_queue is not None
                     else {}
@@ -2053,6 +2055,7 @@ def create_app(
         agent_id: str,
         journal: bool = False,
         run_number: int | None = Query(default=None, ge=1),
+        after_revision: int | None = Query(default=None, ge=0),
     ) -> dict[str, Any]:
         if journal:
             require_user_or_service(request)
@@ -2071,7 +2074,13 @@ def create_app(
                 raise HTTPException(403, "Private session access denied")
         else:
             require_service(request)
-        return await _conversations(request).get_session(task_id, agent_id)
+        return await _conversations(request).get_session(
+            task_id,
+            agent_id,
+            after_revision,
+            native=getattr(request.state, "task_mode", "blackboard") == "ctf"
+            and principal(request).kind == "user",
+        )
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session/journal", tags=["conversations"])
     async def download_agent_journal(

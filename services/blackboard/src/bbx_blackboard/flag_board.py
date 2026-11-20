@@ -23,6 +23,7 @@ from bbx_contracts.challenge_board import (
     business_contract,
     native_scope_updates_enabled,
 )
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.models import KnowledgeAssignment
 from bbx_contracts.runner_bootstrap import (
     native_pause_state,
@@ -148,14 +149,27 @@ class FlagBoardService(ChallengeBoardService):
             task, challenge, snapshot = await self._authority(conn, tid, cid, identity, write=True)
             self._v1(task)
             member = await row(conn, s.ctf_members, tid, aid)
-            if challenge.get("owner_id") != aid or member["role"] != "teammate":
+            if member["role"] != "teammate" or (
+                snapshot is None
+                if collaboration_enabled(task)
+                else challenge.get("owner_id") != aid
+            ):
                 raise HTTPException(403, "Only the current Worker Assignment may record a Flag")
             if old := await prior(conn, tid, aid, body.request_id, hashed):
                 return old
-            self.ctf._revision(challenge, body.expected_revision)
+            if collaboration_enabled(task):
+                from bbx_blackboard.collaboration_review import require_result_revision
+
+                require_result_revision(challenge, body.expected_revision)
+            else:
+                self.ctf._revision(challenge, body.expected_revision)
             if challenge["work_status"] in {"completed", "cancelled"}:
                 raise HTTPException(409, "Challenge is not accepting candidates")
-            if native_scope_updates_enabled(task) and body.evidence_refs:
+            if (
+                native_scope_updates_enabled(task)
+                and not collaboration_enabled(task)
+                and body.evidence_refs
+            ):
                 raise HTTPException(403, "Native scope Flag evidence must reference current facts")
             refs = await self.ctf._artifact_refs(conn, tid, body.evidence_refs, cid)
             fact_query = select(s.facts.c.id).where(
@@ -183,6 +197,20 @@ class FlagBoardService(ChallengeBoardService):
                 )
             ).scalar_one_or_none()
             if existing is not None:
+                if collaboration_enabled(task):
+                    from bbx_blackboard.collaboration_review import CollaborationReview
+
+                    await CollaborationReview(self.ctf).mark_review(
+                        conn,
+                        tid,
+                        task,
+                        challenge,
+                        aid,
+                        body.request_id,
+                        "Flag candidate submitted for verification",
+                        body.fact_refs,
+                        [existing["id"]],
+                    )
                 return await emit(
                     self.repo,
                     conn,
@@ -221,6 +249,21 @@ class FlagBoardService(ChallengeBoardService):
             saved = await emit(
                 self.repo, conn, tid, aid, "board.flag.candidate", body.request_id, hashed, public
             )
+            if collaboration_enabled(task):
+                from bbx_blackboard.collaboration_review import CollaborationReview
+
+                await CollaborationReview(self.ctf).mark_review(
+                    conn,
+                    tid,
+                    task,
+                    challenge,
+                    aid,
+                    body.request_id,
+                    "Flag candidate submitted for verification",
+                    body.fact_refs,
+                    [candidate_id],
+                )
+                return saved
             await self.ctf._message(
                 conn,
                 tid,
@@ -925,6 +968,7 @@ class FlagBoardService(ChallengeBoardService):
             change = None
             if (
                 updated["progress_applied"]
+                and not collaboration_enabled(task)
                 and receipt.result.status in {"accepted", "duplicate"}
                 and receipt.result.total_count is not None
                 and receipt.result.correct_count == receipt.result.total_count

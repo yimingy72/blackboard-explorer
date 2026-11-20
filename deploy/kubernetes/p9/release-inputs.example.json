@@ -46,46 +46,46 @@
     "runner_image": "<accepted-digest-pinned-Runner-image>",
     "sandbox_host_image": "<accepted-digest-pinned-Sandbox-host-image>",
     "sandbox_image": "<accepted-digest-pinned-base-tool-image>",
-    "traffic_sandbox_image": "<accepted-digest-pinned-mode-capture-image>",
     "sandbox_server_url": "http://bbx-p9-sandbox-server.bbx-local-native.svc.cluster.local",
     "sandbox_host_execd_origin": "<accepted-OpenSandbox-ingress-origin>",
-    "sandbox_network": {
-      "ipv4": "<approved-task-bridge-address>",
-      "namespace": "<approved-network-namespace>",
-      "network_identity": "<approved-network-identity>"
-    },
-    "traffic_target_namespace": "<accepted-traffic-target-namespace>",
-    "traffic_targets": [],
     "journal_writer_lock": true
   },
   "board_runtime_additions": {
     "board_network": {
       "mode": "default",
       "dns_ipv4": "<approved-resolver-ipv4>",
-      "allow_cidrs": ["<approved-solver-egress-cidr>"],
-      "deny_cidrs": ["<all-node-pod-service-and-control-cidrs>"]
+      "allow_cidrs": [
+        "<approved-solver-egress-cidr>"
+      ],
+      "deny_cidrs": [
+        "<all-node-pod-service-and-control-cidrs>"
+      ]
+    },
+    "traffic_sandbox_image": "<accepted-digest-pinned-mode-capture-image>",
+    "traffic_target_namespace": "<accepted-traffic-target-namespace>",
+    "traffic_targets": [],
+    "sandbox_network": {
+      "ipv4": "<approved-task-bridge-address>",
+      "namespace": "<approved-network-namespace>",
+      "network_identity": "<approved-network-identity>"
     }
   },
   "ctf_runtime_additions": {
-    "vpn": {
-      "profile": "openvpn-task-ipv4-tcp-v1",
-      "id": "<verified-vpn-deployment-id>",
-      "label": "<verified-vpn-label>",
-      "egress_image": "<admitted-vpn-egress-image-digest>",
-      "sandbox_image": "<admitted-vpn-sandbox-image-digest>",
-      "tun_resource": "<existing-TUN-device-plugin-resource>",
-      "source_cidrs": ["<approved-profile-source-cidr>"],
-      "source_origins": ["<approved-profile-source-origin>"],
-      "peer_cidrs": ["<approved-vpn-peer-cidr>"],
-      "target_cidrs": ["<approved-vpn-target-cidr>"],
-      "default_cidrs": ["<approved-default-egress-cidr>"],
-      "deny_cidrs": ["<all-node-pod-service-and-control-cidrs>"]
+    "execution_profile": "ctf-direct-v1",
+    "sandbox_image": "<accepted-ctf-direct-tool-image-digest>",
+    "sandbox_network": {
+      "namespace": "ctf-shared",
+      "network_identity": "ctf-shared",
+      "ipv4": "0.0.0.0"
     }
   },
   "board.json": {
     "revision": "<verified-positive-integer>",
     "runtime_resource_config": "<exact-board-runtime.json-object>",
-    "acceptance": {"file": "board-acceptance.json", "sha256": "<actual-evidence-file-sha256>"}
+    "acceptance": {
+      "file": "board-acceptance.json",
+      "sha256": "<actual-evidence-file-sha256>"
+    }
   },
   "ctf.json": {
     "id": "<verified-publication-id>",
@@ -95,8 +95,13 @@
     "ctf_profile_version": "<existing-published-CTF-profile-version>",
     "budget_currency": "USD",
     "runtime_resource_config": "<exact-ctf-runtime.json-object>",
-    "acceptance": {"file": "ctf-acceptance.json", "sha256": "<actual-evidence-file-sha256>"},
-    "vpn_profile": "openvpn-task-ipv4-tcp-v1"
+    "acceptance": {
+      "file": "ctf-acceptance.json",
+      "sha256": "<actual-evidence-file-sha256>"
+    },
+    "execution_profile": "ctf-direct-v1",
+    "collaboration_profile": "peer-workers-v1",
+    "inputs_profile": "shared-inputs-v1"
   },
   "acceptance_file_shapes": {
     "board-acceptance.json": {
@@ -114,26 +119,17 @@
       "no_network_fallback": "<true-only-after-observed>"
     },
     "ctf-acceptance.json": {
-      "schema_version": 3,
       "pi_model_protocol": "pi-messages-v1",
       "mcp_transport": "direct-v2",
       "runner_image": "<accepted-Runner-image-digest>",
       "sandbox_host_image": "<accepted-Sandbox-host-image-digest>",
       "runtime_artifact_sha256": "<accepted-Runtime-OCI-manifest-digest-hex-without-prefix>",
       "runtime_config_digest": "<canonical-ctf-runtime-config-digest>",
-      "base_source": "<original-or-reconstructed-as-verified>",
-      "base_tool_image": "<accepted-base-tool-image-digest>",
-      "recipe_sha256": "<build-recipe-digest-if-reconstructed>",
-      "traffic_sandbox_image": "<accepted-traffic-image-digest>",
       "public_create_and_archive": "<true-only-after-observed>",
       "inputs_profile": "<optional-shared-input-profile>",
-      "inputs_host_image": "<optional-shared-input-host-image>",
-      "vpn_profile": "openvpn-task-ipv4-tcp-v1",
-      "vpn_egress_image": "<accepted-vpn-egress-image-digest>",
-      "vpn_sandbox_image": "<accepted-vpn-sandbox-image-digest>",
-      "vpn_host_image": "<accepted-vpn-host-image-digest>",
-      "vpn_roundtrip_and_disconnect": "<true-only-after-observed>",
-      "task_network_default_and_vpn": "<true-only-after-observed>"
+      "schema_version": 4,
+      "execution_profile": "ctf-direct-v1",
+      "sandbox_image": "<accepted-ctf-direct-tool-image-digest>"
     }
   },
   "other_private_files": [

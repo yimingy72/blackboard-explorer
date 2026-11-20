@@ -27,34 +27,6 @@
       },
       "title": "NativeSharedInputLimits",
       "type": "object"
-    },
-    "NativeVpnCapability": {
-      "additionalProperties": false,
-      "properties": {
-        "profile": {
-          "enum": [
-            "openvpn-ipv4-tcp-v1",
-            "openvpn-task-ipv4-tcp-v1"
-          ],
-          "title": "Profile",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        }
-      },
-      "required": [
-        "profile",
-        "id",
-        "label"
-      ],
-      "title": "NativeVpnCapability",
-      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -74,6 +46,11 @@
       "title": "Publication Stamp",
       "type": "string"
     },
+    "external_mcp": {
+      "default": false,
+      "title": "External Mcp",
+      "type": "boolean"
+    },
     "label": {
       "maxLength": 100,
       "minLength": 1,
@@ -84,17 +61,6 @@
       "anyOf": [
         {
           "$ref": "#/$defs/NativeSharedInputLimits"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "vpn": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/NativeVpnCapability"
         },
         {
           "type": "null"

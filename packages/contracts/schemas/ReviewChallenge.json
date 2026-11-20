@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "review_revision": {
+      "minimum": 1,
+      "title": "Review Revision",
+      "type": "integer"
+    },
+    "decision": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "fact_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fact Refs",
+      "type": "array"
+    },
+    "candidate_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Candidate Ids",
+      "type": "array"
+    },
+    "submission_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Submission Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "challenge_id",
+    "expected_revision",
+    "review_revision",
+    "decision",
+    "reason"
+  ],
+  "title": "ReviewChallenge",
+  "type": "object"
+}

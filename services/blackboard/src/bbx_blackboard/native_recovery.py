@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_contracts.runner_bootstrap import (
     NativeResumeRequest,
@@ -97,6 +98,14 @@ async def capture(repo, conn, tid, record, task, reason, instant):
     epoch = data.get("owner_epoch")
     if data.get("recovery") or not data.get("credentials_issued") or not epoch:
         return data
+    if collaboration_enabled(task):
+        from bbx_blackboard.ctf import CtfService
+        from bbx_blackboard.runner_control import row
+        from bbx_blackboard.worker_board_updates import clock_changes
+
+        await clock_changes(CtfService(repo.engine), conn, tid, task, pause=True)
+        task = await row(conn, s.tasks, tid)
+        control = task["ctf_control"]
     observed = record["observation"]
     resources = {
         name: value
@@ -132,6 +141,7 @@ async def capture(repo, conn, tid, record, task, reason, instant):
         },
         "helpers": control.get("native_helpers_active", {}),
         "assignments": control.get("native_worker_active", {}),
+        "worker_sessions": control.get("native_worker_sessions", {}),
         "lead_binding_id": data.get("binding_id"),
         "resource_generation": data.get("resource_generation", 1),
         "sandbox_create_op_id": data.get("sandbox_create_op_id", record["operation_id"]),
@@ -503,20 +513,21 @@ class NativeRecovery:
         if reason := await self._effects(conn, tid, incident):
             return None, reason
         table = s.runner_bindings
-        bindings = (
-            (
-                await conn.execute(
-                    select(table)
-                    .where(table.c.task_id == tid, table.c.owner_epoch == epoch)
-                    .order_by(table.c.id)
-                    .limit(33)
+        active = {
+            incident["lead_binding_id"],
+            *incident["assignment_ids"],
+            *(item["binding_id"] for item in incident.get("worker_sessions", {}).values()),
+        }
+        query = select(table).where(table.c.task_id == tid, table.c.owner_epoch == epoch)
+        if collaboration_enabled(task):
+            query = query.where(
+                or_(
+                    table.c.id.in_(active),
+                    table.c.status.in_(["registered", "prepared", "closing"]),
                 )
             )
-            .mappings()
-            .all()
-        )
+        bindings = (await conn.execute(query.order_by(table.c.id).limit(33))).mappings().all()
         ids = {row["id"] for row in bindings}
-        active = {incident["lead_binding_id"], *incident["assignment_ids"]}
         if (
             len(bindings) > 32
             or not active <= ids
@@ -826,6 +837,7 @@ class NativeRecovery:
                 "lead_binding_id": incident["lead_binding_id"],
                 "binding_ids": [item["binding_id"] for item in manifest["bindings"]],
                 "assignments": incident["assignments"],
+                "worker_sessions": incident.get("worker_sessions", {}),
                 "helpers": incident.get("helpers", {}),
                 "owner_epoch": incident["original_epoch"],
             },

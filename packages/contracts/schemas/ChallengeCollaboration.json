@@ -1,0 +1,116 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "difficulty": {
+      "default": "medium",
+      "enum": [
+        "easy",
+        "medium",
+        "hard"
+      ],
+      "title": "Difficulty",
+      "type": "string"
+    },
+    "multi_stage": {
+      "default": false,
+      "title": "Multi Stage",
+      "type": "boolean"
+    },
+    "assistance_target": {
+      "default": 0,
+      "exclusiveMaximum": 10,
+      "minimum": 0,
+      "title": "Assistance Target",
+      "type": "integer"
+    },
+    "review_revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Review Revision",
+      "type": "integer"
+    },
+    "review_base_revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Review Base Revision",
+      "type": "integer"
+    },
+    "review_summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Summary"
+    },
+    "review_author": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Author"
+    },
+    "review_fact_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Review Fact Refs",
+      "type": "array"
+    },
+    "review_candidate_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Review Candidate Ids",
+      "type": "array"
+    },
+    "feedback_fact_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feedback Fact Id"
+    },
+    "solve_elapsed_ms": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Solve Elapsed Ms",
+      "type": "integer"
+    },
+    "solve_started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Solve Started At"
+    },
+    "assistance_reminded": {
+      "default": false,
+      "title": "Assistance Reminded",
+      "type": "boolean"
+    }
+  },
+  "title": "ChallengeCollaboration",
+  "type": "object"
+}

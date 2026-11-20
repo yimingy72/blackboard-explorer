@@ -206,6 +206,19 @@
         },
         "journal": {
           "$ref": "#/$defs/JournalCursor"
+        },
+        "source_model_call_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Model Call Id"
         }
       },
       "required": [

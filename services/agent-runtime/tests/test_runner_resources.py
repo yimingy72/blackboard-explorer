@@ -452,7 +452,12 @@ async def test_mount_native_uid_resourceversion_and_immutable_bootstrap(monkeypa
         return pod if kind == "pod" else secret
 
     async def kubectl(*args, body=None):
-        sent.append((args, copy.deepcopy(body)))
+        if args[0] == "patch":
+            assert body is not None
+            assert body["metadata"]["uid"] == "runner-uid"
+            assert args[1:3] == ("pod", observation["runner"]["pod_name"])
+        else:
+            sent.append((args, copy.deepcopy(body)))
         return "{}"
 
     monkeypatch.setattr(adapter, "_cluster", cluster)

@@ -1,5 +1,4 @@
 import { Alert, Button, Empty } from 'antd';
-import { InfoCircleOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -32,7 +31,7 @@ function PublishedExternalTools({ role }: { role: McpRole }) {
     finally { if (id === sequence.current) setLoading(false); }
   }
   return <>
-    <p>发布只决定可选范围。请在新建原生 CTF 任务时为角色逐工具明确授权；Helper 不继承。</p>
+    <p>可在新建 CTF 任务时配置 Lead 和 Worker 使用的外部 MCP 工具。</p>
     {query.isLoading ? <LoadingState label="正在读取已发布的 MCP 服务" /> : query.isError
       ? <Alert type="warning" title="无法读取此角色的 MCP 发布范围" action={<Button onClick={() => void query.refetch()}>重试</Button>} />
       : servers.length ? <ul className={styles.externalList}>{servers.map(server =>
@@ -65,16 +64,16 @@ export default function CtfSettings({ query }: { query: CatalogQuery }) {
     badge={'发布版本 ' + value.revision + ' · 只读'} query={query} allowExternal={allowExternal}
     render={(panel, source) => panel === 'prompt' ? <PromptEditor role={role === 'lead' ? 'CTF Lead' : 'CTF Worker'}
       value={value.prompt_templates[role]} variables={promptVariables[role]} />
-      : panel === 'tools' ? <><ToolPermissions role={role} directory={directory} query={query} initial={source}
+      : panel === 'tools' ? <ToolPermissions role={role} directory={directory} query={query} initial={source}
         external={<PublishedExternalTools role={role} />} />
-        <p className={styles.note}><InfoCircleOutlined /> Helper 不作为独立配置角色；不继承平台黑板和外部 MCP 权限。</p></>
-      : <><div className={styles.panelHeading}><div><h3>运行设置</h3><p>任务网络、执行与记录范围由部署发布决定。</p></div></div>
-        <section className={styles.formBlock}><h4>任务网络</h4><dl className={styles.values}>
-          <div><dt>网络能力</dt><dd>{value.task_network ? '默认网络或任务共享 VPN' : '当前发布未开放任务网络选择'}</dd></div>
-          <div><dt>配置范围</dt><dd>{role === 'lead' ? '网络能力开放时，Lead 按任务需要选择。' : '继承任务网络，由 Lead 管理共享 VPN。'}</dd></div>
+      : <><div className={styles.panelHeading}><div><h3>运行设置</h3><p>同级 Worker 在共享 Runtime 中协作求解。</p></div></div>
+        <section className={styles.formBlock}><h4>任务协作</h4><dl className={styles.values}>
+          <div><dt>执行环境</dt><dd>所有成员共享任务 Runtime 与文件。</dd></div>
+          <div><dt>任务分配</dt><dd>首次由平台分配，完成后收到通知自主领取。</dd></div>
         </dl></section>
         <section className={styles.formBlock}><h4>执行记录</h4><dl className={styles.values}>
-          <div><dt>流量采集</dt><dd>按 Agent 采集</dd></div><div><dt>命令记录</dt><dd>仅记录与查看</dd></div>
+          <div><dt>命令与工具</dt><dd>按成员记录执行过程。</dd></div>
+          <div><dt>文件证据</dt><dd>保存文件快照并关联题内事实。</dd></div>
         </dl></section></>}
   />;
 }

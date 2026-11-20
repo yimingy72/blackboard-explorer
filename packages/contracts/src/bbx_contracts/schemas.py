@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from . import (
     challenge_board,
     ctf,
+    ctf_collaboration,
     heartbeat,
     models,
     native_gateway,
@@ -26,6 +27,7 @@ def export_schemas(output_dir: Path) -> list[Path]:
         **vars(models),
         **vars(challenge_board),
         **vars(ctf),
+        **vars(ctf_collaboration),
         **vars(heartbeat),
         **vars(traffic),
         **vars(progress),
