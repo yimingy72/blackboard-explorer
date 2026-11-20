@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
 from bbx_contracts.challenge_board import native_scope_updates_enabled
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from fastapi import HTTPException
 from sqlalchemy import insert, or_, select, update
@@ -355,6 +356,12 @@ class NativeWorkers:
         return [m for m in members if m["id"] in spec["instructions"] and m["id"] not in occupied]
 
     async def reconcile(self, conn, tid, task, record, owner, *, allow_new):
+        if collaboration_enabled(task):
+            from bbx_blackboard.native_worker_pool import NativeWorkerPool
+
+            return await NativeWorkerPool(self.ctf, self.control).reconcile(
+                conn, tid, task, record, owner, allow_new=allow_new
+            )
         spec = record["data"].get("worker_spec")
         if not spec:
             return []
@@ -415,6 +422,29 @@ class NativeWorkers:
 
     async def finish_after_task_exit(self, conn, tid):
         task = await row(conn, s.tasks, tid)
+        if collaboration_enabled(task):
+            for aid, session in task["ctf_control"].get("native_worker_sessions", {}).items():
+                member = await row(conn, s.ctf_members, tid, aid)
+                turn = await row(conn, s.ctf_turns, tid, session["turn_id"])
+                if turn["status"] == "running":
+                    await self.ctf._settle(conn, tid, member, turn, "stopped", "")
+                await self.ctf._emit(
+                    conn, tid, "native_worker.stopped", "system", {"agent_id": aid, **session}
+                )
+            current = await row(conn, s.tasks, tid)
+            await conn.execute(
+                update(s.tasks)
+                .where(s.tasks.c.id == tid)
+                .values(
+                    ctf_control={
+                        **current["ctf_control"],
+                        "native_worker_active": {},
+                        "native_worker_sessions": {},
+                        "native_worker_continuations": {},
+                    }
+                )
+            )
+            return
         assignments = task["ctf_control"].get("native_worker_active", {})
         if not assignments:
             return

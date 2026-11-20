@@ -14,6 +14,7 @@ from bbx_contracts.challenge_board import (
     native_scope_updates_enabled,
 )
 from bbx_contracts.ctf import CtfChallenge, CtfVerification
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from fastapi import HTTPException
 from sqlalchemy import select, update
 
@@ -111,7 +112,7 @@ class TaskBoardService(ChallengeBoardService):
     async def challenges(self, tid, identity, limit=100, offset=0):
         async with self.repo.engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
-            _, member = await self._task_access(conn, tid, identity)
+            task, member = await self._task_access(conn, tid, identity)
             scope = (
                 await knowledge_event_scope(self.repo, conn, tid, identity.agent_id)
                 if identity.kind == "agent"
@@ -123,6 +124,7 @@ class TaskBoardService(ChallengeBoardService):
                 and runtime is not None
                 and member is not None
                 and member["role"] == "teammate"
+                and not collaboration_enabled(task)
             ):
                 business = (
                     await conn.execute(

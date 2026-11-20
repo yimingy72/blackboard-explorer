@@ -41,7 +41,12 @@ class BusinessMCP:
             catalog = (
                 board_schemas()
                 if identity.role in EXPLORATION_ROLES
-                else schemas(dynamic_vpn=dynamic)
+                else schemas(
+                    dynamic_vpn=dynamic,
+                    collaboration=bool(
+                        {"board_available_work", "board_review_challenge"} & set(allowed)
+                    ),
+                )
             )
             builtins = [
                 types.Tool(
@@ -154,15 +159,12 @@ class BusinessMCP:
                     "isError": False,
                 }
             except (HTTPException, RuleViolation, ValidationError) as error:
-                if principal.mode != "blackboard" and not isinstance(error, HTTPException):
-                    await asyncio.shield(
-                        gateway.unknown_business_result(tid, invocation.invocation_id)
-                    )
-                    raise
                 status = error.status_code if isinstance(error, HTTPException) else 422
                 detail = (
                     error.detail
                     if isinstance(error, HTTPException)
+                    else {"code": error.code, "message": str(error)}
+                    if isinstance(error, RuleViolation)
                     else "Blackboard tool input rejected"
                 )
                 payload = {

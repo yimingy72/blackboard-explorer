@@ -1154,7 +1154,6 @@ def create_app(
                 request_id=body.input_group_id,
                 model_alias=selected.id,
                 budget_currency="USD",
-                traffic_profile="binding-pcap-v1",
             )
             launch_digest = runner_payload_digest(runner_json_text(launch.model_dump(mode="json")))
             frozen_publication = publication.frozen()
@@ -1177,11 +1176,6 @@ def create_app(
 
             native_queue = queue_native
 
-        if isinstance(body, CtfTaskCreate) and body.native_vpn_source_id is not None:
-            from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE
-
-            if publication is None or publication.vpn_profile != VPN_DYNAMIC_PROFILE:
-                raise HTTPException(422, "Private VPN source is not supported by this Task")
         if isinstance(body, CtfTaskCreate):
             assert publication is not None and selected is not None
             profile = await resolve_ctf_creation(request, publication)
@@ -1223,7 +1217,6 @@ def create_app(
                     "profile_version",
                     "reasoning_effort",
                     "native_environment",
-                    "native_vpn_source_id",
                     "native_mcp",
                 }
             )
@@ -1240,8 +1233,9 @@ def create_app(
                         "native_inputs_profile": publication.inputs_profile
                         if publication
                         else None,
-                        "native_vpn_profile": publication.vpn_profile if publication else None,
-                        "native_vpn_source_id": body.native_vpn_source_id,
+                        "native_collaboration": bool(
+                            publication and publication.collaboration_profile
+                        ),
                     }
                     if native_queue is not None
                     else {}

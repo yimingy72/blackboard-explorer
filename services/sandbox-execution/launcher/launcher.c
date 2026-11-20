@@ -261,7 +261,7 @@ int main(int argc, char **argv) {
     }
     if (geteuid() != 0 || getuid() != 0 || (argc != 10 && argc != 15) ||
         !identifier(argv[1]) || !identifier(argv[2]) || !identifier(argv[3]) ||
-        (strcmp(argv[9], "basic") && strcmp(argv[9], "net-raw")) ||
+        (strcmp(argv[9], "basic") && strcmp(argv[9], "net-raw") && strcmp(argv[9], "ctf-direct")) ||
         strncmp(argv[5], "/workspace", 10) || (argv[5][10] && argv[5][10] != '/')) {
         errno = EPERM;
         fail("invalid trusted launch request");
@@ -270,19 +270,28 @@ int main(int argc, char **argv) {
         errno = EPERM;
         fail("assignment scope is required; legacy launch refused");
     }
-    int marker = access("/opt/bbx/control/assignment-network-v1", F_OK) == 0;
+    int direct = !strcmp(argv[9], "ctf-direct");
+    if (direct && (argc != 15 || access("/opt/bbx/control/ctf-direct-v1", F_OK) ||
+        strcmp(argv[6], "-") || strcmp(argv[7], "-"))) {
+        errno = EPERM;
+        fail("direct CTF execution requires its original cgroup Runtime");
+    }
+    int marker = !direct && access("/opt/bbx/control/assignment-network-v1", F_OK) == 0;
     if (marker && (argc != 15 || strcmp(argv[9], "basic") || strcmp(argv[6], "-") ||
         strcmp(argv[7], "-"))) {
         errno = EPERM;
         fail("the Assignment network profile requires its original basic cgroup scope");
     }
-    int directory = control_directory("/run/netns");
-    int namespace_fd = openat(directory, argv[1], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (namespace_fd < 0) fail("open original Assignment network");
-    int network_lock = marker ? network_gate(argv, namespace_fd) : -1;
-    if (setns(namespace_fd, CLONE_NEWNET)) fail("enter assignment network");
-    close(namespace_fd);
-    close(directory);
+    int directory, network_lock = -1;
+    if (!direct) {
+        directory = control_directory("/run/netns");
+        int namespace_fd = openat(directory, argv[1], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (namespace_fd < 0) fail("open original Assignment network");
+        network_lock = marker ? network_gate(argv, namespace_fd) : -1;
+        if (setns(namespace_fd, CLONE_NEWNET)) fail("enter assignment network");
+        close(namespace_fd);
+        close(directory);
+    }
     if (argc == 15 && bbx_scope_join(argv[10], argv[11], argv[12], argv[13], argv[14])) fail("join original assignment cgroup");
     /* Scope verification still needs the original mount namespace. */
     if (marker) assignment_resolver(argv[1]);
@@ -325,7 +334,7 @@ int main(int argc, char **argv) {
     add_environment(environment, &count, "TMPDIR", "/workspace/.tmp");
     add_environment(environment, &count, "BBX_COMMAND_ID", argv[2]);
     add_environment(environment, &count, "BBX_NETWORK_ID", argv[3]);
-    add_environment(environment, &count, "BBX_AGENT_IP", argv[4]);
+    if (!direct) add_environment(environment, &count, "BBX_AGENT_IP", argv[4]);
     if (strcmp(argv[6], "-")) {
         const char *keys[] = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"};
         for (int i = 0; i < 6; i++) add_environment(environment, &count, keys[i], argv[6]);

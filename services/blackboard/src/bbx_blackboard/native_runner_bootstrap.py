@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from bbx_contracts.challenge_board import native_dispatch_enabled
 from bbx_contracts.ctf import render_ctf_prompt, resolve_ctf_model
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.model_limits import effective_max_output_tokens
 from bbx_contracts.runner import (
     PROTOCOL,
@@ -281,6 +282,16 @@ class NativeRunnerBootstrap:
             and record["sandbox_create_claimed"] is False
             and not record["observation"]
         )
+        if (
+            record["state"] == "stopped"
+            and record["data"].get("exit_confirmed")
+            and record["config"]
+        ):
+            result["cleanup_resource_config"] = {
+                key: value
+                for key, value in record["config"].items()
+                if key not in {"mcp_transport", "execution_contract"}
+            }
         return result
 
     def require_launch_configuration(self):
@@ -329,6 +340,12 @@ class NativeRunnerBootstrap:
             raise HTTPException(409, "Existing Runner owner cannot enter native bootstrap")
         if (body.helper_foreground or body.helper_background) and not native_dispatch_enabled(task):
             raise HTTPException(422, "Helpers require native Worker dispatch")
+        if collaboration_enabled(task) and (body.helper_foreground or body.helper_background):
+            raise HTTPException(422, "Peer Workers use board assistance instead of child helpers")
+        if not board and (
+            body.traffic_profile is not None or (publication or {}).get("vpn_profile")
+        ):
+            raise HTTPException(422, "CTF uses direct Runtime execution without VPN or capture")
         if native_dispatch_enabled(task) and not 1 <= task["ctf_options"]["max_teammates"] <= 20:
             raise HTTPException(422, "Native Tasks allow 1 to 20 Worker seats")
         started = instant()
@@ -375,6 +392,7 @@ class NativeRunnerBootstrap:
             observation={},
             data={
                 "mcp_transport": "direct-v2",
+                **({"execution_profile": "ctf-direct-v1"} if not board else {}),
                 **({"execution_contract": EXPLORATION_CONTRACT} if board else {}),
                 **({"native_mcp": native_grants} if native_grants else {}),
                 **({"traffic_profile": PROFILE} if body.traffic_profile == PROFILE else {}),
@@ -1752,6 +1770,8 @@ class NativeRunnerBootstrap:
             model = effective_role_model(profile, "lead", selected)
             external = record["data"].get("native_mcp", {})
             worker_spec = None
+            from bbx_blackboard.collaboration_prompts import LEAD_RULES, WORKER_RULES
+
             if native_dispatch_enabled(task):
                 worker_tools = [
                     *task["ctf_control"]["business_tools"]["roles"]["teammate"],
@@ -1759,6 +1779,7 @@ class NativeRunnerBootstrap:
                     *external.get("teammate", {}),
                 ]
                 worker_spec = {
+                    **({"worker_pool": True} if collaboration_enabled(task) else {}),
                     "model": effective_role_model(profile, "teammate", selected),
                     "allowed_tools": worker_tools,
                     **(
@@ -1784,6 +1805,7 @@ class NativeRunnerBootstrap:
                         )
                         + "\nUse only your current challenge Assignment. "
                         "Record useful results as facts on its board."
+                        + (WORKER_RULES if collaboration_enabled(task) else "")
                         for n in range(1, task["ctf_options"]["max_teammates"] + 1)
                     },
                 }
@@ -1807,6 +1829,8 @@ class NativeRunnerBootstrap:
                 "\nUse only the published tools. "
                 "Commands and files use the shared low-privilege Task workspace."
             )
+            if collaboration_enabled(task):
+                instructions += LEAD_RULES
             binding = await self.control.register_binding(
                 tid,
                 runner_json_text(
@@ -2241,6 +2265,11 @@ class NativeRunnerBootstrap:
                 data["worker_binding_ids"] = await self.workers.reconcile(
                     conn, tid, task, record, owner, allow_new=allow_new
                 )
+                if collaboration_enabled(task):
+                    current = await row(conn, s.tasks, tid)
+                    data["worker_next_deadline"] = current["ctf_control"].get(
+                        "worker_next_deadline"
+                    )
             if first or data.get("worker_spec"):
                 owner = await self.control._current_owner(conn, tid)
                 messages = (
@@ -2268,7 +2297,7 @@ class NativeRunnerBootstrap:
                             "binding_id": binding["id"],
                             "input_id": message["id"],
                             "content": message["body"],
-                            "mode": "follow_up",
+                            "mode": "steer" if collaboration_enabled(task) else "follow_up",
                         }
                     )
                     await self.control._enqueue(

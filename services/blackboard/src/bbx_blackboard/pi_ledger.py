@@ -267,6 +267,30 @@ class PiLedger:
             task = await row(conn, s.tasks, tid)
             if task["budget"].get("currency") != "USD":
                 raise denied("The frozen Task budget is not USD")
+            if binding["business"].get("worker_pool"):
+                from bbx_blackboard.native_worker_pool import work_context
+
+                current = work_context(task, proof.binding.agent_id)
+                if (
+                    proof.worker_context is None
+                    or proof.worker_context.model_dump(mode="json") != current
+                ):
+                    raise denied("Worker model source context changed")
+                active = (
+                    task["ctf_control"]
+                    .get("native_worker_active", {})
+                    .get(proof.binding.agent_id, {})
+                )
+                if active.get("releasing"):
+                    raise denied("The original Worker execution has ended")
+                await conn.execute(
+                    update(s.runner_bindings)
+                    .where(
+                        s.runner_bindings.c.task_id == tid,
+                        s.runner_bindings.c.id == binding["id"],
+                    )
+                    .values(business={**binding["business"], "worker_idle": None})
+                )
             allowed = set(spec["allowed_tools"])
             if binding["business"].get("native_assignment_id"):
                 if spec.get("helper_foreground"):
@@ -624,6 +648,20 @@ class PiLedger:
                     )
             if current["purpose"] == "solver":
                 await self._project_board_usage(conn, current, body)
+            if current["task_id"] and current["intent"].get("proof", {}).get("worker_context"):
+                written = await self.repo.append(
+                    conn,
+                    current["task_id"],
+                    [
+                        {
+                            "type": "ctf.native_worker.call_settled",
+                            "actor": "system",
+                            "addressed_to": None,
+                            "payload": {"agent_id": current["agent_id"], "call_id": str(call_id)},
+                        }
+                    ],
+                )
+                await self.repo.notify(current["task_id"], written[-1]["version"], connection=conn)
             return {"call_id": call_id, "attempt_id": body.attempt_id, "state": body.outcome}
 
 

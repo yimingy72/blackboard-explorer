@@ -20,6 +20,7 @@ from bbx_contracts.challenge_board import (
     business_contract as task_contract,
 )
 from bbx_contracts.ctf import CtfConclusion, execution_agent_id
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.models import Usage
 from bbx_contracts.storage import storage_safe
 from fastapi import HTTPException
@@ -590,6 +591,7 @@ class CtfService(
         native_inputs_profile=None,
         native_vpn_profile=None,
         native_vpn_source_id=None,
+        native_collaboration=False,
         pi_model=None,
     ):
         from bbx_contracts.ctf import CtfTaskSpec
@@ -646,6 +648,7 @@ class CtfService(
                 business_contract=BOARD_CONTRACT,
                 business_tools=business_manifest(
                     automatic=native_workers,
+                    collaboration=bool(native_workers and native_collaboration),
                     vpn=native_queue is not None and bool(native_vpn_profile),
                     task_network=native_queue is not None
                     and native_vpn_profile == VPN_DYNAMIC_PROFILE,
@@ -3039,6 +3042,20 @@ class CtfService(
                 await validate_runtime_context(conn, tid, runtime_context)
             await self._actor(conn, tid, actor, generation, turn_id)
             require(actor in {"lead", "user", "system", "service"}, "Only Lead can finish")
+            if collaboration_enabled(task):
+                if actor == "lead" and await conn.scalar(
+                    select(s.ctf_challenges.c.id)
+                    .where(
+                        s.ctf_challenges.c.task_id == tid,
+                        s.ctf_challenges.c.data["work_status"].astext != "completed",
+                    )
+                    .limit(1)
+                ):
+                    raise HTTPException(409, "Unfinished challenges must continue with their teams")
+                from bbx_blackboard.worker_board_updates import clock_changes
+
+                await clock_changes(self, conn, tid, task, pause=True)
+                task = await row(conn, s.tasks, tid)
             control = task["ctf_control"]
             native_preparing = False
             native_resources = None

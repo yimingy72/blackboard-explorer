@@ -1,7 +1,7 @@
 import LoadingState from '../components/LoadingState';
 import { Alert, App, Button, Collapse, Modal, Select, Tabs, Tag } from 'antd';
 import { BulbOutlined, CopyOutlined, ExperimentOutlined, FileOutlined, InboxOutlined } from '@ant-design/icons';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { randomUUID } from '../api/uuid';
 import { useAction } from './useAction';
@@ -12,6 +12,7 @@ import { challengeTimeline, type CtfTimelineEntry } from './progress';
 import { verificationLabel } from './view';
 import { challengeSolution, challengeState, challengeTitle, solutionMarkdown, stageLabels, stepResultLabels } from './challengeView';
 import ChallengeStateTag from './ChallengeState';
+import ChallengeKnowledgePanel from './ChallengeKnowledgePanel';
 import Markdown from './Markdown';
 import EvidenceViewer from '../components/EvidenceViewer';
 import Icon from '../components/Icon';
@@ -30,6 +31,26 @@ function Artifact({ taskId, artifact }: { taskId: string; artifact: CtfArtifact 
       {query.data && <><Collapse size="small" ghost items={[{ key: 'info', label: '文件信息', children: <div className={detailStyles.fileInfo}><code>{query.data.path}</code><p>SHA-256 {query.data.sha256}</p></div> }]} /><EvidenceViewer evidence={{ type: 'file', summary: query.data.filename, uri: query.data.uri }} /></>}
     </Modal>
   </>;
+}
+
+function CollaborationSummary({ challenge }: { challenge: CtfChallenge }) {
+  const [now, setNow] = useState(() => Date.now());
+  const info = challenge.collaboration;
+  useEffect(() => {
+    if (!info?.solve_started_at) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [info?.solve_started_at]);
+  if (!info) return null;
+  const elapsed = info.solve_elapsed_ms + (info.solve_started_at ? Math.max(0, now - Date.parse(info.solve_started_at)) : 0);
+  const slots = challenge.work_status === 'in_progress' ? Math.max(0, info.assistance_target - challenge.collaborator_ids.length) : 0;
+  return <section aria-label="协作状态" className={detailStyles.titleMeta}>
+    <Tag>{({ easy: '简单', medium: '中等', hard: '困难' })[info.difficulty]}</Tag>
+    <Tag>{(challenge.owner_id ? 1 : 0) + challenge.collaborator_ids.length}/10 位 Worker</Tag>
+    {slots > 0 && <Tag color="orange">招募 {slots} 名援助</Tag>}
+    <span>累计解题 {Math.floor(elapsed / 60000)} 分 {Math.floor(elapsed / 1000) % 60} 秒</span>
+    {challenge.work_status === 'awaiting_review' && <p>原团队等待 Lead 核验。</p>}
+  </section>;
 }
 
 function Record({ taskId, record, name, compact = false }: { taskId: string; record: CtfRecord; name: (id: string) => string; compact?: boolean }) {
@@ -86,7 +107,7 @@ export default function ChallengePanel({ taskId, challenge, members, allRecords,
   historyLoading?: boolean; historyError?: string; onRetryHistory?: () => void; phase: string; onBack: () => void; onDiscuss: (member: string) => void;
 }) {
   const [offset, setOffset] = useState(0), [visibleSteps, setVisibleSteps] = useState(12);
-  const [tab, setTab] = useState<'overview' | 'flow' | 'files'>('overview');
+  const [tab, setTab] = useState<'overview' | 'knowledge' | 'flow' | 'files'>('overview');
   const [historyOpen, setHistoryOpen] = useState(false);
   const queryClient = useQueryClient();
   const dispatchAction = useAction();
@@ -126,6 +147,8 @@ export default function ChallengePanel({ taskId, challenge, members, allRecords,
     {(offset > 0 || page.data?.next_offset != null) && <nav className={styles.actions} aria-label="记录分页"><Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>上一页</Button><Button disabled={page.data?.next_offset == null} onClick={() => setOffset(page.data?.next_offset ?? offset)}>下一页</Button></nav>}
   </> }]} />;
   const content = <div className={`${styles.detailScroll} ${detailStyles.content}`}>
+    <CollaborationSummary challenge={challenge} />
+    {tab === 'knowledge' && <ChallengeKnowledgePanel taskId={taskId} challenge={challenge} members={members} onDiscuss={onDiscuss} />}
     {tab === 'overview' && <>
       <section className={detailStyles.participants}><h3>参与成员</h3><div>{participants.map(id => members.some(member => member.id === id) ? <Button key={id} size="small" onClick={() => onDiscuss(id)}><span className={detailStyles.avatar} aria-hidden>{name(id).slice(0, 1).toUpperCase()}</span>{name(id)}<span className={detailStyles.participantRole}>{challenge.owner_id === id ? '主责' : '协作'}</span></Button> : <Tag key={id} title={id}>未知成员 · {challenge.owner_id === id ? '主责' : '协作'}</Tag>)}{!participants.length && <span className={styles.muted}>尚未分派</span>}</div></section>
       <Collapse size="small" className={detailStyles.description} items={[{ key: 'description', label: '题目说明', children: <><dl className={detailStyles.briefFields}><div><dt>Agent 登记简述</dt><dd>{challenge.description ? <Markdown text={challenge.description} /> : '尚未登记题目说明。'}</dd></div>{challenge.connection && !challenge.description.includes(challenge.connection) && <div><dt>连接</dt><dd><code>{challenge.connection}</code></dd></div>}{challenge.requirements && <div><dt>交付要求</dt><dd><Markdown text={challenge.requirements} /></dd></div>}</dl>{challenge.external_id && <p className={detailStyles.sourceId}>外部标识 <code>{challenge.external_id}</code></p>}</> }]} />
@@ -138,7 +161,7 @@ export default function ChallengePanel({ taskId, challenge, members, allRecords,
   </div>;
   return <aside className={styles.challengeDetail} aria-label={`题目详情：${challenge.title}`}>
     <header className={`${styles.panelHeader} ${detailStyles.header}`}><FileOutlined className={detailStyles.titleIcon} /><div className={styles.panelIdentity}><h2 tabIndex={-1} title={challenge.title}>{title.title}</h2>{!!title.metadata.length && <div className={detailStyles.titleMeta}>{title.metadata.join(' · ')}</div>}</div><ChallengeStateTag state={challengeState(challenge, phase)} /><InspectorActions onClose={onBack} /></header>
-    {phase === 'running' && !challenge.owner_id && challenge.work_status === 'pending' && <section className={styles.assignmentControls} aria-label="分配任务">
+    {phase === 'running' && !challenge.collaboration && !challenge.owner_id && challenge.work_status === 'pending' && <section className={styles.assignmentControls} aria-label="分配任务">
       <Select aria-label="领取任务的 Worker" value={workerId} onChange={setWorkerId} options={[
         { value: '', label: '自动选择空闲 Worker' },
         ...members.filter(member => member.role === 'teammate' && member.lifecycle === 'active').map(member => ({ value: member.id, label: `${member.display_name}${member.run_state === 'idle' ? ' · 空闲' : ' · 完成当前任务后领取'}` })),
@@ -148,7 +171,7 @@ export default function ChallengePanel({ taskId, challenge, members, allRecords,
       {challenge.dispatch_status === 'materials_wait' && <span role="status">Lead 标记为等待材料，可重新分配</span>}
       {dispatchAction.error && <Alert type="error" title={dispatchAction.error} />}
     </section>}
-    <Tabs className={styles.detailTabs} activeKey={tab} onChange={key => setTab(key as typeof tab)} items={[{ key: 'overview', label: '概览', children: tab === 'overview' ? content : null }, { key: 'flow', label: '解题流程', children: tab === 'flow' ? content : null }, { key: 'files', label: <>文件 <span className={detailStyles.tabCount}>{artifacts.length}</span></>, children: tab === 'files' ? content : null }]} />
+    <Tabs className={styles.detailTabs} activeKey={tab} onChange={key => setTab(key as typeof tab)} items={[{ key: 'overview', label: '概览', children: tab === 'overview' ? content : null }, { key: 'knowledge', label: '小黑板', children: tab === 'knowledge' ? content : null }, { key: 'flow', label: '解题流程', children: tab === 'flow' ? content : null }, { key: 'files', label: <>文件 <span className={detailStyles.tabCount}>{artifacts.length}</span></>, children: tab === 'files' ? content : null }]} />
     <Modal title="依据记录" open={Boolean(referenceId)} onCancel={() => setReferenceId(null)} footer={null} width={720}>{selectedRecord ? <Record taskId={taskId} record={selectedRecord} name={name} /> : reference.error ? <Alert type="error" title="依据记录读取失败" action={<Button onClick={() => void reference.refetch()}>重试</Button>} /> : <LoadingState label="正在读取依据…" />}</Modal>
   </aside>;
 }

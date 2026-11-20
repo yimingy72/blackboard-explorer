@@ -20,28 +20,13 @@ test('同一个创建入口按模式提交，结果不明时重试原输入', as
     id: 'isolated-ctf', revision: 3, publication_stamp: 'a'.repeat(64),
     label: '隔离 CTF', external_mcp: true,
   };
-  const sourceId = '22222222-2222-4222-8222-222222222222';
-  const privateUploads: string[] = [];
-  const privateDeletes: string[] = [];
   const requests: Record<string, unknown>[] = [];
   let available = false;
   let inputsEnabled = false;
   await page.route('**/api/task-creation-capabilities', (route) =>
     route.fulfill({ json: { mode: 'legacy', blackboard: { available: true }, native_ctf: available ? { ...native, ...(inputsEnabled && {
       shared_inputs: { profile: 'shared-inputs-v1', max_file_bytes: 16 * 1024 * 1024, max_total_bytes: 24 * 1024 * 1024, max_files: 20 },
-      vpn: { profile: 'openvpn-task-ipv4-tcp-v1', id: 'task-vpn', label: '共享 VPN' },
     }) } : null } }));
-  await page.route(/\/api\/task-input-groups\/[^/]+\/private-vpn-source(?:\?|$)/, route => {
-    if (route.request().method() === 'DELETE') {
-      privateDeletes.push(new URL(route.request().url()).searchParams.get('source_id') ?? '');
-      return privateDeletes.length === 1
-        ? route.fulfill({ status: 503, json: { detail: '无法确认删除' } })
-        : route.fulfill({ json: { deleted: true } });
-    }
-    expect(route.request().method()).toBe('PUT');
-    privateUploads.push(route.request().postData() ?? '');
-    return route.fulfill({ json: { source_id: sourceId } });
-  });
   await page.route('**/api/tasks', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback();
     requests.push(route.request().postDataJSON());
@@ -92,11 +77,7 @@ test('同一个创建入口按模式提交，结果不明时重试原输入', as
   await picker.setInputFiles([sharedFile, privateFile]);
   await expect(page.getByText(/已上传/)).toHaveCount(2);
   await expect(page.getByRole('radio', { name: '黑板模式' })).toBeDisabled();
-  await picker.setInputFiles({ ...privateFile, name: 'extra.ovpn' });
-  await expect(page.getByRole('alert').filter({ hasText: /只可添加一个私有/ })).toBeVisible();
-  await page.getByRole('button', { name: '移除附件 private.OVPN' }).click();
-  await expect(page.getByText('无法确认删除')).toBeVisible();
-  await expect(create).toBeDisabled();
+  await expect(page.getByText(/私有 VPN|共享 VPN|只可添加一个私有/)).toHaveCount(0);
   await page.getByRole('button', { name: '移除附件 private.OVPN' }).click();
   await expect(page.getByText('private.OVPN')).toHaveCount(0);
   await page.getByLabel('任务目标').fill('查看合成材料');
@@ -129,15 +110,13 @@ test('同一个创建入口按模式提交，结果不明时重试原输入', as
   expect(requests[2]).toMatchObject({
     mode: 'ctf', pi_model: model,
     native_environment: { id: native.id, revision: native.revision, publication_stamp: native.publication_stamp },
-    input_group_id: expect.any(String), input_file_ids: [expect.any(String)], egress_allowlist: [],
-    native_vpn_source_id: sourceId, reasoning_effort: 'high',
+    input_group_id: expect.any(String), input_file_ids: [expect.any(String), expect.any(String)], egress_allowlist: [],
+    reasoning_effort: 'high',
   });
   const saved = requests[2];
   expect(saved.public_input_ids).toEqual(saved.input_file_ids);
-  for (const key of ['acceptance', 'domain_context', 'native_mcp']) {
+  for (const key of ['acceptance', 'domain_context', 'native_mcp', 'native_vpn_source_id']) {
     expect(saved).not.toHaveProperty(key);
   }
-  expect(privateUploads).toEqual(['synthetic private bytes', 'synthetic private bytes']);
-  expect(privateDeletes).toEqual([sourceId, sourceId]);
   expect(mock.unexpected).toEqual([]);
 });

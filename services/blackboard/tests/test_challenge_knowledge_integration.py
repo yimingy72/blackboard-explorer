@@ -571,7 +571,21 @@ async def test_terminal_review_reads_only_its_history_and_cannot_write(ctf):
             .where(s.ctf_members.c.task_id == tid, s.ctf_members.c.id == owner["actor"])
             .values(lifecycle="removed")
         )
-    await ctf.post_message(tid, "user", owner["actor"], "Explain my original topic", str(uuid4()))
+    from bbx_contracts.pi_models import PiReviewSelection
+    from test_native_runner_bootstrap_integration import fixture_pi_model
+
+    await ctf.post_message(
+        tid,
+        "user",
+        owner["actor"],
+        "Explain my original topic",
+        str(uuid4()),
+        review_model=PiReviewSelection(
+            authority="fixture-authority", pi_model=fixture_pi_model()[1]
+        ),
+        request_user="synthetic-review-user",
+        review_origin={"generation": owner["generation"], "run_number": 1},
+    )
     turn = await ctf.claim_review_turn(tid, owner["actor"], "knowledge-review")
     assert turn is not None and turn["purpose"] == "review"
     review = principal(

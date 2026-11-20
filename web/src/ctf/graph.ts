@@ -108,7 +108,7 @@ export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[],
   const nodes: CtfGraphNode[] = uniqueMembers.map((member) => {
     const position = { x: 0, y: 0 };
     const status = member.lifecycle === 'active' ? member.run_state : member.lifecycle;
-    const assignmentLabel = phase && ['finished', 'failed', 'stopped'].includes(phase) ? '' : uniqueChallenges.filter(challenge => challenge.owner_id === member.id && challenge.work_status === 'in_progress').map(challenge => challenge.title).join('、');
+    const assignmentLabel = phase && ['finished', 'failed', 'stopped'].includes(phase) ? '' : uniqueChallenges.filter(challenge => (challenge.owner_id === member.id || challenge.collaborator_ids.includes(member.id)) && ['in_progress', 'awaiting_review'].includes(challenge.work_status)).map(challenge => `${challenge.owner_id === member.id ? '' : '援助 · '}${challenge.title}${challenge.work_status === 'awaiting_review' ? ' · 待核验' : ''}`).join('、');
     return { id: `agent:${member.id}`, type: 'ctf-agent', position, data: { entityId: member.id, label: member.display_name, role: member.role, status, assignmentLabel, detail: member.lifecycle === 'removed' ? '历史成员 · 会话保留' : member.lifecycle === 'stopped' ? '已停止 · 等待明确恢复' : member.role === 'lead' ? '团队协调' : '协作成员', verification: '', participantCount: uniqueChallenges.filter((challenge) => challenge.owner_id === member.id || challenge.collaborator_ids.includes(member.id)).length } };
   });
   for (const challenge of uniqueChallenges) {
@@ -117,7 +117,7 @@ export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[],
     const related = recordsByChallenge.get(challenge.id) ?? [];
     const progress = challengeProgress(related, challenge.id), candidates = candidateRecords(related, challenge.id).sort((a, b) => a.created_version - b.created_version);
     const verification = challenge.verification ?? {};
-    const accepted = verification.status === 'accepted' && ['platform', 'user'].includes(String(verification.source));
+    const accepted = verification.status === 'accepted' && ['platform', 'user', 'lead'].includes(String(verification.source));
     const solution = challengeSolution(challenge, related).current;
     nodes.push({ id: `challenge:${challenge.id}`, type: 'ctf-task', position, data: { entityId: challenge.id, label: challenge.title, externalId: challenge.external_id ?? challenge.id.slice(0, 8), status: challenge.tombstone ? 'archived' : challenge.work_status, challengeState: challengeState(challenge, phase), participants: people.map(id => ({ id, name: uniqueMembers.find(member => member.id === id)?.display_name ?? id })), artifactCount: new Set(related.flatMap(record => record.artifact_refs ?? []).map(artifact => artifact.id)).size, detail: challenge.description || challenge.requirements || '暂无题目说明', progress: solution?.solution?.conclusion ?? progress.summary, recordCount: progress.count, participantCount: people.length, history: Boolean(challenge.tombstone || ['completed', 'cancelled'].includes(challenge.work_status)), ownerMissing: Boolean(challenge.owner_id && !memberIds.has(challenge.owner_id)), candidate: candidates.length ? candidateText(candidates.at(-1)!) : null, verification: accepted ? verification.test_only ? 'simulated' : 'accepted' : verification.status === 'accepted' ? 'unknown' : String(verification.status ?? 'unknown'), verificationText: verification.status === 'accepted' && !accepted ? '验证来源待核实' : verificationLabel(verification) } });
   }

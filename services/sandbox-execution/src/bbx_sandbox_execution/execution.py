@@ -75,7 +75,11 @@ class AssignmentBinding:
             or type(self.epoch) is not int
             or self.epoch < 0
             or (self.role == "helper" and not self.parent_agent_id)
-            or self.execution_profile not in {"basic", "net-raw"}
+            or self.execution_profile not in {"basic", "net-raw", "ctf-direct"}
+            or (
+                self.execution_profile == "ctf-direct"
+                and (self.role not in {"lead", "worker"} or self.process_accounting != "cgroup-v2")
+            )
             or self.process_accounting not in {"legacy", "cgroup-v2"}
             or (
                 self.process_accounting == "cgroup-v2"

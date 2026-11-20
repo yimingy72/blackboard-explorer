@@ -4,6 +4,7 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 from bbx_contracts.challenge_board import native_dispatch_enabled
+from bbx_contracts.ctf_collaboration import collaboration_enabled
 from bbx_contracts.runner import InputPayload, runner_json_text
 from bbx_contracts.runner_bootstrap import native_pause_state, native_recovery_frozen
 from fastapi import HTTPException
@@ -141,6 +142,11 @@ class NativePause:
             )
 
     async def _start(self, conn, tid, task, record, owner, pause_id, *, budget=None):
+        if collaboration_enabled(task):
+            from bbx_blackboard.worker_board_updates import clock_changes
+
+            await clock_changes(self.ctf, conn, tid, task, pause=True)
+            task = await row(conn, s.tasks, tid)
         data, control = dict(record["data"]), dict(task["ctf_control"])
         if not data.get("activated") or not data.get("binding_id"):
             raise HTTPException(409, "Original Lead session is not ready")
@@ -149,6 +155,7 @@ class NativePause:
         ids = {
             data["binding_id"],
             *(a["binding_id"] for a in assignments.values()),
+            *(item["binding_id"] for item in control.get("native_worker_sessions", {}).values()),
             *(child["binding_id"] for child in children.values()),
         }
         live = (
@@ -172,6 +179,7 @@ class NativePause:
             "pause_id": pause_id,
             "binding_ids": sorted(ids),
             "assignments": assignments,
+            "worker_sessions": control.get("native_worker_sessions", {}),
             "helpers": children,
             "lead_binding_id": data["binding_id"],
             **(budget or {}),
@@ -456,7 +464,21 @@ class NativePause:
         if control.get("native_worker_active", {}) != snapshot["assignments"]:
             raise HTTPException(409, "Original Worker assignments changed during pause")
         ready = dict(control.get("native_worker_ready", {}))
-        for assignment in snapshot["assignments"].values():
+        pool = collaboration_enabled(task)
+        if pool:
+            original_sessions = snapshot.get(
+                "worker_sessions", control.get("native_worker_sessions", {})
+            )
+            control["native_worker_continuations"] = {
+                aid: {
+                    "session": session,
+                    "assignment": snapshot["assignments"].get(aid),
+                    "known_results": await self._known_results(conn, tid, session["binding_id"]),
+                }
+                for aid, session in original_sessions.items()
+            }
+            control["native_worker_sessions"] = {}
+        for assignment in () if pool else snapshot["assignments"].values():
             cid = assignment["work_id"]
             challenge = await self.ctf._challenge(conn, tid, cid)
             if challenge["work_status"] in {"completed", "cancelled"}:
@@ -508,7 +530,11 @@ class NativePause:
             update(s.tasks)
             .where(s.tasks.c.id == tid)
             .values(
-                ctf_control={**control, "native_worker_active": {}, "native_worker_ready": ready}
+                ctf_control={
+                    **control,
+                    "native_worker_active": snapshot["assignments"] if pool else {},
+                    "native_worker_ready": ready,
+                }
             )
         )
         lead_turn_id = operation_id(request.pause_id, request.request_id, "lead-turn")

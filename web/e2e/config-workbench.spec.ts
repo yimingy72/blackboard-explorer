@@ -26,7 +26,7 @@ async function configFixture(page: Page) {
   await page.route('**/api/settings/tool-catalog', route => route.fulfill({ json: catalog }));
   await page.route('**/api/settings/workers', route => route.fulfill({ json: { revision: 6, profile: profile() } }));
   await page.route('**/api/settings/ctf/workers', route => route.fulfill({
-    json: { published: true, revision: 3, task_network: true, prompt_templates: { lead: '真实发布 Lead', teammate: '真实发布 Worker' },
+    json: { published: true, revision: 3, prompt_templates: { lead: '真实发布 Lead', teammate: '真实发布 Worker' },
       business_tools: { lead: ['board_finish_task'], teammate: ['board_post_fact'] } },
   }));
   await page.route('**/api/progress/settings', route => route.fulfill({ json: defaultProgress }));
@@ -112,6 +112,10 @@ test('CTF 只读；成果整理工具保存保持默认提示词未覆盖', asyn
   await expect(page.getByText('真实发布 Lead')).toBeVisible();
   await expect(page.getByRole('textbox')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '保存角色配置' })).toHaveCount(0);
+  await page.getByRole('button', { name: '运行设置', exact: true }).click();
+  await expect(page.getByText('所有成员共享任务 Runtime 与文件。')).toBeVisible();
+  await expect(page.getByText(/VPN|流量采集|Helper/)).toHaveCount(0);
+  await page.getByRole('button', { name: '系统提示词', exact: true }).click();
   await page.getByRole('button', { name: /^Worker/ }).click();
   await expect(page.getByText('真实发布 Worker')).toBeVisible();
   await page.getByRole('link', { name: '成果整理', exact: true }).click();

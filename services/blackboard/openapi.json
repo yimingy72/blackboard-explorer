@@ -2014,6 +2014,9 @@
               "ctf.native_worker.released",
               "ctf.native_worker.stopped",
               "ctf.native_worker.cleanup_changed",
+              "ctf.native_worker.idle",
+              "ctf.native_worker.ready",
+              "ctf.native_worker.call_settled",
               "ctf.turn.started",
               "ctf.turn.finished",
               "ctf.conclusion.requested",
@@ -2671,18 +2674,6 @@
                 "type": "null"
               }
             ]
-          },
-          "native_vpn_source_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Native Vpn Source Id"
           },
           "pi_model": {
             "anyOf": [
@@ -5169,6 +5160,16 @@
             "description": "题目范围；普通与历史记录为空",
             "title": "Challenge Id"
           },
+          "claim_assignment_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "claimed_at": {
             "anyOf": [
               {
@@ -5405,6 +5406,16 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
             "title": "Sdk Session Id",
             "type": "string"
+          },
+          "worker_idle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerIdleProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6397,16 +6408,6 @@
                 "type": "null"
               }
             ]
-          },
-          "vpn": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NativeVpnCapability"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -7324,34 +7325,6 @@
           "state"
         ],
         "title": "NativeTaskNetworkStatus",
-        "type": "object"
-      },
-      "NativeVpnCapability": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "profile": {
-            "enum": [
-              "openvpn-ipv4-tcp-v1",
-              "openvpn-task-ipv4-tcp-v1"
-            ],
-            "title": "Profile",
-            "type": "string"
-          }
-        },
-        "required": [
-          "profile",
-          "id",
-          "label"
-        ],
-        "title": "NativeVpnCapability",
         "type": "object"
       },
       "OperationAck": {
@@ -8529,20 +8502,6 @@
           }
         },
         "title": "Price",
-        "type": "object"
-      },
-      "PrivateVpnSourceView": {
-        "properties": {
-          "source_id": {
-            "format": "uuid",
-            "title": "Source Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source_id"
-        ],
-        "title": "PrivateVpnSourceView",
         "type": "object"
       },
       "ProfileDocument": {
@@ -9759,6 +9718,16 @@
             "const": "bbx.task-runner.v1",
             "title": "Protocol",
             "type": "string"
+          },
+          "worker_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -11630,6 +11599,18 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
             "title": "Sdk Session Id",
             "type": "string"
+          },
+          "source_model_call_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Model Call Id"
           },
           "tool_call_id": {
             "minLength": 1,
@@ -13797,6 +13778,71 @@
         "title": "VerdictItem",
         "type": "object"
       },
+      "WorkerContext": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Ref"
+          },
+          "challenge_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Challenge Id"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "assignment_ref",
+          "challenge_id"
+        ],
+        "title": "WorkerContext",
+        "type": "object"
+      },
+      "WorkerIdleProof": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/WorkerContext"
+          },
+          "entry_id": {
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry_id",
+          "seq",
+          "context"
+        ],
+        "title": "WorkerIdleProof",
+        "type": "object"
+      },
       "WorkerTools": {
         "additionalProperties": false,
         "properties": {
@@ -15623,111 +15669,6 @@
           }
         },
         "summary": "Download File",
-        "tags": [
-          "inputs"
-        ]
-      }
-    },
-    "/api/task-input-groups/{group_id}/private-vpn-source": {
-      "delete": {
-        "operationId": "remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Group Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "source_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Source Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "title": "Response Remove Private Vpn Source Api Task Input Groups  Group Id  Private Vpn Source Delete",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Remove Private Vpn Source",
-        "tags": [
-          "inputs"
-        ]
-      },
-      "put": {
-        "operationId": "upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Group Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrivateVpnSourceView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upload Private Vpn Source",
         "tags": [
           "inputs"
         ]
@@ -22332,6 +22273,23 @@
                 }
               ],
               "title": "Known Board Version"
+            }
+          },
+          {
+            "in": "query",
+            "name": "known_work_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Known Work Revision"
             }
           }
         ],

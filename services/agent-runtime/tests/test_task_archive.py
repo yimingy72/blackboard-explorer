@@ -352,9 +352,16 @@ def ctf_artifact(task: UUID, body: bytes, version: int) -> dict:
     }
 
 
-async def test_ctf_latest_registered_artifact_restores_without_facts_and_retains_history(tmp_path):
+@pytest.mark.parametrize("peer_snapshot", [False, True])
+async def test_ctf_latest_registered_artifact_restores_without_facts_and_retains_history(
+    tmp_path, peer_snapshot
+):
     task = uuid4()
     old, latest = ctf_artifact(task, b"old-script", 4), ctf_artifact(task, b"new-script", 9)
+    if peer_snapshot:
+        for artifact in (old, latest):
+            artifact["uri"] = f"evidence/{task}/member-1/{artifact['sha256']}.bin"
+            artifact["path"] = "/workspace/agents/member-1/replay.py"
     data = snapshot(task)
     del data["state"]["facts"]
     data["state"]["task"]["mode"] = "ctf"
@@ -379,6 +386,22 @@ async def test_ctf_latest_registered_artifact_restores_without_facts_and_retains
     assert manifest["restored_files"][0]["version"] == 9
     saved = json.loads(contents[".bbx/task.json"])
     assert saved["state"]["records"][0]["artifact_refs"] == [old]
+
+
+async def test_ctf_snapshot_hash_cannot_point_at_other_bytes(tmp_path):
+    task = uuid4()
+    artifact = ctf_artifact(task, b"original", 1)
+    artifact["uri"] = f"evidence/{task}/member-1/{'0' * 64}.bin"
+    data = snapshot(task)
+    data["state"]["task"]["mode"] = "ctf"
+    data["state"]["artifacts"] = [artifact]
+    with pytest.raises(ValueError, match="content hash"):
+        await build_archive(
+            cast(ObjectStore, Objects({artifact["uri"]: b"original"})),
+            task,
+            data,
+            tmp_path / "bad.tar.zst",
+        )
 
 
 @pytest.mark.parametrize("failure", ["task", "uri", "path", "version", "hash", "missing_old"])

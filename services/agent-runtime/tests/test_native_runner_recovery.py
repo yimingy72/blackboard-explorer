@@ -4,11 +4,76 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
+from bbx_runtime.clients import RemoteError
 from bbx_runtime.native_runner import NativeRunnerController
 from bbx_runtime.runner_resources import ResourceUnknown
+
+
+async def test_one_invalid_archive_does_not_stop_the_runtime(caplog):
+    controller: Any = object.__new__(NativeRunnerController)
+    controller.closed = False
+    controller.instance = SimpleNamespace(lost=asyncio.Event())
+
+    async def fail():
+        raise ValueError("private fixture payload must not be logged")
+
+    failed = asyncio.create_task(fail())
+    await asyncio.sleep(0)
+    controller.jobs = {"invalid-archive": failed}
+    checked = []
+
+    async def pending(*args, **kwargs):
+        checked.append(args)
+        controller.closed = True
+        return {"task_ids": []}
+
+    controller.service = SimpleNamespace(_json=pending)
+    await controller.run()
+    assert checked == [("GET", "/native-runner/bootstraps")]
+    assert "invalid-archive" in caplog.text and "ValueError" in caplog.text
+    assert "private fixture payload" not in caplog.text
+
+
+async def test_old_release_rejection_does_not_occupy_a_task_slot():
+    controller: Any = object.__new__(NativeRunnerController)
+    controller.closed = False
+    controller.controller_id = "controller"
+    controller.retirement_authority = {}
+    controller.instance = SimpleNamespace(
+        lost=asyncio.Event(), fence=1, backend_pid=1, backend_started_at=datetime.now(UTC)
+    )
+    controller.view = AsyncMock(return_value={"state": "stopped", "data": {}})
+    controller._claim_config = lambda _: {}
+    controller.service = SimpleNamespace(
+        _json=AsyncMock(side_effect=RemoteError(409, "Old release no longer available"))
+    )
+    with pytest.raises(RemoteError):
+        await asyncio.wait_for(controller._supervise_task("old-task"), 0.5)
+    controller.service._json.assert_awaited_once()
+
+
+async def test_terminal_cleanup_uses_original_frozen_release(monkeypatch):
+    controller: Any = object.__new__(NativeRunnerController)
+    original = {"sandbox_image": "old-image", "source_id": "same-source"}
+    resources = object()
+    controller.retirement_authority = {"pod_uid": "api-server", "node_uid": "node"}
+    captured = []
+
+    def create(config):
+        captured.append(config)
+        return resources
+
+    monkeypatch.setattr("bbx_runtime.native_runner.RunnerResources", create)
+    operation = {"state": "stopped", "data": {}, "cleanup_resource_config": original}
+    assert controller._operation_resources(operation) == (resources, original)
+    assert captured == [
+        {**original, "retirement_single_apiserver": controller.retirement_authority}
+    ]
 
 
 @pytest.mark.parametrize("freeze_after", ["observation", "renew"])

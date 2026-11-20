@@ -14,7 +14,7 @@ from bbx_contracts.challenge_board import (
     business_contract,
 )
 from bbx_contracts.storage import storage_safe
-from sqlalchemy import delete, func, literal_column, select, text, update
+from sqlalchemy import delete, func, literal_column, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -177,6 +177,9 @@ async def apply_ctf_view(conn: AsyncConnection, evt: dict[str, Any]) -> None:
         "ctf.native_worker.released",
         "ctf.native_worker.stopped",
         "ctf.native_worker.cleanup_changed",
+        "ctf.native_worker.idle",
+        "ctf.native_worker.ready",
+        "ctf.native_worker.call_settled",
         "ctf.coordination.reminded",
         "agent.trace.recorded",
         "tool_call.recorded",
@@ -332,6 +335,7 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             for k in (
                 "challenge_id",
                 "assignment_ref",
+                "claim_assignment_ref",
                 "statement",
                 "based_on",
                 "expected",
@@ -366,10 +370,20 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
             conn,
             s.intents,
             tid,
-            {"status": "claimed", "holder": p["holder"], "claimed_at": stamp},
+            {
+                "status": "claimed",
+                "holder": p["holder"],
+                "claimed_at": stamp,
+                **(
+                    {"version": version, "claim_assignment_ref": p["claim_assignment_ref"]}
+                    if p.get("challenge_id")
+                    else {}
+                ),
+            },
             p["intent_id"],
         )
-        await patch(conn, s.agent_runs, tid, {"intent_id": p["intent_id"]}, p["holder"])
+        if not p.get("challenge_id"):
+            await patch(conn, s.agent_runs, tid, {"intent_id": p["intent_id"]}, p["holder"])
     elif kind == "intent.released":
         intent = await row(conn, s.intents, tid, p["intent_id"])
         notes = [*intent["notes"], {"by": p["holder"], "at": stamp.isoformat(), "text": p["note"]}]
@@ -402,10 +416,11 @@ async def apply(conn: AsyncConnection, evt: dict[str, Any]) -> None:
                 "result_facts": [*intent["result_facts"], p["by"]]
                 if p["by"] != "system"
                 else intent["result_facts"],
+                **({"version": version} if intent.get("challenge_id") else {}),
             },
             p["intent_id"],
         )
-        if intent["holder"]:
+        if intent["holder"] and not intent.get("challenge_id"):
             await patch(conn, s.agent_runs, tid, {"intent_id": None}, intent["holder"])
     elif kind == "agent.spawned":
         await conn.execute(
@@ -722,7 +737,10 @@ class Repository:
             select(s.events.c.payload["result"]["id"].astext).where(
                 s.events.c.task_id == tid,
                 s.events.c.type.in_(("ctf.challenge.created", "ctf.challenge.updated")),
-                s.events.c.payload["result"]["owner_id"].astext == aid,
+                or_(
+                    s.events.c.payload["result"]["owner_id"].astext == aid,
+                    s.events.c.payload["result"]["collaborator_ids"].contains([aid]),
+                ),
             )
         )
         return {identifier for identifier in identifiers.scalars() if identifier is not None}

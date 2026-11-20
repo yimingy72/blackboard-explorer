@@ -24,7 +24,7 @@ export function saveBoardState(taskId: string, value: BoardState, storage?: Pick
 }
 
 function trustedAccepted(verification: Record<string, unknown>): boolean {
-  return verification.status === 'accepted' && !verification.test_only && (verification.source === 'platform' || verification.source === 'user');
+  return verification.status === 'accepted' && !verification.test_only && ['platform', 'user', 'lead'].includes(String(verification.source));
 }
 
 export function snapshotBoard(challenges: CtfChallenge[], records: CtfRecord[]): BoardSnapshot {

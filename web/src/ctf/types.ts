@@ -4,6 +4,7 @@ export type CtfMember = {
   id: string; agent_id?: string; display_name: string; role: 'lead' | 'teammate';
   lifecycle: 'active' | 'stopped' | 'removed'; run_state: string; generation: number;
   current_turn_id?: string | null;
+  has_worked?: boolean;
 };
 export type CtfChallenge = {
   id: string; title: string; description: string; connection?: string | null;
@@ -12,6 +13,11 @@ export type CtfChallenge = {
   verification: Record<string, unknown>; target: Record<string, unknown>;
   solution_record_id?: string | null;
   dispatch_status?: string | null; requested_worker_id?: string | null;
+  collaboration?: {
+    difficulty: 'easy' | 'medium' | 'hard'; multi_stage: boolean; assistance_target: number;
+    review_revision: number; review_summary?: string | null; feedback_fact_id?: string | null;
+    solve_elapsed_ms: number; solve_started_at?: string | null; assistance_reminded: boolean;
+  } | null;
 };
 export type CtfProgress = { stage: 'approach' | 'attempt' | 'breakthrough' | 'result'; title: string; summary: string };
 export type CtfSolutionStep = { kind: CtfProgress['stage']; title: string; result: 'supported' | 'ruled_out' | 'inconclusive'; summary: string; record_ids: string[]; artifact_ids: string[] };

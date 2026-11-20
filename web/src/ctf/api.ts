@@ -1,5 +1,6 @@
 import { ApiError, request } from '../api/client';
 import type { CtfArtifact, CtfChallenge, CtfEvent, CtfMessage, CtfRecord, CtfSession, CtfState } from './types';
+import type { components } from '../api/schema';
 
 const path = (taskId: string) => `/tasks/${encodeURIComponent(taskId)}`;
 const body = (value: unknown, signal?: AbortSignal): RequestInit => ({ method: 'POST', body: JSON.stringify(value), signal });
@@ -24,4 +25,5 @@ export const ctfApi = {
   records: (id: string, challenge: string, signal?: AbortSignal, offset = 0) => request<{ records: CtfRecord[]; next_offset?: number | null }>(`${path(id)}/ctf/challenges/${encodeURIComponent(challenge)}/records?limit=100&offset=${offset}`, { signal }),
   record: (id: string, challenge: string, record: string, signal?: AbortSignal) => request<CtfRecord>(`${path(id)}/ctf/challenges/${encodeURIComponent(challenge)}/records/${encodeURIComponent(record)}`, { signal }),
   artifact: (id: string, artifact: string, signal?: AbortSignal) => request<CtfArtifact>(`${path(id)}/ctf/artifacts/${encodeURIComponent(artifact)}`, { signal }),
+  knowledge: (id: string, challenge: string, signal?: AbortSignal) => request<components['schemas']['ChallengeKnowledge']>(`${path(id)}/ctf/knowledge/${encodeURIComponent(challenge)}`, { signal }),
 };

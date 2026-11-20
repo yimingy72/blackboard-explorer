@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from .ctf_collaboration import ChallengeCollaboration
 from .mcp_catalog import NativeMcpGrants
 from .model_limits import effective_max_output_tokens
 from .models import ContractModel, ExecResources, ModelConfig, TaskStatus, Usage, WorkerTools
@@ -259,7 +260,6 @@ class CtfTaskCreate(CtfTaskSpec):
     native_environment: NativeCtfEnvironmentRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    native_vpn_source_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     input_group_id: UUID | None = None
     input_file_ids: list[UUID] | None = Field(default=None, max_length=20)
     public_input_ids: list[UUID] | None = Field(default=None, max_length=20)
@@ -272,8 +272,6 @@ class CtfTaskCreate(CtfTaskSpec):
 
     @model_validator(mode="after")
     def validate_selection(self) -> CtfTaskCreate:
-        if self.native_vpn_source_id is not None and self.input_group_id is None:
-            raise ValueError("A private VPN configuration requires an owned input group")
         if self.model_version is not None and self.model_id is None:
             raise ValueError("Model version requires a model ID")
         if self.input_file_ids is not None and self.input_group_id is None:
@@ -502,6 +500,7 @@ class CtfMember(ContractModel):
     )
     generation: int = Field(default=0, ge=0)
     current_turn_id: UUID | None = None
+    has_worked: bool = Field(default=False, exclude_if=lambda value: not value)
     create_request_id: UUID | None = None
     usage: Usage = Field(default_factory=Usage)
     pending_operation: CtfMemberOperation | None = None
@@ -664,6 +663,9 @@ class CtfEvent(ContractModel):
         "ctf.native_worker.released",
         "ctf.native_worker.stopped",
         "ctf.native_worker.cleanup_changed",
+        "ctf.native_worker.idle",
+        "ctf.native_worker.ready",
+        "ctf.native_worker.call_settled",
         "ctf.turn.started",
         "ctf.turn.finished",
         "ctf.conclusion.requested",
@@ -682,7 +684,9 @@ class CtfEvent(ContractModel):
     created_at: datetime
 
 
-CtfWorkStatus = Literal["pending", "in_progress", "blocked", "completed", "cancelled"]
+CtfWorkStatus = Literal[
+    "pending", "in_progress", "awaiting_review", "blocked", "completed", "cancelled"
+]
 
 
 def _nonblank(value: str) -> str:
@@ -755,6 +759,9 @@ class CtfChallenge(ContractModel):
     scope_revision: int = Field(default=1, ge=1)
     origin_work_id: UUID | None = None
     auto_solve_count: int = Field(default=0, ge=0)
+    collaboration: ChallengeCollaboration | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CtfArtifactUploadRequest(ContractModel):
@@ -1035,7 +1042,7 @@ class CtfVerification(ContractModel):
     basis: str | None = None
     submission_id: str | None = None
     status: Literal["pending", "candidate", "unknown", "accepted", "rejected"] = "pending"
-    source: Literal["agent", "platform", "user"] | None = None
+    source: Literal["agent", "platform", "user", "lead"] | None = None
     external_ref: str | None = None
     response_uri: str | None = None
     summary: str | None = None

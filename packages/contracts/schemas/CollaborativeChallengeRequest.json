@@ -1,0 +1,102 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Id"
+    },
+    "connection": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Connection"
+    },
+    "requirements": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requirements"
+    },
+    "difficulty": {
+      "anyOf": [
+        {
+          "enum": [
+            "easy",
+            "medium",
+            "hard"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Difficulty"
+    },
+    "multi_stage": {
+      "default": false,
+      "title": "Multi Stage",
+      "type": "boolean"
+    },
+    "readiness": {
+      "default": "ready",
+      "enum": [
+        "ready",
+        "no_external_materials",
+        "materials_pending"
+      ],
+      "title": "Readiness",
+      "type": "string"
+    },
+    "priority": {
+      "default": 1,
+      "maximum": 3,
+      "minimum": 0,
+      "title": "Priority",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "title"
+  ],
+  "title": "CollaborativeChallengeRequest",
+  "type": "object"
+}

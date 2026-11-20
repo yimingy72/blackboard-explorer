@@ -164,6 +164,9 @@ export class IncrementalJournal {
   }
   index(entry, seq) {
     if (entry.id && entry.type !== "session") this.entrySeq.set(entry.id, seq);
+    if (entry.type === "custom" && entry.customType === "bbx.worker-idle") {
+      this.workerIdle = { entry_id: entry.id, seq, context: entry.data.context };
+    }
     if (this.binding.business_contract === "exploration-board-v1"
         && entry.type === "message" && entry.message.role === "assistant") {
       this.boardAssistants.set(entry.id, { seq, reason: entry.message.stopReason });
@@ -264,6 +267,9 @@ export class IncrementalJournal {
       sdk_session_id: this.session.sessionId, previous, cursor,
       entries: Buffer.concat(blocks).toString("utf8"),
       applied_inputs: [...this.inputs.values()].filter((input) => input.seq > previous.seq && input.seq <= cursor.seq) };
+    if (this.workerIdle && this.workerIdle.seq > previous.seq && this.workerIdle.seq <= cursor.seq) {
+      body.worker_idle = this.workerIdle;
+    }
     body.request_id = digest(jsonText([this.binding.binding_id, body.sdk_session_id, cursor.offset, cursor.hash, cursor.leaf_id]));
     this.pendingConfirmation = body;
     await this.platform.confirmJournal(body, signal);

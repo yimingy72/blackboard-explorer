@@ -931,6 +931,8 @@ class RunnerResources:
             ]
             policy["spec"]["egress"][0]["toPorts"] = link
         policy["apiVersion"] = "cilium.io/v2"
+        if operation["data"].get("execution_profile") == "ctf-direct-v1":
+            policy["spec"]["egress"].append({"toEntities": ["world"]})
         await self._ensure(policy, labels)
         if self.traffic_enabled(operation) and not vpn and not board:
             target = self._document(
@@ -2116,6 +2118,11 @@ class RunnerResources:
             "sandbox_pod_uid": observed["sandbox"]["pod_uid"],
             "environment_revision": observed["sandbox"]["environment_revision"],
             "network": self.config["sandbox_network"],
+            **(
+                {"execution_profile": "ctf-direct-v1"}
+                if operation["data"].get("execution_profile") == "ctf-direct-v1"
+                else {}
+            ),
             **(
                 {
                     "board_network": {

@@ -8,7 +8,7 @@ from bbx_blackboard.board_runner_tools import schemas as board_schemas
 from bbx_blackboard.native_ctf_publication import NativeCtfPublication
 from bbx_blackboard.worker_settings import tool_catalog, validate_prompt
 from bbx_contracts.progress import PROGRESS_TOOL_NAMES
-from bbx_contracts.runner_vpn import NETWORK_USE_DEFAULT, VPN_DYNAMIC_PROFILE, VPN_TOOLS
+from bbx_contracts.runner_vpn import NETWORK_USE_DEFAULT, VPN_TOOLS
 from bbx_runtime.progress.tools import progress_tools
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_tool_catalog_matches_bound_role_tools_and_real_parameters():
     published = NativeCtfPublication.model_construct(
-        vpn_profile=VPN_DYNAMIC_PROFILE,
+        collaboration_profile="peer-workers-v1",
         runtime_resource_config={"runner_profile": "node-sandbox-host-v1"},
     )
     assert "lead" not in tool_catalog(None)["roles"]
@@ -38,7 +38,9 @@ def test_tool_catalog_matches_bound_role_tools_and_real_parameters():
         assert all(item["group"] == "platform" for item in roles[role]["tools"])
     lead = {item["name"]: item for item in roles["lead"]["tools"]}
     teammate = {item["name"]: item for item in roles["teammate"]["tools"]}
-    assert NETWORK_USE_DEFAULT in lead and set(VPN_TOOLS) <= set(lead)
+    assert not ({NETWORK_USE_DEFAULT, *VPN_TOOLS} & set(lead))
+    assert "board_review_challenge" in lead
+    assert "board_claim_challenge" in teammate
     assert not ({NETWORK_USE_DEFAULT, *VPN_TOOLS} & set(teammate))
     assert all(not item["configurable"] for item in (*lead.values(), *teammate.values()))
 

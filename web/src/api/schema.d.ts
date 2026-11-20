@@ -639,24 +639,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/task-input-groups/{group_id}/private-vpn-source": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Upload Private Vpn Source */
-        put: operations["upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put"];
-        post?: never;
-        /** Remove Private Vpn Source */
-        delete: operations["remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -4210,7 +4192,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.native_worker.assigned" | "ctf.native_worker.released" | "ctf.native_worker.stopped" | "ctf.native_worker.cleanup_changed" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
+            type: "ctf.member.created" | "ctf.member.state_changed" | "ctf.member.removed" | "ctf.started" | "ctf.challenge.created" | "ctf.challenge.updated" | "ctf.record.appended" | "ctf.artifact.registered" | "ctf.verification.updated" | "ctf.target.updated" | "ctf.platform.dispatched" | "ctf.platform.result_captured" | "ctf.message.posted" | "ctf.message.delivered" | "ctf.native_worker.assigned" | "ctf.native_worker.released" | "ctf.native_worker.stopped" | "ctf.native_worker.cleanup_changed" | "ctf.native_worker.idle" | "ctf.native_worker.ready" | "ctf.native_worker.call_settled" | "ctf.turn.started" | "ctf.turn.finished" | "ctf.conclusion.requested" | "ctf.conclusion.finalized" | "ctf.coordination.reminded" | "ctf.plan.updated" | "ctf.dispatch.assigned" | "ctf.work.discovered" | "ctf.work.notice" | "ctf.cursor";
             /** Version */
             version: number;
         };
@@ -4446,8 +4428,6 @@ export interface components {
             name?: string | null;
             native_environment?: components["schemas"]["NativeCtfEnvironmentRef"] | null;
             native_mcp?: components["schemas"]["NativeMcpGrants"] | null;
-            /** Native Vpn Source Id */
-            native_vpn_source_id?: string | null;
             pi_model?: components["schemas"]["PiModelRef"] | null;
             /** Profile Version */
             profile_version?: number | null;
@@ -5325,6 +5305,7 @@ export interface components {
              * @description 题目范围；普通与历史记录为空
              */
             challenge_id?: string | null;
+            claim_assignment_ref?: components["schemas"]["KnowledgeAssignment"] | null;
             /**
              * Claimed At
              * @description 认领时间
@@ -5441,6 +5422,7 @@ export interface components {
             request_id: string;
             /** Sdk Session Id */
             sdk_session_id: string;
+            worker_idle?: components["schemas"]["WorkerIdleProof"] | null;
         };
         /** JournalCursor */
         JournalCursor: {
@@ -5808,7 +5790,6 @@ export interface components {
             /** Revision */
             revision: number;
             shared_inputs?: components["schemas"]["NativeSharedInputLimits"] | null;
-            vpn?: components["schemas"]["NativeVpnCapability"] | null;
         };
         /** NativeCtfEnvironmentRef */
         NativeCtfEnvironmentRef: {
@@ -6145,18 +6126,6 @@ export interface components {
              * @enum {string}
              */
             state: "unselected" | "preparing" | "ready" | "failed" | "disconnected" | "stopped";
-        };
-        /** NativeVpnCapability */
-        NativeVpnCapability: {
-            /** Id */
-            id: string;
-            /** Label */
-            label: string;
-            /**
-             * Profile
-             * @enum {string}
-             */
-            profile: "openvpn-ipv4-tcp-v1" | "openvpn-task-ipv4-tcp-v1";
         };
         /** OperationAck */
         OperationAck: {
@@ -6672,14 +6641,6 @@ export interface components {
              */
             output_per_m?: string | null;
         };
-        /** PrivateVpnSourceView */
-        PrivateVpnSourceView: {
-            /**
-             * Source Id
-             * Format: uuid
-             */
-            source_id: string;
-        };
         /** ProfileDocument */
         ProfileDocument: {
             /**
@@ -7135,6 +7096,7 @@ export interface components {
              * @constant
              */
             protocol: "bbx.task-runner.v1";
+            worker_context?: components["schemas"]["WorkerContext"] | null;
         };
         /** ReceiptHeartbeatRequest */
         ReceiptHeartbeatRequest: {
@@ -7777,6 +7739,8 @@ export interface components {
             protocol: "bbx.task-runner.v1";
             /** Sdk Session Id */
             sdk_session_id: string;
+            /** Source Model Call Id */
+            source_model_call_id?: string | null;
             /** Tool Call Id */
             tool_call_id: string;
             /** Tool Name */
@@ -8575,6 +8539,23 @@ export interface components {
             reason: string;
             /** @description 满足或未满足 */
             verdict: components["schemas"]["Verdict"];
+        };
+        /** WorkerContext */
+        WorkerContext: {
+            /** Assignment Ref */
+            assignment_ref: string | null;
+            /** Challenge Id */
+            challenge_id: string | null;
+            /** Revision */
+            revision: number;
+        };
+        /** WorkerIdleProof */
+        WorkerIdleProof: {
+            context: components["schemas"]["WorkerContext"];
+            /** Entry Id */
+            entry_id: string;
+            /** Seq */
+            seq: number;
         };
         /** WorkerTools */
         WorkerTools: {
@@ -9839,72 +9820,6 @@ export interface operations {
             path: {
                 group_id: string;
                 file_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    upload_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                group_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrivateVpnSourceView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_private_vpn_source_api_task_input_groups__group_id__private_vpn_source_delete: {
-        parameters: {
-            query?: {
-                source_id?: string | null;
-            };
-            header?: never;
-            path: {
-                group_id: string;
             };
             cookie?: never;
         };
@@ -13770,6 +13685,7 @@ export interface operations {
             query?: {
                 known_revision?: number;
                 known_board_version?: number | null;
+                known_work_revision?: number | null;
             };
             header?: never;
             path: {

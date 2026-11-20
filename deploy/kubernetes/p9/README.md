@@ -57,9 +57,10 @@ python3 deploy/kubernetes/p9/build_runtime.py --git-dir "$BBX_RELEASE_GIT_DIR" \
 
 首次安装只用于没有现有平台或数据卷的新环境；已有站点使用上方命令。此目录不是创建任意新集群的一键安装器。先核对：
 
-- Kind 有可用的单节点 Linux/amd64、Cilium、现有 OpenSandbox BatchSandbox/controller/ingress 及 TUN。具备 `standard` 任务卷类、Retain 平台卷类对应的 local-path provisioner，以及清单固定的存储、代理和执行镜像；核对实际资源上限能满足两任务并发。
+- Kind 有可用的单节点 Linux/amd64、Cilium、现有 OpenSandbox BatchSandbox/controller/ingress；仅启用普通模式 VPN 时需要 TUN。具备 `standard` 任务卷类、Retain 平台卷类对应的 local-path provisioner，以及清单固定的存储、代理和执行镜像；核对实际资源上限能满足两任务并发。
 - 已确认 `kube-system` 的 UID、P9 命名空间和 Server 身份，已隔离合成环境。P9 的集群角色、准入策略、网络和 8766 回环规则须通过服务端与实际正反向测试。历史 P7/P8 验收不替代 P9 的真实 Service、DNS、CA 与两个模式。
 - 已验私有发布目录包含 `board.json`、`ctf.json`、`board-runtime.json`、`ctf-runtime.json`、`board-acceptance.json`、`ctf-acceptance.json`。两个发布中的 `runtime_resource_config` 分别与对应 Runtime 文件完全相同；验收引用绑定原文件 SHA、规范资源摘要、制品和实测能力。P9 的 `runtime_artifact_sha256` 填已验 Runtime OCI manifest digest 的 64 位十六进制正文，独立记录源码归档 SHA。[字段与占位样例](release-inputs.example.json)不是可用发布或验收。
+- CTF 使用 `execution_profile=ctf-direct-v1`、`collaboration_profile=peer-workers-v1` 与 schema 4 执行验收，删除 CTF 发布中的 VPN 和 capture 配置。完整工具镜像通过 `services/sandbox-execution/ctf-direct.Dockerfile` 派生（传入 `SANDBOX_BASE`），CTF 使用标准 P9 Sandbox Server。构建后将实际镜像摘要同步到发布、Runtime 配置和现有 `bbx-platform-sandbox-pod` 的 `allowedImages`，以及 `bbx-platform-task-pod` 的归档 reader 镜像清单，再创建任务；缺少最后一步会导致 Pod 被旧镜像配置拒绝。普通黑板的网络字段放在其独立配置中。CTF 直接执行无需 TUN、网络准备或逐 Worker 抓包。
 - 使用严格 TLS SAN：`blackboard-control.bbx-platform.svc.cluster.local` 和 `runtime-control.bbx-platform.svc.cluster.local`。证书含 `subjectKeyIdentifier` 和 `authorityKeyIdentifier`，分别运行 `openssl verify -x509_strict -CAfile <CA> -verify_hostname <服务DNS> <证书>`。证书轮换等 Secret 文件投射，再重载代理并核对新叶证书。
 - 拟安装卷为空或已完成受控恢复。MinIO 目标目录必须允许其非 root UID 写入，先用隔离卷实测 provisioner/文件权限；不把旧源卷重新初始化。已有数据、密钥、Vault 和目录的迁移必须另验。
 

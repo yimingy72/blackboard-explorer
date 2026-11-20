@@ -300,6 +300,11 @@ class RunnerGateway:
                 "tool_call_id": invocation.tool_call_id,
                 "tool_name": invocation.tool_name,
                 "arguments_digest": invocation.arguments_digest,
+                **(
+                    {"source_model_call_id": str(invocation.source_model_call_id)}
+                    if invocation.source_model_call_id is not None
+                    else {}
+                ),
             }
             if call["binding_id"] != identity.binding_id or any(
                 original[key] != value for key, value in checks.items()
@@ -350,6 +355,11 @@ class RunnerGateway:
                     }
                 return self._permit(call)
             task = await self.control._task(conn, tid, live=True)
+            stale_work = False
+            if binding["business"].get("worker_pool"):
+                binding, stale_work = await self._worker_tool_source(
+                    conn, tid, task, binding, invocation
+                )
             spec = json.loads(binding["payload_json"])["spec"]
             child = bool(binding["business"].get("native_child_id"))
             if binding["binding"]["business_contract"] == EXPLORATION_CONTRACT:
@@ -395,12 +405,18 @@ class RunnerGateway:
             if (
                 external is None
                 and role == "teammate"
+                and not binding["business"].get("worker_pool")
                 and invocation.tool_name
                 not in {*SANDBOX_TOOLS, "board_announcements", "board_challenges"}
                 and str(original_args.get("challenge_id")) != binding["business"]["challenge_id"]
             ):
                 raise HTTPException(403, "Worker tool arguments exceed the current Assignment")
-            if invocation.tool_name in SANDBOX_TOOLS:
+            invalid_file_fact = (
+                invocation.tool_name == "read_file"
+                and "fact" in original_args
+                and not binding["business"].get("worker_pool")
+            )
+            if invocation.tool_name in SANDBOX_TOOLS and not stale_work:
                 self.sandbox.validate_arguments(invocation.tool_name, original_args)
                 if (
                     (child or binding["binding"]["business_contract"] == EXPLORATION_CONTRACT)
@@ -408,16 +424,24 @@ class RunnerGateway:
                     and original_args.get("background")
                 ):
                     raise HTTPException(403, "Helper command must use foreground mode")
-                scoped = await self.sandbox.binding(conn, tid, binding, owner)
+                scoped = (
+                    await self.sandbox.binding(conn, tid, binding, owner)
+                    if not invalid_file_fact
+                    else None
+                )
                 if reconciling:
                     await self.sandbox.resolve_command(
                         conn, tid, original_args["command_id"], scoped
                     )
-            if external is not None and await self._count(
-                conn,
-                s.runner_calls.c.task_id == tid,
-                s.runner_calls.c.provider_key == "external-mcp",
-                self._unresolved(),
+            if (
+                not stale_work
+                and external is not None
+                and await self._count(
+                    conn,
+                    s.runner_calls.c.task_id == tid,
+                    s.runner_calls.c.provider_key == "external-mcp",
+                    self._unresolved(),
+                )
             ):
                 raise HTTPException(409, "Task has an unresolved external MCP call")
             unrelated = (
@@ -425,7 +449,7 @@ class RunnerGateway:
                 if reconciling
                 else []
             )
-            if await self._count(
+            if not stale_work and await self._count(
                 conn,
                 s.runner_calls.c.task_id == tid,
                 s.runner_calls.c.binding_id == binding["id"],
@@ -443,6 +467,11 @@ class RunnerGateway:
                 "fence": fence(owner),
                 "binding": binding["binding"],
                 "business": binding["business"],
+                **(
+                    {"source_model_call_id": str(invocation.source_model_call_id)}
+                    if invocation.source_model_call_id is not None
+                    else {}
+                ),
                 "sdk_session_id": invocation.sdk_session_id,
                 "journal": invocation.journal.model_dump(mode="json"),
                 "assistant_entry_id": invocation.assistant_entry_id,
@@ -481,16 +510,79 @@ class RunnerGateway:
                 created_at=datetime.now(UTC),
             )
             await conn.execute(insert(s.runner_calls).values(**value))
+            if stale_work or invalid_file_fact:
+                reason = (
+                    "This call belongs to earlier work. It was not executed. "
+                    "Read the latest claim result and board before the next action."
+                    if stale_work
+                    else "File facts require a current Worker challenge. Nothing was executed. "
+                    "Read the file without fact, use board_post_fact with your command "
+                    "receipt, or board_review_challenge with existing saved fact_refs."
+                )
+                await self._save_tool_result(
+                    conn,
+                    tid,
+                    value,
+                    {"isError": True, "content": [{"type": "text", "text": reason}]},
+                )
+                return self._permit(await self._call(conn, tid, value["id"]))
             if invocation.tool_name == "exec_command" and self.vpn is not None:
                 resource = await self.vpn.bootstrap._get(conn, tid)
                 try:
-                    if resource:
+                    if resource and resource["data"].get("execution_profile") != "ctf-direct-v1":
                         vpn_solver_deadline(resource)
                 except HTTPException as error:
                     result = vpn_result({"error": error.detail}, error=True)
                     await self._save_tool_result(conn, tid, value, result)
                     return self._permit(await self._call(conn, tid, value["id"]))
             return self._permit(value)
+
+    async def _worker_tool_source(self, conn, tid, task, binding, invocation):
+        from bbx_blackboard.native_worker_pool import work_context
+
+        if invocation.source_model_call_id is None:
+            raise HTTPException(403, "Worker tools require their originating model call")
+        source = (
+            (
+                await conn.execute(
+                    select(s.pi_model_calls).where(
+                        s.pi_model_calls.c.task_id == tid,
+                        s.pi_model_calls.c.call_id == invocation.source_model_call_id,
+                        s.pi_model_calls.c.agent_id == binding["binding"]["agent_id"],
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        proof = (source["intent"].get("proof") or {}) if source else {}
+        context = proof.get("worker_context")
+        if (
+            not source
+            or source["state"] != "complete"
+            or proof.get("binding") != binding["binding"]
+            or not context
+        ):
+            raise HTTPException(403, "Original Worker model response is unconfirmed")
+        current = work_context(task, binding["binding"]["agent_id"])
+        active = (
+            task["ctf_control"]
+            .get("native_worker_active", {})
+            .get(binding["binding"]["agent_id"], {})
+        )
+        stale = context != current or bool(active.get("releasing"))
+        if context["assignment_ref"] is None and (
+            invocation.tool_name in SANDBOX_TOOLS or invocation.tool_name.startswith("mcp_")
+        ):
+            stale = True
+        business = {
+            **binding["business"],
+            "worker_context": context,
+            "challenge_id": context["challenge_id"],
+            "native_assignment_id": context["assignment_ref"],
+            "scope_revision": active.get("scope_revision") if not stale else None,
+        }
+        return {**binding, "business": business}, stale
 
     async def claim_business_tool(
         self, tid, identity, invocation, name, arguments, *, target="business"
@@ -513,6 +605,15 @@ class RunnerGateway:
                 raise HTTPException(403, "MCP metadata does not match the admitted request")
             if call["state"] == "completed":
                 return None, self._permit(call)
+            if binding["business"].get("worker_pool"):
+                from bbx_blackboard.native_worker_pool import work_context
+
+                task = await row(conn, s.tasks, tid)
+                if data["business"].get("worker_context") != work_context(
+                    task, binding["binding"]["agent_id"]
+                ):
+                    raise HTTPException(409, "Original tool work context changed before dispatch")
+                binding = {**binding, "business": data["business"]}
             if call["state"] != "admitted" or call["owner_epoch"] != owner["epoch"]:
                 raise HTTPException(409, "Tool outcome is unknown; redispatch is forbidden")
             if data["authorized_wait_until_ms"] <= int(datetime.now(UTC).timestamp() * 1000):
@@ -538,7 +639,8 @@ class RunnerGateway:
             if target == "sandbox" and name == "exec_command":
                 resource = await self.sandbox.resource(conn, tid)
                 try:
-                    vpn_solver_deadline(resource)
+                    if resource["data"].get("execution_profile") != "ctf-direct-v1":
+                        vpn_solver_deadline(resource)
                 except HTTPException as error:
                     value = vpn_result({"error": error.detail}, error=True)
                     await self._save_tool_result(conn, tid, call, value)
@@ -554,7 +656,9 @@ class RunnerGateway:
                         conn, tid, call, owner, binding, original
                     )
                 except HTTPException as error:
-                    if binding["binding"]["business_contract"] != EXPLORATION_CONTRACT:
+                    if binding["binding"][
+                        "business_contract"
+                    ] != EXPLORATION_CONTRACT and not binding["business"].get("worker_pool"):
                         raise
                     result = {
                         "isError": True,
@@ -647,6 +751,18 @@ class RunnerGateway:
             .where(s.runner_calls.c.task_id == tid, s.runner_calls.c.id == call["id"])
             .values(state="completed", concurrency_active=False, data=data)
         )
+        if call["data"].get("business", {}).get("worker_pool"):
+            await self.ctf._emit(
+                conn,
+                tid,
+                "native_worker.call_settled",
+                "system",
+                {
+                    "binding_id": call["binding_id"],
+                    "call_id": call["id"],
+                    "agent_id": call["data"]["binding"]["agent_id"],
+                },
+            )
 
     async def unknown_business_result(self, tid, invocation_id):
         async with self.repo.engine.begin() as conn:

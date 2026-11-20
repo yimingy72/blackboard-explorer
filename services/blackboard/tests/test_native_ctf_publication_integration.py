@@ -84,14 +84,12 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         "runner_profile": "node-sandbox-host-v1",
         "sandbox_host_image": "fixture-host@sha256:" + "c" * 64,
         "runtime_artifact_sha256": "1" * 64,
-        "traffic_sandbox_image": "fixture-capture@sha256:" + "d" * 64,
+        "execution_profile": "ctf-direct-v1",
         "sandbox_network": {
             "namespace": "worker-a",
             "network_identity": "worker-a",
             "ipv4": "198.19.1.2",
         },
-        "traffic_target_namespace": "fixture-target",
-        "traffic_targets": [{"ipv4": "10.12.0.5", "port": 18888}],
         "kubeconfig": "/private/owned-kubeconfig",
         "context": "fixture-context",
         "storage_class": "fixture-storage",
@@ -109,17 +107,15 @@ async def test_public_native_creation_freezes_and_replays_original_task(
     }
     receipt = tmp_path / "acceptance.json"
     accepted = {
-        "schema_version": 3,
+        "schema_version": 4,
+        "execution_profile": "ctf-direct-v1",
         "pi_model_protocol": "pi-messages-v1",
         "mcp_transport": "direct-v2",
         "runner_image": resource["runner_image"],
         "sandbox_host_image": resource["sandbox_host_image"],
+        "sandbox_image": resource["sandbox_image"],
         "runtime_artifact_sha256": resource["runtime_artifact_sha256"],
         "runtime_config_digest": management_document_digest(resource),
-        "base_source": "reconstructed",
-        "base_tool_image": "fixture-reconstructed@sha256:" + "e" * 64,
-        "recipe_sha256": "f" * 64,
-        "traffic_sandbox_image": resource["traffic_sandbox_image"],
         "public_create_and_archive": True,
     }
     receipt.write_text(json.dumps(accepted))
@@ -339,7 +335,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
         assert "execute_command" in loaded_profile.worker_tools["lead"].builtin
         traffic = await http.get(f"/api/tasks/{tid}/traffic", headers=user)
         assert traffic.status_code == 200, traffic.text
-        assert traffic.json()["native_bound"] and traffic.json()["native_sources"] == []
+        assert not traffic.json().get("native_bound") and not traffic.json().get("native_sources")
 
         # Changed private config invalidates new selections, not original retries.
         path.write_text(
@@ -348,7 +344,7 @@ async def test_public_native_creation_freezes_and_replays_original_task(
                     **publication,
                     "runtime_resource_config": {
                         **resource,
-                        "traffic_targets": [{"ipv4": "10.12.0.6", "port": 18888}],
+                        "sandbox_image": "fixture-direct-changed@sha256:" + "e" * 64,
                     },
                 }
             )
@@ -405,7 +401,9 @@ async def test_public_native_creation_freezes_and_replays_original_task(
                 },
             )
             assert response.status_code == 200, response.text
-            assert response.json()["data"]["traffic_profile"] == "binding-pcap-v1"
+            assert response.json()["data"]["execution_profile"] == "ctf-direct-v1"
+            assert "traffic_profile" not in response.json()["data"]
+            assert "vpn_profile" not in response.json()["data"]
 
         # Enable the additive P4k capability under the same original publication contract.
         path.write_text(json.dumps({**publication, "inputs_profile": INPUT_PROFILE}))
@@ -659,160 +657,35 @@ async def test_public_native_creation_freezes_and_replays_original_task(
             with pytest.raises(HTTPException, match="not confirmed"):
                 require_inputs_confirmed(replacement)
 
-        from bbx_contracts.runner_vpn import VPN_DYNAMIC_PROFILE, VPN_SOURCE_LIMIT
-
-        app.state.settings = options
-        user = {"Authorization": f"Bearer {issue_user_token(options, 'alice')}"}
-        other = {"Authorization": f"Bearer {issue_user_token(options, 'bob')}"}
-        path.write_text(
-            json.dumps(
-                {
-                    **publication,
-                    "vpn_profile": VPN_DYNAMIC_PROFILE,
-                    "runtime_resource_config": {
-                        **resource,
-                        "traffic_targets": [],
-                        "vpn": {
-                            "profile": VPN_DYNAMIC_PROFILE,
-                            "id": "isolated-task-vpn",
-                            "label": "Task network",
-                            "tun_resource": "devic.es/tun",
-                            "egress_image": "fixture-egress@sha256:" + "a" * 64,
-                            "sandbox_image": "fixture-vpn@sha256:" + "e" * 64,
-                            "peer_cidrs": ["10.14.0.0/24"],
-                            "default_cidrs": ["10.12.0.0/24"],
-                            "target_cidrs": ["10.31.0.0/24"],
-                            "deny_cidrs": ["10.15.0.0/24"],
-                        },
-                    },
-                }
+        # CTF no longer publishes or accepts managed VPN/capture configuration.
+        for obsolete in (
+            {"vpn": {}},
+            {"traffic_sandbox_image": "fixture-capture@sha256:" + "d" * 64},
+            {"traffic_target_namespace": "fixture-target"},
+            {"traffic_targets": []},
+        ):
+            path.write_text(
+                json.dumps(
+                    {
+                        **publication,
+                        "runtime_resource_config": {**resource, **obsolete},
+                    }
+                )
             )
-        )
-        app.state.native_ctf_publication = load_publication(options, allow_test_only=True)
-        capabilities = (await http.get("/api/task-creation-capabilities", headers=user)).json()
-        environment = capabilities["native_ctf"]
-        assert environment["vpn"]["profile"] == VPN_DYNAMIC_PROFILE
-        reference = {key: environment[key] for key in ("id", "revision", "publication_stamp")}
-        private_group = await group()
-        source_url = f"/api/task-input-groups/{private_group}/private-vpn-source"
-        raw = b"\x00\xffopaque private attachment"
-        assert (await http.put(source_url, headers=other, content=raw)).status_code == 403
-        assert (await http.put(source_url, headers=user, content=b"")).status_code == 422
-        too_large = await http.put(source_url, headers=user, content=b"x" * (VPN_SOURCE_LIMIT + 1))
-        assert too_large.status_code == 413
-        parser = AsyncMock(side_effect=AssertionError("Draft upload must not parse private bytes"))
-        monkeypatch.setattr(app.state.native_runner_bootstrap.vpn, "parse_source", parser)
-        upload = await http.put(source_url, headers=user, content=raw)
-        assert upload.status_code == 200, upload.text
-        source_id = upload.json()["source_id"]
-        replay_upload = await http.put(source_url, headers=user, content=raw)
-        assert replay_upload.json() == {"source_id": source_id}
-        assert (await http.delete(source_url, headers=other)).status_code == 403
-        deleted = await http.delete(source_url, headers=user, params={"source_id": str(uuid4())})
-        assert deleted.status_code == 200
-        replay_upload = await http.put(source_url, headers=user, content=raw)
-        assert replay_upload.json() == {"source_id": source_id}
-        for _ in range(2):
-            deleted = await http.delete(source_url, headers=user, params={"source_id": source_id})
-            assert deleted.status_code == 200
-        # A lost PUT response leaves the client without an ID but the draft still has one slot.
-        replaced = await http.put(source_url, headers=user, content=raw)
-        assert replaced.status_code == 200 and replaced.json()["source_id"] != source_id
-        assert (await http.delete(source_url, headers=user)).status_code == 200
-        upload = await http.put(source_url, headers=user, content=raw)
+            assert load_publication(options, allow_test_only=True).publication is None
+        path.write_text(json.dumps({**publication, "vpn_profile": "openvpn-task-ipv4-tcp-v1"}))
+        assert load_publication(options, allow_test_only=True).publication is None
+        source_url = f"/api/task-input-groups/{await group()}/private-vpn-source"
         assert (
-            upload.status_code == 200 and upload.json()["source_id"] != replaced.json()["source_id"]
+            await http.put(source_url, headers=user, content=b"obsolete VPN source")
+        ).status_code in {404, 405}
+        assert (await http.delete(source_url, headers=user)).status_code in {404, 405}
+        rejected = await http.post(
+            "/api/tasks",
+            headers=user,
+            json={
+                **create,
+                "native_vpn_source_id": str(uuid4()),
+            },
         )
-        source_id = upload.json()["source_id"]
-        for mode in ("ctf", "blackboard"):
-            late_group = await group()
-            late_source_url = f"/api/task-input-groups/{late_group}/private-vpn-source"
-            # Simulate a lost upload finishing after the user removed the draft slot.
-            assert (await http.delete(late_source_url, headers=user)).status_code == 200
-            assert (await http.put(late_source_url, headers=user, content=raw)).status_code == 200
-            if mode == "ctf":
-                without_source = await http.post(
-                    "/api/tasks",
-                    headers=user,
-                    json={**create, "input_group_id": late_group, "native_environment": reference},
-                )
-                assert without_source.status_code == 200, without_source.text
-            else:
-                spec = {
-                    "goal": create["goal"],
-                    "agent_profile": "default",
-                    "budget": create["budget"],
-                    "acceptance": [{"id": "A1", "desc": "Check the fixture"}],
-                }
-                await app.state.board_service.create_task(
-                    spec,
-                    input_group_id=UUID(late_group),
-                    input_owner="user:alice",
-                    create_request_hash=request_hash(spec),
-                )
-            async with ctf.repo.engine.connect() as conn:
-                assert (
-                    await conn.scalar(
-                        select(s.native_vpn_assets.c.id).where(
-                            s.native_vpn_assets.c.group_id == late_group
-                        )
-                    )
-                    is None
-                )
-        listed = (await http.get(f"/api/task-input-groups/{private_group}", headers=user)).json()
-        assert listed["files"] == [] and source_id not in json.dumps(listed)
-        private_create = {
-            **create,
-            "input_group_id": private_group,
-            "native_environment": reference,
-            "native_vpn_source_id": source_id,
-        }
-        wrong_group = await http.post(
-            "/api/tasks", headers=user, json={**private_create, "input_group_id": await group()}
-        )
-        assert wrong_group.status_code == 422
-        created = await http.post("/api/tasks", headers=user, json=private_create)
-        assert created.status_code == 200, created.text
-        assert (await http.delete(source_url, headers=user)).status_code == 409
-        tid = UUID(created.json()["id"])
-        shared = f"/api/tasks/{tid}/runtime/runner-bootstrap"
-        assert (await http.get(shared, headers=user)).status_code == 409
-        controller = await http.get(shared, headers=SERVICE)
-        assert controller.status_code == 200 and controller.json()["state"] == "queued"
-        state = (await http.get(f"/api/tasks/{tid}/ctf/state", headers=user)).json()
-        assert state["task"]["native_network"] == {"mode": "unselected", "state": "unselected"}
-        assert state["task"]["initial_attachments"] == [] and source_id not in json.dumps(state)
-        async with ctf.repo.engine.connect() as conn:
-            asset = (
-                (
-                    await conn.execute(
-                        select(s.native_vpn_assets).where(
-                            s.native_vpn_assets.c.id == UUID(source_id)
-                        )
-                    )
-                )
-                .mappings()
-                .one()
-            )
-            assert asset["task_id"] == tid and "PRIVATE KEY" not in asset["ciphertext"]
-            assert asset["digest"] == hashlib.sha256(raw).hexdigest()
-            bootstrap = app.state.native_runner_bootstrap
-            assert bootstrap.vpn.asset_cipher.decrypt(asset["ciphertext"].encode()) == raw
-            parser.assert_not_awaited()
-            instructions = (
-                (
-                    await conn.execute(
-                        select(s.ctf_messages.c.body).where(
-                            s.ctf_messages.c.task_id == tid, s.ctf_messages.c.recipient_id == "lead"
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            assert len(instructions) == 1
-            assert all(
-                expected in instructions[0]
-                for expected in (source_id, "network_use_default", create["goal"])
-            )
-            assert all("PRIVATE KEY" not in text for text in instructions)
+        assert rejected.status_code == 422

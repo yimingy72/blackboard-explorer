@@ -23,7 +23,6 @@ from .runner_inputs import NativeSharedInputLimits
 from .runner_vpn import (
     VPN_DYNAMIC_PROFILE,
     NativeTaskRoutePolicy,
-    NativeVpnCapability,
     approved_ipv4,
 )
 
@@ -221,7 +220,6 @@ class NativeCtfEnvironment(NativeCtfEnvironmentRef):
     shared_inputs: NativeSharedInputLimits | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    vpn: NativeVpnCapability | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class BlackboardCreationCapability(ContractModel):
