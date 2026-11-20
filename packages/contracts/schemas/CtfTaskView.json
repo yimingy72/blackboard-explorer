@@ -500,6 +500,11 @@
           "default": null,
           "title": "Current Turn Id"
         },
+        "has_worked": {
+          "default": false,
+          "title": "Has Worked",
+          "type": "boolean"
+        },
         "create_request_id": {
           "anyOf": [
             {

@@ -28,6 +28,7 @@
       "anyOf": [
         {
           "enum": [
+            "ready",
             "no_external_materials",
             "materials_pending"
           ],
@@ -46,6 +47,18 @@
       "minimum": 0,
       "title": "Priority",
       "type": "integer"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Worker Id"
     }
   },
   "required": [

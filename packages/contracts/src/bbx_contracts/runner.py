@@ -6,9 +6,11 @@ import hashlib
 import json
 import math
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field, RootModel, field_validator, model_validator
 
+from bbx_contracts.ctf_collaboration import WorkerContext
 from bbx_contracts.models import ContractModel
 
 RunnerId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
@@ -111,6 +113,7 @@ class HelperChild(ContractModel):
 
 
 class SessionSpec(ContractModel):
+    worker_pool: bool = Field(default=False, exclude_if=lambda value: not value)
     binding: RunnerBinding
     model: EffectiveRunnerModel
     model_credential_ref: RunnerId
@@ -163,6 +166,9 @@ class InputPayload(ContractModel):
     input_id: RunnerId
     content: str = Field(min_length=1, max_length=20000)
     mode: Literal["steer", "follow_up"] = "follow_up"
+    worker_context: WorkerContext | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("content")
     @classmethod
@@ -232,6 +238,12 @@ class InputApplication(ContractModel):
     seq: int = Field(ge=1)
 
 
+class WorkerIdleProof(ContractModel):
+    entry_id: str = Field(min_length=1)
+    seq: int = Field(ge=1)
+    context: WorkerContext
+
+
 class JournalConfirmation(ContractModel):
     protocol: Literal["bbx.task-runner.v1"]
     request_id: Digest
@@ -241,6 +253,32 @@ class JournalConfirmation(ContractModel):
     previous: JournalCursor
     cursor: JournalCursor
     applied_inputs: list[InputApplication]
+    entries: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    worker_idle: WorkerIdleProof | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def journal_bytes_match_cursor(self):
+        if self.entries is None:
+            return self
+        raw = self.entries.encode("utf-8")
+        lines = raw.splitlines(keepends=True)
+        digest = self.previous.hash
+        for line in lines:
+            if not line.endswith(b"\n") or not isinstance(json.loads(line), dict):
+                raise ValueError("Journal entries must be complete JSON records")
+            digest = hashlib.sha256(bytes.fromhex(digest) + line).hexdigest()
+        if (
+            not lines
+            or self.previous.offset + len(raw) != self.cursor.offset
+            or self.previous.seq + len(lines) != self.cursor.seq
+            or digest != self.cursor.hash
+            or len(lines[-1]) != self.cursor.anchor_size
+            or hashlib.sha256(lines[-1]).hexdigest() != self.cursor.anchor_hash
+        ):
+            raise ValueError("Journal entries do not match the confirmed cursor")
+        return self
 
 
 class JournalReceipt(ContractModel):
@@ -292,6 +330,7 @@ class ToolInvocation(ContractModel):
     arguments_digest: Digest
     arguments_json: str
     journal: JournalCursor
+    source_model_call_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def exact_arguments(self):
@@ -356,6 +395,9 @@ class PublishedPrompt(ContractModel):
     prompt_revision: int = Field(ge=1)
     instructions: str = Field(max_length=131072)
     board_context: BoardContext | None = Field(default=None, exclude_if=lambda value: value is None)
+    worker_context: WorkerContext | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class OperationAck(ContractModel):

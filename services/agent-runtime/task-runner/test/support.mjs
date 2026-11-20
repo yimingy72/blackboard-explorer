@@ -22,10 +22,13 @@ function sendPiMessage(response, tool) {
   const definition = typeof tool === "object" ? tool : { name: "remote_echo", arguments: { value: "same" } };
   event({ type: "start" });
   if (tool) {
-    event({ type: "toolcall_start", contentIndex: 0, id: "same-sdk-call", toolName: definition.name });
-    event({ type: "toolcall_end", contentIndex: 0, toolCall: {
-      type: "toolCall", id: "same-sdk-call", name: definition.name, arguments: definition.arguments,
-    } });
+    for (const [index, item] of (Array.isArray(tool) ? tool : [definition]).entries()) {
+      const id = index ? `same-sdk-call-${index}` : "same-sdk-call";
+      event({ type: "toolcall_start", contentIndex: index, id, toolName: item.name });
+      event({ type: "toolcall_end", contentIndex: index, toolCall: {
+        type: "toolCall", id, name: item.name, arguments: item.arguments,
+      } });
+    }
   } else {
     event({ type: "text_start", contentIndex: 0 });
     event({ type: "text_end", contentIndex: 0, content: "Done." });
@@ -111,6 +114,10 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
         }
         if (url.pathname.endsWith("/prompt")) {
           const prompt = state.prompts.get(bindingId);
+          if (state.workerContexts?.has(bindingId)) {
+            send(response, { protocol: PROTOCOL, fence, binding_id: bindingId, ...prompt,
+              worker_context: state.workerContexts.get(bindingId) }); return;
+          }
           const board = state.boardContexts?.get(bindingId)
             ?? (state.leaseStates.get(bindingId)?.binding.business_contract === "exploration-board-v1"
               ? { version: 0, content: "" } : undefined);
@@ -147,6 +154,16 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
           assert.equal(body.binding.binding_id, bindingId);
           assert.equal(body.sdk_session_id, state.journal.get(bindingId).sdk_session_id);
           state.invocations.set(body.invocation_id, body);
+          if (state.admitTool) {
+            const result = await state.admitTool(body);
+            if (result) {
+              const resultJson = jsonText(result);
+              state.toolResults.set(body.invocation_id, resultJson);
+              send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation_id,
+                disposition: "completed", arguments_digest: body.arguments_digest,
+                result_json: resultJson, result_digest: digest(resultJson) }); return;
+            }
+          }
           send(response, { protocol: PROTOCOL, confirmed: true, invocation_id: body.invocation_id, disposition: "admitted",
             arguments_digest: body.arguments_digest, result_digest: null, result_json: null, authorized_wait_until_ms: Date.now() + 10000 });
           return;
@@ -168,15 +185,17 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
         const bindingId = proof.binding.binding_id;
         assert.equal(request.headers.authorization, `Bearer ${token(bindingId, "model")}`);
         assert.deepEqual(proof.fence, fence);
-        assert.equal(proof.sdk_session_id, state.journal.get(bindingId).sdk_session_id);
-        assert.deepEqual(proof.journal, state.journal.get(bindingId).cursor);
+        const journal = state.readJournal ? await state.readJournal(bindingId) : state.journal.get(bindingId);
+        assert.equal(proof.sdk_session_id, journal.sdk_session_id);
+        assert.deepEqual(proof.journal, journal.cursor);
         const context = { ...body.context,
           messages: [{ role: "system", content: body.context.systemPrompt }, ...body.context.messages],
           tools: getCurrentTools(body.context.messages).map(tool => ({ function: tool })),
           reasoning_effort: body.options.reasoning, max_completion_tokens: body.options.maxTokens,
         };
         state.modelCalls.push({ bindingId, body: context, action: body.bbx.action,
-          promptRevision: proof.prompt_revision, callId: body.bbx.call_id, logicalCallId: body.bbx.logical_call_id });
+          promptRevision: proof.prompt_revision, callId: body.bbx.call_id, logicalCallId: body.bbx.logical_call_id,
+          ...(proof.worker_context && { workerContext: proof.worker_context }) });
         if (state.directModelUrl) {
           const forwarded = await fetch(state.directModelUrl + "/messages", {
             method: "POST", body: raw,
@@ -244,7 +263,7 @@ export async function fixture(t, ids = ["one"], { taskId = "task" } = {}) {
             }
             await state.toolBarrier.promise;
           }
-          const saved = { content: [{ type: "text", text: `${bindingId} remote result` }],
+          const saved = await state.toolResult?.(bindingId, invocation, body.params.arguments) ?? { content: [{ type: "text", text: `${bindingId} remote result` }],
             ...(state.finalBoardReceipt && invocation.tool_name === "submit_close"
               && { structuredContent: { bbx_board_stop: true } }),
           };

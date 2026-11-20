@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "assignment_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignment Ref"
+    },
+    "challenge_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Challenge Id"
+    }
+  },
+  "required": [
+    "revision",
+    "assignment_ref",
+    "challenge_id"
+  ],
+  "title": "WorkerContext",
+  "type": "object"
+}

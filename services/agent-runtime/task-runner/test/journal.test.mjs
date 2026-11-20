@@ -28,7 +28,8 @@ test("PVC confirmation reads only appended bytes, restores from an anchor, and r
   let small = await journal.confirm();
   assert.equal(journal.bytesRead - readBefore, small.offset - large.offset);
   assert.ok(journal.bytesRead - readBefore < 1000);
-  assert.equal(JSON.stringify(confirmations).includes("unuploaded-content"), false, "confirmation carries metadata, not object-store uploads");
+  assert.equal(confirmations.map(item => item.entries).join(""), (await readFile(path)).toString("utf8"), "confirmations project each original journal byte once");
+  assert.equal(Buffer.byteLength(confirmations.at(-1).entries), small.offset - large.offset);
   manager.appendCustomEntry("covered-before-sync", { value: 2 });
   const coveredEnd = (await stat(path)).size;
   const coveredLeaf = manager.getLeafId();

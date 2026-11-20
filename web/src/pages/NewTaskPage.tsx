@@ -45,13 +45,12 @@ export default function NewTaskPage() {
     const [uploadsInvalid, setUploadsInvalid] = useState(false);
     const group = useRef<Promise<string> | null>(null);
     const [inputIds, setInputIds] = useState<string[]>([]);
-    const [privateSourceId, setPrivateSourceId] = useState<string>();
     const created = useRef(false);
     const alive = useRef(true);
     const [groupExpired, setGroupExpired] = useState(false);
     const submitted = useRef<TaskCreateInput | null>(null);
     const [locked, setLocked] = useState(false);
-    const attachmentsStatus = useRef((busy: boolean, invalid: boolean, ids: string[], sourceId?: string) => { setUploadsBusy(busy); setUploadsInvalid(invalid); setInputIds(ids); setPrivateSourceId(sourceId); }).current;
+    const attachmentsStatus = useRef((busy: boolean, invalid: boolean, ids: string[]) => { setUploadsBusy(busy); setUploadsInvalid(invalid); setInputIds(ids); }).current;
     async function ensureGroup(): Promise<string> {
         setSelectedMode(current => current ?? mode);
         if (!group.current)
@@ -68,7 +67,6 @@ export default function NewTaskPage() {
         const previous = group.current;
         resetGroup();
         setInputIds([]);
-        setPrivateSourceId(undefined);
         setUploadsBusy(false);
         setUploadsInvalid(false);
         void previous?.then((id) => api.deleteInputGroup(id)).catch(() => { });
@@ -88,9 +86,8 @@ export default function NewTaskPage() {
     const nativeTask = mode === 'ctf';
     const nativeEnvironment = nativeTask ? publication?.native_ctf : null;
     const sharedInputs = nativeEnvironment?.shared_inputs;
-    const privateVpn = nativeEnvironment?.vpn?.profile === 'openvpn-task-ipv4-tcp-v1';
     const creationBlocked = !capabilities.isSuccess || (nativeTask ? !nativeEnvironment : !blackboardAvailable);
-    const attachmentsPreventSwitch = uploadsBusy || uploadsInvalid || inputIds.length > 0 || Boolean(privateSourceId);
+    const attachmentsPreventSwitch = uploadsBusy || uploadsInvalid || inputIds.length > 0;
     function changeMode(next: TaskMode) {
         setSelectedMode(next);
         setFormError('');
@@ -157,10 +154,7 @@ export default function NewTaskPage() {
                 setFormError(!sharedInputs && inputIds.length ? '此环境不支持附件，请返回后新建任务。' : '原生 CTF 需要 1 至 20 个 Worker 席位。');
                 return;
             }
-            if (nativeTask && privateSourceId && !privateVpn) {
-                setFormError('此环境不再支持已选的私有 .ovpn 文件，请移除后重试。');
-                return;
-            }
+
             if (mode === 'blackboard' && progressEnabled && (!Number.isFinite(Number(progressCap)) || Number(progressCap) <= 0)) {
                 setFormError('请填写大于0的独立成果整理上限。'); return;
             }
@@ -176,7 +170,6 @@ export default function NewTaskPage() {
                 budget: { currency: "USD", max_cost: maxCost, max_minutes: minutes },
                 ctf_options: { max_teammates: agents },
                 ...(thinking !== 'inherit' && (selectedModel.reasoning || thinking === 'off') && { reasoning_effort: thinking }),
-                ...(privateSourceId && { native_vpn_source_id: privateSourceId }),
                 ...(nativeEnvironment && { native_environment: { id: nativeEnvironment.id, revision: nativeEnvironment.revision, publication_stamp: nativeEnvironment.publication_stamp } }),
             } : {
                 ...common, mode: 'blackboard', agent_profile: 'default',
@@ -250,12 +243,11 @@ export default function NewTaskPage() {
               <Form.Item label="任务目标" htmlFor="goal" required><Input.TextArea id="goal" autoSize={{ minRows: 4, maxRows: 10 }} value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="描述要解决的问题、范围和预期结果" required /></Form.Item>
               {!nativeTask && <Form.Item label="领域背景" htmlFor="domain-context"><Input.TextArea id="domain-context" autoSize={{ minRows: 2, maxRows: 6 }} value={context} onChange={(event) => setContext(event.target.value)} placeholder="已知信息、资料范围或执行边界（可选）" /></Form.Item>}
               {mode === 'ctf' ? <Form.Item label="完成要求" htmlFor="completion-requirements"><Input.TextArea id="completion-requirements" autoSize={{ minRows: 3, maxRows: 8 }} value={completionRequirements} onChange={(event) => setCompletionRequirements(event.target.value)} placeholder="需要完成的题目、证据或交付内容" /></Form.Item> : <section className={styles.acceptance} aria-label="验收条件"><h2>验收条件</h2>{acceptance.map((item, index) => <div className={styles.acceptanceRow} key={item.key}><span>A{index + 1}</span><Input.TextArea aria-label={`验收条件 ${index + 1}`} id={`acceptance-${item.key}`} autoSize={{ minRows: 1, maxRows: 5 }} value={item.desc} onChange={(event) => updateAcceptance(item.key, event.target.value)} placeholder="说明如何判断这一项已完成" required /><Button type="text" icon={<DeleteOutlined />} aria-label={`删除验收条件 ${index + 1}`} disabled={pending || locked || acceptance.length === 1} onClick={() => setAcceptance((items) => items.filter((entry) => entry.key !== item.key))} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={addAcceptance}>添加验收条件</Button></section>}
-              {nativeTask && !sharedInputs && !privateVpn && !attachmentsPreventSwitch ? <p className={controls.hint}>此环境暂不支持初始附件。</p> : <section className={styles.attachments} aria-label="初始附件">
+              {nativeTask && !sharedInputs && !attachmentsPreventSwitch ? <p className={controls.hint}>此环境暂不支持初始附件。</p> : <section className={styles.attachments} aria-label="初始附件">
                 <TaskAttachments ensureGroup={ensureGroup} resetGroup={resetGroup} groupExpired={groupExpired} disabled={pending || locked}
-                  limits={sharedInputs ?? undefined} allowShared={!nativeTask || Boolean(sharedInputs)} privateVpn={nativeTask ? privateVpn : undefined} onStatus={attachmentsStatus}
+                  limits={sharedInputs ?? undefined} allowShared={!nativeTask || Boolean(sharedInputs)} onStatus={attachmentsStatus}
                   description={nativeTask ? [
                       sharedInputs ? `共享附件对任务团队可见。单件最多 ${sharedInputs.max_file_bytes / 1048576} MiB，合计 ${sharedInputs.max_total_bytes / 1048576} MiB，最多 ${sharedInputs.max_files} 件。` : '此环境暂不支持共享附件。',
-                      privateVpn && '可另添加一个私有 .ovpn 文件，连接时校验配置。',
                   ].filter(Boolean).join(' ') : undefined} />
               </section>}
             </section>

@@ -111,3 +111,13 @@ it('copies only a changed collection while retaining batch order and untouched r
   expect(after?.artifacts).toBe(before.artifacts);
   expect(unrelatedReads).toBe(0);
 });
+
+
+it('folds native facts and intents into visible challenge progress without duplicate records', () => {
+  const snapshot = state();
+  const posted = event(11, 'fact.posted', { id: 'F1', challenge_id: 'c1', author: 'member-1', statement: 'Command completed successfully' });
+  const first = applyCtfEvents(snapshot, [posted]);
+  const repeated = applyCtfEvents(first, [posted, event(12, 'intent.posted', { id: 'I1', challenge_id: 'c1', author: 'member-1', statement: 'Check the result' })]);
+  expect(repeated?.records).toHaveLength(2);
+  expect(repeated?.records?.[0]).toMatchObject({ id: 'fact:F1', knowledge_id: 'F1', body: 'Command completed successfully' });
+});

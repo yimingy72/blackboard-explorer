@@ -226,3 +226,32 @@ describe('review result identity', () => {
     expect(conversationEntries(session, [{ ...result, body: 'Different final answer' }], member.id)).toHaveLength(5);
   });
 });
+
+
+it('renders original Pi reasoning, tool calls and command results without duplicating mailbox inputs', () => {
+  const message = { id: 'input', sender_id: 'user', sender_kind: 'user', recipient_id: 'lead', kind: 'instruction', body: 'Start', status: 'delivered', deferred: false };
+  const session = { revision: 4, session: {}, native_entries: [
+    { type: 'custom_message', customType: 'bbx.input', details: { input_id: 'input' }, content: 'Start' },
+    { type: 'message', id: 'answer', message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Inspect the workspace' },
+      { type: 'text', text: 'Checking files' },
+      { type: 'toolCall', id: 'call', name: 'exec_command', arguments: { command: 'pwd' } },
+    ] } },
+    { type: 'message', id: 'result', message: { role: 'toolResult', toolCallId: 'call', isError: false, content: [{ type: 'text', text: '/workspace' }] } },
+  ] };
+  const entries = conversationEntries(session, [message], 'lead');
+  expect(entries).toHaveLength(2);
+  expect(entries[1].reasoning).toEqual([{ text: 'Inspect the workspace', kind: 'reasoning' }]);
+  expect(entries[1].toolCalls[0]).toMatchObject({ name: 'exec_command', arguments: { command: 'pwd' }, status: 'completed' });
+  expect(entries[1].toolCalls[0].result).toBe('/workspace');
+});
+
+
+it('marks nonzero native command exits as failures while retaining structured output', () => {
+  const entries = conversationEntries({ session: {}, revision: 2, native_entries: [
+    { type: 'message', id: 'a', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call', name: 'exec_command', arguments: { command: 'pwd' } }] } },
+    { type: 'message', id: 'b', message: { role: 'toolResult', toolName: 'exec_command', toolCallId: 'call', isError: false, content: [{ type: 'text', text: JSON.stringify({ exit_code: 126, output: { stderr: { text: 'Missing directory' } } }) }] } },
+  ] }, [], 'worker');
+  expect(entries[0].toolCalls[0].status).toBe('failed');
+  expect(entries[0].toolCalls[0].result).toMatchObject({ exit_code: 126 });
+});

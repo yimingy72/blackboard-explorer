@@ -17,6 +17,16 @@ from bbx_contracts.challenge_board import (
     FlagCandidateRequest,
     FlagSubmissionRequest,
 )
+from bbx_contracts.ctf_collaboration import (
+    COLLABORATION_REVISION,
+    ClaimChallengeIntent,
+    ClaimChallengeRequest,
+    CollaborativeChallengeRequest,
+    CollaborativeChallengeUpdate,
+    RequestAssistance,
+    ReviewChallenge,
+    SubmitChallengeReview,
+)
 from bbx_contracts.runner_vpn import (
     NETWORK_USE_DEFAULT,
     VPN_CONFIGURE,
@@ -32,6 +42,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from bbx_blackboard.challenge_board import ChallengeBoardService
+from bbx_blackboard.collaboration_board import CollaborationBoardService
+from bbx_blackboard.collaboration_review import CollaborationReview
 from bbx_blackboard.flag_board import FlagBoardService
 from bbx_blackboard.task_board import TaskBoardService
 
@@ -45,6 +57,11 @@ MUTATIONS = {
     "board_post_intent",
     "board_record_flag",
     "board_submit_flag",
+    "board_claim_challenge",
+    "board_request_assistance",
+    "board_claim_intent",
+    "board_submit_review",
+    "board_review_challenge",
 }
 
 
@@ -53,6 +70,8 @@ class BusinessTools:
         self.board = ChallengeBoardService(ctf)
         self.tasks = TaskBoardService(ctf)
         self.flags = FlagBoardService(ctf, signing_key)
+        self.peers = CollaborationBoardService(ctf)
+        self.review = CollaborationReview(ctf)
 
     async def invoke(self, task_id, identity, operation, arguments):
         if operation in VPN_TOOLS:
@@ -62,6 +81,23 @@ class BusinessTools:
             raise HTTPException(403, "Tool is not published for this role")
         arguments = dict(arguments)
         try:
+            if manifest["revision"] == COLLABORATION_REVISION:
+                if operation == "board_create_challenge":
+                    return await self.peers.create_challenge(task_id, identity, arguments)
+                if operation == UPDATE_CHALLENGE_TOOL:
+                    return await self.peers.update_challenge(task_id, identity, arguments)
+                if operation == "board_available_work" and not arguments:
+                    return await self.peers.available(task_id, identity)
+                if operation == "board_claim_challenge":
+                    return await self.peers.claim(task_id, identity, arguments)
+                if operation == "board_request_assistance":
+                    return await self.peers.request_assistance(task_id, identity, arguments)
+                if operation == "board_claim_intent":
+                    return await self.board.claim_intent(task_id, identity, arguments)
+                if operation == "board_submit_review":
+                    return await self.review.submit(task_id, identity, arguments)
+                if operation == "board_review_challenge":
+                    return await self.review.review(task_id, identity, arguments)
             if operation == "board_announcements":
                 parsed = AnnouncementReadRequest.model_validate(arguments)
                 return await self.tasks.announcements(
@@ -126,7 +162,7 @@ class BusinessTools:
         raise HTTPException(404, "Unknown business tool")
 
 
-def schemas(*, dynamic_vpn=False):
+def schemas(*, dynamic_vpn=False, collaboration=False):
     models = {
         "board_announcements": AnnouncementReadRequest,
         "board_challenges": BoardPageRequest,
@@ -145,6 +181,19 @@ def schemas(*, dynamic_vpn=False):
         **({NETWORK_USE_DEFAULT: NativeVpnStatus} if dynamic_vpn else {}),
     }
     result = {}
+    if collaboration:
+        models.update(
+            {
+                "board_create_challenge": CollaborativeChallengeRequest,
+                UPDATE_CHALLENGE_TOOL: CollaborativeChallengeUpdate,
+                "board_claim_challenge": ClaimChallengeRequest,
+                "board_request_assistance": RequestAssistance,
+                "board_claim_intent": ClaimChallengeIntent,
+                "board_submit_review": SubmitChallengeReview,
+                "board_review_challenge": ReviewChallenge,
+            }
+        )
+        models.pop(DISPATCH_TOOL)
     for name, model in models.items():
         schema = model.model_json_schema()
         if name == VPN_CONFIGURE and dynamic_vpn:
@@ -161,6 +210,12 @@ def schemas(*, dynamic_vpn=False):
             schema["properties"]["challenge_id"] = {"type": "string", "format": "uuid"}
             schema["required"].append("challenge_id")
         result[name] = schema
+    if collaboration:
+        result["board_available_work"] = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
     for name in ("board_read", "board_search", "board_flags", "board_flag_value"):
         properties: dict[str, dict] = {"challenge_id": {"type": "string", "format": "uuid"}}
         required = ["challenge_id"]

@@ -47,9 +47,9 @@ test("official Pi Runner connects both frozen MCP targets, pages and routes the 
 
   const prepare = h.command({ kind: "prepare", spec });
   const prepared = await waitFor(() => h.state.receipts.find(r => r.request_id === prepare.request_id && r.status === "prepared"), "direct Runner prepared");
-  assert.deepEqual(h.state.directLists.map(({target, cursor}) => [target, cursor]), [
+  assert.deepEqual(h.state.directLists.map(({target, cursor}) => [target, cursor]).sort(), [
     ["business", null], ["business", "approved-page"], ["sandbox", null],
-  ]);
+  ].sort());
   assert.ok(h.state.directLists.every(({sdk}) => sdk === prepared.sdk_session_id));
   h.command({ kind: "input", binding_id: "one", input_id: "synthetic-input", content: "Use both synthetic echoes.", mode: "follow_up" });
   await waitFor(() => h.state.toolCalls.length === 2 && h.state.modelReceipts.length === 3, "two independently scoped tools");

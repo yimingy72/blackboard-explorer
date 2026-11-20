@@ -45,3 +45,20 @@ describe('challenge presentation', () => {
     expect(markdown).not.toContain('突破');
   });
 });
+
+
+it('shows unfinished active work as interrupted after the task ends', () => {
+  expect(challengeState({ work_status: 'in_progress', verification: {} }, 'stopped')).toBe('interrupted');
+  expect(challengeState({ work_status: 'in_progress', verification: {} }, 'running')).toBe('working');
+});
+
+it('derives peer recruitment from seats and keeps review and Lead acceptance distinct', () => {
+  const collaboration = { difficulty: 'hard' as const, multi_stage: true, assistance_target: 1,
+    review_revision: 1, solve_elapsed_ms: 60000, assistance_reminded: false };
+  const peer = { ...challenge, collaboration, work_status: 'in_progress', collaborator_ids: [] };
+  expect(challengeState(peer)).toBe('assistance');
+  expect(challengeState({ ...peer, collaborator_ids: ['helper'] })).toBe('working');
+  expect(challengeState({ ...peer, work_status: 'awaiting_review' })).toBe('review');
+  expect(challengeState({ ...peer, work_status: 'awaiting_review' }, 'stopped')).toBe('interrupted');
+  expect(challengeState({ ...peer, work_status: 'completed', verification: { source: 'lead', status: 'accepted' } })).toBe('solved');
+});

@@ -220,6 +220,9 @@ class Intent(ContractModel):
     id: str = Field(min_length=1, description="意图编号")
     challenge_id: UUID | None = Field(default=None, description="题目范围；普通与历史记录为空")
     assignment_ref: KnowledgeAssignment | None = None
+    claim_assignment_ref: KnowledgeAssignment | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     statement: str = Field(min_length=1, description="要调查的方向")
     based_on: list[str] = Field(min_length=1, description="至少一条依据事实")
     expected: str = Field(min_length=1, description="成立时预期观察")
@@ -243,8 +246,15 @@ class Intent(ContractModel):
             raise ValueError("challenge_id and assignment_ref must be supplied together")
         if self.challenge_id is None and not self.relates_to:
             raise ValueError("ordinary intents require relates_to")
+        if self.challenge_id is None and self.claim_assignment_ref is not None:
+            raise ValueError("ordinary intents cannot carry a challenge claim")
         if self.challenge_id is not None and (self.holder is not None or self.status == "claimed"):
-            raise ValueError("challenge intents do not have an independent holder")
+            if (
+                self.claim_assignment_ref is None
+                or self.claim_assignment_ref.agent_id != self.holder
+                or self.status != "claimed"
+            ):
+                raise ValueError("challenge holder requires its current claim Assignment")
         return self
 
 

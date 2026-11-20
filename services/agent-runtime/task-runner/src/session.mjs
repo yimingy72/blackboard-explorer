@@ -150,7 +150,7 @@ export class RunnerSession {
       throw new Error("Invalid frozen MCP role targets");
     }
     const available = new Map();
-    for (const target of targets) {
+    const connections = await Promise.allSettled(targets.map(async (target) => {
       const { audience, reference } = mcpScope(this.spec, target);
       const url = safeUrl(this.config.mcp_targets[target]);
       if (target === "sandbox" && url.href !== "http://127.0.0.1:8766/mcp/") {
@@ -178,7 +178,9 @@ export class RunnerSession {
       available.set(target, await client.listTools({ signal: AbortSignal.any([
         this.stopController.signal, AbortSignal.timeout(timeout),
       ]) }));
-    }
+    }));
+    const failed = connections.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
     const tools = this.spec.allowed_tools.map((name) => {
       const matches = (available.get(this.mcpTarget(name)) ?? []).filter((tool) => tool.name === this.toolNames.get(name));
       if (matches.length !== 1 || ["bash", "read", "write", "edit"].includes(name)) throw new Error("An approved remote tool is unavailable, ambiguous or conflicts with a local tool");
@@ -230,7 +232,7 @@ export class RunnerSession {
       this.promptRevision = promptEntry.data.prompt_revision;
       this.roleInstalled = true;
     }
-    if (this.binding.business_contract === "exploration-board-v1") {
+    if (this.binding.business_contract === "exploration-board-v1" || this.spec.worker_pool) {
       const board = manager.getEntries().findLast((entry) => entry.type === "custom" && entry.customType === "bbx.board-context");
       if (board) {
         const saved = board.data;
@@ -256,11 +258,25 @@ export class RunnerSession {
         void work.finally(() => this.jobs.delete(work));
       });
     }
+    if (this.spec.worker_pool) {
+      session.subscribe((event) => {
+        if (event.type !== "agent_settled" || event.aborted) return;
+        const work = this.recordWorkerIdle().catch(() => freezeSession(session));
+        this.jobs.add(work);
+        void work.finally(() => this.jobs.delete(work));
+      });
+    }
     installModelBoundary(this.session, { runtimeUrl: this.config.model_proxy_url,
       nativeModelRevision: this.spec.model.model_revision,
       nativeProof: (journal) => ({ kind: "native", fence: this.config.fence, binding: this.binding,
         sdk_session_id: this.session.sessionId, journal, profile_revision: this.spec.profile_revision,
-        prompt_revision: this.promptRevision }),
+        prompt_revision: this.promptRevision,
+        ...(this.spec.worker_pool && { worker_context: this.workerContext }) }),
+      ...(this.spec.worker_pool && { recordResponse: async ({ callId, proof, message }) => {
+        this.session.sessionManager.appendCustomEntry("bbx.worker-model", {
+          call_id: callId, context: proof.worker_context, content_digest: digest(jsonText(message.content)),
+        });
+      } }),
       createStream: createAssistantMessageEventStream,
       prepareContext: (context, options) => this.refreshPrompt(context, options),
       binding: { taskId: this.config.fence.task_id, agentId: this.binding.agent_id, bindingId: this.binding.binding_id,
@@ -290,6 +306,10 @@ export class RunnerSession {
       throw new Error("The original blackboard context is unavailable");
     let boardMessage;
     if (published) {
+      if (this.spec.worker_pool) {
+        if (!published.worker_context) throw new Error("Worker work context is unavailable");
+        this.workerContext = published.worker_context;
+      }
       if (this.roleInstalled && published.prompt_revision === this.promptRevision && published.instructions !== this.promptText) throw new Error("A published prompt revision changed content");
       if (!this.roleInstalled || published.prompt_revision > this.promptRevision) {
         const message = { role: "system", content: "", sections: { bbx_role: published.instructions }, timestamp: Date.now() };
@@ -301,7 +321,7 @@ export class RunnerSession {
         this.promptText = published.instructions;
         this.roleInstalled = true;
       }
-      if (this.binding.business_contract === "exploration-board-v1" && published.board_context
+      if ((this.binding.business_contract === "exploration-board-v1" || this.spec.worker_pool) && published.board_context
           && options.sessionId === this.session.sessionId) {
         const board = published.board_context;
         if (board.version < this.boardVersion || digest(board.content) !== board.source_digest
@@ -350,6 +370,7 @@ export class RunnerSession {
   }
   input(command) {
     this.assertActive();
+    if (this.spec.worker_pool && command.payload.worker_context) this.workerTools(command.payload.worker_context);
     const known = this.journal.inputs.get(command.payload.input_id);
     const intent = [...this.journal.commands.values()].find((item) => item.kind === "input" && item.input_id === command.payload.input_id);
     if (intent && intent.content_digest !== digest(command.payload.content)) throw new Error("request_conflict");
@@ -390,6 +411,24 @@ export class RunnerSession {
     }
     if (changed) await this.confirm(this.stopController.signal);
   }
+  async recordWorkerIdle() {
+    if (!this.workerContext || !this.session.isIdle || this.session.agent.hasQueuedMessages()
+        || this.unresolvedAttempts.size || this.unresolvedInvocations.size
+        || this.stopController.signal.aborted) return;
+    this.session.sessionManager.appendCustomEntry("bbx.worker-idle", { context: this.workerContext });
+    await this.confirm(this.stopController.signal);
+  }
+  workerTools(context) {
+    if (!this.spec.allowed_tools.includes("board_claim_challenge")) return;
+    const selection = new Set(["board_available_work", "board_claim_challenge", "board_challenges",
+      "board_announcements", "board_read", "board_search"]);
+    const names = context.assignment_ref ? this.spec.allowed_tools : this.spec.allowed_tools.filter((name) => selection.has(name));
+    const key = names.join("\n");
+    if (this.workerToolKey !== key) {
+      this.session.setActiveToolsByName(names);
+      this.workerToolKey = key;
+    }
+  }
   async toolInvocation(name, callId, args, signal) {
     this.assertActive();
     const entry = this.session.sessionManager.getBranch().findLast((entry) => entry.type === "message"
@@ -398,11 +437,21 @@ export class RunnerSession {
     if (!entry) throw new Error("A persisted native tool invocation is required");
     const invocationId = digest(jsonText([this.config.fence.task_id, this.binding.binding_id, this.session.sessionId, entry.id, callId, name]));
     const argumentsJson = jsonText(args);
+    let source;
+    if (this.spec.worker_pool) {
+      const branch = this.session.sessionManager.getBranch();
+      const index = branch.findIndex((item) => item.id === entry.id);
+      source = branch.slice(0, index).findLast((item) => item.type === "custom"
+        && item.customType === "bbx.worker-model"
+        && item.data.content_digest === digest(jsonText(entry.message.content)));
+      if (!source) throw new Error("The tool has no original Worker model response");
+    }
     this.invocations.set(`${entry.id}:${callId}`, invocationId);
     return { protocol: PROTOCOL, fence: this.config.fence, binding: this.binding,
       sdk_session_id: this.session.sessionId, invocation_id: invocationId, tool_call_id: callId,
       assistant_entry_id: entry.id, tool_name: name, arguments_json: argumentsJson,
-      arguments_digest: digest(argumentsJson), journal: await this.confirm(signal) };
+      arguments_digest: digest(argumentsJson), journal: await this.confirm(signal),
+      ...(source && { source_model_call_id: source.data.call_id }) };
   }
   mcpTarget(name) {
     if (!Object.hasOwn(this.spec.mcp_tool_routes, name)) throw new Error("The tool is not bound to a frozen MCP target");
@@ -440,6 +489,10 @@ export class RunnerSession {
       }
       if (!result || !Array.isArray(result.content)
           || result.content.some((part) => !part || typeof part.type !== "string")) throw new Error("The saved remote tool result is invalid");
+      if (this.spec.worker_pool && name === "board_claim_challenge" && !result.isError
+          && result.structuredContent?.result?.assignment) {
+        this.workerTools(result.structuredContent.result.assignment);
+      }
       return { content: toLlmContent(result), details: { invocation_id: invocationId, bbx_is_error: result.isError === true,
         ...(this.binding.business_contract === "exploration-board-v1" && name === "submit_close"
           && result.isError !== true && result.structuredContent?.bbx_board_stop === true && { bbx_board_stop: true }),

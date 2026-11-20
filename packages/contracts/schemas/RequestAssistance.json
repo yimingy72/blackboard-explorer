@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "challenge_id": {
+      "format": "uuid",
+      "title": "Challenge Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "additional_workers": {
+      "default": 1,
+      "exclusiveMaximum": 10,
+      "minimum": 1,
+      "title": "Additional Workers",
+      "type": "integer"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "challenge_id",
+    "expected_revision",
+    "reason"
+  ],
+  "title": "RequestAssistance",
+  "type": "object"
+}

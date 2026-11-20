@@ -48,7 +48,8 @@
           "enum": [
             "agent",
             "platform",
-            "user"
+            "user",
+            "lead"
           ],
           "type": "string"
         },

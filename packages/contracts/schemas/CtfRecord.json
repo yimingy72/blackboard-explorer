@@ -349,6 +349,7 @@
           "enum": [
             "pending",
             "in_progress",
+            "awaiting_review",
             "blocked",
             "completed",
             "cancelled"

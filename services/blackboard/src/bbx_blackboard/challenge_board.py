@@ -16,6 +16,7 @@ from bbx_contracts.challenge_board import (
     native_dispatch_enabled,
     native_scope_updates_enabled,
 )
+from bbx_contracts.ctf_collaboration import ClaimChallengeIntent, collaboration_enabled
 from bbx_contracts.models import Fact, Intent, KnowledgeAssignment
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -23,6 +24,11 @@ from sqlalchemy import select
 from bbx_blackboard.auth import Principal
 from bbx_blackboard.ctf_review import TERMINAL
 from bbx_blackboard.domain import RuleViolation, dispute_fields
+from bbx_blackboard.domain.challenge_collaboration import (
+    claim_intent_events,
+    participants,
+    readable,
+)
 from bbx_blackboard.domain.rules import fact_events, intent_events
 from bbx_blackboard.store import schema as s
 from bbx_blackboard.store.repository import row
@@ -36,7 +42,12 @@ def current_assignment(task, challenge, member):
             or snapshot.get("scope_revision") != challenge.get("scope_revision", 1)
             or snapshot.get("turn_id") != member["current_turn_id"]
             or snapshot.get("generation") != member["generation"]
-            or challenge["work_status"] != "in_progress"
+            or challenge["work_status"]
+            not in (
+                {"in_progress", "awaiting_review", "completed"}
+                if collaboration_enabled(task)
+                else {"in_progress"}
+            )
         ):
             raise HTTPException(403, "Current native Worker Assignment is unavailable")
         return snapshot
@@ -116,6 +127,8 @@ async def knowledge_event_scope(repo, conn, tid, aid):
             continue
         if member["role"] == "lead":
             scope.add(challenge["id"])
+        elif not review and collaboration_enabled(task) and readable(task, challenge, aid):
+            scope.add(challenge["id"])
         elif review and (challenge.get("owner_id") == aid or challenge["id"] in history):
             scope.add(challenge["id"])
         elif not review and challenge.get("owner_id") == aid:
@@ -185,7 +198,7 @@ class ChallengeBoardService:
             if identity.turn_id is None:
                 raise HTTPException(403, "Fenced review required")
             _, turn = await self.ctf._fence(conn, tid, aid, identity.generation, identity.turn_id)
-            self.ctf._authorize_review(task, turn)
+            self.ctf._authorize_review(task, member, turn)
         elif member["lifecycle"] != "active":
             raise HTTPException(403, "Inactive board identity")
         return task, dict(member)
@@ -229,7 +242,7 @@ class ChallengeBoardService:
             if identity.turn_id is None:
                 raise HTTPException(403, "Fenced review identity required")
             _, turn = await self.ctf._fence(conn, tid, aid, identity.generation, identity.turn_id)
-            self.ctf._authorize_review(task, turn)
+            self.ctf._authorize_review(task, member, turn)
             if (
                 member["role"] != "lead"
                 and challenge.get("owner_id") != aid
@@ -240,7 +253,14 @@ class ChallengeBoardService:
         if member["lifecycle"] != "active":
             raise HTTPException(403, "Inactive knowledge identity")
         if member["role"] != "lead":
-            if challenge.get("owner_id") != aid:
+            if collaboration_enabled(task):
+                if not readable(task, challenge, aid):
+                    raise HTTPException(403, "Challenge is outside this Worker's board scope")
+                if aid not in participants(task, cid):
+                    if write:
+                        raise HTTPException(403, "Only current challenge participants may write")
+                    return task, challenge, None
+            elif challenge.get("owner_id") != aid:
                 raise HTTPException(403, "Challenge is outside the current Assignment")
         snapshot = current_assignment(task, challenge, member)
         if write:
@@ -261,12 +281,45 @@ class ChallengeBoardService:
         for evidence in data["evidence"]:
             uri = evidence.get("uri")
             call_id = evidence.get("call_id")
-            if uri and call_id and native_scope_updates_enabled(task):
+            if (
+                uri
+                and call_id
+                and native_scope_updates_enabled(task)
+                and not collaboration_enabled(task)
+            ):
                 raise HTTPException(422, "Use separate object and command evidence references")
-            if not uri and assignment and evidence["type"] == "command_output" and call_id:
+            lead_command = aid == "lead" and native_dispatch_enabled(task)
+            if (
+                not uri
+                and (assignment or lead_command)
+                and evidence["type"] == "command_output"
+                and call_id
+            ):
                 commands, calls = s.sandbox_command_records, s.runner_calls
                 if any(evidence.get(key) is not None for key in ("path", "size", "sha256")):
                     raise HTTPException(422, "Command evidence references the saved result only")
+                if assignment:
+                    scope = [
+                        commands.c.challenge_id == cid,
+                        commands.c.assignment_id == assignment["assignment_ref"],
+                        commands.c.binding_id == assignment["binding_id"],
+                        commands.c.epoch == assignment["epoch"],
+                    ]
+                else:
+                    lead = await row(conn, s.ctf_members, tid, aid)
+                    scope = [
+                        commands.c.role == "lead",
+                        commands.c.challenge_id.is_(None),
+                        commands.c.generation == lead["generation"],
+                        commands.c.epoch
+                        == select(s.runner_owners.c.epoch)
+                        .where(
+                            s.runner_owners.c.task_id == tid,
+                            s.runner_owners.c.current.is_(True),
+                        )
+                        .scalar_subquery(),
+                        calls.c.data["binding"]["turn_id"].astext == lead["current_turn_id"],
+                    ]
                 original = (
                     await conn.execute(
                         select(commands.c.id)
@@ -279,10 +332,7 @@ class ChallengeBoardService:
                             commands.c.task_id == tid,
                             commands.c.id == call_id,
                             commands.c.agent_id == aid,
-                            commands.c.challenge_id == cid,
-                            commands.c.assignment_id == assignment["assignment_ref"],
-                            commands.c.binding_id == assignment["binding_id"],
-                            commands.c.epoch == assignment["epoch"],
+                            *scope,
                             commands.c.state.in_(["completed", "failed"]),
                             commands.c.data["receipt"].astext == "foreground_terminal",
                             commands.c.execution_id.is_not(None),
@@ -312,7 +362,7 @@ class ChallengeBoardService:
                     raise HTTPException(403, "Initial attachment is not shared with this Agent")
                 material = initial
             else:
-                if native_scope_updates_enabled(task):
+                if native_scope_updates_enabled(task) and not collaboration_enabled(task):
                     raise HTTPException(
                         403, "Native scope evidence requires a saved command or a shared Task input"
                     )
@@ -327,6 +377,19 @@ class ChallengeBoardService:
                                 s.ctf_records.c.task_id == tid,
                                 s.ctf_records.c.data["kind"].astext == "artifact_registration",
                                 s.ctf_records.c.data["artifact"]["uri"].astext == uri,
+                                *(
+                                    [s.ctf_records.c.data["challenge_id"].astext == str(cid)]
+                                    if collaboration_enabled(task)
+                                    else []
+                                ),
+                                *(
+                                    [
+                                        s.ctf_records.c.data["artifact"]["path"].astext
+                                        == evidence["path"]
+                                    ]
+                                    if collaboration_enabled(task) and evidence.get("path")
+                                    else []
+                                ),
                             )
                             .limit(1)
                         )
@@ -343,6 +406,24 @@ class ChallengeBoardService:
                         403, "Evidence is not shared with this challenge"
                     ) from error
                 material = registered["artifact"]
+                if collaboration_enabled(task) and call_id:
+                    source = await conn.scalar(
+                        select(s.runner_calls.c.data).where(
+                            s.runner_calls.c.task_id == tid,
+                            s.runner_calls.c.id == "tool:" + call_id,
+                            s.runner_calls.c.state == "completed",
+                            s.runner_calls.c.data["file_artifact"]["uri"].astext == uri,
+                            s.runner_calls.c.data["business"]["challenge_id"].astext == str(cid),
+                        )
+                    )
+                    if not source:
+                        raise HTTPException(
+                            403, "File evidence has no matching completed snapshot read"
+                        )
+                    native_refs[call_id] = {
+                        "id": call_id,
+                        "agent_id": source["binding"]["agent_id"],
+                    }
             for key in ("path", "size", "sha256"):
                 if evidence.get(key) is not None and evidence[key] != material.get(key):
                     raise RuleViolation(
@@ -451,7 +532,14 @@ class ChallengeBoardService:
             if kind == "fact":
                 iid = data.get("resolves")
                 if iid:
-                    if challenge.get("owner_id") != aid:
+                    if collaboration_enabled(task):
+                        intent = state.intents.get(iid, {})
+                        claim = intent.get("claim_assignment_ref") or {}
+                        if intent.get("holder") != aid or claim.get("assignment_id") != (
+                            snapshot or {}
+                        ).get("assignment_ref"):
+                            raise HTTPException(403, "Only the current Intent holder may close it")
+                    elif challenge.get("owner_id") != aid:
                         raise HTTPException(
                             403, "Only the current Assignment may close its directions"
                         )
@@ -472,7 +560,15 @@ class ChallengeBoardService:
                 )
             else:
                 planned = intent_events(state, aid, {**data, "relates_to": [], "claim": False})
-            recipients = sorted({"lead", aid, challenge.get("owner_id")} - {None})
+            recipients = sorted(
+                {
+                    "lead",
+                    aid,
+                    challenge.get("owner_id"),
+                    *(participants(task, cid) if collaboration_enabled(task) else ()),
+                }
+                - {None}
+            )
             for event in planned:
                 event["addressed_to"] = recipients
                 event["payload"].update(
@@ -485,7 +581,12 @@ class ChallengeBoardService:
                 if native_scope_updates_enabled(task):
                     event["payload"]["scope_revision"] = challenge.get("scope_revision", 1)
             saved = await self.repo.append(conn, tid, planned)
-            if kind == "fact" and snapshot and native_dispatch_enabled(task):
+            if (
+                kind == "fact"
+                and snapshot
+                and native_dispatch_enabled(task)
+                and not collaboration_enabled(task)
+            ):
                 fact_id = saved[0]["object_id"]
                 await self.ctf._message(
                     conn,
@@ -507,6 +608,77 @@ class ChallengeBoardService:
                 )
             await self.repo.notify(tid, saved[-1]["version"], connection=conn)
             return self._response(saved)
+
+    async def claim_intent(self, tid, identity, request):
+        body = ClaimChallengeIntent.model_validate(request)
+        aid = self._agent(identity, tid)
+        command = body.model_dump(mode="json")
+        digest = hashlib.sha256(json.dumps(command, sort_keys=True).encode()).hexdigest()
+        async with self.repo.engine.begin() as conn:
+            await self.repo.lock(conn, tid)
+            task, challenge, snapshot = await self._authority(
+                conn, tid, body.challenge_id, identity, write=True
+            )
+            if not collaboration_enabled(task) or snapshot is None:
+                raise HTTPException(403, "Intent claims require a peer Worker Assignment")
+            previous = await self._previous(conn, tid, aid, str(body.request_id), digest)
+            if previous:
+                return self._claim_response(previous)
+            self.ctf._revision(challenge, body.expected_revision)
+            if challenge["work_status"] != "in_progress":
+                raise HTTPException(409, "Challenge is not accepting new Intent work")
+            state = await self.repo.load(
+                conn, tid, include_tool_calls=False, challenge_id=str(body.challenge_id)
+            )
+            origin = KnowledgeAssignment(
+                agent_id=aid,
+                generation=identity.generation,
+                turn_id=identity.turn_id,
+                epoch=snapshot["epoch"],
+                owner_id=challenge["owner_id"],
+                scope_revision=challenge.get("scope_revision", 1),
+                assignment_id=snapshot["assignment_ref"],
+            ).model_dump(mode="json")
+            planned = claim_intent_events(state, body.intent_id, aid, origin, body.expected_version)
+            planned[0]["addressed_to"] = sorted({"lead", *participants(task, body.challenge_id)})
+            planned[0]["payload"].update(
+                request_id=str(body.request_id),
+                request_actor=aid,
+                request_hash=digest,
+                challenge_revision=challenge["revision"],
+                claimed_intent=Intent.model_validate(
+                    {
+                        key: value
+                        for key, value in state.intents[body.intent_id].items()
+                        if key in Intent.model_fields
+                    }
+                ).model_dump(mode="json"),
+            )
+            saved = await self.repo.append(conn, tid, planned)
+            await self.repo.notify(tid, saved[-1]["version"], connection=conn)
+            return self._claim_response(saved)
+
+    @staticmethod
+    def _claim_response(events):
+        item = events[0]
+        payload = item["payload"]
+        value = Intent.model_validate(
+            {
+                **payload["claimed_intent"],
+                "holder": payload["holder"],
+                "status": "claimed",
+                "claim_assignment_ref": payload["claim_assignment_ref"],
+                "claimed_at": item["created_at"],
+                "version": item["version"],
+            }
+        )
+        return {
+            "id": value.id,
+            "object": value.model_dump(mode="json"),
+            "challenge_revision": payload["challenge_revision"],
+            "board_version": item["version"],
+            "events": events,
+        }
 
     async def board(self, tid: UUID, cid: UUID, identity: Principal):
         async with self.repo.engine.connect() as conn:

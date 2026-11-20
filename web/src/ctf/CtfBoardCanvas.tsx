@@ -25,7 +25,7 @@ function AgentNode({ data, selected }: NodeProps<CtfGraphNode>) {
   const actions = useContext(Actions), lead = data.role === 'lead';
   return <div className={`${styles.node} ${styles.agent} ${lead ? styles.lead : ''} ${selected ? styles.selected : ''} ${data.related ? styles.related : ''}`}>
     <Ports /><button className={styles.nodeButton} aria-label={`Agent：${data.label}`} aria-pressed={Boolean(selected)} type="button" onClick={(event) => { if (event.detail === 0) actions.select({ kind: 'agent', id: data.entityId }); }}>
-      <span className={styles.agentMark} aria-hidden="true">{lead ? <ApartmentOutlined /> : data.label.slice(0, 1).toUpperCase()}</span><span className={styles.nodeCopy}><strong title={data.label}>{data.label}</strong><small title={lead ? data.detail : statusLabel(data.status)}>{lead ? '团队协调' : statusLabel(data.status)}</small></span>
+      <span className={styles.agentMark} aria-hidden="true">{lead ? <ApartmentOutlined /> : data.label.slice(0, 1).toUpperCase()}</span><span className={styles.nodeCopy}><strong title={data.label}>{data.label}</strong><small title={data.assignmentLabel || (lead ? data.detail : statusLabel(data.status))}>{data.assignmentLabel || (lead && data.status !== 'provisioning' ? '团队协调' : statusLabel(data.status))}</small></span>
     </button>{data.pinned && <button className={`${styles.pin} nodrag nopan`} aria-label={`恢复 ${data.label} 自动布局`} title="手动位置已保存，点击恢复自动布局" onClick={(event) => { event.stopPropagation(); actions.release(`agent:${data.entityId}`); }}><PushpinOutlined /></button>}{lead && actions.dispatch && <Tooltip title="调度记录"><button type="button" className={`${styles.dispatch} nodrag`} aria-label="查看 Lead 调度记录" onClick={(event) => { event.stopPropagation(); actions.dispatch?.(); }}><UnorderedListOutlined aria-hidden /></button></Tooltip>}
   </div>;
 }
@@ -51,7 +51,8 @@ function CtfFlow({ taskId, ready, events, members, challenges, records, selected
   const [reduced, setReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [signals, setSignals] = useState<ActiveSignal[]>([]), [layoutRevision, setLayoutRevision] = useState(0);
   const graph = useMemo(() => {
-    const result = deriveCtfGraph(members, challenges, records);
+    const result = deriveCtfGraph(members, challenges, records, phase);
+    if (phase === 'provisioning') result.nodes = result.nodes.map(node => node.type === 'ctf-agent' && node.data.role === 'lead' ? { ...node, data: { ...node.data, status: 'provisioning', detail: '正在启动执行环境' } } : node);
     if (phase && ['finished', 'failed', 'stopped'].includes(phase)) result.nodes = result.nodes.map((node) => node.type === 'ctf-agent' && node.data.status === 'idle' ? { ...node, data: { ...node.data, status: 'finished' } } : node);
     return result;
   }, [members, challenges, records, phase]);
