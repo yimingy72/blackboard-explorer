@@ -1,0 +1,114 @@
+# CTF Worker 池与题内黑板正式 Spec
+
+日期：2026-11-20。基线：`7831ca3`。任务编号：`CTF-worker-board-20261120`。
+
+用户已授权与“多Agent CTF架构优化”共同确定本 Spec、开发计划后开发；以下业务规则来自逐项确认。实现按[开发计划](CTF-worker-board-20261120-plan.md)推进。新契约覆盖旧 Native CTF 的自动派工、父子 helper 与题内 Intent 规则；普通黑板 Explore/Derive/Close 保持原语义。
+
+## 1. 目标与范围
+
+目标是让可用 Worker 尽快推进可领取工作，保留已有求解上下文，减少空转推理、重复准备、重复探索和通知延迟。复用现有 PostgreSQL 事件、CTF 对象、Pi Runner、Sandbox、对象存储和前端，不增加管理模型、新消息服务或常驻意图专家。
+
+本次包括契约、黑板工具、平台调度、原生执行与恢复、文件证据、提示词、工作台和合成验收。系统日志、思考/工具/命令展示与实时费用沿用既有链路，新增成员和会话切题不能使它们丢失。无真实模型调用的检查不冒充真实解题吞吐测试。
+
+## 2. 角色与权威
+
+| 对象 | 能做什么 | 状态权威 |
+| --- | --- | --- |
+| Lead | 理解总任务，建题/补充题面，设置简单/中等/困难，公告，Runtime 操作，核验与提交 flag，追加核验 Fact | 不创建/删除/直接发消息给 Worker，不取消或退回题目；不能伪造外部平台回执 |
+| 主 Worker、援助 Worker | 读可领取题与自己参与题，提出/认领 Intent，写 Fact/进展，申请援助，提交待核验 | 同级成员；不能自行修改任何 Worker 状态、退题、换主责、判整题通过 |
+| 平台 | 创建 Worker 池、首次分配、认领事务、通知、计时、成员状态、释放与已有故障恢复 | 状态由持久业务关系和实际执行结果产生，不由模型声明产生 |
+
+Worker 池大小由总任务设置决定，示例 20 不是硬编码；每题上限是主责加援助共 10 人。删除旧父子 helper 新建能力、工具和设置入口；历史 ChildRun/会话/费用/证据可读，原有退出清理可以处理存量。普通 derive 不删除。人工停止总任务与故障恢复不属于 Agent 退题，不移除用户管理能力。
+
+## 3. 状态、成员关系与持久化
+
+复用 `CtfChallenge` 的 `owner_id`、`collaborator_ids`、`revision`、`scope_revision` 和事件投影；有效 `native_worker_active` Assignment 是参与关系权威，显示字段同事务更新。每名 Worker 同时只参与一道题；每题恰有至多一个主责，援助不覆盖主责。
+
+新增或补充以下契约字段，不再重复保存可推导的人数：
+
+| 范围 | 字段/语义 |
+| --- | --- |
+| Challenge | `difficulty`: easy/medium/hard；`multi_stage`: 多阶段渗透提示，创建时默认 hard；`assistance_target`: 0..9，目标援助人数 |
+| Challenge | `work_status`: pending/in_progress/awaiting_review/completed；旧 blocked/cancelled 仅历史兼容 |
+| Challenge | `review_revision`: 核验轮次；候选分别存档；拒绝 Fact 和继续解题一起提交 |
+| Challenge | `solve_elapsed_ms`、`solve_started_at`、`assistance_reminded`: 累计解题与单次 30 分钟事件 |
+| Worker | 持久 `has_worked`；成功建立首次 Assignment 才置 true；选择通知签名和消费进度 |
+| Assignment | 唯一 ID、题/成员、primary/assistant、generation/epoch、开始/释放和原有调用来源；不把会话 ID 当负责人 |
+
+`needs_assistance` 从解题阶段、目标和有效援助人数推导。待核验/通过不招人；其余有缺口可招。主责在等待援助时继续开工。核验中 Worker 业务状态仍为运行中，UI 附带“等待核验”；平台确认旧执行结束后才释放为 idle。持久 Worker 会话可以存在而 Worker 业务上为空闲。
+
+修改题面是同题补充，通知原团队并保留知识、负责人和计时；新契约不再通过修改 description 自动 drain/退回待领取。目标或附件更新保留之前证据来源，已经发出的命令按原快照回写，不以配置修改暗中退题/换人。变更版本用于拒绝过期写入，不把题面 revision 和 Intent version、事件游标混用。
+
+## 4. 初次分配与后续自主认领
+
+1. 总任务建立 Worker 记录，不为无工作的 Worker 发起模型回合。
+2. Lead 发布可执行题目时，平台在短事务中优先为新题绑定尚未工作过的 Worker；余下首次 Worker 可分配开放援助。没有题目/名额则待命。首次做援助也置 `has_worked=true`。
+3. 已工作过的空闲 Worker 收到全部可领取题的分组摘要与版本，调用查看/认领工具自主选择。存在新题时从新题组选，没有新题才选援助。首次分配也遵守该优先级，不抢走已在援助的成员。
+4. 认领在同一 Task 锁事务重核 Worker 空闲、新题优先、题目阶段、当前负责人、人数目标/10 人上限和请求幂等。只有一个主责成功；援助人数不超额；成功同时更新 Assignment、成员状态、题目投影与事件。
+5. 争抢失败返回最新可领取摘要，由 Worker 再选，平台不改领。认领成功返回完整题面、成员、公告、小黑板与目录，不再要求一次额外工具查询才能开始。
+6. 新题/援助变化、Worker 释放、投递失败重试、会话恢复均触发调度。相同空闲阶段和相同可领取集合只保留一个未消费通知；变化后更新摘要，不为每条事件都新起一轮模型。
+7. 有工作必须选择并尝试认领；模型正常结束却仍空闲且有可领工作时，根据执行结束事件重新提醒当前集合。竞争失败在当前回合继续选择；不定时唤醒没有工作的模型。
+
+`has_worked` 不因空闲、重启、暂停或首次投递失败重置；失败认领不置 true。正常首次绑定后即使通知重试，也仍是同一 Assignment。平台只为首次 Worker 选题，不将“曾工作过但现在 idle”重新解释成首次。
+
+## 5. 长期 Worker 会话与执行边界
+
+新版本 Worker 使用稳定的池成员身份和 Pi 会话，首次获得工作时准备；后续空闲选择及解下一题复用已确认 journal、MCP 连接和工具经验。Worker session/turn 与题目 Assignment 分离。空闲选择工具不依赖已关闭的旧题绑定。
+
+Runner binding 固定 Task/Worker/generation/epoch；当前 Assignment 在服务端权威关系中解析，每次模型/工具准入把当时 Assignment 快照写入调用记录。题内工具仍显式带 challenge_id/expected_revision；Sandbox 的命令、证据、流量和结果归属取当次准入快照，迟到结果不能按当前题重新归属。旧调用 ID 只读取原调用结果，不能换题后执行旧副作用。长会话内增加 Assignment 边界记录：新工具调用必须属于当前工作段，不能把上题已生成但未准入的工具调用放到下题执行；不通过原地改写历史 binding/journal 达成切题。
+
+释放需要已通过、Runner 本轮自然结束、没有原题未决模型/工具/命令。复用已有执行观测和持久 journal 记录实际结束，不要求模型回复“已等待”或额外 ACK。仅当这些条件满足才关闭旧参与关系并通知下一轮选择；会话保留。不因待核验强制 abort/freeze。进程故障沿既有 epoch/unknown 恢复，不假装成 idle。
+
+工具描述按角色和当前工作面提供；先复用已注册工具与 SDK 的 active tools，不为此新增 MCP 网关。独立 MCP 目标的准备可并发，保留各目标身份与失败处理。首次输入携带必要题面、文件目录、当前快照，后续只送变化。不能把模型经验保留等同于执行权限保留，不能修改已发送会话前缀。
+
+## 6. 困难题与援助
+
+简单/中等初始 `assistance_target=0`，困难初始 1；多阶段渗透默认困难。Lead 负责判断和调整难度；已经加入的成员不因难度调低退出。两人齐备即停止默认招募；任何成员可根据可并行方向申请更多援助，默认新增 1 人，按幂等请求累计目标，最多 9 名援助。无需先拿满所有 Intent 才能求援。
+
+累计解题时间从首次认领开始，以题目墙钟计算，不乘人数；pending、awaiting_review、整体暂停不计，恢复/驳回续算。需要援助仍计时。到 30 分钟：没有实际援助则保持/开启至少 1 个援助目标，通知主责与可领工作的空闲成员；已有实际援助则只提醒主责研判，不自动加目标，不清除已有未满足申请，不改难度。到期处理幂等，只触发一次；重启从持久时点恢复。用最近截止时间唤醒现有控制循环，不恢复 5 秒全量业务扫描。
+
+## 7. 待核验与 Lead 反馈
+
+主责或任一援助均可提交候选/结果并将题置 awaiting_review。首个提交打开本轮核验；同时到达的不同候选都保存，同轮追加不丢失，不反复重置轮次。候选成功保存、状态、计时结算和通知事件在一个事务内完成。
+
+提交后平台同时通知 Lead 与同题全员，Worker 使用 Pi `steer`。这是软通知：当前回复与当前批工具可完成，下一处理点读入；不保证立即取消，不检查模型是否理解，也不等全员 ACK。Lead 可立即研判，不等待长工具完成。待核验期间不接新援助，原有成员不去接新题。
+
+Lead 判为不通过时必须提供明确原因 Fact，可引用候选、已有 Fact 与可信提交回执；Fact 和 in_progress 状态同事务写入。平台 steer 原团队获取最新小黑板、读取原因继续，恢复此前未填的援助名额。外部 rejected 回执先通知 Lead，不能在没有 Lead 原因 Fact 时自动让团队继续。
+
+Lead 判通过须引用已保存的核验依据；有外部比赛接口时沿已有真实回执与完整通过标准，不伪造 accepted。外部回执仅更新提交记录，题目最终状态由 Lead 核验操作更新。通过后通知全员，平台按每人旧执行实际结束逐个释放；已结束者不等其他人。旧核验请求、旧通知和迟到失败回执不能将 completed 改回 awaiting_review/in_progress。不同候选独立留存。
+
+## 8. 题内 Fact、Intent 与文件
+
+每题小黑板复用已有 `challenge_id` 过滤、Fact/Intent、事件投影与对象存储。
+
+| 对象 | 保留的核心字段 | 新执行约定 |
+| --- | --- | --- |
+| Fact | id/kind/statement/evidence/derived_from/disputes/resolves/result/author/status/provenance/version/assignment_ref | 追加纠错，不改原文；proposed 或 tool_backed 不表示结论已证实；Lead 可写核验原因 |
+| Intent | id/statement/based_on/expected/method/relates_to/retry_of/status/holder/claimed_at/result/closed_by/result_facts/notes/attempts/author/version | 每条一个 holder，每 Worker 同时最多 3 条有效 claimed；成员用结果 Fact 关闭自己持有的方向 |
+| Evidence | type/path/uri/summary/call_id/size/sha256/auto | path 为工作位置，uri+sha256 为不可变证据版本；执行结果引用可信 call_id |
+
+创建时间取持久事件，API 可投影。作者与当前 holder 分开。一个 Intent 不创建一个 Agent；未领 Intent 继续排队。confirmed/rejected/inconclusive 只是方向结果，不代表整题通过/失败。普通模式每人一条等规则不被 CTF 的 3 条改动覆盖。
+
+简单获取信息不强制先写 Intent；`based_on` 引用真实 Fact。没有基础事实时先观察或登记真实题面/附件，不伪造 Fact。没有 open 但有 claimed、在途工具或待返回结果，不视为方向枯竭；现有成员梳理事实、未定结果、旧方向和 Lead 反馈，必要时通过正常援助找新视角，不增加专职 Agent，不因空产自动终止题目。
+
+同题成员的 Fact、Intent/认领/关闭/状态变化均同步给其他成员。尚未送入会话的普通知识变化合并为题 ID、对象 ID、摘要和版本；首次入题拿快照，以后增量，全文按需读取。无需为每条 Fact 唤醒 Lead。
+
+建议目录为 `/workspace/shared/challenges/<challenge_id>/inputs/`、`workers/<worker_id>/`、`artifacts/`。原 `/workspace/agents/<worker_id>/` 默认 cwd 保留；同 Task 工作卷共享，目录不是新增文件 ACL。
+
+补齐原生文件证据登记：Worker 提交路径，平台按现有 Sandbox 文件 API 获取快照，计算 sha256、上传现有对象存储，再原子登记 Artifact/Fact/事件。上传 I/O 不持 Task 锁，锁内重核身份与题目版本，失败不写成功 Fact。引用旧 URI 时不能被后来同名文件覆盖。声明脚本产生某结果时应关联执行时的脚本版本和 call_id；未捕获执行时版本就如实标为事后快照，不能冒充执行证据。
+
+## 9. 实时事件、恢复与性能
+
+黑板变化和必要通知记录同事务，提交后 `pg_notify` 唤醒现有消费者；通知本身不是持久来源。消费游标、Runner command/input ID 与投递结果沿现有表存储。首次连接/重连从持久游标补读，投递重试幂等，过期状态通知消费时对照最新题目/Assignment，合并或丢弃已失效内容。
+
+Worker 空闲、题目创建/就绪、援助开放、核验变化、执行结束触发精确受影响 Task 的处理。控制器等待事件或最近援助 deadline；凭证续租/网络重试/健康监测保留各自必要期限，不能借此反复通知同批空闲模型。
+
+记录并报告创建→可分配、可分配→通知/首次分配、通知→领取、领取→模型 prepared/实际发送/首 token（各自有证据才填写）、核验→通知/释放、模型调用数、token/费用、容器/MCP 准备时间。基线数字只是已有样本，不是 p95。假模型测试应证明无固定 5 秒下界、待命零模型轮询、复用会话不重复连接，以及 20 Worker/30 题和 3 题协作不会双领或空转。
+
+## 10. 发布、兼容与完成条件
+
+新业务工具 manifest 发布新 revision 并冻结到新 Task。先扩展可读契约，再启用新入口；历史任务保持原来源和已发布契约，不把活动旧 Assignment 无证据重解释为同级团队。UI 可读新旧格式。旧 helper 创建入口从新发布模板和界面移除，历史收尾与读算仅保留必要适配；普通黑板和旧日志不被批量删除。
+
+只有计划中的领域、Runner、事件/计时、证据、前端及合成验收全部完成，才报告本次完成。每次提交按仓库要求运行 `make check`；前端运行 `make web-check`，原生 Runner、PostgreSQL 事务和恢复接缝做定向验证。检查不调用真实模型。发布本机时保留当前完整环境的 VPN/输入等功能，验证同版本组合后切换，报告实测范围；不能直接以较少功能的基础镜像覆盖当前平台。
+
+设计变更单独提交。代码按阶段提交，中文报告记录实现、验证、偏差与未验证边界；不擅自合并 main 或推送。与协作会话的审核记录归开发计划，不以另一个模型的建议代替用户已确认规则。
