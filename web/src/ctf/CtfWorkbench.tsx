@@ -25,7 +25,7 @@ import RecoveryPanel from './RecoveryPanel';
 import CtfBoardCanvas from './CtfBoardCanvas';
 import Icon from '../components/Icon';
 import styles from './CtfWorkbench.module.css';
-const eventTypes = ['task.created', 'task.finished', 'task.stopped', 'task.failed', 'ctf.started', 'ctf.member.created', 'ctf.member.state_changed', 'ctf.member.removed', 'ctf.message.posted', 'ctf.message.delivered', 'ctf.turn.started', 'ctf.turn.finished', 'ctf.conclusion.requested', 'ctf.conclusion.finalized', 'ctf.challenge.created', 'ctf.challenge.updated', 'ctf.record.appended', 'ctf.artifact.registered', 'ctf.verification.updated', 'ctf.target.updated', 'ctf.platform.dispatched', 'ctf.cursor', 'agent.trace.recorded', 'tool_call.recorded'];
+const eventTypes = ['task.created', 'task.finished', 'task.stopped', 'task.failed', 'ctf.started', 'ctf.member.created', 'ctf.member.state_changed', 'ctf.member.removed', 'ctf.message.posted', 'ctf.message.delivered', 'ctf.turn.started', 'ctf.turn.finished', 'ctf.conclusion.requested', 'ctf.conclusion.finalized', 'ctf.challenge.created', 'ctf.challenge.updated', 'ctf.record.appended', 'ctf.artifact.registered', 'ctf.verification.updated', 'ctf.target.updated', 'ctf.platform.dispatched', 'ctf.cursor', 'agent.trace.recorded', 'tool_call.recorded', 'cost.reconciled', 'budget.updated'];
 export default function CtfWorkbench({ taskId, initialTask }: {
     taskId: string;
     initialTask: TaskView;
@@ -134,6 +134,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
                         if (ctfEventsNeedSnapshot(batch)) {
                             void queryClient.invalidateQueries({ queryKey: ['ctf', taskId, 'state'] });
                             void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+                            void queryClient.invalidateQueries({ queryKey: ['pi-task-fees', taskId] });
                         }
                     }, 150);
             }
@@ -156,6 +157,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     }
     function refresh() {
         void state.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['pi-task-fees', taskId] });
         if (historyRequested) void eventHistory.refetch();
         setStreamRevision((value) => value + 1);
     }
@@ -164,8 +166,15 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         setDialog(next);
     }
     const task = { ...initialTask, ...state.data?.task, cost_currency: state.data?.task.cost_currency ?? initialTask.cost_currency, runs: state.data?.task.runs ?? initialTask.runs };
-    const piFees = useQuery({ queryKey: ['pi-task-fees', taskId], queryFn: () => api.piTaskFees(taskId),
-        enabled: Boolean(task.pi_model), refetchInterval: query => query.state.data?.enabled && query.state.data.solver.unknown_calls ? 4000 : 10000 });
+    const piFees = useQuery({
+        queryKey: ['pi-task-fees', taskId], queryFn: () => api.piTaskFees(taskId),
+        enabled: Boolean(task.pi_model),
+        refetchInterval: query => {
+            const active = ['created', 'provisioning', 'running', 'closing'].includes(task.status);
+            const unsettled = query.state.data?.enabled && query.state.data.solver.unknown_calls > 0;
+            return active || unsettled ? 2000 : false;
+        },
+    });
     const piSolver = piFees.data?.enabled ? piFees.data.solver : undefined;
     const phase = task.ctf_phase === 'closed' || task.status !== 'created' ? task.status : task.ctf_phase ?? task.status;
     const members = state.data?.members ?? [];

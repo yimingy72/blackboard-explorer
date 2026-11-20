@@ -4,11 +4,37 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from bbx_contracts.runner import runner_json_text, runner_payload_digest
 from bbx_runtime.native_runner import NativeRunnerController
 from bbx_runtime.runner_resources import ResourceUnknown
+
+
+async def test_one_invalid_archive_does_not_stop_the_runtime(caplog):
+    controller: Any = object.__new__(NativeRunnerController)
+    controller.closed = False
+    controller.instance = SimpleNamespace(lost=asyncio.Event())
+
+    async def fail():
+        raise ValueError("private fixture payload must not be logged")
+
+    failed = asyncio.create_task(fail())
+    await asyncio.sleep(0)
+    controller.jobs = {"invalid-archive": failed}
+    checked = []
+
+    async def pending(*args, **kwargs):
+        checked.append(args)
+        controller.closed = True
+        return {"task_ids": []}
+
+    controller.service = SimpleNamespace(_json=pending)
+    await controller.run()
+    assert checked == [("GET", "/native-runner/bootstraps")]
+    assert "invalid-archive" in caplog.text and "ValueError" in caplog.text
+    assert "private fixture payload" not in caplog.text
 
 
 @pytest.mark.parametrize("freeze_after", ["observation", "renew"])
