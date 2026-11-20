@@ -1,0 +1,73 @@
+{
+  "volatility3": {
+    "filename": "volatility3-2.28.2-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/8a/26/548439f5192e496fff7f54d41d8762fa8f3712d53c8441b9f57d7c7a8310/volatility3-2.28.2-py3-none-any.whl",
+    "sha256": "0461d6dd71b9ddbaf70c96e079c06efdf174ac65383b3dcf10dd165181fbd3c3",
+    "bytes": 1424884
+  },
+  "zsteg": {
+    "filename": "zsteg-0.2.14.gem",
+    "url": "https://rubygems.org/gems/zsteg-0.2.14.gem",
+    "sha256": "761ee35a8512630606946187ed1a3150c6ab30dd5e32cefe48ebb2b874190f6f"
+  },
+  "bkcrack": {
+    "package": "bkcrack",
+    "version": "1.8.1",
+    "url": "https://codeload.github.com/kimci86/bkcrack/tar.gz/refs/tags/v1.8.1",
+    "sha256": "bb6a6d0bb1ccbb3c39cf8b3113581b5514b127023bbe0e864992c57e79346053",
+    "size": 112701
+  },
+  "seclists": {
+    "commit": "1a89b46c204032247592a1626e29f841cb0fe2a5",
+    "source": "https://api.github.com/repos/danielmiessler/SecLists/commits/master",
+    "wordlists": [
+      {
+        "path": "Discovery/Web-Content/common.txt",
+        "bytes": 38536,
+        "git_blob_sha": "15bb1c17533b4c0cf0100abe4fa1789093f4e724",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Discovery/Web-Content/common.txt"
+      },
+      {
+        "path": "Discovery/Web-Content/raft-small-directories.txt",
+        "bytes": 163210,
+        "git_blob_sha": "e9cc785d050937669450adb0af2e920d9cea6022",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Discovery/Web-Content/raft-small-directories.txt"
+      },
+      {
+        "path": "Discovery/Web-Content/raft-small-files.txt",
+        "bytes": 148390,
+        "git_blob_sha": "6b3438db2f50ca18c6cdda47bf9c9a17cb94edff",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Discovery/Web-Content/raft-small-files.txt"
+      },
+      {
+        "path": "Discovery/Web-Content/raft-small-words.txt",
+        "bytes": 348619,
+        "git_blob_sha": "144fe94d881bdef9ebeb149b032691557635954d",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Discovery/Web-Content/raft-small-words.txt"
+      },
+      {
+        "path": "Usernames/cirt-default-usernames.txt",
+        "bytes": 6346,
+        "git_blob_sha": "c61d77b459332daf098e4bc76d3123ac8618103b",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Usernames/cirt-default-usernames.txt"
+      },
+      {
+        "path": "Usernames/top-usernames-shortlist.txt",
+        "bytes": 112,
+        "git_blob_sha": "8f714dbe94bfef25cb14daa19aeb8fb18e18ef89",
+        "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/Usernames/top-usernames-shortlist.txt"
+      }
+    ],
+    "license": {
+      "path": "LICENSE",
+      "bytes": 1072,
+      "git_blob_sha": "fbd3be5da1b5c7363ab6d581e4cc6a22a8893683",
+      "url": "https://raw.githubusercontent.com/danielmiessler/SecLists/1a89b46c204032247592a1626e29f841cb0fe2a5/LICENSE"
+    }
+  },
+  "opencv": {
+    "filename": "opencv_python_headless-5.1.0.95-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "url": "https://files.pythonhosted.org/packages/37/63/6f18cf6b25aca818c5432317f9c9db3ee87d9f03d576d1e5953910429be3/opencv_python_headless-5.1.0.95-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "sha256": "93cc83677f07791a9d3284bb6b9bbf7c2ffcca05aabcee239e68ca4abaf50aa1"
+  }
+}

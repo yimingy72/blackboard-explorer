@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# Sage needs its matching pkg-config and compilers for Cython extensions.
+export PATH="/opt/sage/bin:$PATH"
+exec /opt/sage/bin/sage "$@"

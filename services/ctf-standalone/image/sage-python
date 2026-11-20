@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export PATH="/opt/sage/bin:$PATH"
+exec /opt/sage/bin/python "$@"
