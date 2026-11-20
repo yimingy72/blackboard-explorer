@@ -241,6 +241,29 @@ class JournalConfirmation(ContractModel):
     previous: JournalCursor
     cursor: JournalCursor
     applied_inputs: list[InputApplication]
+    entries: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def journal_bytes_match_cursor(self):
+        if self.entries is None:
+            return self
+        raw = self.entries.encode("utf-8")
+        lines = raw.splitlines(keepends=True)
+        digest = self.previous.hash
+        for line in lines:
+            if not line.endswith(b"\n") or not isinstance(json.loads(line), dict):
+                raise ValueError("Journal entries must be complete JSON records")
+            digest = hashlib.sha256(bytes.fromhex(digest) + line).hexdigest()
+        if (
+            not lines
+            or self.previous.offset + len(raw) != self.cursor.offset
+            or self.previous.seq + len(lines) != self.cursor.seq
+            or digest != self.cursor.hash
+            or len(lines[-1]) != self.cursor.anchor_size
+            or hashlib.sha256(lines[-1]).hexdigest() != self.cursor.anchor_hash
+        ):
+            raise ValueError("Journal entries do not match the confirmed cursor")
+        return self
 
 
 class JournalReceipt(ContractModel):

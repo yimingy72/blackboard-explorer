@@ -969,3 +969,55 @@ async def test_input_transaction_monotonic_prompt_and_close_evidence(ctf, monkey
                 assert not (
                     await conn.execute(select(table.c.task_id).where(table.c.task_id == tid))
                 ).all()
+
+
+async def test_native_journal_content_is_readable_and_revision_cached(ctf):
+    async with connect(ctf) as (app, http):
+        tid, owner, binding, command = await setup(http, ctf)
+        await acquire(http, tid, owner, binding, command)
+        entry = {
+            "type": "message",
+            "id": "answer",
+            "timestamp": "2026-11-20T01:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Check the supplied evidence"},
+                    {
+                        "type": "toolCall",
+                        "id": "call",
+                        "name": "exec_command",
+                        "arguments": {"command": "pwd"},
+                    },
+                ],
+            },
+        }
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        encoded = line.encode()
+        previous = empty_cursor()
+        current = {
+            "offset": len(encoded),
+            "seq": 1,
+            "hash": hashlib.sha256(bytes.fromhex(previous["hash"]) + encoded).hexdigest(),
+            "leaf_id": "answer",
+            "anchor_offset": 0,
+            "anchor_size": len(encoded),
+            "anchor_hash": hashlib.sha256(encoded).hexdigest(),
+        }
+        body = {**confirmation(owner, binding, previous, current), "entries": line}
+        await confirm(http, tid, owner, binding, body)
+        await confirm(http, tid, owner, binding, body)
+        user = {"Authorization": "Bearer " + issue_user_token(app.state.settings, "operator")}
+        endpoint = f"/api/tasks/{tid}/agents/lead/session"
+        response = await http.get(endpoint, headers=user)
+        assert response.status_code == 200, response.text
+        assert response.json()["native_entries"] == [entry]
+        assert response.json()["transcript_pending"] is False
+        unchanged = await http.get(endpoint, headers=user, params={"after_revision": 1})
+        assert unchanged.json() == {"revision": 1, "not_modified": True}
+        invalid = await http.post(
+            control(tid) + f"/bindings/{binding['binding_id']}/journal/confirm",
+            headers=auth(owner),
+            content=raw({**body, "entries": line.replace("pwd", "whoami")}),
+        )
+        assert invalid.status_code == 422

@@ -618,6 +618,76 @@
         "title": "BoardContext",
         "type": "object"
       },
+      "BoardDispatchChallengeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "ready",
+              "withdraw"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "challenge_id": {
+            "format": "uuid",
+            "title": "Challenge Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "priority": {
+            "default": 1,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "readiness": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ready",
+                  "no_external_materials",
+                  "materials_pending"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readiness"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "worker_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Id"
+          }
+        },
+        "required": [
+          "request_id",
+          "challenge_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "BoardDispatchChallengeRequest",
+        "type": "object"
+      },
       "BoardJournalProjection": {
         "additionalProperties": false,
         "properties": {
@@ -5303,6 +5373,17 @@
           },
           "cursor": {
             "$ref": "#/components/schemas/JournalCursor"
+          },
+          "entries": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entries"
           },
           "fence": {
             "$ref": "#/components/schemas/RunnerFence"
@@ -16717,6 +16798,23 @@
               ],
               "title": "Run Number"
             }
+          },
+          {
+            "in": "query",
+            "name": "after_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Revision"
+            }
           }
         ],
         "responses": {
@@ -17717,6 +17815,71 @@
           }
         },
         "summary": "Claim Challenge",
+        "tags": [
+          "ctf"
+        ]
+      }
+    },
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/dispatch": {
+      "post": {
+        "operationId": "dispatch_challenge_api_tasks__task_id__ctf_challenges__challenge_id__dispatch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Challenge Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardDispatchChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dispatch Challenge Api Tasks  Task Id  Ctf Challenges  Challenge Id  Dispatch Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dispatch Challenge",
         "tags": [
           "ctf"
         ]

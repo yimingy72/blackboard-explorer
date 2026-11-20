@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -378,12 +379,55 @@ class Conversations:
         )
         return dict(row) if row else None
 
-    async def get_session(self, tid: UUID, aid: str) -> dict[str, Any]:
+    async def get_session(
+        self, tid: UUID, aid: str, after_revision: int | None = None, *, native: bool = False
+    ) -> dict[str, Any]:
         async with self.repo.engine.connect() as conn:
             await self._task_agent(conn, tid, aid)
             found = await self._session(conn, tid, aid)
+            bindings = []
+            if native:
+                bindings = (
+                    await conn.execute(
+                        select(s.runner_bindings.c.id, s.runner_bindings.c.cursor).where(
+                            s.runner_bindings.c.task_id == tid,
+                            s.runner_bindings.c.binding["agent_id"].astext == aid,
+                            s.runner_bindings.c.binding["business_contract"].astext
+                            == BOARD_CONTRACT,
+                        )
+                    )
+                ).all()
+            if bindings:
+                revision = sum((item.cursor or {}).get("seq", 0) for item in bindings)
+                revision += found["revision"] if found else 0
+                if after_revision == revision:
+                    return {"revision": revision, "not_modified": True}
+                receipts = (
+                    await conn.execute(
+                        select(s.runner_receipts.c.body_text).where(
+                            s.runner_receipts.c.task_id == tid,
+                            s.runner_receipts.c.binding_id.in_([item.id for item in bindings]),
+                            s.runner_receipts.c.kind == "journal",
+                            s.runner_receipts.c.late.is_(False),
+                        )
+                    )
+                ).scalars()
+                entries = []
+                for receipt in receipts:
+                    journal = json.loads(receipt).get("entries")
+                    if journal:
+                        entries.extend(json.loads(line) for line in journal.splitlines())
+                entries.sort(key=lambda item: item.get("timestamp", ""))
+                return {
+                    "session": found["session"] if found else {},
+                    "revision": revision,
+                    "native_entries": entries,
+                    "transcript_pending": not entries,
+                }
         if found is None:
             raise HTTPException(404, "Agent session not found")
+        if after_revision == found["revision"]:
+            return {"revision": found["revision"], "not_modified": True}
         return {
             **{
                 key: found[key] for key in ("session", "opening_instructions", "origin", "revision")

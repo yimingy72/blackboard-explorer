@@ -13,7 +13,7 @@ import ssl
 import time
 from contextlib import aclosing, asynccontextmanager, suppress
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -29,6 +29,7 @@ from bbx_sandbox_execution.execution import SOLVER_GID, SOLVER_UID, AssignmentBi
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from opensandbox.exceptions import SandboxApiException
+from opensandbox.models.execd import RunCommandOpts
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -420,6 +421,22 @@ class SandboxMCP:
             raise ValueError("Original Sandbox traffic scope changed")
         return source
 
+    @staticmethod
+    async def prepare_workspace(sandbox, binding):
+        agent_id = binding.parent_agent_id or binding.agent_id
+        directory = "/workspace/agents/" + ("agent-1" if agent_id == "lead" else agent_id)
+        result = await sandbox.commands.run(
+            ["/bin/mkdir", "-p", directory],
+            opts=RunCommandOpts(
+                working_directory="/workspace",
+                uid=SOLVER_UID,
+                gid=SOLVER_GID,
+                timeout=timedelta(seconds=7),
+            ),
+        )
+        if result.complete is None or result.exit_code != 0 or result.error is not None:
+            raise ValueError("Agent workspace creation failed")
+
     async def grant(self, sandbox, item, *, prepare=False):
         scope, binding = item["scope"], AssignmentBinding(**item["binding"])
         source = self.network_scope(item, binding)
@@ -432,6 +449,7 @@ class SandboxMCP:
         ):
             raise ValueError("Original Task VPN link is unavailable")
         if prepare and item.get("prepare_allowed"):
+            await self.prepare_workspace(sandbox, binding)
             await root_network(
                 sandbox,
                 "prepare",

@@ -93,6 +93,7 @@ class NativeWorkers:
             **challenge,
             "owner_id": aid,
             "work_status": "in_progress",
+            "dispatch_status": "assigned",
             "revision": challenge["revision"] + 1,
         }
         await self.ctf._board_event(
@@ -381,11 +382,13 @@ class NativeWorkers:
         task = await row(conn, s.tasks, tid)
         queue = task["ctf_control"].get("native_worker_ready", {})
         if allow_new and queue:
-            idle = iter(await self.idle_members(conn, tid, task, spec))
+            idle = list(await self.idle_members(conn, tid, task, spec))
             for cid, ready in sorted(
                 queue.items(), key=lambda item: (item[1]["priority"], item[1]["sequence"])
             ):
-                if ready["readiness"] != "no_external_materials":
+                if not idle:
+                    break
+                if ready["readiness"] == "materials_pending":
                     continue
                 challenge = await self.ctf._challenge(conn, tid, cid)
                 if (
@@ -395,9 +398,13 @@ class NativeWorkers:
                     or challenge.get("scope_revision", 1) != ready["scope_revision"]
                 ):
                     continue
-                member = next(idle, None)
+                worker_id = ready.get("worker_id")
+                member = next(
+                    (item for item in idle if worker_id is None or item["id"] == worker_id), None
+                )
                 if member is None:
-                    break
+                    continue
+                idle.remove(member)
                 task = await row(conn, s.tasks, tid)
                 await self._assign(conn, tid, task, owner, spec, member, challenge)
         task = await row(conn, s.tasks, tid)

@@ -11,6 +11,7 @@ export type CtfGraphNodeData = {
   ownerMissing?: boolean; related?: boolean; pinned?: boolean; history?: boolean; activity?: string;
   challengeState?: ChallengeState; artifactCount?: number;
   participants?: Array<{ id: string; name: string }>;
+  assignmentLabel?: string;
 };
 export type CtfGraphNode = Node<CtfGraphNodeData, 'ctf-agent' | 'ctf-task'>;
 export type CtfGraphEdge = Edge<{ relation: 'team' | 'claim' | 'collaborate' | 'activity'; from?: { x: number; y: number }; to?: { x: number; y: number }; emphasized?: boolean; dimmed?: boolean; signal?: { id: string; kind: string; reverse: boolean } }>;
@@ -94,7 +95,7 @@ function orbitLayout(nodes: CtfGraphNode[], challenges: CtfChallenge[]): CtfGrap
   const positioned = new Map(placed.map((node) => [node.id, node]));
   return nodes.map((node) => positioned.get(node.id) ?? node);
 }
-export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[], records: CtfRecord[] = []): { nodes: CtfGraphNode[]; edges: CtfGraphEdge[] } {
+export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[], records: CtfRecord[] = [], phase?: string): { nodes: CtfGraphNode[]; edges: CtfGraphEdge[] } {
   const uniqueMembers = [...new Map(members.map((member) => [member.id, member])).values()];
   const uniqueChallenges = [...new Map(challenges.map((challenge) => [challenge.id, challenge])).values()];
   const lead = uniqueMembers.find((member) => member.role === 'lead');
@@ -107,7 +108,8 @@ export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[],
   const nodes: CtfGraphNode[] = uniqueMembers.map((member) => {
     const position = { x: 0, y: 0 };
     const status = member.lifecycle === 'active' ? member.run_state : member.lifecycle;
-    return { id: `agent:${member.id}`, type: 'ctf-agent', position, data: { entityId: member.id, label: member.display_name, role: member.role, status, detail: member.lifecycle === 'removed' ? '历史成员 · 会话保留' : member.lifecycle === 'stopped' ? '已停止 · 等待明确恢复' : member.role === 'lead' ? '团队协调' : '协作成员', verification: '', participantCount: uniqueChallenges.filter((challenge) => challenge.owner_id === member.id || challenge.collaborator_ids.includes(member.id)).length } };
+    const assignmentLabel = phase && ['finished', 'failed', 'stopped'].includes(phase) ? '' : uniqueChallenges.filter(challenge => challenge.owner_id === member.id && challenge.work_status === 'in_progress').map(challenge => challenge.title).join('、');
+    return { id: `agent:${member.id}`, type: 'ctf-agent', position, data: { entityId: member.id, label: member.display_name, role: member.role, status, assignmentLabel, detail: member.lifecycle === 'removed' ? '历史成员 · 会话保留' : member.lifecycle === 'stopped' ? '已停止 · 等待明确恢复' : member.role === 'lead' ? '团队协调' : '协作成员', verification: '', participantCount: uniqueChallenges.filter((challenge) => challenge.owner_id === member.id || challenge.collaborator_ids.includes(member.id)).length } };
   });
   for (const challenge of uniqueChallenges) {
     const people = [...new Set([challenge.owner_id, ...challenge.collaborator_ids].filter((id): id is string => Boolean(id)))];
@@ -117,7 +119,7 @@ export function deriveCtfGraph(members: CtfMember[], challenges: CtfChallenge[],
     const verification = challenge.verification ?? {};
     const accepted = verification.status === 'accepted' && ['platform', 'user'].includes(String(verification.source));
     const solution = challengeSolution(challenge, related).current;
-    nodes.push({ id: `challenge:${challenge.id}`, type: 'ctf-task', position, data: { entityId: challenge.id, label: challenge.title, externalId: challenge.external_id ?? challenge.id.slice(0, 8), status: challenge.tombstone ? 'archived' : challenge.work_status, challengeState: challengeState(challenge), participants: people.map(id => ({ id, name: uniqueMembers.find(member => member.id === id)?.display_name ?? id })), artifactCount: new Set(related.flatMap(record => record.artifact_refs ?? []).map(artifact => artifact.id)).size, detail: challenge.description || challenge.requirements || '暂无题目说明', progress: solution?.solution?.conclusion ?? progress.summary, recordCount: progress.count, participantCount: people.length, history: Boolean(challenge.tombstone || ['completed', 'cancelled'].includes(challenge.work_status)), ownerMissing: Boolean(challenge.owner_id && !memberIds.has(challenge.owner_id)), candidate: candidates.length ? candidateText(candidates.at(-1)!) : null, verification: accepted ? verification.test_only ? 'simulated' : 'accepted' : verification.status === 'accepted' ? 'unknown' : String(verification.status ?? 'unknown'), verificationText: verification.status === 'accepted' && !accepted ? '验证来源待核实' : verificationLabel(verification) } });
+    nodes.push({ id: `challenge:${challenge.id}`, type: 'ctf-task', position, data: { entityId: challenge.id, label: challenge.title, externalId: challenge.external_id ?? challenge.id.slice(0, 8), status: challenge.tombstone ? 'archived' : challenge.work_status, challengeState: challengeState(challenge, phase), participants: people.map(id => ({ id, name: uniqueMembers.find(member => member.id === id)?.display_name ?? id })), artifactCount: new Set(related.flatMap(record => record.artifact_refs ?? []).map(artifact => artifact.id)).size, detail: challenge.description || challenge.requirements || '暂无题目说明', progress: solution?.solution?.conclusion ?? progress.summary, recordCount: progress.count, participantCount: people.length, history: Boolean(challenge.tombstone || ['completed', 'cancelled'].includes(challenge.work_status)), ownerMissing: Boolean(challenge.owner_id && !memberIds.has(challenge.owner_id)), candidate: candidates.length ? candidateText(candidates.at(-1)!) : null, verification: accepted ? verification.test_only ? 'simulated' : 'accepted' : verification.status === 'accepted' ? 'unknown' : String(verification.status ?? 'unknown'), verificationText: verification.status === 'accepted' && !accepted ? '验证来源待核实' : verificationLabel(verification) } });
   }
   const positioned = orbitLayout(nodes, uniqueChallenges);
   const positionedById = new Map(positioned.map((node) => [node.id, node]));

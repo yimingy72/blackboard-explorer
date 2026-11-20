@@ -216,13 +216,6 @@ class TaskBoardService(ChallengeBoardService):
     @staticmethod
     def _ready_challenge(control, queue, challenge, readiness, priority):
         cid = challenge["id"]
-        if readiness == "no_external_materials" and (
-            not (challenge.get("description") or "").strip()
-            or any(challenge.get(name) for name in ("external_id", "connection", "target"))
-        ):
-            raise HTTPException(
-                409, "A self-contained challenge with no external target is required"
-            )
         old = queue.get(cid)
         if not old:
             control["native_worker_ready_sequence"] = (
@@ -234,17 +227,20 @@ class TaskBoardService(ChallengeBoardService):
             "sequence": old["sequence"] if old else control["native_worker_ready_sequence"],
             "scope_revision": challenge.get("scope_revision", 1),
         }
-        return "ready" if readiness == "no_external_materials" else "materials_wait"
+        return "materials_wait" if readiness == "materials_pending" else "ready"
 
     async def dispatch_challenge(self, tid, identity, request):
         body = BoardDispatchChallengeRequest.model_validate(request)
-        aid = self._agent(identity, tid)
-        if identity.runtime_context is None:
+        user = identity.kind == "user"
+        aid = "user" if user else self._agent(identity, tid)
+        if not user and identity.runtime_context is None:
             raise HTTPException(403, "Native Runner context required for dispatch")
         hashed = digest({"operation": DISPATCH_TOOL, **body.model_dump(mode="json")})
         async with self.repo.engine.begin() as conn:
             await self.repo.lock(conn, tid)
-            task, _ = await self._task_access(conn, tid, identity, write=True, lead=True)
+            task, _ = await self._task_access(conn, tid, identity, write=not user, lead=True)
+            if task["status"] != "running":
+                raise HTTPException(409, "Task execution is not running")
             control = dict(task["ctf_control"])
             if DISPATCH_TOOL not in control.get("business_tools", {}).get("roles", {}).get(
                 "lead", []
@@ -266,10 +262,31 @@ class TaskBoardService(ChallengeBoardService):
                 status = self._ready_challenge(
                     control, queue, challenge, body.readiness, body.priority
                 )
+                if body.worker_id is not None:
+                    member = (
+                        (
+                            await conn.execute(
+                                select(s.ctf_members).where(
+                                    s.ctf_members.c.task_id == tid,
+                                    s.ctf_members.c.id == body.worker_id,
+                                )
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if member is None:
+                        raise HTTPException(404, "Worker not found")
+                    if member["role"] != "teammate" or member["lifecycle"] != "active":
+                        raise HTTPException(409, "The selected Worker is not active")
+                    queue[cid]["worker_id"] = body.worker_id
+                value["dispatch_status"] = status
+                value["requested_worker_id"] = body.worker_id
             else:
                 queue.pop(cid, None)
                 value["work_status"] = "cancelled"
                 status = "draining" if challenge["owner_id"] else "cancelled"
+                value["dispatch_status"] = status
             await conn.execute(
                 update(s.tasks)
                 .where(s.tasks.c.id == tid)
@@ -323,15 +340,10 @@ class TaskBoardService(ChallengeBoardService):
             if scope_changed:
                 control = dict(task["ctf_control"])
                 scope = challenge.get("scope_revision", 1)
-                if (
-                    challenge["work_status"] in {"completed", "cancelled"}
-                    or (challenge.get("verification") or {}).get("status")
-                    in {"accepted", "unknown"}
-                    or any(challenge.get(name) for name in ("external_id", "connection", "target"))
-                ):
-                    raise HTTPException(
-                        409, "Scope can only change for an open self-contained challenge"
-                    )
+                if challenge["work_status"] in {"completed", "cancelled"} or (
+                    challenge.get("verification") or {}
+                ).get("status") in {"accepted", "unknown"}:
+                    raise HTTPException(409, "Scope can only change for an open challenge")
                 owner = challenge.get("owner_id")
                 assignments = control.get("native_worker_active", {})
                 if owner is None and any(item["work_id"] == cid for item in assignments.values()):
@@ -353,12 +365,14 @@ class TaskBoardService(ChallengeBoardService):
                 queue = dict(control.get("native_worker_ready", {}))
                 queue.pop(cid, None)
                 status = "pending"
+                value["requested_worker_id"] = None
                 if body.readiness is not None:
                     status = self._ready_challenge(
                         control, queue, value, body.readiness, body.priority
                     )
                 if owner is not None:
                     status = "draining"
+                value["dispatch_status"] = status
                 await conn.execute(
                     update(s.tasks)
                     .where(s.tasks.c.id == tid)

@@ -176,13 +176,16 @@ class BoardDispatchChallengeRequest(ContractModel):
     challenge_id: UUID
     expected_revision: int = Field(ge=1)
     action: Literal["ready", "withdraw"]
-    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    readiness: Literal["ready", "no_external_materials", "materials_pending"] | None = None
     priority: int = Field(default=1, ge=0, le=3, strict=True)
+    worker_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def explicit_readiness(self):
-        if (self.action == "ready") != (self.readiness is not None):
-            raise ValueError("Ready requires an explicit material state; withdraw does not")
+        if self.action == "ready" and self.readiness is None:
+            self.readiness = "ready"
+        if self.action == "withdraw" and self.readiness is not None:
+            raise ValueError("Withdraw does not accept a material state")
         return self
 
 
@@ -200,7 +203,7 @@ class BoardChallengeUpdateRequest(ContractModel):
     title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=16000)
     requirements: str | None = Field(default=None, max_length=16000)
-    readiness: Literal["no_external_materials", "materials_pending"] | None = None
+    readiness: Literal["ready", "no_external_materials", "materials_pending"] | None = None
     priority: int = Field(default=1, ge=0, le=3, strict=True)
 
     @model_validator(mode="after")

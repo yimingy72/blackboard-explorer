@@ -742,6 +742,8 @@ class CtfChallenge(ContractModel):
     external_id: str | None = None
     requirements: str | None = None
     owner_id: str | None = None
+    dispatch_status: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    requested_worker_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     collaborator_ids: list[str] = Field(default_factory=list)
     work_status: CtfWorkStatus = "pending"
     revision: int = Field(ge=1)

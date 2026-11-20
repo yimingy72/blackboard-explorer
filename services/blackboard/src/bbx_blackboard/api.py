@@ -845,7 +845,15 @@ def create_app(
                         and not suffix.startswith("/ctf/knowledge/")
                     ):
                         if identity.kind == "agent" or (
-                            request.method != "GET" and not suffix.startswith("/ctf/runtime/")
+                            request.method != "GET"
+                            and not suffix.startswith("/ctf/runtime/")
+                            and not (
+                                identity.kind == "user"
+                                and request.method == "POST"
+                                and re.fullmatch(
+                                    r"/ctf/challenges/[0-9a-fA-F-]{36}/dispatch", suffix
+                                )
+                            )
                         ):
                             raise HTTPException(
                                 403, "Legacy business entry is unavailable for this Task contract"
@@ -920,6 +928,7 @@ def create_app(
                         "/workspace",
                         "/workspace/tree",
                         "/workspace/file",
+                        "/pi-fees",
                     }
                     conversation = bool(re.fullmatch(r"/agents/[^/]+/(messages|session)", suffix))
                     traffic = suffix == "/traffic" or suffix.startswith("/traffic/")
@@ -2052,6 +2061,7 @@ def create_app(
         agent_id: str,
         journal: bool = False,
         run_number: int | None = Query(default=None, ge=1),
+        after_revision: int | None = Query(default=None, ge=0),
     ) -> dict[str, Any]:
         if journal:
             require_user_or_service(request)
@@ -2070,7 +2080,13 @@ def create_app(
                 raise HTTPException(403, "Private session access denied")
         else:
             require_service(request)
-        return await _conversations(request).get_session(task_id, agent_id)
+        return await _conversations(request).get_session(
+            task_id,
+            agent_id,
+            after_revision,
+            native=getattr(request.state, "task_mode", "blackboard") == "ctf"
+            and principal(request).kind == "user",
+        )
 
     @app.get("/api/tasks/{task_id}/agents/{agent_id}/session/journal", tags=["conversations"])
     async def download_agent_journal(

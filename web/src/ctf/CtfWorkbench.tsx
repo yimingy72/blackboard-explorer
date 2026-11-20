@@ -25,7 +25,7 @@ import RecoveryPanel from './RecoveryPanel';
 import CtfBoardCanvas from './CtfBoardCanvas';
 import Icon from '../components/Icon';
 import styles from './CtfWorkbench.module.css';
-const eventTypes = ['task.created', 'task.finished', 'task.stopped', 'task.failed', 'ctf.started', 'ctf.member.created', 'ctf.member.state_changed', 'ctf.member.removed', 'ctf.message.posted', 'ctf.message.delivered', 'ctf.turn.started', 'ctf.turn.finished', 'ctf.conclusion.requested', 'ctf.conclusion.finalized', 'ctf.challenge.created', 'ctf.challenge.updated', 'ctf.record.appended', 'ctf.artifact.registered', 'ctf.verification.updated', 'ctf.target.updated', 'ctf.platform.dispatched', 'ctf.cursor', 'agent.trace.recorded', 'tool_call.recorded'];
+const eventTypes = ['task.created', 'task.finished', 'task.stopped', 'task.failed', 'ctf.started', 'ctf.member.created', 'ctf.member.state_changed', 'ctf.member.removed', 'ctf.message.posted', 'ctf.message.delivered', 'ctf.turn.started', 'ctf.turn.finished', 'ctf.conclusion.requested', 'ctf.conclusion.finalized', 'ctf.challenge.created', 'ctf.challenge.updated', 'ctf.record.appended', 'ctf.artifact.registered', 'ctf.verification.updated', 'ctf.target.updated', 'ctf.platform.dispatched', 'ctf.cursor', 'agent.trace.recorded', 'tool_call.recorded', 'ctf.native_worker.assigned', 'ctf.native_worker.released', 'ctf.native_worker.stopped', 'cost.reconciled', 'budget.updated', 'fact.posted', 'intent.posted'];
 export default function CtfWorkbench({ taskId, initialTask }: {
     taskId: string;
     initialTask: TaskView;
@@ -76,7 +76,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
         staleTime: 5000,
         refetchInterval: query => {
             const phase = query.state.data?.task.status ?? query.state.data?.task.ctf_phase;
-            return ['created', 'provisioning', 'running', 'closing'].includes(String(phase)) ? 30000 : false;
+            return ['created', 'provisioning'].includes(String(phase)) ? 1000 : ['running', 'closing'].includes(String(phase)) ? 30000 : false;
         },
     });
     // Full event history can be several megabytes. Keep it lazy; SSE keeps the live board current.
@@ -121,7 +121,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
                 if (next === cursor.current)
                     return;
                 cursor.current = next;
-                for (const received of snapshotReads.current) if (event.type.startsWith('ctf.') && event.type !== 'ctf.cursor') received.push(event);
+                for (const received of snapshotReads.current) if (event.type !== 'ctf.cursor' && /^(ctf|fact|intent)\./.test(event.type)) received.push(event);
                 pending.push(event);
                 if (!timer)
                     timer = setTimeout(() => {
@@ -134,6 +134,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
                         if (ctfEventsNeedSnapshot(batch)) {
                             void queryClient.invalidateQueries({ queryKey: ['ctf', taskId, 'state'] });
                             void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+                            void queryClient.invalidateQueries({ queryKey: ['pi-task-fees', taskId] });
                         }
                     }, 150);
             }
@@ -156,6 +157,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     }
     function refresh() {
         void state.refetch();
+        void queryClient.invalidateQueries({ queryKey: ['pi-task-fees', taskId] });
         if (historyRequested) void eventHistory.refetch();
         setStreamRevision((value) => value + 1);
     }
@@ -165,7 +167,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
     }
     const task = { ...initialTask, ...state.data?.task, cost_currency: state.data?.task.cost_currency ?? initialTask.cost_currency, runs: state.data?.task.runs ?? initialTask.runs };
     const piFees = useQuery({ queryKey: ['pi-task-fees', taskId], queryFn: () => api.piTaskFees(taskId),
-        enabled: Boolean(task.pi_model), refetchInterval: query => query.state.data?.enabled && query.state.data.solver.unknown_calls ? 4000 : 10000 });
+        enabled: Boolean(task.pi_model), refetchInterval: query => ['created', 'provisioning', 'running', 'closing'].includes(task.status) || query.state.data?.enabled && query.state.data.solver.unknown_calls ? 2000 : false });
     const piSolver = piFees.data?.enabled ? piFees.data.solver : undefined;
     const phase = task.ctf_phase === 'closed' || task.status !== 'created' ? task.status : task.ctf_phase ?? task.status;
     const members = state.data?.members ?? [];
@@ -233,7 +235,7 @@ export default function CtfWorkbench({ taskId, initialTask }: {
       {(task.initial_attachment_state === 'blocked' || task.initial_attachment_state === 'pending' && terminal) && <Alert type="warning" title="初始附件写入未确认，原文件仍保留" showIcon />}
       {statusAction.error && <Alert type="error" title={statusAction.error} showIcon />}{state.error && <Alert type="error" title={state.error.message} action={<Button onClick={() => void state.refetch()}>重试</Button>} />}
       <div ref={workspace} className={styles.workspace}>
-        <InspectorLayout hideOnMobile={goalOpen} label={challenge ? '题目详情' : `${selected?.display_name} 会话详情`} onClose={closeInspector} inspector={challenge ? <ChallengePanel key={taskId + ':' + challenge.id} taskId={taskId} challenge={challenge} members={members} allRecords={records} events={boardEvents} historyLoading={eventHistory.isLoading} historyError={eventHistory.error?.message} onRetryHistory={ensureHistory} phase={phase} onBack={closeInspector} onDiscuss={(id) => select('agent',id)} /> : selected ? <Conversation key={taskId + ':' + selected.id} taskId={taskId} member={selected} members={members} phase={phase} onClose={closeInspector} onTraffic={() => setTrafficAgent(selected.id)} clientState={clientStates.current[selected.id]??=createAgentClientState()} draftValue={drafts[selected.id]??''} onDraftChange={changeDraft} /> : null}>
+        <InspectorLayout hideOnMobile={goalOpen} label={challenge ? '题目详情' : `${selected?.display_name} 会话详情`} onClose={closeInspector} inspector={challenge ? <ChallengePanel key={taskId + ':' + challenge.id} taskId={taskId} challenge={challenge} members={members} allRecords={records} events={boardEvents} historyLoading={eventHistory.isLoading} historyError={eventHistory.error?.message} onRetryHistory={ensureHistory} phase={phase} onBack={closeInspector} onDiscuss={(id) => select('agent',id)} /> : selected ? <Conversation key={taskId + ':' + selected.id} taskId={taskId} member={selected} members={members} assignments={['finished', 'failed', 'stopped'].includes(phase) ? [] : items.filter(item => item.owner_id === selected.id && item.work_status === 'in_progress')} onChallenge={id => select('challenge', id)} phase={phase} onClose={closeInspector} onTraffic={() => setTrafficAgent(selected.id)} clientState={clientStates.current[selected.id]??=createAgentClientState()} draftValue={drafts[selected.id]??''} onDraftChange={changeDraft} /> : null}>
           <TaskGoal key={taskId} open={goalOpen} goal={task.goal} requirements={task.completion_requirements} context={task.domain_context} files={task.initial_attachments} onClose={closeGoal} />
           <main className={styles.canvasRegion} aria-label="CTF 团队协作画布"><CtfBoardCanvas taskId={taskId} ready={Boolean(state.data)} events={assignmentEvents} members={members} challenges={items} records={records} selected={selectedGraphId} phase={phase} onSelect={(next) => select(next.kind,next.id)} onOpenDispatch={() => { dispatchTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; openDialog('dispatch'); }} /></main>
         </InspectorLayout>

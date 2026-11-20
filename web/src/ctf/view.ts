@@ -52,13 +52,45 @@ function applyToolResult(call: CtfToolCall, content: Record<string, unknown>): b
   return true;
 }
 export type ChatEntry = { id: string; speaker: string; body: string; assistant: boolean; delivery?: CtfMessage; tools: number; reasoning: CtfReasoning[]; toolCalls: CtfToolCall[] };
+
+function nativeMessages(entries: Record<string, unknown>[]): Record<string, unknown>[] {
+  return entries.flatMap<Record<string, unknown>>(entry => {
+    if (entry.type === 'custom_message' && entry.customType === 'bbx.input') {
+      return [{ role: 'user', message_id: object(entry.details).input_id, contents: [{ type: 'text', text: entry.content }] }];
+    }
+    const message = object(entry.message);
+    if (entry.type !== 'message' || !['assistant', 'user', 'toolResult'].includes(String(message.role))) return [];
+    const content = Array.isArray(message.content) ? message.content.map(object) : [{ type: 'text', text: message.content }];
+    if (message.role === 'toolResult') {
+      let result: unknown = content;
+      if (content.length === 1 && content[0].type === 'text' && typeof content[0].text === 'string') {
+        result = content[0].text;
+        try { result = JSON.parse(content[0].text); } catch { /* Plain command output is already readable. */ }
+      }
+      const exitCode = object(result).exit_code;
+      const failed = message.isError || (['exec_command', 'vpn_exec_command'].includes(String(message.toolName)) && typeof exitCode === 'number' && exitCode !== 0);
+      return [{ role: 'tool', contents: [{ type: 'function_result', call_id: message.toolCallId, result, exception: failed ? '工具执行失败' : undefined }] }];
+    }
+    return [{
+      role: message.role,
+      message_id: entry.id,
+      contents: content.map(part => {
+        if (part.type === 'thinking') return { type: 'text_reasoning', text: part.thinking, additional_properties: { reasoning_text: true } };
+        if (part.type === 'toolCall') return { type: 'function_call', call_id: part.id, name: part.name, arguments: part.arguments };
+        return part;
+      }),
+    }];
+  });
+}
+
 export function conversationEntries(session: CtfSession | null | undefined, messages: CtfMessage[], memberId: string): ChatEntry[] {
   const state = object(session?.session.state);
   const raw = object(state.in_memory).messages;
   const seen = new Set<string>();
   const entries: ChatEntry[] = [];
   const calls = new Map<string, CtfToolCall>();
-  for (const [index, item] of (Array.isArray(raw) ? raw : []).entries()) {
+  const transcript = [...nativeMessages(session?.native_entries ?? []), ...(Array.isArray(raw) ? raw : [])];
+  for (const [index, item] of transcript.entries()) {
     const message = object(item);
     const role = String(message.role ?? '');
     const contents = Array.isArray(message.contents) ? message.contents.map(object) : [];

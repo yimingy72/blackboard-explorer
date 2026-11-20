@@ -45,3 +45,9 @@ describe('challenge presentation', () => {
     expect(markdown).not.toContain('突破');
   });
 });
+
+
+it('shows unfinished active work as interrupted after the task ends', () => {
+  expect(challengeState({ work_status: 'in_progress', verification: {} }, 'stopped')).toBe('interrupted');
+  expect(challengeState({ work_status: 'in_progress', verification: {} }, 'running')).toBe('working');
+});

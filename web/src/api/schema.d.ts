@@ -1123,6 +1123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch Challenge */
+        post: operations["dispatch_challenge_api_tasks__task_id__ctf_challenges__challenge_id__dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}/ctf/challenges/{challenge_id}/help": {
         parameters: {
             query?: never;
@@ -3735,6 +3752,35 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** BoardDispatchChallengeRequest */
+        BoardDispatchChallengeRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "ready" | "withdraw";
+            /**
+             * Challenge Id
+             * Format: uuid
+             */
+            challenge_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Priority
+             * @default 1
+             */
+            priority: number;
+            /** Readiness */
+            readiness?: ("ready" | "no_external_materials" | "materials_pending") | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Worker Id */
+            worker_id?: string | null;
+        };
         /** BoardJournalProjection */
         BoardJournalProjection: {
             /** Binding Id */
@@ -5382,6 +5428,8 @@ export interface components {
             applied_inputs: components["schemas"]["InputApplication"][];
             binding: components["schemas"]["RunnerBinding"];
             cursor: components["schemas"]["JournalCursor"];
+            /** Entries */
+            entries?: string | null;
             fence: components["schemas"]["RunnerFence"];
             previous: components["schemas"]["JournalCursor"];
             /**
@@ -10451,6 +10499,7 @@ export interface operations {
             query?: {
                 journal?: boolean;
                 run_number?: number | null;
+                after_revision?: number | null;
             };
             header?: never;
             path: {
@@ -11069,6 +11118,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dispatch_challenge_api_tasks__task_id__ctf_challenges__challenge_id__dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                challenge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BoardDispatchChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

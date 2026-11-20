@@ -230,6 +230,7 @@ export class IncrementalJournal {
     let lastEntry = previous.leaf_id;
     let position = previous.offset;
     let pending = Buffer.alloc(0);
+    const blocks = [];
     while (position < target) {
       const bytes = Buffer.alloc(Math.min(65536, target - position));
       const { bytesRead } = await this.file.read(bytes, 0, bytes.length, position);
@@ -237,6 +238,7 @@ export class IncrementalJournal {
       if (!bytesRead) throw new Error("The journal increment could not be read");
       position += bytesRead;
       this.bytesRead += bytesRead;
+      blocks.push(bytes.subarray(0, bytesRead));
       pending = Buffer.concat([pending, bytes.subarray(0, bytesRead)]);
       let end;
       while ((end = pending.indexOf(10)) !== -1) {
@@ -260,6 +262,7 @@ export class IncrementalJournal {
     await this.assertFile(cursor.offset);
     const body = { protocol: PROTOCOL, fence: this.fence, binding: this.binding,
       sdk_session_id: this.session.sessionId, previous, cursor,
+      entries: Buffer.concat(blocks).toString("utf8"),
       applied_inputs: [...this.inputs.values()].filter((input) => input.seq > previous.seq && input.seq <= cursor.seq) };
     body.request_id = digest(jsonText([this.binding.binding_id, body.sdk_session_id, cursor.offset, cursor.hash, cursor.leaf_id]));
     this.pendingConfirmation = body;

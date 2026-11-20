@@ -79,7 +79,8 @@ async def row(conn, table, tid, oid=None):
 
 
 def decode(model, raw):
-    if len(raw) > 2 * 1024 * 1024:
+    limit = 17 * 1024 * 1024 if model in {JournalConfirmation, CommandReceipt} else 2 * 1024 * 1024
+    if len(raw) > limit:
         raise HTTPException(413, "Runner metadata exceeds its bound")
     try:
         text = raw.decode("utf-8")

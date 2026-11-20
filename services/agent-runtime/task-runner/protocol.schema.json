@@ -574,6 +574,18 @@
           },
           "title": "Applied Inputs",
           "type": "array"
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entries"
         }
       },
       "required": [

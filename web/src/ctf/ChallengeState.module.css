@@ -4,3 +4,7 @@
 .blocked { color:#88550d; background:#fff5e3; border-color:#efdbb4; }
 .delivered { color:#25686f; background:#eaf6f6; border-color:#c6e2e5; }
 .solved { color:#27613e; background:#edf7f0; border-color:#cce3d2; }
+
+.queued { color: #386ac0; background: #f0f5ff; border-color: #c9dafa; }
+
+.interrupted { color: #6b7280; background: #f7f8fa; border-color: #dce2eb; }

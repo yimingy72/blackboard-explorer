@@ -11,12 +11,14 @@ export type CtfChallenge = {
   collaborator_ids: string[]; work_status: string; revision: number; tombstone?: boolean;
   verification: Record<string, unknown>; target: Record<string, unknown>;
   solution_record_id?: string | null;
+  dispatch_status?: string | null; requested_worker_id?: string | null;
 };
 export type CtfProgress = { stage: 'approach' | 'attempt' | 'breakthrough' | 'result'; title: string; summary: string };
 export type CtfSolutionStep = { kind: CtfProgress['stage']; title: string; result: 'supported' | 'ruled_out' | 'inconclusive'; summary: string; record_ids: string[]; artifact_ids: string[] };
 export type CtfSolution = { conclusion: string; approach: string; steps: CtfSolutionStep[]; remaining: string[]; reproduction: string };
 export type CtfArtifact = { id: string; uri: string; filename: string; path: string; size: number; sha256: string; created_version?: number };
 export type CtfRecord = {
+  knowledge_id?: string;
   id: string; challenge_id: string; author_id: string; kind: string; body: string;
   created_version: number; created_at?: string; verification?: Record<string, unknown>; target?: Record<string, unknown>; platform_call?: Record<string, unknown>; summary_applied?: boolean; artifact_refs: CtfArtifact[];
   attempted_routes?: string | null; observations_and_basis?: string | null;
@@ -29,7 +31,7 @@ export type CtfMessage = {
   id: string; sender_id: string; sender_kind: string; recipient_id: string; kind: string;
   reply_to?: string | null; source_turn_id?: string | null; purpose?: string; body: string; status: string; deferred: boolean; created_at?: string;
 };
-export type CtfSession = { session: Record<string, unknown>; revision: number; transcript_pending?: boolean };
+export type CtfSession = { session: Record<string, unknown>; revision: number; transcript_pending?: boolean; native_entries?: Record<string, unknown>[]; not_modified?: boolean };
 export type CtfReasoning = { text: string; kind: 'reasoning' | 'summary' };
 export type CtfToolCall = { id: string; name: string; arguments: unknown; result?: unknown; status: 'pending' | 'completed' | 'failed' };
 export type CtfState = {

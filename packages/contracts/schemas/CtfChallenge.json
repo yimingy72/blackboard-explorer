@@ -349,6 +349,30 @@
       "default": null,
       "title": "Owner Id"
     },
+    "dispatch_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dispatch Status"
+    },
+    "requested_worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requested Worker Id"
+    },
     "collaborator_ids": {
       "items": {
         "type": "string"

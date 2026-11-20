@@ -2170,11 +2170,13 @@ class RunnerResources:
         if existing:
             if json.loads(base64.b64decode(existing)) != configuration:
                 raise ResourceUnknown("The original Sandbox host startup material cannot change")
+            await self._refresh_mount(observed, secret)
             return
         secret["data"]["host.json"] = base64.b64encode(
             json.dumps(configuration, ensure_ascii=False, separators=(",", ":")).encode()
         ).decode()
         await self._kubectl("replace", "-f", "-", body=secret)
+        await self._refresh_mount(observed, secret)
 
     async def wait_sandbox_host_ready(self, operation, configuration):
         try:
@@ -2261,6 +2263,26 @@ class RunnerResources:
         except (TimeoutError, ValueError):
             raise ResourceUnknown("The original Sandbox host readiness is unresolved") from None
 
+    async def _refresh_mount(self, observation, secret):
+        # A Pod metadata update triggers kubelet projection without its minute-long sync delay.
+        namespace, _ = self._scope(observation)
+        digest = hashlib.sha256(json.dumps(secret["data"], sort_keys=True).encode()).hexdigest()
+        await self._kubectl(
+            "patch",
+            "pod",
+            observation["runner"]["pod_name"],
+            "-n",
+            namespace,
+            "--type=merge",
+            "--patch-file=/dev/stdin",
+            body={
+                "metadata": {
+                    "uid": observation["runner"]["pod_uid"],
+                    "annotations": {"bbx.dev/mount-" + secret["metadata"]["name"]: digest},
+                }
+            },
+        )
+
     async def publish_mount(
         self, observation, bootstrap, credentials, *, control_only=False, retain_binding_ids=()
     ):
@@ -2339,6 +2361,7 @@ class RunnerResources:
                 json.dumps(existing, ensure_ascii=False, separators=(",", ":")).encode()
             ).decode()
             await self._kubectl("replace", "-f", "-", body=secret)
+            await self._refresh_mount(observation, secret)
             return
         if retain_binding_ids:
             if not isinstance(retain_binding_ids, (list, tuple)) or any(
@@ -2390,6 +2413,7 @@ class RunnerResources:
             }.items()
         }
         await self._kubectl("replace", "-f", "-", body=secret)
+        await self._refresh_mount(observation, secret)
 
     async def recover(self, operation, tenant_key):
         """Discover only the original operation; never create or replay resource mutations."""

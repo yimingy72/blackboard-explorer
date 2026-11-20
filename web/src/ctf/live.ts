@@ -32,6 +32,7 @@ export function ctfEventsNeedSnapshot(events: readonly CtfEvent[]): boolean {
     event.type.startsWith('task.')
     || event.type === 'ctf.started'
     || event.type === 'ctf.recovered'
+    || event.type.startsWith('ctf.native_worker.')
     || event.type.startsWith('ctf.conclusion.')
     || event.type === 'budget.updated'
     || event.type === 'cost.reconciled');
@@ -62,8 +63,12 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
     } else if (event.type === 'ctf.member.state_changed' || event.type === 'ctf.member.removed') {
       const id = typeof payload.id === 'string' ? payload.id : '';
       const current = memberMap().get(id);
-      if (current && typeof payload.lifecycle === 'string') {
-        memberMap().set(id, { ...current, lifecycle: payload.lifecycle as typeof current.lifecycle });
+      if (current) {
+        memberMap().set(id, {
+          ...current,
+          ...(typeof payload.lifecycle === 'string' ? { lifecycle: payload.lifecycle as typeof current.lifecycle } : {}),
+          ...(typeof payload.run_state === 'string' ? { run_state: payload.run_state } : {}),
+        });
         membersChanged = true;
       }
     } else if (event.type === 'ctf.turn.started') {
@@ -81,7 +86,7 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
     } else if (event.type === 'ctf.turn.finished') {
       const id = typeof payload.agent_id === 'string' ? payload.agent_id : '';
       const current = memberMap().get(id);
-      if (current) {
+      if (current && (!current.current_turn_id || current.current_turn_id === payload.id)) {
         memberMap().set(id, { ...current, run_state: 'idle', current_turn_id: null } as typeof current);
         membersChanged = true;
       }
@@ -95,6 +100,17 @@ export function applyCtfEvents(state: CtfState | undefined, events: readonly Ctf
       const record = result(event) as unknown as CtfRecord | null;
       if (record && typeof record.id === 'string' && record.id && record.kind !== 'artifact_registration') {
         recordMap().set(record.id, record);
+        recordsChanged = true;
+      }
+    } else if (event.type === 'fact.posted' || event.type === 'intent.posted') {
+      if (typeof payload.challenge_id === 'string' && typeof payload.id === 'string' && typeof payload.statement === 'string') {
+        const kind = event.type === 'fact.posted' ? 'fact' : 'intent';
+        const id = `${kind}:${payload.id}`;
+        recordMap().set(id, {
+          id, knowledge_id: payload.id, challenge_id: payload.challenge_id, kind,
+          body: payload.statement, author_id: String(payload.author ?? event.actor ?? 'system'),
+          created_version: event.version, created_at: event.created_at, artifact_refs: [],
+        });
         recordsChanged = true;
       }
     } else if (event.type === 'ctf.artifact.registered') {
