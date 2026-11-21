@@ -1,0 +1,10 @@
+本执行容器提供以下工具；完整版本、模块路由和验证范围见 /opt/ctf-tools/manifest.json。
+Lead 和 Worker 共用同一容器，但 Lead 负责赛事工具，Worker 负责题目执行。
+基础文件/二进制：file、strings、readelf、objdump、ldd、strace、ltrace、xxd、tar、unzip、zip、7z、diff、patch、timeout、rg。
+Pwn：gcc/g++、gdb、pwndbg/GEF、pwntools、ROPgadget、checksec、one_gadget、seccomp-tools、patchelf。pwntools 使用 /usr/bin/python3，导入名 pwn。
+逆向：radare2、Ghidra headless、angr、JADX；保留 Java 编译与运行。本精简镜像没有 QEMU、多架构 GDB 或 APK 重打包链。
+密码数学：Sage、Z3、PyCryptodome、gmpy2、sympy、fpylll。angr、Z3、Scapy 使用 /usr/bin/python3。科学计算使用 /usr/local/bin/sage-python（解释器 /opt/sage/bin/python，含 NumPy/SciPy/Cython 环境）。
+网络/Web：curl/wget、nc/socat、SSH/DNS、nmap、sqlmap、dirsearch、ffuf/gobuster、requests/httpx/bs4。普通用户扫描使用 nmap -sT；原始报文权限由比赛环境决定。
+文件/Misc：tshark/Scapy 离线 PCAP、ExifTool、OpenCV/PIL、ImageMagick、binwalk/foremost/steghide/zsteg、ffmpeg/sox/multimon-ng、zbarimg/qrencode、7z/unrar/bkcrack、John、hashcat CPU OpenCL、Poppler/qpdf、Volatility3（符号可能需补）。
+Ghidra：/usr/share/ghidra/support/analyzeHeadless；项目路径不要使用隐藏目录。JADX 输入输出使用绝对路径。John 可直接用 john，内置字典在 /usr/share/john/password.lst；/usr/share/seclists 是 6 份常用 Web/用户名词典的精选子集，不是完整 SecLists 或 rockyou。
+运行时版本：Python /usr/bin/python3 为 3.14.8；Node /usr/local/bin/node 为 v22.21.1；SageMath /usr/local/bin/sage 为 10.9。工具说明不代表任意旧版本脚本兼容，先按题目选工具，不要逐一探测全部工具。

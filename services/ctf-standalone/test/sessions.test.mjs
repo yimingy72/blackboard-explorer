@@ -301,6 +301,40 @@ test("real Pi provider transport reaches only the local fixture and executes loc
   assert.equal(pool.status()[0].error, null);
 });
 
+test("max thinking sends reasoning_effort max through the real Pi transport", async (t) => {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    assert.equal(request.url, "/v1/chat/completions");
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    requests.push(JSON.parse(body));
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({
+      id: "thinking-fixture",
+      object: "chat.completion.chunk",
+      model: "scripted",
+      choices: [{ index: 0, delta: { role: "assistant", content: "max verified" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    })}\n\ndata: [DONE]\n\n`);
+  });
+  await new Promise((accept) => server.listen(0, "127.0.0.1", accept));
+  t.after(() => new Promise((accept) => server.close(accept)));
+  const { pool } = await setup(t, {
+    modelConfig: {
+      ...config,
+      baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+      reasoning: true,
+      thinkingLevel: "max",
+      thinkingLevelMap: { max: "max" },
+    },
+  });
+  await pool.ensure("worker-1");
+  await pool.prompt("worker-1", "verify the maximum thinking level");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].reasoning_effort, "max");
+  assert.equal(pool.status()[0].error, null);
+});
+
 test("notifications survive restart before delivery and ignore older versions", async (t) => {
   let requests = 0;
   const { pool, root } = await setup(t, { streamFunction: (model) => {

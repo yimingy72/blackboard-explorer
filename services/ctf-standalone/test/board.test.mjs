@@ -57,18 +57,70 @@ test("twenty Workers start as records and preparation reports real readiness", (
   fails(() => board.execute("lead", "grow_workers", { ...request, target_total: 23 }), "request_conflict");
 });
 
-test("30 tasks dispatch twenty unique primary assignments before any aid", (t) => {
+test("20 Workers start one primary on each of 20 hard challenges before assistance", (t) => {
   const { board, create } = setup(t);
-  const challenges = Array.from({ length: 30 }, (_, index) => create({ title: String(index), difficulty: "hard" }));
+  const challenges = Array.from({ length: 20 }, (_, index) => create({ title: String(index), difficulty: "hard" }));
   const dispatched = board.execute("platform", "dispatch");
   assert.equal(dispatched.assignments.length, 20);
   assert.equal(new Set(dispatched.assignments.map((item) => item.challenge.id)).size, 20);
-  assert.equal(dispatched.available.new_challenges.length, 10);
-  assert.ok(dispatched.assignments.every((item) => item.challenge.members[0].role === "primary"));
+  assert.equal(dispatched.available.new_challenges.length, 0);
+  assert.ok(dispatched.assignments.every((item) => item.challenge.members.length === 1));
+  assert.ok(dispatched.assignments.every((item) => item.challenge.members[0]?.role === "primary"));
+  assert.ok(challenges.every((challenge) => board.challenge(challenge.id).phase === "assembling"));
+  assert.ok(challenges.every((challenge) => board.challenge(challenge.id).needs_assistance));
   assert.equal(board.snapshot("lead").challenges.length, challenges.length);
   const cursor = board.getMeta("event_cursor");
   assert.deepEqual(board.execute("platform", "dispatch").assignments, []);
   assert.equal(board.getMeta("event_cursor"), cursor);
+});
+
+test("Lead priority controls dispatch order for offline and online challenges", (t) => {
+  const { board, create } = setup(t, 2);
+  const online = create({ priority: 3, requires_online_environment: true });
+  const offline = create({ priority: 0, requires_online_environment: false });
+  const assigned = board.execute("platform", "dispatch").assignments;
+  assert.equal(assigned[0].challenge.id, offline.id);
+  assert.equal(assigned[1].challenge.id, online.id);
+});
+
+test("a hard primary starts assembling and receives its assistant before solving", (t) => {
+  const { board, create, advance } = setup(t, 1);
+  const challenge = create({ difficulty: "hard" });
+  const dispatched = board.execute("platform", "dispatch");
+  assert.equal(dispatched.assignments.length, 1);
+  assert.equal(board.challenge(challenge.id).phase, "assembling");
+  assert.equal(board.challenge(challenge.id).owner_id, "worker-1");
+  assert.equal(board.challenge(challenge.id).solve_started_at, null);
+  assert.equal(board.challenge(challenge.id).needs_assistance, true);
+  advance(10 * 60 * 1000);
+  assert.deepEqual(board.execute("platform", "tick").reminded, []);
+  const grown = board.execute("lead", "grow_workers", { request_id: "grow", target_total: 2 });
+  board.execute("platform", "worker_ready", { worker_id: grown.created[0] });
+  assert.equal(board.execute("platform", "dispatch").assignments.length, 1);
+  const solving = board.challenge(challenge.id);
+  assert.equal(solving.phase, "solving");
+  assert.equal(solving.members.length, 2);
+  assert.equal(solving.solve_started_at, 10 * 60 * 1000 + 1000);
+});
+
+test("a hard primary can record and submit work while assistance is assembling", (t) => {
+  const { board, create, call, lead } = setup(t, 1);
+  const challenge = create({ difficulty: "hard" });
+  board.execute("platform", "dispatch");
+  const basis = fact(call, "worker-1", challenge.id);
+  const direction = intent(call, "worker-1", challenge.id, basis.id, { claim: true });
+  assert.equal(board.challenge(challenge.id).facts.length, 1);
+  assert.equal(board.challenge(challenge.id).intents[0].id, direction.id);
+  review(call, "worker-1", challenge.id);
+  assert.equal(board.challenge(challenge.id).phase, "reviewing");
+  lead("reject_review", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    review_revision: 1,
+    reason: "Needs an independent second perspective",
+  });
+  assert.equal(board.challenge(challenge.id).phase, "assembling");
+  assert.equal(board.challenge(challenge.id).solve_started_at, null);
 });
 
 test("hard challenges get a primary and assistant; same team knowledge syncs", (t) => {
@@ -85,6 +137,123 @@ test("hard challenges get a primary and assistant; same team knowledge syncs", (
   assert.deepEqual(new Set(event.worker_ids), new Set([primary, assistant]));
   assert.equal(board.challenge(challenge.id).owner_id, primary);
   fails(() => board.snapshot("worker-3", { challengeId: challenge.id }), "forbidden");
+});
+
+test("team_ready is emitted only for the assembling to solving transition", (t) => {
+  const { board, create, call } = setup(t, 3);
+  const challenge = create({ difficulty: "hard" });
+  const cursor = board.getMeta("event_cursor");
+  board.execute("platform", "dispatch");
+  const initial = board.events(cursor).filter((event) => event.type === "worker.assigned");
+  assert.equal(initial.length, 2);
+  assert.equal(initial[0].team_ready, false);
+  assert.equal(initial.filter((event) => event.team_ready).length, 1);
+  call("worker-1", "request_assistance", {
+    challenge_id: challenge.id,
+    reason: "An independent direction is ready",
+  });
+  const assistanceCursor = board.getMeta("event_cursor");
+  board.execute("platform", "dispatch");
+  const later = board.events(assistanceCursor).filter((event) => event.type === "worker.assigned");
+  assert.equal(later.length, 1);
+  assert.equal(later[0].team_ready, false);
+});
+
+test("request_assistance adds to the current target and caps at nine", (t) => {
+  const { board, create, call } = setup(t, 1);
+  const challenge = create();
+  board.execute("platform", "dispatch");
+  call("worker-1", "request_assistance", { challenge_id: challenge.id, reason: "First extra Worker" });
+  assert.equal(board.challenge(challenge.id).assistance_target, 1);
+  call("worker-1", "request_assistance", {
+    challenge_id: challenge.id,
+    reason: "Second extra Worker",
+    additional_workers: 2,
+  });
+  assert.equal(board.challenge(challenge.id).assistance_target, 3);
+  call("worker-1", "request_assistance", {
+    challenge_id: challenge.id,
+    reason: "Reach the cap",
+    additional_workers: 9,
+  });
+  assert.equal(board.challenge(challenge.id).assistance_target, 9);
+});
+
+test("lowering difficulty removes the default hard assistance target", (t) => {
+  const { board, create, lead } = setup(t, 2);
+  const challenge = create({ difficulty: "hard" });
+  board.execute("platform", "dispatch");
+  assert.equal(board.challenge(challenge.id).assistance_target, 1);
+  lead("update_challenge", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    difficulty: "medium",
+  });
+  assert.equal(board.challenge(challenge.id).assistance_target, 0);
+});
+
+test("downgrading a hard challenge preserves explicit assistance requests", (t) => {
+  const { board, create, call, lead } = setup(t, 1);
+  const challenge = create({ difficulty: "hard" });
+  board.execute("platform", "dispatch");
+  call("worker-1", "request_assistance", {
+    challenge_id: challenge.id,
+    reason: "Two explicit parallel directions",
+    additional_workers: 2,
+  });
+  assert.equal(board.challenge(challenge.id).assistance_target, 3);
+  lead("update_challenge", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    difficulty: "medium",
+  });
+  assert.equal(board.challenge(challenge.id).assistance_target, 2);
+});
+
+test("upgrading to hard pauses timing while downgrading preserves explicit assistance", (t) => {
+  const { board, create, call, lead, advance } = setup(t, 1);
+  const challenge = create();
+  board.execute("platform", "dispatch");
+  advance(5000);
+  call("worker-1", "request_assistance", { challenge_id: challenge.id, reason: "Explicit extra direction" });
+  assert.equal(board.challenge(challenge.id).assistance_target, 1);
+  lead("update_challenge", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    difficulty: "hard",
+  });
+  const assembling = board.challenge(challenge.id);
+  assert.equal(assembling.phase, "assembling");
+  assert.equal(assembling.assistance_target, 2);
+  assert.equal(assembling.solve_started_at, null);
+  assert.equal(assembling.solve_elapsed_ms, 5000);
+  advance(5000);
+  lead("update_challenge", {
+    challenge_id: challenge.id,
+    expected_revision: assembling.revision,
+    difficulty: "medium",
+  });
+  const downgraded = board.challenge(challenge.id);
+  assert.equal(downgraded.phase, "solving");
+  assert.equal(downgraded.assistance_target, 1);
+  assert.equal(downgraded.solve_started_at, 1000 + 10_000);
+});
+
+test("Lead can defer an assembling hard challenge", (t) => {
+  const { board, create, call, lead } = setup(t, 3);
+  const seed = create();
+  board.execute("platform", "dispatch");
+  accepted(board, lead, call, "worker-1", seed.id);
+  board.execute("platform", "release_finished");
+  const challenge = create({ difficulty: "hard" });
+  call("worker-1", "claim", { challenge_id: challenge.id });
+  assert.equal(board.challenge(challenge.id).phase, "assembling");
+  lead("defer", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    reason: "Pairing cannot complete with current resources",
+  });
+  assert.equal(board.challenge(challenge.id).phase, "deferred");
 });
 
 test("subsequent tasks are chosen in an active idle response with frozen identity", (t) => {
@@ -108,21 +277,74 @@ test("subsequent tasks are chosen in an active idle response with frozen identit
   assert.equal(fact(call, "worker-1", b.id).assignment_ref.assignment_id, selected.context.assignment_id);
 });
 
-test("new work outranks assistance and competing claims fail without assigning alternatives", (t) => {
-  const { board, create, call, lead } = setup(t, 3);
-  const old = create({ difficulty: "hard" });
+test("new work outranks assistance during dispatch", (t) => {
+  const { board, create, call } = setup(t, 4);
+  const assistance = create();
   board.execute("platform", "dispatch");
-  accepted(board, lead, call, "worker-1", old.id);
-  board.execute("platform", "release_finished");
-  const hard = create({ difficulty: "hard" });
-  board.execute("platform", "dispatch");
-  assert.equal(board.challenge(hard.id).owner_id, "worker-3");
+  call("worker-1", "request_assistance", { challenge_id: assistance.id, reason: "A second direction can run now" });
+  assert.equal(board.challenge(assistance.id).assistance_target, 1);
   const fresh = create();
-  fails(() => call("worker-1", "claim", { challenge_id: hard.id }), "work_changed");
+  const dispatched = board.execute("platform", "dispatch");
+  assert.equal(dispatched.assignments[0].challenge.id, fresh.id);
+  assert.equal(dispatched.assignments[1].challenge.id, assistance.id);
+});
+
+test("a Worker cannot claim assistance while any new challenge is available", (t) => {
+  const { board, create, call, lead } = setup(t, 2);
+  const assisted = create();
+  board.execute("platform", "dispatch");
+  call("worker-1", "request_assistance", { challenge_id: assisted.id, reason: "A second direction" });
+  const releasedWork = create();
+  board.execute("platform", "dispatch");
+  accepted(board, lead, call, "worker-2", releasedWork.id);
+  board.execute("platform", "release_finished");
+  create();
+  fails(() => call("worker-2", "claim", { challenge_id: assisted.id }), "work_changed");
+});
+
+test("competing claims fail without assigning an alternative challenge", (t) => {
+  const { board, create, call, lead } = setup(t, 2);
+  const firstSeed = create();
+  const secondSeed = create();
+  board.execute("platform", "dispatch");
+  accepted(board, lead, call, "worker-1", firstSeed.id);
+  accepted(board, lead, call, "worker-2", secondSeed.id);
+  board.execute("platform", "release_finished");
+  const fresh = create();
   const revision = fresh.revision;
   call("worker-1", "claim", { challenge_id: fresh.id, expected_revision: revision });
   fails(() => call("worker-2", "claim", { challenge_id: fresh.id, expected_revision: revision }), "revision_conflict");
   assert.equal(board.context("worker-2").assignment_id, null);
+});
+
+test("subsequent claims may start multiple hard challenges before assistance", (t) => {
+  const { board, create, call, lead } = setup(t, 4);
+  const seed = create({ difficulty: "hard" });
+  board.execute("platform", "dispatch");
+  accepted(board, lead, call, "worker-1", seed.id);
+  board.execute("platform", "release_finished");
+  const first = create({ difficulty: "hard" });
+  const second = create({ difficulty: "hard" });
+  call("worker-1", "claim", { challenge_id: first.id });
+  assert.equal(board.challenge(first.id).phase, "assembling");
+  call("worker-2", "claim", { challenge_id: second.id });
+  assert.equal(board.challenge(first.id).phase, "assembling");
+  assert.equal(board.challenge(second.id).phase, "assembling");
+  assert.equal(board.challenge(first.id).members.length, 1);
+  assert.equal(board.challenge(second.id).members.length, 1);
+});
+
+test("an already-worked Worker can claim online work when Lead leaves it unclaimed", (t) => {
+  const { board, create, call, lead } = setup(t, 2);
+  const seed = create();
+  board.execute("platform", "dispatch");
+  accepted(board, lead, call, "worker-1", seed.id);
+  board.execute("platform", "release_finished");
+  const online = create({ requires_online_environment: true, priority: 0 });
+  const offline = create({ requires_online_environment: false, priority: 3 });
+  call("worker-1", "claim", { challenge_id: online.id });
+  assert.equal(board.context("worker-1").challenge_id, online.id);
+  assert.equal(board.challenge(offline.id).owner_id, null);
 });
 
 test("Intent facts, ownership, three holdings and parallel direction dependencies", (t) => {
@@ -435,6 +657,21 @@ test("one held direction can trigger independent assistance before three holding
   assert.equal(board.execute("platform", "dispatch").assignments[0].worker_id, "worker-2");
 });
 
+test("a Worker can ask Lead to consider deferral with durable evidence", (t) => {
+  const { board, create, call } = setup(t, 1);
+  const challenge = create();
+  board.execute("platform", "dispatch");
+  const cursor = board.getMeta("event_cursor");
+  const request = call("worker-1", "request_deferral", {
+    challenge_id: challenge.id,
+    reason: "The service is gone and every independent branch is exhausted",
+  });
+  assert.match(request.fact.statement, /exhausted/);
+  const event = board.events(cursor).find((item) => item.type === "deferral.requested");
+  assert.ok(event.worker_ids.includes("lead"));
+  assert.equal(board.challenge(challenge.id).phase, "solving");
+});
+
 test("normal snapshots omit event history and explicit cursors return scoped deltas", (t) => {
   const { board, create, call, lead } = setup(t, 2);
   const first = create();
@@ -519,6 +756,31 @@ test("resume waits for environment confirmation even when the old environment st
   board.execute("platform", "set_environment", { challenge_id: challenge.id, status: "active", ready: true });
   assert.equal(board.available().new_challenges.length, 1);
   assert.equal(board.challenge(challenge.id).generation, 1);
+});
+
+test("a new environment generation restores the hard assistance floor", (t) => {
+  const { board, create, lead } = setup(t, 2);
+  const challenge = create({ difficulty: "hard" });
+  board.execute("platform", "dispatch");
+  lead("defer", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+    reason: "Recreate the environment",
+  });
+  board.execute("platform", "release_finished");
+  board.execute("platform", "set_environment", { challenge_id: challenge.id, status: "closed" });
+  lead("resume", {
+    challenge_id: challenge.id,
+    expected_revision: board.challenge(challenge.id).revision,
+  });
+  board.execute("platform", "set_environment", {
+    challenge_id: challenge.id,
+    status: "active",
+    ready: true,
+    new_generation: true,
+  });
+  assert.equal(board.challenge(challenge.id).generation, 2);
+  assert.equal(board.challenge(challenge.id).assistance_target, 1);
 });
 
 test("assignment events persist the exact worker and assignment for delivery retries", (t) => {
@@ -608,4 +870,65 @@ test("resuming the same environment allows a released direction to continue", (t
   });
   assert.equal(result.intent.environment_generation, direction.environment_generation);
   assert.equal(result.intent.id, direction.id);
+});
+
+test("legacy assistance defaults migrate without overriding an explicit request", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "bbx-ctf-board-migration-"));
+  const path = join(directory, "board.sqlite");
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const original = new Board({ path, initialWorkers: 1 });
+  const legacyChallenge = (id, uniqueCode) => ({
+    id,
+    unique_code: uniqueCode,
+    title: uniqueCode,
+    description: "",
+    difficulty: "hard",
+    multi_stage: false,
+    priority: 1,
+    phase: "pending",
+    revision: 1,
+    generation: 1,
+    ready: false,
+    owner_id: null,
+    assistance_target: 1,
+    assistance_requested: 1,
+    assistance_reminded: false,
+    solve_elapsed_ms: 0,
+    solve_started_at: null,
+    review_revision: 0,
+    environment: { status: "pending", online: false, connection: null },
+    created_at: 1,
+    review_summary: null,
+  });
+  const defaults = legacyChallenge("legacy-default", "legacy-default");
+  const explicit = legacyChallenge("legacy-explicit", "legacy-explicit");
+  const insert = original.db.prepare("INSERT INTO records(kind,id,challenge_id,data) VALUES(?,?,?,?)");
+  insert.run("challenge", defaults.id, defaults.id, JSON.stringify(defaults));
+  insert.run("challenge", explicit.id, explicit.id, JSON.stringify(explicit));
+  original.db.prepare("INSERT INTO events(data) VALUES(?)").run(JSON.stringify({
+    type: "assistance.requested",
+    actor_id: "worker-1",
+    challenge_id: explicit.id,
+    revision: 1,
+    worker_ids: ["worker-1"],
+    at: 2,
+  }));
+  original.close();
+
+  const migrated = new Board({ path, initialWorkers: 1 });
+  t.after(() => migrated.close());
+  assert.equal(migrated.challenge(defaults.id).assistance_requested, 0);
+  assert.equal(migrated.challenge(defaults.id).assistance_target, 1);
+  assert.equal(migrated.challenge(explicit.id).assistance_requested, 1);
+  assert.equal(migrated.challenge(explicit.id).assistance_target, 2);
+  for (const id of [defaults.id, explicit.id]) {
+    migrated.execute("lead", "update_challenge", {
+      request_id: `downgrade-${id}`,
+      challenge_id: id,
+      expected_revision: migrated.challenge(id).revision,
+      difficulty: "medium",
+    });
+  }
+  assert.equal(migrated.challenge(defaults.id).assistance_target, 0);
+  assert.equal(migrated.challenge(explicit.id).assistance_target, 1);
 });

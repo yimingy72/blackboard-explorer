@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 export const MAX_CHALLENGE_WORKERS = 10;
 export const MAX_WORKER_INTENTS = 3;
 export const ASSISTANCE_REMINDER_MS = 30 * 60 * 1000;
+const BOARD_STATE_VERSION = 1;
 
 export class BoardError extends Error {
   constructor(code, message, details = {}) {
@@ -40,6 +41,34 @@ function digest(value) {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
+function boundedInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0
+    ? Math.min(MAX_CHALLENGE_WORKERS - 1, value)
+    : 0;
+}
+
+function hardAssistanceFloor(challenge) {
+  return challenge.difficulty === "hard" ? 1 : 0;
+}
+
+function explicitAssistanceTarget(challenge) {
+  return boundedInteger(challenge.assistance_requested);
+}
+
+function baseAssistanceTarget(challenge) {
+  return Math.min(MAX_CHALLENGE_WORKERS - 1,
+    hardAssistanceFloor(challenge) + explicitAssistanceTarget(challenge));
+}
+
+function minimumTeamSize(challenge) {
+  return 1 + hardAssistanceFloor(challenge);
+}
+
+function maximumAssistanceTarget(challenge) {
+  return Math.min(MAX_CHALLENGE_WORKERS - 1,
+    Math.max(baseAssistanceTarget(challenge), boundedInteger(challenge.assistance_target)));
+}
+
 /** A single local writer owns business state and its durable change stream. */
 export class Board extends EventEmitter {
   constructor({ path = ":memory:", initialWorkers = 20, clock = Date.now } = {}) {
@@ -67,6 +96,7 @@ export class Board extends EventEmitter {
         this.db.exec("COMMIT");
       } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     }
+    this._migrateChallenges();
   }
   close() { this.db.close(); }
   getMeta(key, fallback = null) {
@@ -101,6 +131,30 @@ export class Board extends EventEmitter {
     return this._save("worker", { id: `worker-${sequence}`, status: "starting", has_worked: false,
       generation: 0, idle_generation: 0, assignment_id: null, active: false,
       execution_context: null, error: null });
+  }
+  _migrateChallenges() {
+    const requestedChallenges = new Set(this.events()
+      .filter(event => event.type === "assistance.requested" && event.challenge_id)
+      .map(event => event.challenge_id));
+    for (const challenge of this._all("challenge")) {
+      if (challenge.state_version === BOARD_STATE_VERSION) continue;
+      const floor = hardAssistanceFloor(challenge);
+      const previousRequested = boundedInteger(challenge.assistance_requested);
+      let explicit = Math.max(0, previousRequested - floor);
+      if (requestedChallenges.has(challenge.id)) explicit = Math.max(1, explicit);
+      const previousTarget = boundedInteger(challenge.assistance_target);
+      challenge.hard_assistance_target = floor;
+      challenge.assistance_requested = explicit;
+      challenge.assistance_target = Math.min(MAX_CHALLENGE_WORKERS - 1,
+        Math.max(previousTarget, floor + explicit));
+      challenge.requires_online_environment ??= null;
+      challenge.points ??= null;
+      challenge.total_score ??= null;
+      challenge.flag_count ??= null;
+      challenge.correct_flag_count ??= null;
+      challenge.state_version = BOARD_STATE_VERSION;
+      this._save("challenge", challenge);
+    }
   }
   workers() { return this._all("worker"); }
   _worker(id) {
@@ -140,7 +194,7 @@ export class Board extends EventEmitter {
       needs_assistance: this._slots(challenge) > 0 };
   }
   _slots(challenge) {
-    if (challenge.phase !== "solving" || !challenge.owner_id || !challenge.ready) return 0;
+    if (!["assembling", "solving"].includes(challenge.phase) || !challenge.owner_id || !challenge.ready) return 0;
     const members = this._members(challenge.id);
     const assistants = members.filter((item) => item.role === "assistant").length;
     return Math.max(0, Math.min(MAX_CHALLENGE_WORKERS - members.length,
@@ -151,7 +205,9 @@ export class Board extends EventEmitter {
     for (const challenge of this._all("challenge")) {
       const item = { challenge_id: challenge.id, id: challenge.id, revision: challenge.revision,
         title: challenge.title, description: challenge.description, difficulty: challenge.difficulty,
-        priority: challenge.priority, created_at: challenge.created_at };
+        priority: challenge.priority, created_at: challenge.created_at,
+        offline: challenge.requires_online_environment === false,
+        points: challenge.points ?? null, flag_count: challenge.flag_count ?? null };
       if (challenge.phase === "pending" && challenge.ready && !challenge.owner_id && this._members(challenge.id).length === 0) {
         fresh.push(item);
       } else if (this._slots(challenge)) assistance.push({ ...item, open_slots: this._slots(challenge) });
@@ -284,6 +340,7 @@ export class Board extends EventEmitter {
       case "create_challenge": return this._createChallenge(actor, args);
       case "update_challenge": return this._updateChallenge(actor, args);
       case "set_environment": return this._environment(actor, args);
+      case "apply_catalog_metadata": return this._applyCatalogMetadata(actor, args);
       case "dispatch": return this._dispatch(actor);
       case "claim": return this._claimAction(actor, args, context);
       case "activity": return this._activity(actor, args);
@@ -294,6 +351,7 @@ export class Board extends EventEmitter {
       case "release_intent": return this._releaseIntent(actor, args, context);
       case "register_artifact": return this._registerArtifact(actor, args);
       case "request_assistance": return this._requestAssistance(actor, args, context);
+      case "request_deferral": return this._requestDeferral(actor, args, context);
       case "submit_review": return this._submitReview(actor, args, context);
       case "begin_submission": return this._beginSubmission(actor, args);
       case "submission_result": return this._submissionResult(actor, args);
@@ -317,6 +375,8 @@ export class Board extends EventEmitter {
     requireValue(args.description === undefined || typeof args.description === "string", "invalid_argument", "description must be a string");
     requireValue(args.multi_stage === undefined || typeof args.multi_stage === "boolean", "invalid_argument", "multi_stage must be boolean");
     requireValue(args.ready === undefined || typeof args.ready === "boolean", "invalid_argument", "ready must be boolean");
+    requireValue(args.requires_online_environment === undefined || typeof args.requires_online_environment === "boolean",
+      "invalid_argument", "requires_online_environment must be boolean");
     requireValue(!this._all("challenge").some((item) => item.unique_code === uniqueCode),
       "duplicate_challenge", "External challenge already exists");
     const difficulty = args.difficulty ?? (args.multi_stage ? "hard" : "medium");
@@ -325,30 +385,42 @@ export class Board extends EventEmitter {
       description: args.description ?? "", difficulty, multi_stage: args.multi_stage ?? false,
       priority: integer(args.priority ?? 1, 0, 3, "priority"), phase: "pending", revision: 1,
       generation: 1, ready: args.ready ?? true, owner_id: null,
+      requires_online_environment: args.requires_online_environment ?? null,
       assistance_target: difficulty === "hard" ? 1 : 0,
-      assistance_requested: difficulty === "hard" ? 1 : 0, assistance_reminded: false,
+      hard_assistance_target: difficulty === "hard" ? 1 : 0,
+      assistance_requested: 0, assistance_reminded: false,
       solve_elapsed_ms: 0, solve_started_at: null, review_revision: 0,
       environment: { status: args.ready === false ? "pending" : "active", online: false, connection: null },
-      created_at: this.clock(), review_summary: null };
+      flag_count: null, correct_flag_count: null,
+      created_at: this.clock(), review_summary: null, state_version: BOARD_STATE_VERSION };
     this._save("challenge", challenge);
     this._event("challenge.created", challenge, ["lead"]);
     return this.challenge(challenge.id);
   }
   _updateChallenge(actor, args) {
     this._lead(actor);
-    const challenge = this._authority(actor, args, null, { phases: ["pending", "solving", "reviewing", "deferred"] });
+    const challenge = this._authority(actor, args, null, { phases: ["pending", "assembling", "solving", "reviewing", "deferred"] });
     requireValue(args.description === undefined || typeof args.description === "string", "invalid_argument", "description must be a string");
     requireValue(args.multi_stage === undefined || typeof args.multi_stage === "boolean", "invalid_argument", "multi_stage must be boolean");
     for (const name of ["title", "description", "multi_stage"]) if (args[name] !== undefined) challenge[name] = args[name];
     text(challenge.title, "title");
+    const previousDifficulty = challenge.difficulty;
     if (args.difficulty !== undefined) {
       requireValue(["easy", "medium", "hard"].includes(args.difficulty), "invalid_argument", "Invalid difficulty");
       challenge.difficulty = args.difficulty;
     } else if (args.multi_stage) challenge.difficulty = "hard";
     if (args.priority !== undefined) challenge.priority = integer(args.priority, 0, 3, "priority");
-    if (challenge.difficulty === "hard") {
-      challenge.assistance_requested = Math.max(1, challenge.assistance_requested);
-      challenge.assistance_target = Math.max(1, challenge.assistance_target);
+    challenge.hard_assistance_target = hardAssistanceFloor(challenge);
+    challenge.assistance_target = baseAssistanceTarget(challenge);
+    const upgradedToHard = previousDifficulty !== "hard" && challenge.difficulty === "hard";
+    if (upgradedToHard && ["pending", "solving"].includes(challenge.phase) && challenge.owner_id) {
+      challenge.phase = "assembling";
+      this._clock(challenge, false);
+    }
+    if (["assembling", "solving"].includes(challenge.phase)
+      && this._members(challenge.id).length >= minimumTeamSize(challenge)) {
+      challenge.phase = "solving";
+      if (challenge.solve_started_at === null) this._clock(challenge, true);
     }
     this._touch(challenge, "challenge.updated");
     return this.challenge(challenge.id);
@@ -360,7 +432,8 @@ export class Board extends EventEmitter {
     if (args.new_generation) {
       requireValue(this._members(challenge.id).length === 0, "team_not_released", "Release prior work before reopening the environment");
       challenge.generation++;
-      challenge.assistance_target = challenge.assistance_requested ?? challenge.assistance_target;
+      challenge.hard_assistance_target = hardAssistanceFloor(challenge);
+      challenge.assistance_target = baseAssistanceTarget(challenge);
     }
     challenge.environment = { ...challenge.environment, status: args.status,
       ...(args.connection !== undefined ? { connection: args.connection } : {}),
@@ -370,14 +443,40 @@ export class Board extends EventEmitter {
     this._touch(challenge, "environment.updated", ["lead"]);
     return this.challenge(challenge.id);
   }
-  _claim(worker, challenge) {
-    const choices = this.available();
-    const preferred = choices.new_challenges.length ? choices.new_challenges : choices.assistance;
+
+  _applyCatalogMetadata(actor, args) {
+    this._platform(actor);
+    const challenge = this._challenge(args.challenge_id);
+    const updates = {};
+    if (args.requires_online_environment !== undefined) {
+      requireValue(typeof args.requires_online_environment === "boolean",
+        "invalid_argument", "requires_online_environment must be boolean");
+      updates.requires_online_environment = args.requires_online_environment;
+    }
+    for (const name of ["points", "total_score"]) {
+      if (args[name] === undefined) continue;
+      requireValue(typeof args[name] === "number" && Number.isFinite(args[name]) && args[name] >= 0,
+        "invalid_argument", `${name} must be a nonnegative number`);
+      updates[name] = args[name];
+    }
+    if (args.flag_count !== undefined) {
+      updates.flag_count = integer(args.flag_count, 0, Number.MAX_SAFE_INTEGER, "flag_count");
+    }
+    if (args.correct_flag_count !== undefined) {
+      updates.correct_flag_count = integer(
+        args.correct_flag_count, 0, Number.MAX_SAFE_INTEGER, "correct_flag_count");
+    }
+    if (!Object.keys(updates).length) return challenge;
+    Object.assign(challenge, updates);
+    this._save("challenge", challenge);
+    return this.challenge(challenge.id);
+  }
+  _assign(worker, challenge) {
     requireValue(worker.status === "idle" && !worker.assignment_id,
       "worker_not_idle", "Worker is not available for another assignment");
-    requireValue(preferred.some((item) => item.id === challenge.id), "work_changed", "Select available work, with new challenges first", choices);
     requireValue(this._members(challenge.id).length < MAX_CHALLENGE_WORKERS, "team_full", "Challenge team is full");
     const role = challenge.owner_id ? "assistant" : "primary";
+    let teamReady = false;
     worker.generation++;
     const assignment = { id: randomUUID(), worker_id: worker.id, challenge_id: challenge.id, role,
       generation: worker.generation, environment_generation: challenge.generation,
@@ -389,14 +488,37 @@ export class Board extends EventEmitter {
     this._save("worker", worker);
     if (role === "primary") {
       challenge.owner_id = worker.id;
+      if (minimumTeamSize(challenge) > 1) {
+        challenge.phase = "assembling";
+        this._clock(challenge, false);
+      } else {
+        challenge.phase = "solving";
+        this._clock(challenge, true);
+      }
+    } else if (challenge.phase === "assembling"
+      && this._members(challenge.id).length >= minimumTeamSize(challenge)) {
       challenge.phase = "solving";
-      challenge.solve_started_at = this.clock();
+      this._clock(challenge, true);
+      teamReady = true;
     }
     this._touch(challenge, "worker.assigned", [worker.id], {
       assigned_worker_id: worker.id,
       assignment_id: assignment.id,
+      team_ready: teamReady,
     });
     return { worker_id: worker.id, context: this.context(worker.id), challenge: this.challenge(challenge.id) };
+  }
+  _claim(worker, challenge) {
+    const choices = this.available();
+    const fresh = choices.new_challenges.find((item) => item.id === challenge.id);
+    const assistance = choices.assistance.find((item) => item.id === challenge.id);
+    if (fresh) {
+      return this._assign(worker, challenge);
+    }
+    requireValue(assistance, "work_changed", "Select currently available work", choices);
+    requireValue(choices.new_challenges.length === 0, "work_changed",
+      "Select a new challenge before general assistance", choices);
+    return this._assign(worker, challenge);
   }
   _claimAction(actor, args, context) {
     requireValue(!["lead", "platform"].includes(actor), "forbidden", "Only Workers claim work");
@@ -410,11 +532,12 @@ export class Board extends EventEmitter {
   _dispatch(actor) {
     this._platform(actor);
     const assignments = [];
-    for (const worker of this.workers().filter((item) => item.status === "idle" && !item.has_worked && !item.active)) {
+    const idle = this.workers().filter((item) => item.status === "idle" && !item.has_worked && !item.active);
+    while (idle.length) {
       const available = this.available();
-      const item = available.new_challenges[0] ?? available.assistance[0];
-      if (!item) break;
-      assignments.push(this._claim(worker, this._challenge(item.id)));
+      const work = available.new_challenges[0] ?? available.assistance[0];
+      if (!work) break;
+      assignments.push(this._assign(idle.shift(), this._challenge(work.id)));
     }
     const available = this.available();
     const notifications = available.new_challenges.length || available.assistance.length
@@ -518,14 +641,15 @@ export class Board extends EventEmitter {
   }
   _postFactAction(actor, args, context) {
     const challenge = this._authority(actor, args, context,
-      { phases: actor === "lead" ? ["pending", "solving", "reviewing", "deferred"] : ["solving", "reviewing"] });
+      { phases: actor === "lead" ? ["pending", "assembling", "solving", "reviewing", "deferred"]
+        : ["assembling", "solving", "reviewing"] });
     const fact = this._fact(actor, challenge, args, context);
     this._autoAssistance(challenge);
     this._touch(challenge, "fact.posted", [], { fact_id: fact.id });
     return { fact, revision: challenge.revision };
   }
   _postIntent(actor, args, context) {
-    const challenge = this._authority(actor, args, context, { phases: ["solving"] });
+    const challenge = this._authority(actor, args, context, { phases: ["assembling", "solving"] });
     const basedOn = this._references("fact", args.based_on, challenge.id, "based_on");
     requireValue(basedOn.length > 0, "invalid_intent", "Intent requires an existing Fact");
     const dependencies = this._references("intent", args.depends_on ?? [], challenge.id, "depends_on");
@@ -563,7 +687,7 @@ export class Board extends EventEmitter {
     this._save("intent", intent);
   }
   _claimIntentAction(actor, args, context) {
-    const challenge = this._authority(actor, args, context, { phases: ["solving"] });
+    const challenge = this._authority(actor, args, context, { phases: ["assembling", "solving"] });
     const intent = this._get("intent", args.intent_id);
     requireValue(intent?.challenge_id === challenge.id, "invalid_reference", "Intent belongs to another challenge");
     requireValue(intent.version === args.expected_version, "intent_version_conflict", "Intent version changed");
@@ -573,7 +697,7 @@ export class Board extends EventEmitter {
     return { intent, revision: challenge.revision };
   }
   _releaseIntent(actor, args, context) {
-    const challenge = this._authority(actor, args, context, { phases: ["solving"] });
+    const challenge = this._authority(actor, args, context, { phases: ["assembling", "solving"] });
     const intent = this._get("intent", args.intent_id);
     requireValue(intent?.challenge_id === challenge.id && intent.status === "claimed" && intent.holder === actor,
       "intent_not_held", "Only its holder can release an Intent");
@@ -585,14 +709,15 @@ export class Board extends EventEmitter {
     return { intent, revision: challenge.revision };
   }
   _autoAssistance(challenge) {
-    if (challenge.phase !== "solving") return;
+    if (!["assembling", "solving"].includes(challenge.phase)) return;
     const intents = this._all("intent", challenge.id);
     const ready = intents.filter((item) => item.status === "open" && item.parallel && this._readyIntent(item, challenge.generation));
     const members = this._members(challenge.id);
     const unoccupied = members.filter((member) => !member.active && !intents.some((item) => item.status === "claimed" && item.holder === member.worker_id)).length;
     const needed = Math.max(0, ready.length - unoccupied);
     challenge.assistance_target = Math.min(MAX_CHALLENGE_WORKERS - 1,
-      Math.max(challenge.assistance_requested, members.filter((item) => item.role === "assistant").length + needed));
+      Math.max(baseAssistanceTarget(challenge),
+        members.filter((item) => item.role === "assistant").length + needed));
   }
   _registerArtifact(actor, args) {
     this._platform(actor);
@@ -616,13 +741,27 @@ export class Board extends EventEmitter {
     return artifact;
   }
   _requestAssistance(actor, args, context) {
-    const challenge = this._authority(actor, args, context, { phases: ["solving"] });
+    const challenge = this._authority(actor, args, context, { phases: ["assembling", "solving"] });
     const additional = integer(args.additional_workers ?? 1, 1, MAX_CHALLENGE_WORKERS - 1, "additional_workers");
     const reason = text(args.reason, "reason");
-    challenge.assistance_target = Math.min(MAX_CHALLENGE_WORKERS - 1, challenge.assistance_target + additional);
-    challenge.assistance_requested = challenge.assistance_target;
+    const currentTarget = maximumAssistanceTarget(challenge);
+    challenge.assistance_target = Math.min(MAX_CHALLENGE_WORKERS - 1, currentTarget + additional);
+    challenge.assistance_requested = Math.min(MAX_CHALLENGE_WORKERS - 1,
+      explicitAssistanceTarget(challenge) + additional);
     this._touch(challenge, "assistance.requested", [], { reason });
     return this.challenge(challenge.id);
+  }
+
+  _requestDeferral(actor, args, context) {
+    const challenge = this._authority(actor, args, context, { phases: ["assembling", "solving"] });
+    const reason = text(args.reason, "reason");
+    const fact = this._fact(actor, challenge, {
+      kind: "observation",
+      statement: `Deferral requested: ${reason}`,
+      evidence: [{ type: "text", summary: "Worker reported a concrete blocker and requested Lead review" }],
+    }, context);
+    this._touch(challenge, "deferral.requested", ["lead"], { fact_id: fact.id, reason });
+    return { fact, revision: challenge.revision };
   }
   _clock(challenge, running) {
     const now = this.clock();
@@ -630,7 +769,8 @@ export class Board extends EventEmitter {
     challenge.solve_started_at = running ? now : null;
   }
   _submitReview(actor, args, context) {
-    const challenge = this._authority(actor, args, context, { revision: false });
+    const challenge = this._authority(actor, args, context,
+      { phases: ["assembling", "solving", "reviewing"], revision: false });
     this._revision(challenge, args, challenge.phase === "reviewing");
     const factRefs = this._references("fact", args.fact_refs ?? [], challenge.id, "fact_refs");
     const flag = text(args.flag, "flag");
@@ -664,7 +804,9 @@ export class Board extends EventEmitter {
       "submission_unresolved", "Reconcile the existing submission before sending another");
     const submission = { id: randomUUID(), challenge_id: challenge.id, candidate_id: candidate.id,
       flag: candidate.flag, unique_code: challenge.unique_code, review_revision: challenge.review_revision,
-      environment_generation: challenge.generation, status: "pending", receipt: null, created_at: this.clock() };
+      environment_generation: challenge.generation,
+      baseline_correct_flag_count: challenge.correct_flag_count ?? null,
+      status: "pending", receipt: null, created_at: this.clock() };
     this._save("submission", submission);
     this._touch(challenge, "submission.started", ["lead"], { submission_id: submission.id });
     return { submission, should_submit: true };
@@ -707,8 +849,9 @@ export class Board extends EventEmitter {
     const fact = this._fact("lead", challenge, { kind: "observation", statement: reason,
       evidence: [{ type: "text", summary: submission ? `Official submission ${submission.id}: ${reason}` : `Lead review: ${reason}` }] });
     challenge.feedback_fact_id = fact.id;
-    challenge.phase = "solving";
-    this._clock(challenge, true);
+    challenge.phase = this._members(challenge.id).length >= minimumTeamSize(challenge)
+      ? "solving" : "assembling";
+    this._clock(challenge, challenge.phase === "solving");
   }
   _rejectReview(actor, args) {
     this._lead(actor);
@@ -722,7 +865,7 @@ export class Board extends EventEmitter {
   }
   _defer(actor, args) {
     this._lead(actor);
-    const challenge = this._authority(actor, args, null, { phases: ["pending", "solving", "reviewing"] });
+    const challenge = this._authority(actor, args, null, { phases: ["pending", "assembling", "solving", "reviewing"] });
     requireValue(!this._all("submission", challenge.id).some((item) => ["pending", "unknown"].includes(item.status)),
       "submission_unresolved", "Reconcile pending official submission before deferral");
     const reason = text(args.reason, "reason");
@@ -752,8 +895,9 @@ export class Board extends EventEmitter {
       if (challenge.solve_elapsed_ms + this.clock() - challenge.solve_started_at < ASSISTANCE_REMINDER_MS) continue;
       this._clock(challenge, true); challenge.assistance_reminded = true;
       if (!this._members(challenge.id).some((item) => item.role === "assistant")) {
-        challenge.assistance_requested = Math.max(1, challenge.assistance_requested);
-        challenge.assistance_target = Math.max(1, challenge.assistance_target);
+        challenge.assistance_requested = Math.max(explicitAssistanceTarget(challenge),
+          Math.max(0, 1 - hardAssistanceFloor(challenge)));
+        challenge.assistance_target = Math.max(1, baseAssistanceTarget(challenge));
       }
       this._touch(challenge, "assistance.reminder", [challenge.owner_id, "lead"]);
       reminded.push(challenge.id);

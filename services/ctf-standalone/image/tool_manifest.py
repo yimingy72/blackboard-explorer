@@ -14,7 +14,8 @@ seccomp-tools patchelf r2 jadx sage sage-python z3 openssl hashcat john
 clinfo exiftool binwalk foremost steghide pngcheck magick tshark tcpdump olevba
 mmls testdisk 7z unrar curl wget nc socat ssh dig ffuf gobuster nmap sqlmap
 dirsearch sox ffmpeg ffprobe multimon-ng zbarimg qrencode xxd qpdf pdfinfo
-pdftotext bkcrack zsteg vol""".split()
+pdftotext bkcrack zsteg vol file strings readelf objdump ldd strace ltrace rg
+tar unzip zip base64 diff patch timeout""".split()
 
 CAPABILITY_CHECKS = {
     "pwn": ["gcc_compile", "gdb_run", "pwndbg", "gef", "pwntools", "ropgadget"],
@@ -59,6 +60,24 @@ CAPABILITY_SCOPE = {
     "node_sqlite": "An in-memory node:sqlite query",
 }
 
+WORKER_TOOLS_REQUIRED_COMMANDS = (
+    "file",
+    "strings",
+    "readelf",
+    "objdump",
+    "ldd",
+    "strace",
+    "ltrace",
+    "rg",
+    "tar",
+    "unzip",
+    "zip",
+    "base64",
+    "diff",
+    "patch",
+    "timeout",
+)
+
 
 def python_modules(executable: str) -> dict:
     names = (
@@ -72,6 +91,37 @@ def python_modules(executable: str) -> dict:
         "'packages':{p:m.version(p) for p in packages.get(n,[])}} for n in names}))"
     )
     return json.loads(subprocess.check_output([executable, "-c", code], text=True))
+
+
+def render_worker_tools(versions: dict[str, str]) -> str:
+    sage_version = versions["sage"].removeprefix("SageMath version ")
+    return (
+        "本执行容器提供以下工具；完整版本、模块路由和验证范围见 /opt/ctf-tools/manifest.json。\n"
+        "Lead 和 Worker 共用同一容器，但 Lead 负责赛事工具，Worker 负责题目执行。\n"
+        "基础文件/二进制：file、strings、readelf、objdump、ldd、strace、ltrace、xxd、"
+        "tar、unzip、zip、7z、diff、patch、timeout、rg。\n"
+        "Pwn：gcc/g++、gdb、pwndbg/GEF、pwntools、ROPgadget、checksec、one_gadget、"
+        "seccomp-tools、patchelf。pwntools 使用 /usr/bin/python3，导入名 pwn。\n"
+        "逆向：radare2、Ghidra headless、angr、JADX；保留 Java 编译与运行。"
+        "本精简镜像没有 QEMU、多架构 GDB 或 APK 重打包链。\n"
+        "密码数学：Sage、Z3、PyCryptodome、gmpy2、sympy、fpylll。"
+        "angr、Z3、Scapy 使用 /usr/bin/python3。科学计算使用 /usr/local/bin/sage-python"
+        "（解释器 /opt/sage/bin/python，含 NumPy/SciPy/Cython 环境）。\n"
+        "网络/Web：curl/wget、nc/socat、SSH/DNS、nmap、sqlmap、dirsearch、ffuf/gobuster、"
+        "requests/httpx/bs4。普通用户扫描使用 nmap -sT；原始报文权限由比赛环境决定。\n"
+        "文件/Misc：tshark/Scapy 离线 PCAP、ExifTool、OpenCV/PIL、ImageMagick、"
+        "binwalk/foremost/steghide/zsteg、ffmpeg/sox/multimon-ng、zbarimg/qrencode、"
+        "7z/unrar/bkcrack、John、hashcat CPU OpenCL、Poppler/qpdf、"
+        "Volatility3（符号可能需补）。\n"
+        "Ghidra：/usr/share/ghidra/support/analyzeHeadless；项目路径不要使用隐藏目录。"
+        "JADX 输入输出使用绝对路径。John 可直接用 john，内置字典在"
+        " /usr/share/john/password.lst；/usr/share/seclists 是 6 份常用 Web/用户名词典的精选子集，"
+        "不是完整 SecLists 或 rockyou。\n"
+        f"运行时版本：Python /usr/bin/python3 为 {versions['python'].removeprefix('Python ')}；"
+        f"Node /usr/local/bin/node 为 {versions['node']}；"
+        f"SageMath /usr/local/bin/sage 为 {sage_version}。"
+        "工具说明不代表任意旧版本脚本兼容，先按题目选工具，不要逐一探测全部工具。\n"
+    )
 
 
 def main() -> None:
@@ -183,26 +233,7 @@ def main() -> None:
     destination.with_suffix(".sha256").write_text(
         hashlib.sha256(destination.read_bytes()).hexdigest() + "  " + destination.name + "\n"
     )
-    destination.with_name("worker-tools.md").write_text(
-        "本执行容器提供以下工具；完整版本、模块路由和验证范围见 /opt/ctf-tools/manifest.json。\n"
-        "Pwn：gcc/g++、gdb、pwndbg/GEF、pwntools、ROPgadget、"
-        "checksec、one_gadget、seccomp-tools、patchelf。\n"
-        "逆向：radare2、Ghidra headless、angr、JADX；保留 Java 编译与运行。"
-        "本精简镜像没有 QEMU、多架构 GDB 或 APK 重打包链。\n"
-        "密码数学：Sage、Z3、PyCryptodome、gmpy2、sympy、fpylll。"
-        "科学计算使用 sage-python（解释器 /opt/sage/bin/python，含 NumPy/SciPy/Cython 环境）。\n"
-        "网络/Web：curl/wget、nc/socat、SSH/DNS、nmap、sqlmap、dirsearch、ffuf/gobuster、"
-        "requests/httpx/bs4。普通用户扫描使用 nmap -sT；原始报文权限由比赛环境决定。\n"
-        "文件/Misc：tshark/Scapy 离线 PCAP、ExifTool、OpenCV/PIL、ImageMagick、"
-        "binwalk/foremost/steghide/zsteg、ffmpeg/sox/multimon-ng、zbarimg/qrencode、"
-        "7z/unrar/bkcrack、John、hashcat CPU OpenCL、Poppler/qpdf、Volatility3（符号可能需补）。\n"
-        "Ghidra：/usr/share/ghidra/support/analyzeHeadless；项目路径不要使用隐藏目录。"
-        "JADX 输入输出使用绝对路径。John 可直接用 john，内置字典在"
-        " /usr/share/john/password.lst；/usr/share/seclists 是6份常用 Web/用户名词典的精选子集，"
-        "不是完整 SecLists 或 rockyou。\n"
-        f"默认 {versions['python']}；Node {versions['node']}；{versions['sage']}。"
-        "工具说明不代表任意旧版本脚本兼容，先按题目选工具，不要逐一探测全部工具。\n"
-    )
+    destination.with_name("worker-tools.md").write_text(render_worker_tools(versions))
 
 
 if __name__ == "__main__":

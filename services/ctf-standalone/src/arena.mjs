@@ -29,7 +29,8 @@ export class ArenaClient {
   #fetch;
   #filePaths = new Map();
 
-  constructor({ baseUrl, token, timeoutMs = 15000, fetchImpl = fetch, cumulativeScore = null }) {
+  constructor({ baseUrl, token, timeoutMs = 15000, downloadTimeoutMs = 10 * 60 * 1000,
+    fetchImpl = fetch, cumulativeScore = null }) {
     const url = new URL(baseUrl);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
       throw new TypeError("Arena base URL must be an HTTP(S) URL without credentials, query, or fragment");
@@ -38,8 +39,12 @@ export class ArenaClient {
       throw new TypeError("Arena base URL must identify the service root or /openapi/v1");
     }
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError("Arena timeout must be positive");
+    if (!Number.isFinite(downloadTimeoutMs) || downloadTimeoutMs <= 0) {
+      throw new TypeError("Arena download timeout must be positive");
+    }
     this.baseUrl = url.origin;
     this.timeoutMs = timeoutMs;
+    this.downloadTimeoutMs = downloadTimeoutMs;
     this.cumulativeScore = Number.isFinite(cumulativeScore) && cumulativeScore >= 0 ? cumulativeScore : null;
     this.#token = nonempty(token, "Arena token");
     if (/[\r\n]/.test(token)) throw new TypeError("Arena token contains an invalid header character");
@@ -55,11 +60,83 @@ export class ArenaClient {
     return value;
   }
 
+  #downloadResponse(response, externalSignal) {
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    let settled = false;
+    let timer;
+    let abortListener;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+      if (externalSignal && abortListener) externalSignal.removeEventListener("abort", abortListener);
+      abortListener = undefined;
+    };
+    const stream = new ReadableStream({
+      start: (controller) => {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const error = new ArenaError("Arena handout download timed out", {
+            code: "download_timeout",
+          });
+          controller.error(error);
+          void reader.cancel(error).catch(() => {});
+          cleanup();
+        }, this.downloadTimeoutMs);
+        timer.unref?.();
+        if (!externalSignal) return;
+        abortListener = () => {
+          if (settled) return;
+          settled = true;
+          const error = new ArenaError("Arena handout download was cancelled", { code: "cancelled" });
+          controller.error(error);
+          void reader.cancel(error).catch(() => {});
+          cleanup();
+        };
+        if (externalSignal.aborted) abortListener();
+        else externalSignal.addEventListener("abort", abortListener, { once: true });
+      },
+      pull: async (controller) => {
+        if (settled) return;
+        try {
+          const { done, value } = await reader.read();
+          if (settled) return;
+          if (done) {
+            settled = true;
+            controller.close();
+            cleanup();
+          } else {
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          if (settled) return;
+          settled = true;
+          controller.error(error instanceof ArenaError ? error
+            : new ArenaError("Arena handout download failed", { code: "transport_error" }));
+          cleanup();
+        }
+      },
+      cancel: async (reason) => {
+        settled = true;
+        cleanup();
+        await reader.cancel(reason).catch(() => {});
+      },
+    }, { highWaterMark: 0 });
+    return new Response(stream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
   async #request(action = "", { method = "GET", uniqueCode, body, path, signal, responseType = "json" } = {}) {
     const url = new URL(CHALLENGES_PATH + (action ? `/${action}` : ""), this.baseUrl);
     if (uniqueCode !== undefined) url.searchParams.set("unique_code", nonempty(uniqueCode, "Challenge code"));
     if (path !== undefined) url.searchParams.set("path", path);
-    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => timeoutController.abort(), this.timeoutMs);
+    timeout.unref?.();
     const headers = { BENCHMARK_TOKEN: this.#token };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     try {
@@ -67,7 +144,7 @@ export class ArenaClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        signal: signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal,
         redirect: "manual",
       });
       if (!response.ok) {
@@ -82,7 +159,7 @@ export class ArenaClient {
           outcomeUnknown: method === "POST" && response.status >= 500,
         });
       }
-      if (responseType === "response") return response;
+      if (responseType === "response") return this.#downloadResponse(response, signal);
       if (responseType === "text") return this.#redact(await response.text());
       if (response.status === 204) return null;
       try { return this.#redact(await response.json()); }
@@ -98,6 +175,8 @@ export class ArenaClient {
         code: signal?.aborted ? "cancelled" : "transport_error",
         outcomeUnknown: method === "POST",
       });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -171,12 +250,25 @@ export class ArenaClient {
     }
   }
 
-  async reconcileSubmission(uniqueCode, { duplicate = false, ...options } = {}) {
+  async reconcileSubmission(uniqueCode, { duplicate = false, baselineCorrectFlagCount = null, ...options } = {}) {
     try {
       const challenge = (await this.listChallenges(options)).find((item) => item.unique_code === uniqueCode);
+      const progressed = challenge
+        && Number.isSafeInteger(baselineCorrectFlagCount) && baselineCorrectFlagCount >= 0
+        && Number.isSafeInteger(challenge.correct_flag_count)
+        && challenge.correct_flag_count > baselineCorrectFlagCount;
+      const accepted = Boolean(challenge) && (duplicate || challengeCompleted(challenge) || progressed);
       return {
-        outcome: challenge && challengeCompleted(challenge) ? "accepted" : "unknown",
-        receipt: null, challenge: challenge ?? null, duplicate, reconciled: true,
+        outcome: accepted ? "accepted" : "unknown",
+        receipt: null,
+        challenge: challenge ?? null,
+        duplicate,
+        reconciled: true,
+        ...(accepted && !challengeCompleted(challenge)
+          ? { reason: duplicate
+            ? "Official progress confirms that the flag was already accepted"
+            : "Official progress advanced after the unknown submission" }
+          : {}),
         cumulativeScore: this.cumulativeScore,
       };
     } catch (error) {

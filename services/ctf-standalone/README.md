@@ -4,10 +4,13 @@
 
 ## 运行组成
 
-Node.js 主进程承载本地 SQLite 黑板、调度器、Lead、20 个初始 Pi Worker 会话、赛事 HTTP 适配器和本地命令工具。Lead 读取容器实际资源后决定是否增加 Worker，增员沿用同级成员池。
+Node.js 主进程承载本地 SQLite 黑板、调度器、Lead、20 个初始 Pi Worker 会话、赛事 HTTP 适配器和本地命令工具。Lead 拥有 `grow_workers` 权限和主动增员义务：结合 cgroup 资源、未认领任务、assembling/援助需求、空闲 Worker 与活跃执行判断容量。待援助且无空闲 Worker、任务可能积压，或资源仍有安全余量且存在有效并行工作时，应及时增员；增员沿用同级成员池。
 
 - 首次工作由平台分配，后续有可领取工作时平台实时通知空闲 Worker 自选。新题优先于援助。
-- 每题最多 10 名 Worker，每名 Worker 同时最多持有 3 条 Intent。困难题以主责和援助各一人起步，可并行方向能够触发增援。
+- 比赛目录中 `container=false` 的离线题优先是 Lead 的调度策略。Lead 使用 `arena_prepare_offline` 尽早创建缺失题、设置更小的 priority（通常为 0 或 1）、启动离线环境、下载全部附件并写 manifest；平台不替 Lead 硬门禁离线/在线启动顺序，也不本地替 Lead 排在线题目。
+- 在线环境同时最多保持 3 个是赛事 API 配额，`pending`、`active`、`unknown` 和 `closing` 均按真实占用状态处理。API 返回配额拒绝时必须保留原始错误并由 Lead 调整；只有题目完成并确认环境关闭，或暂缓时显式关闭环境并收到关闭确认，才视为补位。`arena_start` 不自动下载附件，Lead 必须在环境就绪后通过 `arena_files` 查询并补取 Worker 需要的文件。
+- 每题最多 10 名 Worker，每名 Worker 同时最多持有 3 条 Intent。困难题以主责和援助各一人起步，组队阶段主 Worker 立即做低成本侦察和自动化，不等待第二名成员。第二名 Worker 加入前不累计正式解题时间，可并行方向能够继续触发增援。
+- 新未认领任务始终高于援助任务。困难题先分配一名主 Worker 并进入 assembling/需要援助。只有没有新题且存在空闲 Worker 或 Lead 增员后，才加入援助 Worker。available 中统一按 Lead 设置的 priority 从小到大选择，离线优先不由 Board 额外硬编码。
 - 累计解题达到 30 分钟时，无援助的题开启援助，已有援助的题通知主责研判。
 - Fact、Intent、候选和环境代次保存在题目黑板。文件证据通过不可变快照关联任务、作者和执行身份。
 - 任一成员可提交候选，平台用 Pi `steer` 通知同题团队和 Lead。Lead 授权赛事提交，程序按真实回执更新题目。成员在旧执行结束后释放，后续题目复用原 Pi 会话。
@@ -37,11 +40,16 @@ node src/main.mjs --help
     "apiKeyEnv": "CTF_MODEL_API_KEY",
     "contextWindow": 131072,
     "maxTokens": 8192,
-    "reasoning": false,
-    "thinkingLevel": "off"
+    "reasoning": true,
+    "thinkingLevel": "max",
+    "thinkingLevelMap": {
+      "max": "max"
+    }
   }
 }
 ```
+
+Pi SDK 只有模型显式声明 `thinkingLevelMap.max` 时才把 `max` 保留为受支持等级；缺少该映射会把请求降为 `high`。因此 `thinkingLevel: "max"` 与 `thinkingLevelMap: { "max": "max" }` 必须一起配置，百智云 OpenAI 兼容接口会收到 `reasoning_effort: "max"`。`xhigh` 也遵循相同规则。
 
 `CTF_MODEL_API_KEY` 是本程序示例配置选择的变量名。赛事方模型注入字段仍需接入时核实。凭据由运行环境提供，JSON 仅引用变量名。
 
@@ -56,6 +64,9 @@ node src/main.mjs --config /absolute/path/config.json
 ```bash
 docker run --rm --name bbx-ctf-local \
   --env ARENA_SOLVER_TOKEN \
+  --env ARENA_SOLVER_BASE_URL \
+  --env BENCHMARK_BASE_URL \
+  --env ARENA_ATTEMPT_ID \
   --env CYBER_ARENA_HELP_MARKDOWN \
   --env CTF_MODEL_API_KEY \
   --mount type=bind,src=/absolute/path/config.json,dst=/config/runtime.json,readonly \
@@ -65,17 +76,22 @@ docker run --rm --name bbx-ctf-local \
 
 ## 赛事注入与模式
 
-已确认的赛事注入内容为 `ARENA_SOLVER_TOKEN`、`CYBER_ARENA_HELP_MARKDOWN` 和 `/challenge/cyber_arena_help.md`。程序优先读取帮助环境变量，缺失时读取帮助文件。当前帮助中的 `ARENA_SOLVER_BASE_URL` 或同值 `BENCHMARK_BASE_URL` 提供 per-attempt 求解服务地址，请求使用 `BENCHMARK_TOKEN` Header。
+已确认的赛事注入内容为 `ARENA_SOLVER_TOKEN`、`ARENA_SOLVER_BASE_URL`、同值 `BENCHMARK_BASE_URL`、`ARENA_ATTEMPT_ID`、`CYBER_ARENA_HELP_MARKDOWN` 和 `/challenge/cyber_arena_help.md`。程序读取带地址的赋值格式，也支持帮助只描述字段名、真实地址由独立环境变量注入的格式。多个来源同时存在时必须一致。请求使用 `BENCHMARK_TOKEN` Header。
 
-本地模拟服务可在 JSON 的 `arena` 对象显式设置 `baseUrl` 和 `tokenEnv`。存在赛事注入帮助时，显式地址必须与帮助一致。同一工作目录绑定一个 attempt 身份，换场使用新的工作目录。
+本地模拟服务可在 JSON 的 `arena` 对象显式设置 `baseUrl` 和 `tokenEnv`。存在赛事注入地址时，显式地址必须与注入值一致。同一工作目录绑定一个 attempt 身份，换场使用新的工作目录。
+
+完整赛事帮助不是静态系统提示词，也不要求 Worker 各自保存一份。程序在比赛启动和恢复时把脱敏后的帮助全文、真实模式、目录、截止时间与 Lead 黑板放入一条 `ctf.notice` 自定义消息，通过 Pi 的 `steer` 注入 Lead 当前回合。Worker 只接收当前任务事件、题内黑板和路径，避免 20 个以上会话重复加载整份比赛规则。
 
 `arena.mode` 支持 `attempt` 和 `connectivity_test`。模式优先从官方帮助首部的 `Rendered for a single attempt.` 或 `Rendered for a connectivity check.` 标识识别，也可由 JSON 显式指定。两者同时存在时必须一致。缺少模式标识的配置沿用 `attempt`。
 
-- `attempt` 对普通在线题和离线题都先调用赛事 `start`。环境 `pending` 时等待就绪，在线环境名额由协调器统一核对。
+- `attempt` 对普通在线题和离线题都先调用赛事 `start`。Lead 应尽快准备并推进离线题，但平台不强制本地 gate；在线题启动顺序由 Lead 根据收益、任务和 Worker 状态决定，3 个实例上限以赛事 API 的真实配额和拒绝回执为准。
+- 在线题启动后不会自动准备附件。环境就绪后由 Lead 调用 `arena_files` 查询官方文件清单，并按准确路径下载 Worker 需要的附件。
 - `connectivity_test` 从题面 `description` 求解，直接提交候选。探针省去赛事 `start` 和 `close`。赛事记录确定判定后关闭探针，本地按提交回执结束。
 - 模式判断使用配置和正式 bootstrap 标识，题目名称与题型字段只用于解题和难度判断。
 
-工具镜像中的 `/opt/ctf-tools/worker-tools.md` 提供精简工具与解释器路径，`/opt/ctf-tools/manifest.json` 保存完整清单。Lead 和 Worker 的系统提示词加载当前镜像清单，按当前任务读取详细用法。
+工具镜像中的 `/opt/ctf-tools/worker-tools.md` 提供精简工具与解释器路径，`/opt/ctf-tools/manifest.json` 保存完整清单。最终镜像构建会从现有基础镜像的 manifest 出发，以 `worker-tools.md` 中实际存在的命令补齐 command 路径，校验基础文件、二进制和归档工具，保留原有 verification 元数据，更新最终镜像用途与赛事运行能力并重写 `manifest.sha256`，不依赖重新拉取或重打基础镜像。
+
+Lead 和 Worker 的系统提示词加载同一份当前镜像清单。Worker 优先组合高信息量命令、复用事实和方向、持久化证据，并在无新增信息时停止重复尝试、申请援助或请求 Lead 判断是否暂缓。`board_act` 的系统提示列出每个角色可用动作及完整必填字段，避免模型通过失败重试猜测参数。
 
 ## 回执和恢复
 

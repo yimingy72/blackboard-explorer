@@ -79,8 +79,33 @@ test("conflicting rendered or explicit endpoints fail before any request", async
 
 test("help parser handles markdown escapes and rejects an unrendered template", () => {
   assert.equal(parseArenaHelp(help.replaceAll("_", "\\_")).baseUrl, "http://127.0.0.1:12345");
+  assert.equal(
+    parseArenaHelp("Attempt: attempt-fixture\nAttempt expires at: 2026-11-22T03:00:00Z\n").expiresAt,
+    Date.parse("2026-11-22T03:00:00Z"),
+  );
+  assert.equal(
+    parseArenaHelp("Attempt: attempt-fixture\nAttempt expires at: **2026-11-22T03:00:00Z.**\n").expiresAt,
+    Date.parse("2026-11-22T03:00:00Z"),
+  );
   assert.throws(() => parseArenaHelp("ARENA_SOLVER_BASE_URL=http://model-proxy-<workload>.<namespace>:8090"), /URL/);
   assert.throws(() => parseArenaHelp("Attempt window: this attempt expires at invalid-date;"), /expiration/);
+});
+
+test("injected endpoint variables fill descriptive help and must agree", async (t) => {
+  const descriptive = "# Cyber Arena — Challenges API\nRendered for a single attempt.\n"
+    + "The API root is ARENA_SOLVER_BASE_URL; append /openapi/v1/ to it.\n";
+  const options = await fixture(t, { model }, {
+    CYBER_ARENA_HELP_MARKDOWN: descriptive,
+    ARENA_SOLVER_BASE_URL: "http://127.0.0.1:12345",
+    BENCHMARK_BASE_URL: "http://127.0.0.1:12345",
+    ARENA_ATTEMPT_ID: "attempt-from-environment",
+  });
+  const loaded = await loadConfig(options);
+  assert.equal(loaded.arena.baseUrl, "http://127.0.0.1:12345");
+  assert.equal(loaded.arena.attemptId, "attempt-from-environment");
+
+  options.env.BENCHMARK_BASE_URL = "http://127.0.0.1:23456";
+  await assert.rejects(loadConfig(options), /Injected arena base URLs conflict/);
 });
 
 test("mode follows the official bootstrap preamble and never infers from task text", async (t) => {
@@ -128,6 +153,33 @@ test("literal secret values and invalid model capabilities are rejected", async 
     const options = await fixture(t, invalid);
     await assert.rejects(loadConfig(options));
   }
+});
+
+test("max thinking is accepted only with an explicit provider mapping", async (t) => {
+  const unmapped = await fixture(t, { model: { ...model, reasoning: true, thinkingLevel: "max" } });
+  await assert.rejects(loadConfig(unmapped), /thinkingLevelMap\.max/);
+
+  const invalid = await fixture(t, {
+    model: {
+      ...model,
+      reasoning: true,
+      thinkingLevel: "max",
+      thinkingLevelMap: { max: "" },
+    },
+  });
+  await assert.rejects(loadConfig(invalid), /thinkingLevelMap\.max/);
+
+  const options = await fixture(t, {
+    model: {
+      ...model,
+      reasoning: true,
+      thinkingLevel: "max",
+      thinkingLevelMap: { max: "max", xhigh: null },
+    },
+  });
+  const loaded = await loadConfig(options);
+  assert.equal(loaded.model.thinkingLevel, "max");
+  assert.deepEqual(loaded.model.thinkingLevelMap, { max: "max", xhigh: null });
 });
 
 test("config JSON is mandatory and global .env or OPENAI variables are not read", async (t) => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { ArenaClient, ArenaError, challengeCompleted } from "../src/arena.mjs";
 import { startFakeArena } from "./helpers/fake-arena.mjs";
@@ -21,6 +22,10 @@ async function fixture(t, handler, options = {}) {
     calls.push(call);
     const result = await handler(call, calls.length);
     if (result === null) return;
+    if (result.stream) {
+      await result.stream(response);
+      return;
+    }
     response.writeHead(result.status ?? 200, result.headers ?? { "Content-Type": "application/json" });
     response.end(result.raw ?? JSON.stringify(result.json));
   });
@@ -52,6 +57,18 @@ test("unsupported and duplicate challenge lists fail explicitly", async (t) => {
   await assert.rejects(client.listChallenges(), /duplicate codes/);
 });
 
+test("JSON response bodies remain bounded by the request timeout", async (t) => {
+  const { client } = await fixture(t, () => ({
+    stream: async (response) => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.flushHeaders();
+      await delay(100);
+      response.end(JSON.stringify([{ unique_code: "late" }]));
+    },
+  }), { timeoutMs: 40 });
+  await assert.rejects(client.listChallenges(), (error) => error.code === "transport_error");
+});
+
 test("start, close, help and finish use the official paths and methods", async (t) => {
   const { client, calls } = await fixture(t, (call) => call.url.pathname.endsWith("/help")
     ? { raw: `Help containing ${TOKEN}`, headers: { "Content-Type": "text/markdown" } }
@@ -78,6 +95,64 @@ test("only listed handout paths can be read and content streams from the officia
   assert.equal(calls[1].url.pathname, "/openapi/v1/challenges/files");
   assert.equal(calls[1].url.searchParams.get("path"), "handouts/unusual spelling.bin");
   assert.throws(() => client.readFile("another", "handouts/unusual spelling.bin"), ArenaError);
+});
+
+test("handout headers use the request timeout while body uses the download timeout", async (t) => {
+  const content = Buffer.from("slow handout body");
+  const { client } = await fixture(t, (call) => call.url.searchParams.has("path")
+    ? {
+      stream: async (response) => {
+        response.writeHead(200, { "Content-Type": "application/octet-stream" });
+        response.flushHeaders();
+        await delay(100);
+        response.end(content);
+      },
+    }
+    : { json: [{ path: "handouts/slow.bin" }] }, {
+    timeoutMs: 40,
+    downloadTimeoutMs: 500,
+  });
+  await client.listFiles("x");
+  const response = await client.readFile("x", "handouts/slow.bin");
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
+});
+
+test("a handout body that exceeds the download timeout aborts without hanging", async (t) => {
+  const { client } = await fixture(t, (call) => call.url.searchParams.has("path")
+    ? {
+      stream: async (response) => {
+        response.writeHead(200, { "Content-Type": "application/octet-stream" });
+        response.flushHeaders();
+        await delay(250);
+        response.end("too late");
+      },
+    }
+    : { json: [{ path: "handouts/stuck.bin" }] }, {
+    timeoutMs: 40,
+    downloadTimeoutMs: 50,
+  });
+  await client.listFiles("x");
+  const response = await client.readFile("x", "handouts/stuck.bin");
+  await assert.rejects(response.arrayBuffer(), (error) => error.code === "download_timeout");
+});
+
+test("caller cancellation still aborts an in-progress handout body", async (t) => {
+  const { client } = await fixture(t, (call) => call.url.searchParams.has("path")
+    ? {
+      stream: async (response) => {
+        response.writeHead(200, { "Content-Type": "application/octet-stream" });
+        response.flushHeaders();
+        await delay(200);
+        response.end("cancelled");
+      },
+    }
+    : { json: [{ path: "handouts/cancelled.bin" }] });
+  await client.listFiles("x");
+  const controller = new AbortController();
+  const response = await client.readFile("x", "handouts/cancelled.bin", { signal: controller.signal });
+  const body = response.arrayBuffer();
+  setTimeout(() => controller.abort(), 20);
+  await assert.rejects(body, (error) => error.code === "cancelled");
 });
 
 test("redirects never forward the attempt token to a handout destination", async (t) => {
@@ -139,11 +214,13 @@ test("duplicate submission reconciles progress with one GET and no repeated POST
   assert.deepEqual(calls.map((call) => call.method), ["POST", "GET"]);
 });
 
-test("duplicate without confirmed completion remains unknown", async (t) => {
+test("duplicate submission is accepted even while a multi-flag challenge remains incomplete", async (t) => {
   const { client } = await fixture(t, (call) => call.method === "POST"
     ? { status: 409, json: { error: { code: "duplicate", message: "Duplicate" } } }
-    : { json: [{ unique_code: "x", is_completed: false, flag_count: 1, correct_flag_count: 0 }] });
-  assert.equal((await client.submit("x", "flag{x}")).outcome, "unknown");
+    : { json: [{ unique_code: "x", is_completed: false, flag_count: 2, correct_flag_count: 1 }] });
+  const result = await client.submit("x", "flag{x}");
+  assert.equal(result.outcome, "accepted");
+  assert.equal(result.duplicate, true);
 });
 
 test("unknown submission can be reconciled after a restart without submitting again", async (t) => {
@@ -197,6 +274,7 @@ test("completion and configuration validation use exact types", () => {
   assert.throws(() => new ArenaClient({ baseUrl: "file:///tmp/socket", token: TOKEN }));
   assert.throws(() => new ArenaClient({ baseUrl: "http://user:pass@fixture", token: TOKEN }));
   assert.throws(() => new ArenaClient({ baseUrl: "http://fixture", token: "bad\r\nheader" }));
+  assert.throws(() => new ArenaClient({ baseUrl: "http://fixture", token: TOKEN, downloadTimeoutMs: 0 }));
 });
 
 test("shared fake arena exercises slots, score, recovery, attachments and explicit finish", async (t) => {
@@ -290,4 +368,20 @@ test("multi-flag fixture retains partial progress and the environment until ever
   const completed = (await client.listChallenges())[0];
   assert.equal(challengeCompleted(completed), true);
   assert.equal(completed.container_status, "stopped");
+});
+
+test("reconciliation recognizes an unknown partial flag without waiting for completion", async (t) => {
+  const arena = await startFakeArena({
+    challenges: [{ unique_code: "stages", flags: ["flag{first}", "flag{second}"], container: true }],
+  });
+  t.after(() => arena.close());
+  const client = new ArenaClient(arena);
+  await client.start("stages");
+  arena.setFault("submit", { kind: "accepted_disconnect" });
+  assert.equal((await client.submit("stages", "flag{first}")).outcome, "unknown");
+  const reconciled = await client.reconcileSubmission("stages", { baselineCorrectFlagCount: 0 });
+  assert.equal(reconciled.outcome, "accepted");
+  assert.equal(reconciled.challenge.correct_flag_count, 1);
+  assert.equal(reconciled.challenge.is_completed, false);
+  assert.equal((await client.submit("stages", "flag{second}")).outcome, "accepted");
 });
